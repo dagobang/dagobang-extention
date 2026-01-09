@@ -1,0 +1,176 @@
+{
+  "common": {
+    "appName": "Dagobang",
+    "loading": "載入中...",
+    "initializing": "初始化中...",
+    "cancel": "取消",
+    "or": "或",
+    "chain": "鏈",
+    "language": {
+      "zh_CN": "簡體中文",
+      "zh_TW": "繁體中文",
+      "en": "English"
+    }
+  },
+  "popup": {
+    "error": {
+      "serviceUnavailable": "服務不可用：{0}",
+      "unknown": "未知錯誤",
+      "invalidPassword": "密碼錯誤"
+    },
+    "welcome": {
+      "title": "歡迎",
+      "subtitle": "建立或匯入錢包以開始使用。",
+      "passwordPlaceholder": "設定強密碼",
+      "confirmPasswordPlaceholder": "再次輸入密碼",
+      "passwordNotMatch": "兩次輸入的密碼不一致",
+      "createWallet": "建立新錢包",
+      "importPlaceholder": "貼上助記詞或私鑰",
+      "importWallet": "匯入錢包"
+    },
+    "unlock": {
+      "title": "歡迎回來",
+      "subtitle": "輸入密碼解鎖",
+      "passwordPlaceholder": "密碼",
+      "unlock": "解鎖",
+      "resetWipe": "重置 / 清除錢包",
+      "confirmWipe": "確定要清除錢包嗎？錢包中的所有帳戶將被刪除，此操作不可復原。"
+    },
+    "backup": {
+      "title": "備份助記詞",
+      "notice": "請抄寫並妥善保管，切勿分享給任何人。",
+      "confirm": "我已保存"
+    },
+    "home": {
+      "myAccounts": "我的帳戶",
+      "addNew": "+ 新增",
+      "createNew": "建立新帳戶",
+      "importPrivateKey": "匯入私鑰",
+      "accountNamePlaceholder": "帳戶名稱（可選）",
+      "privateKeyPlaceholder": "私鑰（0x...）",
+      "verifyPassword": "驗證密碼",
+      "importAccount": "匯入帳戶",
+      "createAccount": "建立帳戶",
+      "imported": "已匯入",
+      "copyAddress": "複製地址",
+      "switch": "切換",
+      "lockWallet": "鎖定錢包",
+      "manage": {
+        "button": "管理",
+        "title": "管理帳戶",
+        "close": "關閉",
+        "alias": "別名",
+        "aliasPlaceholder": "別名（留空清除）",
+        "save": "儲存",
+        "exportPrivateKey": "匯出此帳戶私鑰",
+        "passwordPlaceholder": "密碼",
+        "export": "匯出私鑰",
+        "privateKey": "私鑰",
+        "copy": "複製私鑰",
+        "copied": "已複製"
+      }
+    },
+    "settings": {
+      "title": "設定",
+      "chainId": "鏈 ID",
+      "bsc": "BSC (56)",
+      "network": "網路",
+      "rpcUrls": "RPC 位址（每行一個）",
+      "antiMev": "反 MEV 模式",
+      "protectedRpcUrls": "保護 RPC 位址（每行一個）",
+      "trade": "交易",
+      "routerAddress": "路由合約位址",
+      "slippageBps": "滑點（bps）",
+      "deadlineSeconds": "截止時間（秒）",
+      "gasPreset": "Gas 檔位",
+      "autoLockSeconds": "自動鎖定（秒）",
+      "toastPosition": "Toast 彈出位置",
+      "security": "安全",
+      "exportPassword": "用於匯出的密碼",
+      "exportPk": "匯出私鑰",
+      "exportMnemonic": "匯出助記詞",
+      "saveChanges": "儲存修改",
+      "changePassword": "修改密碼",
+      "currentPassword": "當前密碼",
+      "newPassword": "新密碼",
+      "confirmPassword": "確認新密碼",
+      "passwordChanged": "密碼修改成功",
+      "gas": {
+        "slow": "慢",
+        "standard": "標準",
+        "fast": "快",
+        "turbo": "抢跑"
+      },
+      "toastPositionOptions": {
+        "topLeft": "左上",
+        "topCenter": "上中",
+        "topRight": "右上",
+        "bottomLeft": "左下",
+        "bottomCenter": "下中",
+        "bottomRight": "右下"
+      }
+    }
+  },
+  "contentUi": {
+    "error": {
+      "settingsNotReady": "設定未就緒",
+      "invalidToken": "無效的代幣",
+      "invalidAmount": "無效的數量",
+      "noBalance": "餘額不足",
+      "tokenInfoRequired": "需要代幣資訊",
+      "insufficientBalance": "餘額不足",
+      "transactionFailed": "交易失敗"
+    },
+    "common": {
+      "token": "代幣"
+    },
+    "toast": {
+      "trading": "[{0}] 交易執行中...",
+      "buySuccessTime": "[{0}] 成功買入！耗時 {1} 秒",
+      "buyDone": "[{0}] 買入完成：{1} BNB {0}",
+      "sellSuccessTime": "[{0}] 成功賣出！耗時 {1} 秒",
+      "sellDone": "[{0}] 賣出完成：{1}%",
+      "approveSubmitted": "[{0}] 授權已提交"
+    },
+    "status": {
+      "txSent": "交易已送出"
+    },
+    "section": {
+      "buy": "買入",
+      "sell": "賣出"
+    },
+    "mode": {
+      "default": "預設",
+      "turbo": "極速"
+    },
+    "slippage": {
+      "low": "低",
+      "default": "預設",
+      "medium": "中",
+      "high": "高",
+      "toggleMode": "切換執行模式",
+      "toggleGas": "切換燃氣價格",
+      "toggleSlippage": "切換滑點"
+    },
+    "approve": {
+      "title": "預授權",
+      "button": "授權"
+    },
+    "overlay": {
+      "lockedTitle": "錢包已鎖定",
+      "lockedSubtitle": "點擊解鎖",
+      "unsupportedChain": "不支援的鏈：{0}"
+    },
+    "footer": {
+      "balance": "餘額",
+      "totalBuy": "總買入",
+      "totalSell": "總賣出",
+      "unrealized": "未實現",
+      "price": "價格",
+      "marketCap": "市值",
+      "liquidity": "流動性",
+      "dex": "交易所",
+      "pool": "池子"
+    }
+  }
+}

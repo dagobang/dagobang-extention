@@ -1,0 +1,176 @@
+{
+  "common": {
+    "appName": "Dagobang",
+    "loading": "Loading...",
+    "initializing": "Initializing...",
+    "cancel": "Cancel",
+    "or": "Or",
+    "chain": "Chain",
+    "language": {
+      "zh_CN": "简体中文",
+      "zh_TW": "繁體中文",
+      "en": "English"
+    }
+  },
+  "popup": {
+    "error": {
+      "serviceUnavailable": "Service unavailable: {0}",
+      "unknown": "Unknown error",
+      "invalidPassword": "Invalid password"
+    },
+    "welcome": {
+      "title": "Welcome",
+      "subtitle": "Create or import a wallet to get started.",
+      "passwordPlaceholder": "Set a strong password",
+      "confirmPasswordPlaceholder": "Confirm password",
+      "passwordNotMatch": "Passwords do not match",
+      "createWallet": "Create New Wallet",
+      "importPlaceholder": "Paste mnemonic or private key",
+      "importWallet": "Import Wallet"
+    },
+    "unlock": {
+      "title": "Welcome Back",
+      "subtitle": "Enter password to unlock",
+      "passwordPlaceholder": "Password",
+      "unlock": "Unlock",
+      "resetWipe": "Reset / Wipe Wallet",
+      "confirmWipe": "Are you sure you want to wipe the wallet? All accounts in the wallet will be deleted. This action cannot be undone."
+    },
+    "backup": {
+      "title": "Secret Backup",
+      "notice": "Please write this down and store it safely. Do not share it with anyone.",
+      "confirm": "I have saved it"
+    },
+    "home": {
+      "myAccounts": "My Accounts",
+      "addNew": "+ Add New",
+      "createNew": "Create New",
+      "importPrivateKey": "Import Private Key",
+      "accountNamePlaceholder": "Account Name (Optional)",
+      "privateKeyPlaceholder": "Private Key (0x...)",
+      "verifyPassword": "Verify Password",
+      "importAccount": "Import Account",
+      "createAccount": "Create Account",
+      "imported": "Imported",
+      "copyAddress": "Copy Address",
+      "switch": "Switch",
+      "lockWallet": "Lock Wallet",
+      "manage": {
+        "button": "Manage",
+        "title": "Manage Account",
+        "close": "Close",
+        "alias": "Alias",
+        "aliasPlaceholder": "Alias (leave empty to clear)",
+        "save": "Save",
+        "exportPrivateKey": "Export this account's private key",
+        "passwordPlaceholder": "Password",
+        "export": "Export Private Key",
+        "privateKey": "Private Key",
+        "copy": "Copy Private Key",
+        "copied": "Copied"
+      }
+    },
+    "settings": {
+      "title": "Settings",
+      "chainId": "Chain ID",
+      "bsc": "BSC (56)",
+      "network": "Network",
+      "rpcUrls": "RPC URLs (one per line)",
+      "antiMev": "Anti-MEV Mode",
+      "protectedRpcUrls": "Protected RPC URLs (one per line)",
+      "trade": "Trade",
+      "routerAddress": "Router Address",
+      "slippageBps": "Slippage (bps)",
+      "deadlineSeconds": "Deadline (s)",
+      "gasPreset": "Gas Preset",
+      "autoLockSeconds": "Auto Lock (s)",
+      "toastPosition": "Toast position",
+      "security": "Security",
+      "exportPassword": "Password for export",
+      "exportPk": "Export PK",
+      "exportMnemonic": "Export Mnemonic",
+      "saveChanges": "Save Changes",
+      "changePassword": "Change Password",
+      "currentPassword": "Current Password",
+      "newPassword": "New Password",
+      "confirmPassword": "Confirm New Password",
+      "passwordChanged": "Password updated successfully",
+      "gas": {
+        "slow": "Slow",
+        "standard": "Standard",
+        "fast": "Fast",
+        "turbo": "Instant"
+      },
+      "toastPositionOptions": {
+        "topLeft": "Top left",
+        "topCenter": "Top center",
+        "topRight": "Top right",
+        "bottomLeft": "Bottom left",
+        "bottomCenter": "Bottom center",
+        "bottomRight": "Bottom right"
+      }
+    }
+  },
+  "contentUi": {
+    "error": {
+      "settingsNotReady": "Settings not ready",
+      "invalidToken": "Invalid token",
+      "invalidAmount": "Invalid amount",
+      "noBalance": "No balance",
+      "tokenInfoRequired": "Token info required",
+      "insufficientBalance": "Insufficient balance",
+      "transactionFailed": "Transaction failed"
+    },
+    "common": {
+      "token": "Token"
+    },
+    "toast": {
+      "trading": "[{0}] Trading...",
+      "buySuccessTime": "[{0}] Buy succeeded! {1}s",
+      "buyDone": "[{0}] Buy confirmed: {1} BNB {0}",
+      "sellSuccessTime": "[{0}] Sell succeeded! {1}s",
+      "sellDone": "[{0}] Sell confirmed: {1}%",
+      "approveSubmitted": "[{0}] Approve submitted"
+    },
+    "status": {
+      "txSent": "Tx Sent"
+    },
+    "section": {
+      "buy": "Buy",
+      "sell": "Sell"
+    },
+    "mode": {
+      "default": "Default",
+      "turbo": "Turbo"
+    },
+    "slippage": {
+      "low": "Low",
+      "default": "Default",
+      "medium": "Medium",
+      "high": "High",
+      "toggleMode": "Toggle execution mode",
+      "toggleGas": "Toggle gas price",
+      "toggleSlippage": "Toggle slippage"
+    },
+    "approve": {
+      "title": "Approve",
+      "button": "Approve"
+    },
+    "overlay": {
+      "lockedTitle": "Wallet Locked",
+      "lockedSubtitle": "Click to unlock",
+      "unsupportedChain": "Unsupported Chain: {0}"
+    },
+    "footer": {
+      "balance": "Balance",
+      "totalBuy": "Total Buy",
+      "totalSell": "Total Sell",
+      "unrealized": "Unrealized",
+      "price": "Price",
+      "marketCap": "Market Cap",
+      "liquidity": "Liquidity",
+      "dex": "DEX",
+      "pool": "Pool"
+    }
+  }
+}

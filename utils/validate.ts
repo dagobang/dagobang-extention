@@ -1,0 +1,85 @@
+import type { Settings } from '../types/extention';
+import { defaultSettings } from './defaults';
+
+// Simple normalization helper (could be moved to a formatter util if needed)
+function normalizeAddress(addr: string | undefined): `0x${string}` | '' {
+  if (!addr) return '';
+  const trimmed = addr.trim();
+  if (!trimmed) return '';
+  // Basic check, could use viem's isAddress/getAddress
+  return trimmed as `0x${string}`;
+}
+
+function clampNumber(value: any, min: number, max: number, fallback: number) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(v)));
+}
+
+export function validateSettings(input: Settings): Settings | null {
+  const defaults = defaultSettings();
+  const chainId = 56;
+  const autoLockSeconds = clampNumber(input.autoLockSeconds, 30, 3600, defaults.autoLockSeconds);
+  const locale = (['zh_CN', 'zh_TW', 'en'] as const).includes(input.locale as any)
+    ? (input.locale as 'zh_CN' | 'zh_TW' | 'en')
+    : defaults.locale;
+  const accountAliases: Record<string, string> = {};
+  if (input.accountAliases && typeof input.accountAliases === 'object') {
+    for (const [addr, alias] of Object.entries(input.accountAliases)) {
+      if (typeof alias !== 'string') continue;
+      const trimmed = alias.trim();
+      if (!trimmed) continue;
+      if (typeof addr !== 'string' || !addr.trim()) continue;
+      accountAliases[addr.trim().toLowerCase()] = trimmed;
+    }
+  }
+
+  const chains = { ...defaults.chains };
+  
+  if (input.chains) {
+    ([56] as const).forEach((cid) => {
+      const cInput = input.chains[cid];
+      const cDef = defaults.chains[cid];
+      if (cInput) {
+        chains[cid] = {
+          rpcUrls: (cInput.rpcUrls || []).map((x) => x.trim()).filter(Boolean),
+          protectedRpcUrls: (cInput.protectedRpcUrls || []).map((x) => x.trim()).filter(Boolean),
+          antiMev: !!cInput.antiMev,
+          gasPreset: ['slow', 'standard', 'fast', 'turbo'].includes(cInput.gasPreset) ? cInput.gasPreset : cDef.gasPreset,
+          executionMode: cInput.executionMode === 'turbo' ? 'turbo' : cDef.executionMode,
+          slippageBps: clampNumber(cInput.slippageBps, 0, 9000, cDef.slippageBps),
+          deadlineSeconds: clampNumber(cInput.deadlineSeconds, 10, 3600, cDef.deadlineSeconds),
+          buyPresets: Array.isArray(cInput.buyPresets) ? cInput.buyPresets.map(String) : cDef.buyPresets,
+          sellPresets: Array.isArray(cInput.sellPresets) ? cInput.sellPresets.map(String) : cDef.sellPresets,
+        };
+        // Fallback for RPCs if empty
+        if (chains[cid].rpcUrls.length === 0) {
+          chains[cid].rpcUrls = cDef.rpcUrls;
+        }
+      }
+    });
+  }
+
+  const toastPositionOptions = [
+    'top-left',
+    'top-center',
+    'top-right',
+    'bottom-left',
+    'bottom-center',
+    'bottom-right',
+  ] as const;
+  const inputToastPosition = (input as any).toastPosition;
+  const toastPosition = toastPositionOptions.includes(inputToastPosition)
+    ? inputToastPosition
+    : defaults.toastPosition ?? 'top-center';
+
+  return {
+    chainId,
+    chains,
+    autoLockSeconds,
+    lastSelectedAddress: input.lastSelectedAddress,
+    locale,
+    accountAliases,
+    toastPosition,
+  };
+}

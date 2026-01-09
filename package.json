@@ -1,0 +1,37 @@
+{
+  "name": "dagobang-extention",
+  "description": "Dagobang - Low Fee Meme Trading Browser Extension",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "wxt zip",
+    "zip:firefox": "wxt zip -b firefox",
+    "compile": "tsc --noEmit",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "@iconify/react": "6.0.2",
+    "lucide-react": "0.562.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-hot-toast": "2.6.0",
+    "tiny-invariant": "1.3.3",
+    "tiny-warning": "1.0.3",
+    "viem": "2.43.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@wxt-dev/module-react": "1.1.5",
+    "autoprefixer": "10.4.21",
+    "postcss": "8.5.6",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.9.3",
+    "wxt": "0.20.6"
+  }
+}

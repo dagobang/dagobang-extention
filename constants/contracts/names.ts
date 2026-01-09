@@ -1,0 +1,15 @@
+export enum ContractNames {
+  DagobangRouter = "DagobangRouter",
+  WETH = "WETH",
+  UniswapFactoryV2 = "UniswapFactoryV2",
+  PancakeFactoryV2 = "PancakeFactoryV2",
+  UniswapFactoryV3 = "UniswapFactoryV3",
+  PancakeFactoryV3 = "PancakeFactoryV3",
+  PoolManager = "PoolManager",
+  PancakeInfinityVault = "PancakeInfinityVault",
+  PancakeInfinityClPoolManager = "PancakeInfinityClPoolManager",
+  PancakeInfinityBinPoolManager = "PancakeInfinityBinPoolManager",
+  FourMemeTokenManagerV2 = "FourMemeTokenManagerV2",
+  FlapshTokenManager = "FlapshTokenManager",
+  TokenManagerHelper3 = "TokenManagerHelper3",
+}

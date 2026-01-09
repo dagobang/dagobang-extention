@@ -1,0 +1,176 @@
+{
+  "common": {
+    "appName": "打狗棒",
+    "loading": "加载中...",
+    "initializing": "初始化中...",
+    "cancel": "取消",
+    "or": "或",
+    "chain": "链",
+    "language": {
+      "zh_CN": "简体中文",
+      "zh_TW": "繁體中文",
+      "en": "English"
+    }
+  },
+  "popup": {
+    "error": {
+      "serviceUnavailable": "服务不可用：{0}",
+      "unknown": "未知错误",
+      "invalidPassword": "密码错误"
+    },
+    "welcome": {
+      "title": "欢迎",
+      "subtitle": "创建或导入钱包以开始使用。",
+      "passwordPlaceholder": "设置一个强密码",
+      "confirmPasswordPlaceholder": "再次输入密码",
+      "passwordNotMatch": "两次输入的密码不一致",
+      "createWallet": "创建新钱包",
+      "importPlaceholder": "粘贴助记词或私钥",
+      "importWallet": "导入钱包"
+    },
+    "unlock": {
+      "title": "欢迎回来",
+      "subtitle": "输入密码解锁",
+      "passwordPlaceholder": "密码",
+      "unlock": "解锁",
+      "resetWipe": "重置 / 清除钱包",
+      "confirmWipe": "确定要清除钱包吗？钱包中的所有账户将被删除，此操作不可撤销。"
+    },
+    "backup": {
+      "title": "备份助记词",
+      "notice": "请抄写并妥善保管，切勿分享给任何人。",
+      "confirm": "我已保存"
+    },
+    "home": {
+      "myAccounts": "我的账户",
+      "addNew": "+ 新增",
+      "createNew": "创建新账户",
+      "importPrivateKey": "导入私钥",
+      "accountNamePlaceholder": "账户名称（可选）",
+      "privateKeyPlaceholder": "私钥（0x...）",
+      "verifyPassword": "验证密码",
+      "importAccount": "导入账户",
+      "createAccount": "创建账户",
+      "imported": "已导入",
+      "copyAddress": "复制地址",
+      "switch": "切换",
+      "lockWallet": "锁定钱包",
+      "manage": {
+        "button": "管理",
+        "title": "管理账户",
+        "close": "关闭",
+        "alias": "别名",
+        "aliasPlaceholder": "别名（留空清除）",
+        "save": "保存",
+        "exportPrivateKey": "导出该账户私钥",
+        "passwordPlaceholder": "密码",
+        "export": "导出私钥",
+        "privateKey": "私钥",
+        "copy": "复制私钥",
+        "copied": "已复制"
+      }
+    },
+    "settings": {
+      "title": "设置",
+      "chainId": "链 ID",
+      "bsc": "BSC (56)",
+      "network": "网络",
+      "rpcUrls": "RPC 地址（每行一个）",
+      "antiMev": "反 MEV 模式",
+      "protectedRpcUrls": "保护 RPC 地址（每行一个）",
+      "trade": "交易",
+      "routerAddress": "路由合约地址",
+      "slippageBps": "滑点（bps）",
+      "deadlineSeconds": "截止时间（秒）",
+      "gasPreset": "Gas 档位",
+      "autoLockSeconds": "自动锁定（秒）",
+      "toastPosition": "Toast 弹出位置",
+      "security": "安全",
+      "exportPassword": "用于导出的密码",
+      "exportPk": "导出私钥",
+      "exportMnemonic": "导出助记词",
+      "saveChanges": "保存修改",
+      "changePassword": "修改密码",
+      "currentPassword": "当前密码",
+      "newPassword": "新密码",
+      "confirmPassword": "确认新密码",
+      "passwordChanged": "密码修改成功",
+      "gas": {
+        "slow": "慢",
+        "standard": "标准",
+        "fast": "快",
+        "turbo": "抢跑"
+      },
+      "toastPositionOptions": {
+        "topLeft": "左上",
+        "topCenter": "上中",
+        "topRight": "右上",
+        "bottomLeft": "左下",
+        "bottomCenter": "下中",
+        "bottomRight": "右下"
+      }
+    }
+  },
+  "contentUi": {
+    "error": {
+      "settingsNotReady": "设置未就绪",
+      "invalidToken": "无效的代币",
+      "invalidAmount": "无效的数量",
+      "noBalance": "余额不足",
+      "tokenInfoRequired": "需要代币信息",
+      "insufficientBalance": "余额不足",
+      "transactionFailed": "交易失败"
+    },
+    "common": {
+      "token": "代币"
+    },
+    "toast": {
+      "trading": "[{0}] 交易执行中...",
+      "buySuccessTime": "[{0}] 成功买入！耗时 {1} 秒",
+      "buyDone": "[{0}] 买入完毕：{1} BNB {0}",
+      "sellSuccessTime": "[{0}] 成功卖出！耗时 {1} 秒",
+      "sellDone": "[{0}] 卖出完毕：{1}%",
+      "approveSubmitted": "[{0}] 授权提交"
+    },
+    "status": {
+      "txSent": "交易已发送"
+    },
+    "section": {
+      "buy": "买入",
+      "sell": "卖出"
+    },
+    "mode": {
+      "default": "默认",
+      "turbo": "极速"
+    },
+    "slippage": {
+      "low": "低",
+      "default": "默认",
+      "medium": "中",
+      "high": "高",
+      "toggleMode": "切换执行模式",
+      "toggleGas": "切换燃气价格",
+      "toggleSlippage": "切换滑点"
+    },
+    "approve": {
+      "title": "预授权",
+      "button": "授权"
+    },
+    "overlay": {
+      "lockedTitle": "钱包已锁定",
+      "lockedSubtitle": "点击解锁",
+      "unsupportedChain": "不支持的链：{0}"
+    },
+    "footer": {
+      "balance": "余额",
+      "totalBuy": "总买入",
+      "totalSell": "总卖出",
+      "unrealized": "未实现",
+      "price": "价格",
+      "marketCap": "市值",
+      "liquidity": "流动性",
+      "dex": "交易所",
+      "pool": "池子"
+    }
+  }
+}
