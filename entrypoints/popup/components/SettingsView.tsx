@@ -183,8 +183,27 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
                   }))
                 }
               />
-            </label>
-          </div>
+          </label>
+        </div>
+
+        <div className="space-y-3 pt-4 border-t border-zinc-800">
+          <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">AI</div>
+          <label className="block space-y-1">
+            <div className="text-[14px] text-zinc-400">Seedream API Key</div>
+            <input
+              type="password"
+              className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+              value={settingsDraft.seedreamApiKey ?? ''}
+              onChange={(e) =>
+                setSettingsDraft((s) => ({
+                  ...s,
+                  seedreamApiKey: e.target.value,
+                }))
+              }
+              placeholder="用于生成 Logo 的 Seedream API Key"
+            />
+          </label>
+        </div>
           <div className="grid grid-cols-2 gap-3">
             <label className="block space-y-1">
               <div className="text-[14px] text-zinc-400">{tt('popup.settings.gasPreset')}</div>

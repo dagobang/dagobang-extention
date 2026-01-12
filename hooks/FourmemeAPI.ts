@@ -76,7 +76,7 @@ export class FourmemeAPI {
   private static async makeRequest(url: string, options: RequestInit): Promise<Response> {
     const headers = { ...options.headers } as Record<string, string>;
 
-    if (options.method === "POST" && options.body) {
+    if (options.method === "POST" && options.body && typeof options.body === "string") {
       headers["content-length"] = new Blob([options.body as string]).size.toString();
     }
 
@@ -113,6 +113,99 @@ export class FourmemeAPI {
       "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
     };
+  }
+
+  public static async generateNonce(accountAddress: string, networkCode: string): Promise<string> {
+    const endpoint = "/private/user/nonce/generate";
+    const url = `${this.BASE_URL}${endpoint}`;
+    const body = {
+      accountAddress,
+      verifyType: "LOGIN",
+      networkCode,
+    };
+    const headers = this.getHeaders();
+    const response = await this.makeRequest(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(result?.msg || `Fourmeme generate nonce failed: ${response.status}`);
+    }
+    if (!result || (result.code !== "0" && result.code !== 0)) {
+      throw new Error(result?.msg || "Fourmeme generate nonce failed");
+    }
+    return String(result.data ?? "");
+  }
+
+  public static async loginDex(input: {
+    address: string;
+    signature: string;
+    networkCode: string;
+    walletName?: string;
+    region?: string;
+    langType?: string;
+  }): Promise<string> {
+    const endpoint = "/private/user/login/dex";
+    const url = `${this.BASE_URL}${endpoint}`;
+    const body = {
+      region: input.region || "WEB",
+      langType: input.langType || "EN",
+      loginIp: "",
+      inviteCode: "",
+      verifyInfo: {
+        address: input.address,
+        networkCode: input.networkCode,
+        signature: input.signature,
+        verifyType: "LOGIN",
+      },
+      walletName: input.walletName || "Dagobang",
+    };
+    const headers = this.getHeaders();
+    const response = await this.makeRequest(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(result?.msg || `Fourmeme login failed: ${response.status}`);
+    }
+    if (!result || (result.code !== "0" && result.code !== 0)) {
+      throw new Error(result?.msg || "Fourmeme login failed");
+    }
+    return String(result.data ?? "");
+  }
+
+  public static async uploadImageFromUrl(imgUrl: string, accessToken: string): Promise<string> {
+    const downloadResp = await fetch(imgUrl);
+    if (!downloadResp.ok) {
+      throw new Error(`Failed to download image: ${downloadResp.status}`);
+    }
+    const blob = await downloadResp.blob();
+    const formData = new FormData();
+    formData.append("file", blob, "logo.png");
+
+    const endpoint = "/private/token/upload";
+    const url = `${this.BASE_URL}${endpoint}`;
+    const headers = this.getHeaders() as Record<string, string>;
+    delete headers["content-type"];
+    headers["meme-web-access"] = accessToken;
+
+    const response = await this.makeRequest(url, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(result?.msg || `Fourmeme upload image failed: ${response.status}`);
+    }
+    if (!result || (result.code !== "0" && result.code !== 0)) {
+      throw new Error(result?.msg || "Fourmeme upload image failed");
+    }
+    return String(result.data ?? "");
   }
 
   public static async getTokenInfo(chain: string, address: string): Promise<TokenInfo | null> {
@@ -166,6 +259,49 @@ export class FourmemeAPI {
       console.error("Failed to fetch token info from Fourmeme:", error);
       return null;
     }
+  }
+
+  public static async createToken(input: {
+    name: string;
+    shortName: string;
+    desc: string;
+    imgUrl: string;
+    webUrl?: string;
+    twitterUrl?: string;
+    telegramUrl?: string;
+    preSale: string;
+    onlyMPC: boolean;
+  }, accessToken: string): Promise<any> {
+    const endpoint = "/private/token/create";
+    const url = `${this.BASE_URL}${endpoint}`;
+    const body = {
+      name: input.name,
+      shortName: input.shortName,
+      desc: input.desc,
+      imgUrl: input.imgUrl,
+      webUrl: input.webUrl,
+      twitterUrl: input.twitterUrl,
+      telegramUrl: input.telegramUrl,
+      preSale: input.preSale,
+      onlyMPC: input.onlyMPC,
+    };
+    const headers = {
+      ...this.getHeaders(),
+      "meme-web-access": accessToken,
+    };
+    const response = await this.makeRequest(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(result?.msg || `Fourmeme create token failed: ${response.status}`);
+    }
+    if (!result || (result.code !== "0" && result.code !== 0)) {
+      throw new Error(result?.msg || "Fourmeme create token failed");
+    }
+    return result.data;
   }
 }
 

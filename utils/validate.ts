@@ -1,4 +1,4 @@
-import type { Settings } from '../types/extention';
+import type { Settings, AutoTradeConfig } from '../types/extention';
 import { defaultSettings } from './defaults';
 
 // Simple normalization helper (could be moved to a formatter util if needed)
@@ -73,6 +73,49 @@ export function validateSettings(input: Settings): Settings | null {
     ? inputToastPosition
     : defaults.toastPosition ?? 'top-center';
 
+  const seedreamApiKey = typeof (input as any).seedreamApiKey === 'string'
+    ? (input as any).seedreamApiKey.trim()
+    : defaults.seedreamApiKey ?? '';
+
+  const inputAutoTrade = (input as any).autoTrade as Partial<AutoTradeConfig> | undefined;
+  const defaultAutoTrade = defaults.autoTrade;
+  const autoTrade: AutoTradeConfig = {
+    enabled: !!inputAutoTrade?.enabled,
+    buyAmountBnb: typeof inputAutoTrade?.buyAmountBnb === 'string' && inputAutoTrade.buyAmountBnb.trim()
+      ? inputAutoTrade.buyAmountBnb.trim()
+      : defaultAutoTrade.buyAmountBnb,
+    maxMarketCapUsd: typeof inputAutoTrade?.maxMarketCapUsd === 'string'
+      ? inputAutoTrade.maxMarketCapUsd.trim()
+      : defaultAutoTrade.maxMarketCapUsd,
+    minLiquidityUsd: typeof inputAutoTrade?.minLiquidityUsd === 'string'
+      ? inputAutoTrade.minLiquidityUsd.trim()
+      : defaultAutoTrade.minLiquidityUsd,
+    minHolders: typeof inputAutoTrade?.minHolders === 'string'
+      ? inputAutoTrade.minHolders.trim()
+      : defaultAutoTrade.minHolders,
+    maxTokenAgeMinutes: typeof inputAutoTrade?.maxTokenAgeMinutes === 'string'
+      ? inputAutoTrade.maxTokenAgeMinutes.trim()
+      : defaultAutoTrade.maxTokenAgeMinutes,
+    maxDevHoldPercent: typeof inputAutoTrade?.maxDevHoldPercent === 'string'
+      ? inputAutoTrade.maxDevHoldPercent.trim()
+      : defaultAutoTrade.maxDevHoldPercent,
+    blockIfDevSell: typeof inputAutoTrade?.blockIfDevSell === 'boolean'
+      ? inputAutoTrade.blockIfDevSell
+      : defaultAutoTrade.blockIfDevSell,
+    autoSellEnabled: typeof inputAutoTrade?.autoSellEnabled === 'boolean'
+      ? inputAutoTrade.autoSellEnabled
+      : defaultAutoTrade.autoSellEnabled,
+    takeProfitMultiple: typeof inputAutoTrade?.takeProfitMultiple === 'string'
+      ? inputAutoTrade.takeProfitMultiple.trim()
+      : defaultAutoTrade.takeProfitMultiple,
+    stopLossMultiple: typeof inputAutoTrade?.stopLossMultiple === 'string'
+      ? inputAutoTrade.stopLossMultiple.trim()
+      : defaultAutoTrade.stopLossMultiple,
+    maxHoldMinutes: typeof inputAutoTrade?.maxHoldMinutes === 'string'
+      ? inputAutoTrade.maxHoldMinutes.trim()
+      : defaultAutoTrade.maxHoldMinutes,
+  };
+
   return {
     chainId,
     chains,
@@ -81,5 +124,7 @@ export function validateSettings(input: Settings): Settings | null {
     locale,
     accountAliases,
     toastPosition,
+    seedreamApiKey,
+    autoTrade,
   };
 }

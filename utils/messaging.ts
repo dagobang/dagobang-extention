@@ -5,7 +5,7 @@ export async function call<T extends BgRequest>(req: T): Promise<BgResponse<T>> 
   try {
     const p = browser.runtime.sendMessage(req);
     // Longer timeout for transaction waiting
-    const timeoutMs = req.type === 'tx:waitForReceipt' ? 60000 : 5000;
+    const timeoutMs = (req.type === 'tx:waitForReceipt' || req.type === 'ai:generateLogo') ? 60000 : 5000;
     const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), timeoutMs));
     const res = (await Promise.race([p, timeout])) as any;
     if (res?.error) {

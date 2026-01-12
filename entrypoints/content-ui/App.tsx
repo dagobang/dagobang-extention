@@ -5,14 +5,17 @@ import { Header } from './components/Header';
 import { BuySection } from './components/BuySection';
 import { SellSection } from './components/SellSection';
 import { Overlays } from './components/Overlays';
+import { CookingPanel } from './components/CookingPanel';
+import { AutotradePanel } from './components/AutotradePanel';
 import type { BgGetStateResponse, Settings } from '@/types/extention';
 import { parseCurrentUrl, type SiteInfo } from '@/utils/sites';
 import { call } from '@/utils/messaging';
-import { parseEther } from 'viem';
+import { parseEther, zeroAddress } from 'viem';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import { getChainIdByName } from '@/constants/chains';
 import { FourmemeTokenInfo, type TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
+import { Logo } from '@/components/Logo';
 
 export default function App() {
   const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(null);
@@ -20,13 +23,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<BgGetStateResponse | null>(null);
   const [sellPercent, setSellPercent] = useState(25);
-  const [tokenInfo, setTokenInfo] = useState<any | null>(null); // Store full TokenInfo
+  const [tokenInfo, setTokenInfo] = useState<any | null>(null);
   const [tokenDecimals, setTokenDecimals] = useState<number | null>(null);
   const [tokenSymbol, setTokenSymbol] = useState<string | null>(null);
   const [tokenBalanceWei, setTokenBalanceWei] = useState<string>('0');
   const [nativeBalanceWei, setNativeBalanceWei] = useState<string>('0');
   const [txHash, setTxHash] = useState<string | null>(null);
-  // Turbo 秒卖兜底：买入 txHash 返回的“最小到手 Token 数量”，仅用于在买入未确认且余额仍为 0 时估算卖出 minReturn(BNB)。
   const [pendingBuyTokenMinOutWei, setPendingBuyTokenMinOutWei] = useState<string | null>(null);
   const [minimized, setMinimized] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -43,7 +45,9 @@ export default function App() {
     return { x: defaultX, y: defaultY };
   });
   const posRef = useRef(pos);
-  const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
+  const [showCookingPanel, setShowCookingPanel] = useState(false);
+  const [showAutotradePanel, setShowAutotradePanel] = useState(false);
+  const dragging = useRef<null | { target: 'main'; startX: number; startY: number; baseX: number; baseY: number }>(null);
 
   const isUnlocked = !!state?.wallet.isUnlocked;
   const settings: Settings | null = state?.settings ?? null;
@@ -79,7 +83,7 @@ export default function App() {
         setSiteInfo(info);
       }
     };
-    check(); // first run
+    check();
     const timer = setInterval(check, 500);
     return () => clearInterval(timer);
   }, [siteInfo]);
@@ -128,8 +132,8 @@ export default function App() {
     setState(res);
     setError(null);
     if (res.wallet.address) {
-      const bal = await call({ type: 'chain:getBalance', address: res.wallet.address });
-      setNativeBalanceWei(bal.balanceWei);
+      const tokenBalanceWei = await TokenAPI.getBalance(siteInfo?.platform ?? '', siteInfo?.chain ?? '', res.wallet.address, zeroAddress);
+      setNativeBalanceWei(tokenBalanceWei ?? '0');
     }
   }
 
@@ -159,19 +163,6 @@ export default function App() {
         setTokenSymbol(meta.symbol);
         setTokenDecimals(meta.decimals);
 
-        if (meta.launchpad_platform.includes('fourmeme') && !meta.quote_token_address) {
-          // fallback : read quote token address from fourmeme contract on-chain
-          const tokenInfo = await call({
-            type: 'token:getTokenInfo:fourmeme',
-            chainId: getChainIdByName(siteInfo.chain), tokenAddress: tokenAddressNormalized
-          }) as FourmemeTokenInfo
-
-          setTokenInfo({
-            ...meta,
-            quote_token_address: tokenInfo.quote,
-          });
-        }
-
         if ((meta as any).tokenPrice) {
           const p = (meta as any).tokenPrice as { marketCap?: string; liquidity?: string };
           setMarketCapDisplay(p.marketCap ?? null);
@@ -183,8 +174,8 @@ export default function App() {
       }
 
       if (address) {
-        const bal = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address });
-        setTokenBalanceWei(bal.balanceWei);
+        const holding = await TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, address, tokenAddressNormalized);
+        setTokenBalanceWei(holding ?? '0');
       }
     } catch (e: any) {
       setTokenSymbol(null);
@@ -216,8 +207,13 @@ export default function App() {
   }, [address, tokenAddressNormalized]);
 
   useEffect(() => {
+    if (!tokenAddressNormalized || !siteInfo || !address) return;
+    refreshToken(true);
+  }, [tokenAddressNormalized, siteInfo, address]);
+
+  useEffect(() => {
     refreshToken();
-    const timer = setInterval(() => refreshToken(), 15000);
+    const timer = setInterval(() => refreshToken(), 5000);
     return () => clearInterval(timer);
   }, [tokenAddressNormalized, address]);
 
@@ -226,14 +222,16 @@ export default function App() {
       if (!dragging.current) return;
       const dx = e.clientX - dragging.current.startX;
       const dy = e.clientY - dragging.current.startY;
-      setPos({ x: dragging.current.baseX + dx, y: dragging.current.baseY + dy });
+      const nextX = dragging.current.baseX + dx;
+      const nextY = dragging.current.baseY + dy;
+      setPos({ x: nextX, y: nextY });
     };
     const onUp = () => {
       if (!dragging.current) return;
       dragging.current = null;
       try {
-        const key = 'dagobang_content_ui_pos';
-        window.localStorage.setItem(key, JSON.stringify(posRef.current));
+        const keyMain = 'dagobang_content_ui_pos';
+        window.localStorage.setItem(keyMain, JSON.stringify(posRef.current));
       } catch {
       }
     };
@@ -542,110 +540,121 @@ export default function App() {
     call({ type: 'bg:openPopup' });
   };
 
+  const handleToggleCookingPanel = () => {
+    setShowCookingPanel((v) => !v);
+  };
+
+  const handleToggleAutotradePanel = () => {
+    setShowAutotradePanel((v) => !v);
+  };
+
   if (!siteInfo) return null;
 
-  if (minimized) {
-    return (
-      <>
-        <CustomToaster position={toastPosition} />
+  return (
+    <>
+      <CustomToaster position={toastPosition} />
+
+      {minimized ? (
         <div
           className="fixed z-[2147483647] flex cursor-pointer items-center justify-center rounded-full bg-zinc-900 p-3 shadow-xl border border-zinc-700 hover:border-zinc-500 transition-colors"
           style={{ left: pos.x, top: pos.y }}
           onPointerDown={(e) => {
-            dragging.current = { startX: e.clientX, startY: e.clientY, baseX: pos.x, baseY: pos.y };
+            dragging.current = {
+              target: 'main',
+              startX: e.clientX,
+              startY: e.clientY,
+              baseX: posRef.current.x,
+              baseY: posRef.current.y,
+            };
           }}
           onClick={() => {
             if (!dragging.current) setMinimized(false);
           }}
         >
-          {/* <Zap size={20} className="text-emerald-500" /> */}
           <Logo />
         </div>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <CustomToaster position={toastPosition} />
-      <div
-        className="fixed z-[2147483647] w-[300px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col"
-        style={{ left: pos.x, top: pos.y }}
-      >
-        <Header
-          onDragStart={(e) => {
-            dragging.current = { startX: e.clientX, startY: e.clientY, baseX: pos.x, baseY: pos.y };
-          }}
-          onMinimize={() => setMinimized(true)}
-          isEditing={isEditing}
-          onEditToggle={handleEditToggle}
-        />
-        <div className="relative flex flex-col">
-          {/*
-          <StatusMessage
-            error={error}
-            onErrorClear={() => setError(null)}
-            txHash={txHash}
-            onTxHashClear={() => setTxHash(null)}
-            chainId={settings?.chainId || 56}
-          /> */}
-
-          <BuySection
-            formattedNativeBalance={formattedNativeBalance}
-            busy={busy}
-            isUnlocked={isUnlocked}
-            onBuy={handleBuy}
-            settings={settings}
-            onToggleMode={handleToggleMode}
-            onToggleGas={handleToggleGas}
-            onToggleSlippage={handleToggleSlippage}
+      ) : (
+        <div
+          className="fixed z-[2147483647] w-[300px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col"
+          style={{ left: pos.x, top: pos.y }}
+        >
+          <Header
+            onDragStart={(e) => {
+              dragging.current = {
+                target: 'main',
+                startX: e.clientX,
+                startY: e.clientY,
+                baseX: posRef.current.x,
+                baseY: posRef.current.y,
+              };
+            }}
+            onMinimize={() => setMinimized(true)}
             isEditing={isEditing}
-            onUpdatePreset={handleUpdateBuyPreset}
-            draftPresets={draftBuyPresets}
-            locale={locale}
+            onEditToggle={handleEditToggle}
+            onToggleCooking={handleToggleCookingPanel}
+            cookingActive={showCookingPanel}
+            onToggleAutotrade={handleToggleAutotradePanel}
+            autotradeActive={showAutotradePanel}
           />
+          <div className="relative flex flex-col">
+            <BuySection
+              formattedNativeBalance={formattedNativeBalance}
+              busy={busy}
+              isUnlocked={isUnlocked}
+              onBuy={handleBuy}
+              settings={settings}
+              onToggleMode={handleToggleMode}
+              onToggleGas={handleToggleGas}
+              onToggleSlippage={handleToggleSlippage}
+              isEditing={isEditing}
+              onUpdatePreset={handleUpdateBuyPreset}
+              draftPresets={draftBuyPresets}
+              locale={locale}
+            />
 
-          <div className="h-px bg-zinc-800 mx-3"></div>
+            <div className="h-px bg-zinc-800 mx-3"></div>
 
-          <SellSection
-            formattedTokenBalance={formattedTokenBalance}
-            tokenSymbol={tokenSymbol}
-            busy={busy}
-            isUnlocked={isUnlocked}
-            onSell={handleSell}
-            settings={settings}
-            onToggleMode={handleToggleMode}
-            onToggleGas={handleToggleGas}
-            onToggleSlippage={handleToggleSlippage}
-            onApprove={handleApprove}
-            isEditing={isEditing}
-            onUpdatePreset={handleUpdateSellPreset}
-            draftPresets={draftSellPresets}
-            locale={locale}
-          />
+            <SellSection
+              formattedTokenBalance={formattedTokenBalance}
+              tokenSymbol={tokenSymbol}
+              busy={busy}
+              isUnlocked={isUnlocked}
+              onSell={handleSell}
+              settings={settings}
+              onToggleMode={handleToggleMode}
+              onToggleGas={handleToggleGas}
+              onToggleSlippage={handleToggleSlippage}
+              onApprove={handleApprove}
+              isEditing={isEditing}
+              onUpdatePreset={handleUpdateSellPreset}
+              draftPresets={draftSellPresets}
+              locale={locale}
+            />
 
-          {/* <FooterStats
-            formattedTokenBalance={formattedTokenBalance}
-            tokenSymbol={tokenSymbol}
-            tokenName={(tokenInfo as TokenInfo | null)?.name}
-            tokenLogo={(tokenInfo as TokenInfo | null)?.logo}
-            price={tokenPrice}
-            quoteSymbol={quoteSymbol}
-            marketCap={marketCapDisplay}
-            liquidity={liquidityDisplay}
-            dexLabel={(tokenInfo as TokenInfo | null)?.dex_type ?? null}
-            poolAddress={(tokenInfo as TokenInfo | null)?.pool_pair ?? null}
-            locale={locale}
-          /> */}
-
-          <Overlays
-            siteInfo={siteInfo}
-            isUnlocked={isUnlocked}
-            onUnlock={handleUnlock}
-            locale={locale}
-          />
+            <Overlays
+              siteInfo={siteInfo}
+              isUnlocked={isUnlocked}
+              onUnlock={handleUnlock}
+              locale={locale}
+            />
+          </div>
         </div>
-      </div>
+      )}
+
+      <CookingPanel
+        visible={showCookingPanel}
+        onVisibleChange={setShowCookingPanel}
+        address={address}
+        seedreamApiKey={settings?.seedreamApiKey ?? ''}
+      />
+
+      <AutotradePanel
+        visible={showAutotradePanel}
+        onVisibleChange={setShowAutotradePanel}
+        settings={settings}
+        isUnlocked={isUnlocked}
+        address={address}
+      />
     </>
   );
 }

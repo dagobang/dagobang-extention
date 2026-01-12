@@ -1,7 +1,10 @@
 import {
-  Pencil, X,
+  Pencil,
+  X,
   GripHorizontal,
-  Check
+  Check,
+  Zap,
+  Flame,
 } from 'lucide-react';
 import type { PointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
@@ -11,9 +14,22 @@ type HeaderProps = {
   onMinimize: () => void;
   isEditing: boolean;
   onEditToggle: () => void;
+  onToggleCooking: () => void;
+  cookingActive: boolean;
+  onToggleAutotrade: () => void;
+  autotradeActive: boolean;
 };
 
-export function Header({ onDragStart, onMinimize, isEditing, onEditToggle }: HeaderProps) {
+export function Header({
+  onDragStart,
+  onMinimize,
+  isEditing,
+  onEditToggle,
+  onToggleCooking,
+  cookingActive,
+  onToggleAutotrade,
+  autotradeActive,
+}: HeaderProps) {
   return (
     <div
       className="flex-shrink-0 flex cursor-grab items-center justify-between px-3 py-2 border-b border-zinc-800/50"
@@ -23,18 +39,60 @@ export function Header({ onDragStart, onMinimize, isEditing, onEditToggle }: Hea
         <div className="flex items-center">
           <Logo size={{ width: '24px', height: '24px' }} />
         </div>
-        
+
+        <button
+          type="button"
+          className={
+            autotradeActive
+              ? 'flex items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 p-1'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-emerald-300 p-1 hover:border-emerald-400'
+          }
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleAutotrade();
+          }}
+        >
+          <Zap size={14} />
+        </button>
+
+        <button
+          type="button"
+          className={
+            cookingActive
+              ? 'flex items-center justify-center rounded-full bg-amber-500/20 text-amber-300 p-1'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-amber-300 p-1 hover:border-amber-400'
+          }
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCooking();
+          }}
+        >
+          <Flame size={14} />
+        </button>
+
         {isEditing ? (
           <Check
             size={14}
             className="cursor-pointer text-emerald-500 hover:text-emerald-400"
-            onClick={onEditToggle}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditToggle();
+            }}
           />
         ) : (
           <Pencil
             size={14}
             className="cursor-pointer hover:text-zinc-200"
-            onClick={onEditToggle}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditToggle();
+            }}
           />
         )}
       </div>
@@ -45,12 +103,14 @@ export function Header({ onDragStart, onMinimize, isEditing, onEditToggle }: Hea
       </div>
 
       <div className="flex items-center gap-2">
-        {/* <div className="flex items-center gap-1 rounded bg-zinc-800 px-1.5 py-0.5 text-[12px] text-zinc-300">
-          <Wallet size={10} />
-          <span>1</span>
-        </div>
-        <SettingsIcon size={14} className="text-zinc-400 hover:text-zinc-200 cursor-pointer" /> */}
-        <X size={16} className="text-zinc-400 hover:text-red-400 cursor-pointer" onClick={onMinimize} />
+        <X
+          size={16}
+          className="text-zinc-400 hover:text-red-400 cursor-pointer"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMinimize();
+          }}
+        />
       </div>
     </div>
   );

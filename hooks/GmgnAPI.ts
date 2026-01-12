@@ -2,8 +2,9 @@
  * GMGN API Class
  * Handles API calls to GMGN with proper authentication and headers
  */
+import { TokenAPI } from "#imports";
 import { TokenStat, TokenInfo } from "@/types/token";
-import { browser } from "wxt/browser";
+import { zeroAddress } from "viem";
 
 
 export interface MultiTokenInfoResponse {
@@ -24,6 +25,44 @@ export interface MultiTokenInfoResponse {
     migration_market_cap_quote: string;
     [key: string]: any;
   }>;
+}
+
+interface TokenHolding {
+  chain_wallet: string;
+  token_address: string;
+  wallet_address: string;
+  balance: string;
+  price: string;
+  [key: string]: any;
+}
+
+interface TokenHoldingsResponse {
+  code: number;
+  reason: string;
+  message: string;
+  data: {
+    holdings: TokenHolding[];
+  };
+}
+
+interface WalletBalance {
+  chain_wallet: string;
+  token_address: string;
+  wallet_address: string;
+  balance: string;
+  decimals: number;
+  height: number;
+  tx_index: number;
+  timestamp: number;
+}
+
+interface WalletBalancesResponse {
+  code: number;
+  reason: string;
+  message: string;
+  data: {
+    balances: WalletBalance[];
+  };
 }
 
 // Candlestick Data Interface
@@ -95,10 +134,16 @@ export const extractGmgnAuthData = () => {
   }
 };
 
+/**
+ * GMGN API Class
+ * Handles API calls to GMGN with proper authentication and headers
+ * Call on content script
+ */
 export class GmgnAPI {
   private static readonly BASE_URL = 'https://gmgn.ai/tapi/v1';
   private static readonly CANDLES_BASE_URL = 'https://gmgn.ai/api/v1';
   private static readonly TOKEN_INFO_BASE_URL = 'https://gmgn.ai/mrwapi/v1';
+  private static readonly HOLDINGS_BASE_URL = 'https://gmgn.ai/td/api/v1';
 
   /**
    * Make HTTP request using fetch API with proper headers
@@ -131,8 +176,8 @@ export class GmgnAPI {
 
   static async getChain(): Promise<string> {
     try {
-      const result = await browser.storage.local.get(['selected_chain']);
-      return (result.selected_chain as string) || '';
+      const result = await window.localStorage.getItem('selected_chain');
+      return (result as string) || '';
     } catch (e) {
       return '';
     }
@@ -140,10 +185,9 @@ export class GmgnAPI {
 
   static async getWalletAddress(): Promise<string> {
     try {
-      const result = await browser.storage.local.get(['tgInfo', 'selected_chain']);
-      const chain = (result.selected_chain as string) || '';
-      const tgInfoStr = (result.tgInfo as string) || '{}';
-      const tgInfo = JSON.parse(tgInfoStr);
+      const chain = await this.getChain();
+      const tgInfoStr = await window.localStorage.getItem('tgInfo');
+      const tgInfo = JSON.parse(tgInfoStr || '{}');
       const addr = tgInfo[`${chain}_address`] || '';
       return addr;
     } catch (e) {
@@ -157,8 +201,8 @@ export class GmgnAPI {
    */
   static async getCookies(): Promise<string> {
     try {
-      const result = await browser.storage.local.get(['gmgn_cookies']);
-      return (result.gmgn_cookies as string) || '';
+      const result = await window.localStorage.getItem('gmgn_cookies');
+      return (result as string) || '';
     } catch (e) {
       return '';
     }
@@ -170,10 +214,9 @@ export class GmgnAPI {
    */
   static async getAuthToken(): Promise<string> {
     try {
-      const result = await browser.storage.local.get(['tgInfo']);
-      const tgInfoStr = (result.tgInfo as string) || '{}';
-      const tgInfo = JSON.parse(tgInfoStr);
-      return tgInfo.token?.trade_token || '';
+      const tgInfoStr = await window.localStorage.getItem('tgInfo');
+      const tgInfo = JSON.parse(tgInfoStr || '{}');
+      return tgInfo.token?.access_token || '';
     } catch (e) {
       return '';
     }
@@ -185,10 +228,9 @@ export class GmgnAPI {
    */
   static async getStorageParams(): Promise<Partial<ApiUrlParams>> {
     try {
-      const result = await browser.storage.local.get(['key_device_id', 'key_fp_did']);
       return {
-        device_id: result.key_device_id as string,
-        fp_did: result.key_fp_did as string
+        device_id: window.localStorage.getItem('key_device_id') ?? '',
+        fp_did: window.localStorage.getItem('key_fp_did') ?? '',
       };
     } catch (e) {
       return {
@@ -210,7 +252,7 @@ export class GmgnAPI {
       'accept-encoding': 'gzip, deflate, br, zstd',
       'accept-language': 'zh-CN,zh;q=0.9,ru;q=0.8',
       'authorization': authToken ? `Bearer ${authToken}` : '',
-      'baggage': 'sentry-environment=production,sentry-release=20251021-5714-919d226,sentry-public_key=93c25bab7246077dc3eb85b59d6e7d40,sentry-trace_id=db9ecf0cd593448192de7e1ab1f26d77,sentry-sample_rate=0.01,sentry-sampled=false',
+      'baggage': 'sentry-environment=production,sentry-release=20260110-9749-5a2a7f8,sentry-public_key=93c25bab7246077dc3eb85b59d6e7d40,sentry-trace_id=db9ecf0cd593448192de7e1ab1f26d77,sentry-sample_rate=0.01,sentry-sampled=false',
       'content-type': 'application/json',
       'cookie': cookies,
       'origin': 'https://gmgn.ai',
@@ -238,13 +280,14 @@ export class GmgnAPI {
     baseUrl: string = this.BASE_URL
   ): Promise<string> {
     const storageParams = await this.getStorageParams();
+    console.log('storageParams', JSON.stringify(storageParams));
     const defaultParams: ApiUrlParams = {
       web_from_source: 'one_click_submit',
       device_id: storageParams.device_id!,
       fp_did: storageParams.fp_did!,
-      client_id: 'gmgn_web_20251021-5714-919d226',
+      client_id: 'gmgn_web_20260110-9749-5a2a7f8',
       from_app: 'gmgn',
-      app_ver: '20251021-5714-919d226',
+      app_ver: '20260110-9749-5a2a7f8',
       tz_name: 'Asia/Shanghai',
       tz_offset: '28800',
       app_lang: 'en-US',
@@ -335,7 +378,7 @@ export class GmgnAPI {
       const result = await response.json() as MultiTokenInfoResponse;
       if (result.code === 0 && result.data && result.data.length > 0) {
         const tokenData = result.data[0];
-        return {
+        const info = {
           chain: tokenData.chain,
           address: tokenData.address,
           name: tokenData.name,
@@ -348,13 +391,115 @@ export class GmgnAPI {
           launchpad_status: tokenData.launchpad_status,
           quote_token: tokenData.migration_market_cap_quote,
           // quote_token_address is not returned by the API
-          quote_token_address: '',
+          quote_token_address: zeroAddress,
           pool_pair: tokenData.biggest_pool_address,
         };
+
+        if (tokenData.launchpad_platform.includes('fourmeme') && info.quote_token != 'BNB') {
+          const quoteTokenInfo = await TokenAPI.getTokenInfoByFourmemeHttp('gmgn', chain, address);
+          if (quoteTokenInfo) {
+            info.quote_token_address = quoteTokenInfo.quote;
+          }
+        }
+        return info;
       }
       return null;
     } catch (error) {
       console.error('Failed to fetch token info:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get token holding for a wallet
+   * @param chain Blockchain chain
+   * @param tokenAddress Token address
+   * @returns Promise<string | undefined> Token balance or undefined if not found
+   */
+  public static async getTokenHolding(chain: string, walletAddress: string, tokenAddress: string): Promise<string | undefined> {
+    if (!walletAddress) {
+      return undefined;
+    }
+
+    const endpoint = '/wallets/holding';
+    const queryParams = {
+      worker: '0',
+      chain,
+      token_address: tokenAddress,
+      wallet_addresses: walletAddress
+    };
+
+    const url = await this.buildApiUrl(endpoint, queryParams, this.HOLDINGS_BASE_URL);
+    const headers = await this.getHeaders();
+
+    try {
+      const response = await this.makeRequest(url, {
+        method: 'GET',
+        headers
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json() as TokenHoldingsResponse;
+      if (
+        result.code === 0 &&
+        result.data &&
+        Array.isArray(result.data.holdings) &&
+        result.data.holdings.length > 0
+      ) {
+        return result.data.holdings[0].balance;
+      }
+
+      console.error('Failed to fetch token holding data:', result);
+      return undefined;
+    } catch (error) {
+      console.error('Failed to fetch token holding:', error);
+      throw error;
+    }
+  }
+
+  public static async getBalance(chain: string, walletAddress: string, tokenAddress: string): Promise<string | undefined> {
+    if (!walletAddress) {
+      return undefined;
+    }
+
+    const endpoint = '/wallets/balances';
+    const queryParams = {
+      worker: '0',
+      chain,
+      token_address: tokenAddress,
+      wallet_addresses: walletAddress
+    };
+
+    const url = await this.buildApiUrl(endpoint, queryParams, this.HOLDINGS_BASE_URL);
+    const headers = await this.getHeaders();
+
+    try {
+      const response = await this.makeRequest(url, {
+        method: 'GET',
+        headers
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json() as WalletBalancesResponse;
+      if (
+        result.code === 0 &&
+        result.data &&
+        Array.isArray(result.data.balances) &&
+        result.data.balances.length > 0
+      ) {
+        return result.data.balances[0].balance;
+      }
+
+      console.error('Failed to fetch wallet balance data:', result);
+      return undefined;
+    } catch (error) {
+      console.error('Failed to fetch wallet balance:', error);
       throw error;
     }
   }

@@ -2,9 +2,10 @@ import GmgnAPI from "./GmgnAPI";
 import AxiomAPI from "./AxiomAPI";
 import { TokenInfo } from "@/types/token";
 import { call } from "@/utils/messaging";
+import { parseEther } from "viem";
 
 const PLATFORM_API: Record<string, { getTokenInfo: (chain: string, address: string) => Promise<TokenInfo | null> }> = {
-    "gmgn": GmgnAPI,
+    // "gmgn": GmgnAPI,
     "axiom": AxiomAPI,
 };
 
@@ -35,6 +36,36 @@ export class TokenAPI {
             return await this.getTokenInfoByFourmemeHttp(platform, chain, address);
         }
         return null;
+    }
+
+    static async getBalance(platform: string, chain: string, address: string, tokenAddress: string): Promise<string | null> {
+        if (platform === 'gmgn') {
+            const balance = await GmgnAPI.getBalance(chain, address, tokenAddress) ?? null;
+            if (balance) {
+                return parseEther(balance).toString();
+            }
+        }
+
+        if (tokenAddress === '0x0000000000000000000000000000000000000000') {
+            const bal = await call({ type: 'chain:getBalance', address: address as `0x${string}` });
+            return bal?.balanceWei ?? null;
+        }
+
+        const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
+        const bal = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address: address as `0x${string}` });
+        return bal?.balanceWei ?? null;
+    }
+
+    static async getTokenHolding(platform: string, chain: string, walletAddress: string, tokenAddress: string): Promise<string | null> {
+        if (platform === 'gmgn') {
+            const holding = await GmgnAPI.getTokenHolding(chain, walletAddress, tokenAddress) ?? null;
+            if (holding) {
+                return parseEther(holding).toString();
+            }
+        }
+        const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
+        const bal = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address: walletAddress as `0x${string}` });
+        return bal?.balanceWei ?? null;
     }
 
     static async getTokenInfoByFourmemeHttp(platform: string, chain: string, address: string): Promise<TokenInfo | null> {

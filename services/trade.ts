@@ -630,7 +630,7 @@ export class TradeService {
     return this.sendTransaction(client, account, tokenAddress, data, 0n, settings.chains[chainId].gasPreset, chainId);
   }
 
-  private static async sendTransaction(
+  static async sendTransaction(
     client: any,
     account: any,
     to: string,

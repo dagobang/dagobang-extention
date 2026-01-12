@@ -1,4 +1,4 @@
-import type { Settings, ChainSettings } from '../types/extention';
+import type { Settings, ChainSettings, AutoTradeConfig } from '../types/extention';
 
 const BSC_MAINNET: ChainSettings = {
   rpcUrls: ['https://bsc-dataseed.bnbchain.org'],
@@ -12,6 +12,21 @@ const BSC_MAINNET: ChainSettings = {
   sellPresets: ['25', '50', '75', '100'],
 };
 
+const DEFAULT_AUTOTRADE: AutoTradeConfig = {
+  enabled: false,
+  buyAmountBnb: '0.05',
+  maxMarketCapUsd: '',
+  minLiquidityUsd: '',
+  minHolders: '',
+  maxTokenAgeMinutes: '',
+  maxDevHoldPercent: '',
+  blockIfDevSell: true,
+  autoSellEnabled: false,
+  takeProfitMultiple: '2',
+  stopLossMultiple: '0.5',
+  maxHoldMinutes: '',
+};
+
 export function defaultSettings(): Settings {
   return {
     chainId: 56,
@@ -22,5 +37,7 @@ export function defaultSettings(): Settings {
     locale: 'zh_CN',
     accountAliases: {},
     toastPosition: 'top-center',
+    seedreamApiKey: '',
+    autoTrade: DEFAULT_AUTOTRADE,
   };
 }

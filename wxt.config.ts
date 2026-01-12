@@ -7,7 +7,7 @@ export default defineConfig({
     name: 'Dagobang 打狗棒',
     description: 'Dagobang non-custodial Meme Trading Tool',
     version: '0.1.0',
-    permissions: ['storage', 'tabs'],
+    permissions: ['storage'],
     host_permissions: [
       'https://*.gmgn.ai/*',
       'https://gmgn.ai/*',
@@ -23,7 +23,7 @@ export default defineConfig({
       'https://dexscreener.com/*',
       'https://*.xxyy.io/*',
       'https://xxyy.io/*',
-
+      'https://ark.ap-southeast.bytepluses.com/*',
     ],
     action: {
       default_title: 'Dagobang 打狗棒',
