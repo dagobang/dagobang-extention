@@ -1,11 +1,12 @@
 import GmgnAPI from "./GmgnAPI";
 import AxiomAPI from "./AxiomAPI";
-import { TokenInfo } from "@/types/token";
+import { FourmemeTokenInfo, TokenInfo } from "@/types/token";
 import { call } from "@/utils/messaging";
 import { parseEther } from "viem";
+import { getChainIdByName } from "@/constants/chains";
 
 const PLATFORM_API: Record<string, { getTokenInfo: (chain: string, address: string) => Promise<TokenInfo | null> }> = {
-    // "gmgn": GmgnAPI,
+    "gmgn": GmgnAPI,
     "axiom": AxiomAPI,
 };
 
@@ -17,9 +18,9 @@ export class TokenAPI {
             const tokenInfo = await api.getTokenInfo(chain, address);
             if (tokenInfo) {
                 if (tokenInfo.launchpad_platform.includes('fourmeme') && tokenInfo.quote_token != "BNB") {
-                    const fourmemeTokenInfo = await this.getTokenInfoByFourmemeHttp(platform, chain, address);
+                    const fourmemeTokenInfo = await this.getTokenInfoByFourmeme(platform, chain, address);
                     if (fourmemeTokenInfo) {
-                        return fourmemeTokenInfo;
+                        return fourmemeTokenInfo
                     }
                 }
                 if (["4444", "7777", "8888"].includes(address.substring(address.length - 4))) {
@@ -33,7 +34,7 @@ export class TokenAPI {
             return await this.getTokenInfoByFlapHttp(platform, chain, address);
         }
         if (address.endsWith("4444")) {
-            return await this.getTokenInfoByFourmemeHttp(platform, chain, address);
+            return await this.getTokenInfoByFourmeme(platform, chain, address);
         }
         return null;
     }
@@ -68,6 +69,14 @@ export class TokenAPI {
         return bal?.balanceWei ?? null;
     }
 
+    static async getTokenInfoByFourmemeContract(chain: string, address: string): Promise<FourmemeTokenInfo | null> {
+        const res = await call({
+            type: 'token:getTokenInfo:fourmeme',
+            chainId: getChainIdByName(chain), tokenAddress: address as `0x${string}`
+        }) as FourmemeTokenInfo
+        return res;
+    }
+
     static async getTokenInfoByFourmemeHttp(platform: string, chain: string, address: string): Promise<TokenInfo | null> {
         const res = await call({
             type: 'token:getTokenInfo:fourmemeHttp',
@@ -76,6 +85,18 @@ export class TokenAPI {
             address: address as `0x${string}`,
         });
         return res.tokenInfo;
+    }
+
+    static async getTokenInfoByFourmeme(platform: string, chain: string, address: string): Promise<TokenInfo | null> {
+        const [contractInfo, httpInfo] = await Promise.all([
+            this.getTokenInfoByFourmemeContract(chain, address),
+            this.getTokenInfoByFourmemeHttp(platform, chain, address),
+        ]);
+        if (contractInfo && httpInfo) {
+            httpInfo.quote_token_address = contractInfo.quote;
+            return httpInfo;
+        }
+        return null;
     }
 
     static async getTokenInfoByFlapHttp(platform: string, chain: string, address: string): Promise<TokenInfo | null> {

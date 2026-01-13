@@ -129,6 +129,7 @@ export async function parseCurrentUrl(href: string): Promise<SiteInfo | null> {
           }
         }
 
+        return info as any;
       }
     }
 
@@ -166,4 +167,3 @@ export async function parseCurrentUrl(href: string): Promise<SiteInfo | null> {
     return null;
   }
 }
-

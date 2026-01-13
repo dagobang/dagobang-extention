@@ -7,6 +7,13 @@ export type ExecutionMode = 'default' | 'turbo';
 export const SLIPPAGE_BPS_OPTIONS = [3000, 4000, 5000, 9000] as const;
 export type SlippageBpsOption = (typeof SLIPPAGE_BPS_OPTIONS)[number];
 
+export type GasGweiConfig = {
+  slow: string;
+  standard: string;
+  fast: string;
+  turbo: string;
+};
+
 export type ChainSettings = {
   rpcUrls: string[];
   protectedRpcUrls: string[];
@@ -17,6 +24,10 @@ export type ChainSettings = {
   deadlineSeconds: number;
   buyPresets: string[];
   sellPresets: string[];
+  buyGasGwei: GasGweiConfig;
+  sellGasGwei: GasGweiConfig;
+  buyGasPreset: GasPreset;
+  sellGasPreset: GasPreset;
 };
 
 export type AutoTradeConfig = {
@@ -43,6 +54,8 @@ export type Settings = {
   accountAliases?: Record<string, string>;
   toastPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
   seedreamApiKey?: string;
+  gmgnQuickBuy1Bnb?: string;
+  gmgnQuickBuy2Bnb?: string;
   autoTrade: AutoTradeConfig;
 };
 
@@ -106,7 +119,6 @@ export type TxSellInput = {
   tokenAddress: `0x${string}`;
   tokenAmountWei: string;
   sellPercentBps?: number;
-  // Turbo 秒卖兜底：当买入未确认导致链上 balanceOf(pending)=0 时，用买入的 tokenMinOut 估算卖出 minReturn(BNB)。
   expectedTokenInWei?: string;
   poolFee?: number;
   slippageBps?: number;

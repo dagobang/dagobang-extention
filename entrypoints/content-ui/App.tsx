@@ -37,6 +37,7 @@ export default function App() {
   const [tokenStat, setTokenStat] = useState<TokenStat | null>(null);
   const [marketCapDisplay, setMarketCapDisplay] = useState<string | null>(null);
   const [liquidityDisplay, setLiquidityDisplay] = useState<string | null>(null);
+  const [pendingQuickBuy, setPendingQuickBuy] = useState<{ tokenAddress: string; amount: string } | null>(null);
 
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
@@ -54,6 +55,12 @@ export default function App() {
   const address = state?.wallet.address ?? null;
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
+
+  useEffect(() => {
+    if (settings) {
+      (window as any).__DAGOBANG_SETTINGS__ = settings;
+    }
+  }, [settings]);
 
   useEffect(() => {
     posRef.current = pos;
@@ -75,9 +82,35 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<any>).detail;
+      if (!detail) return;
+      const addr = detail.tokenAddress as string | undefined;
+      const amount = detail.amountBnb as string | undefined;
+      if (!addr || !amount) return;
+      if (!settings) return;
+      const site: SiteInfo = {
+        chain: 'bsc',
+        tokenAddress: addr,
+        platform: 'gmgn',
+      };
+      setSiteInfo(site);
+      setIsEditing(false);
+      setDraftBuyPresets(settings.chains[settings.chainId].buyPresets || ['0.01', '0.2', '0.5', '1.0']);
+      setDraftSellPresets(settings.chains[settings.chainId].sellPresets || ['10', '25', '50', '100']);
+      setPendingQuickBuy({ tokenAddress: addr.toLowerCase(), amount });
+    };
+    window.addEventListener('dagobang-quickbuy' as any, handler as any);
+    return () => {
+      window.removeEventListener('dagobang-quickbuy' as any, handler as any);
+    };
+  }, [settings]);
+
   // Monitor URL changes
   useEffect(() => {
     const check = async () => {
+      if (pendingQuickBuy) return;
       const info = await parseCurrentUrl(window.location.href);
       if (info == null || (JSON.stringify(info) !== JSON.stringify(siteInfo))) {
         setSiteInfo(info);
@@ -86,13 +119,23 @@ export default function App() {
     check();
     const timer = setInterval(check, 500);
     return () => clearInterval(timer);
-  }, [siteInfo]);
+  }, [siteInfo, pendingQuickBuy]);
 
   const tokenAddressNormalized = useMemo(() => {
     if (!siteInfo?.tokenAddress) return null;
     const t = siteInfo.tokenAddress.trim();
     return /^0x[a-fA-F0-9]{40}$/.test(t) ? (t as `0x${string}`) : null;
   }, [siteInfo]);
+
+  useEffect(() => {
+    if (!pendingQuickBuy) return;
+    if (!settings) return;
+    if (!tokenAddressNormalized) return;
+    if (!tokenInfo) return;
+    if (tokenAddressNormalized.toLowerCase() !== pendingQuickBuy.tokenAddress) return;
+    handleBuy(pendingQuickBuy.amount);
+    setPendingQuickBuy(null);
+  }, [pendingQuickBuy, tokenAddressNormalized, tokenInfo, settings]);
 
   const formattedNativeBalance = useMemo(() => {
     if (!nativeBalanceWei) return '0.00';
@@ -427,12 +470,13 @@ export default function App() {
     }).then(refreshAll);
   };
 
-  const handleToggleGas = () => {
+  const handleToggleBuyGas = () => {
     if (!settings) return;
     const chainId = settings.chainId;
     const currentChainSettings = settings.chains[chainId];
     const presets: ('slow' | 'standard' | 'fast' | 'turbo')[] = ['slow', 'standard', 'fast', 'turbo'];
-    const next = presets[(presets.indexOf(currentChainSettings.gasPreset) + 1) % 4];
+    const current = (currentChainSettings as any).buyGasPreset ?? currentChainSettings.gasPreset ?? 'standard';
+    const next = presets[(presets.indexOf(current) + 1) % 4];
     call({
       type: 'settings:set',
       settings: {
@@ -441,7 +485,29 @@ export default function App() {
           ...settings.chains,
           [chainId]: {
             ...currentChainSettings,
-            gasPreset: next,
+            buyGasPreset: next,
+          },
+        },
+      },
+    }).then(refreshAll);
+  };
+
+  const handleToggleSellGas = () => {
+    if (!settings) return;
+    const chainId = settings.chainId;
+    const currentChainSettings = settings.chains[chainId];
+    const presets: ('slow' | 'standard' | 'fast' | 'turbo')[] = ['slow', 'standard', 'fast', 'turbo'];
+    const current = (currentChainSettings as any).sellGasPreset ?? currentChainSettings.gasPreset ?? 'standard';
+    const next = presets[(presets.indexOf(current) + 1) % 4];
+    call({
+      type: 'settings:set',
+      settings: {
+        ...settings,
+        chains: {
+          ...settings.chains,
+          [chainId]: {
+            ...currentChainSettings,
+            sellGasPreset: next,
           },
         },
       },
@@ -548,113 +614,115 @@ export default function App() {
     setShowAutotradePanel((v) => !v);
   };
 
-  if (!siteInfo) return null;
-
   return (
     <>
       <CustomToaster position={toastPosition} />
 
-      {minimized ? (
-        <div
-          className="fixed z-[2147483647] flex cursor-pointer items-center justify-center rounded-full bg-zinc-900 p-3 shadow-xl border border-zinc-700 hover:border-zinc-500 transition-colors"
-          style={{ left: pos.x, top: pos.y }}
-          onPointerDown={(e) => {
-            dragging.current = {
-              target: 'main',
-              startX: e.clientX,
-              startY: e.clientY,
-              baseX: posRef.current.x,
-              baseY: posRef.current.y,
-            };
-          }}
-          onClick={() => {
-            if (!dragging.current) setMinimized(false);
-          }}
-        >
-          <Logo />
-        </div>
-      ) : (
-        <div
-          className="fixed z-[2147483647] w-[300px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col"
-          style={{ left: pos.x, top: pos.y }}
-        >
-          <Header
-            onDragStart={(e) => {
-              dragging.current = {
-                target: 'main',
-                startX: e.clientX,
-                startY: e.clientY,
-                baseX: posRef.current.x,
-                baseY: posRef.current.y,
-              };
-            }}
-            onMinimize={() => setMinimized(true)}
-            isEditing={isEditing}
-            onEditToggle={handleEditToggle}
-            onToggleCooking={handleToggleCookingPanel}
-            cookingActive={showCookingPanel}
-            onToggleAutotrade={handleToggleAutotradePanel}
-            autotradeActive={showAutotradePanel}
+      {siteInfo && (
+        <>
+          {minimized ? (
+            <div
+              className="fixed z-[2147483647] flex cursor-pointer items-center justify-center rounded-full bg-zinc-900 p-3 shadow-xl border border-zinc-700 hover:border-zinc-500 transition-colors"
+              style={{ left: pos.x, top: pos.y }}
+              onPointerDown={(e) => {
+                dragging.current = {
+                  target: 'main',
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  baseX: posRef.current.x,
+                  baseY: posRef.current.y,
+                };
+              }}
+              onClick={() => {
+                if (!dragging.current) setMinimized(false);
+              }}
+            >
+              <Logo />
+            </div>
+          ) : (
+            <div
+              className="fixed z-[2147483647] w-[300px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col"
+              style={{ left: pos.x, top: pos.y }}
+            >
+              <Header
+                onDragStart={(e) => {
+                  dragging.current = {
+                    target: 'main',
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    baseX: posRef.current.x,
+                    baseY: posRef.current.y,
+                  };
+                }}
+                onMinimize={() => setMinimized(true)}
+                isEditing={isEditing}
+                onEditToggle={handleEditToggle}
+                onToggleCooking={handleToggleCookingPanel}
+                cookingActive={showCookingPanel}
+                onToggleAutotrade={handleToggleAutotradePanel}
+                autotradeActive={showAutotradePanel}
+              />
+              <div className="relative flex flex-col">
+                <BuySection
+                  formattedNativeBalance={formattedNativeBalance}
+                  busy={busy}
+                  isUnlocked={isUnlocked}
+                  onBuy={handleBuy}
+                  settings={settings}
+                  onToggleMode={handleToggleMode}
+                  onToggleGas={handleToggleBuyGas}
+                  onToggleSlippage={handleToggleSlippage}
+                  isEditing={isEditing}
+                  onUpdatePreset={handleUpdateBuyPreset}
+                  draftPresets={draftBuyPresets}
+                  locale={locale}
+                />
+
+                <div className="h-px bg-zinc-800 mx-3"></div>
+
+                <SellSection
+                  formattedTokenBalance={formattedTokenBalance}
+                  tokenSymbol={tokenSymbol}
+                  busy={busy}
+                  isUnlocked={isUnlocked}
+                  onSell={handleSell}
+                  settings={settings}
+                  onToggleMode={handleToggleMode}
+                  onToggleGas={handleToggleSellGas}
+                  onToggleSlippage={handleToggleSlippage}
+                  onApprove={handleApprove}
+                  isEditing={isEditing}
+                  onUpdatePreset={handleUpdateSellPreset}
+                  draftPresets={draftSellPresets}
+                  locale={locale}
+                />
+
+                <Overlays
+                  siteInfo={siteInfo}
+                  isUnlocked={isUnlocked}
+                  onUnlock={handleUnlock}
+                  locale={locale}
+                />
+              </div>
+            </div>
+          )}
+
+          <CookingPanel
+            visible={showCookingPanel}
+            onVisibleChange={setShowCookingPanel}
+            address={address}
+            seedreamApiKey={settings?.seedreamApiKey ?? ''}
           />
-          <div className="relative flex flex-col">
-            <BuySection
-              formattedNativeBalance={formattedNativeBalance}
-              busy={busy}
-              isUnlocked={isUnlocked}
-              onBuy={handleBuy}
-              settings={settings}
-              onToggleMode={handleToggleMode}
-              onToggleGas={handleToggleGas}
-              onToggleSlippage={handleToggleSlippage}
-              isEditing={isEditing}
-              onUpdatePreset={handleUpdateBuyPreset}
-              draftPresets={draftBuyPresets}
-              locale={locale}
-            />
 
-            <div className="h-px bg-zinc-800 mx-3"></div>
-
-            <SellSection
-              formattedTokenBalance={formattedTokenBalance}
-              tokenSymbol={tokenSymbol}
-              busy={busy}
-              isUnlocked={isUnlocked}
-              onSell={handleSell}
-              settings={settings}
-              onToggleMode={handleToggleMode}
-              onToggleGas={handleToggleGas}
-              onToggleSlippage={handleToggleSlippage}
-              onApprove={handleApprove}
-              isEditing={isEditing}
-              onUpdatePreset={handleUpdateSellPreset}
-              draftPresets={draftSellPresets}
-              locale={locale}
-            />
-
-            <Overlays
-              siteInfo={siteInfo}
-              isUnlocked={isUnlocked}
-              onUnlock={handleUnlock}
-              locale={locale}
-            />
-          </div>
-        </div>
+          <AutotradePanel
+            visible={showAutotradePanel}
+            onVisibleChange={setShowAutotradePanel}
+            settings={settings}
+            isUnlocked={isUnlocked}
+            address={address}
+          />
+        </>
       )}
-
-      <CookingPanel
-        visible={showCookingPanel}
-        onVisibleChange={setShowCookingPanel}
-        address={address}
-        seedreamApiKey={settings?.seedreamApiKey ?? ''}
-      />
-
-      <AutotradePanel
-        visible={showAutotradePanel}
-        onVisibleChange={setShowAutotradePanel}
-        settings={settings}
-        isUnlocked={isUnlocked}
-        address={address}
-      />
     </>
   );
 }

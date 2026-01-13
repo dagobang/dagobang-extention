@@ -5,7 +5,7 @@ import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
 import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
-import type { BgRequest } from '@/types/extention';
+import type { BgRequest, Settings } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token.fourmeme';
 import FourmemeAPI from '@/hooks/FourmemeAPI';
 import FlapAPI from '@/hooks/FlapAPI';
@@ -23,6 +23,8 @@ export default defineBackground(() => {
   }>();
 
   const getKey = (chainId: number, tokenAddress: `0x${string}`) => `${chainId}:${tokenAddress.toLowerCase()}`;
+
+  const settingsCache: { value: Settings | null } = { value: null };
 
   const parseNumber = (v: string | null | undefined) => {
     if (!v) return null;

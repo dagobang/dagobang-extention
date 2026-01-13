@@ -395,12 +395,6 @@ export class GmgnAPI {
           pool_pair: tokenData.biggest_pool_address,
         };
 
-        if (tokenData.launchpad_platform.includes('fourmeme') && info.quote_token != 'BNB') {
-          const quoteTokenInfo = await TokenAPI.getTokenInfoByFourmemeHttp('gmgn', chain, address);
-          if (quoteTokenInfo) {
-            info.quote_token_address = quoteTokenInfo.quote;
-          }
-        }
         return info;
       }
       return null;

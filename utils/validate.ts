@@ -34,6 +34,13 @@ export function validateSettings(input: Settings): Settings | null {
     }
   }
 
+  const gmgnQuickBuy1Bnb = typeof (input as any).gmgnQuickBuy1Bnb === 'string'
+    ? (input as any).gmgnQuickBuy1Bnb.trim() || defaults.gmgnQuickBuy1Bnb || '0.02'
+    : defaults.gmgnQuickBuy1Bnb || '0.02';
+  const gmgnQuickBuy2Bnb = typeof (input as any).gmgnQuickBuy2Bnb === 'string'
+    ? (input as any).gmgnQuickBuy2Bnb.trim() || defaults.gmgnQuickBuy2Bnb || '0.1'
+    : defaults.gmgnQuickBuy2Bnb || '0.1';
+
   const chains = { ...defaults.chains };
   
   if (input.chains) {
@@ -41,16 +48,41 @@ export function validateSettings(input: Settings): Settings | null {
       const cInput = input.chains[cid];
       const cDef = defaults.chains[cid];
       if (cInput) {
+        const inputBuyGas = (cInput as any).buyGasGwei as any;
+        const inputSellGas = (cInput as any).sellGasGwei as any;
+        const inputBuyGasPreset = (cInput as any).buyGasPreset as any;
+        const inputSellGasPreset = (cInput as any).sellGasPreset as any;
+        const allowedGasPresets = ['slow', 'standard', 'fast', 'turbo'] as const;
+        const buyGasGwei = {
+          slow: typeof inputBuyGas?.slow === 'string' && inputBuyGas.slow.trim() ? inputBuyGas.slow.trim() : cDef.buyGasGwei.slow,
+          standard: typeof inputBuyGas?.standard === 'string' && inputBuyGas.standard.trim() ? inputBuyGas.standard.trim() : cDef.buyGasGwei.standard,
+          fast: typeof inputBuyGas?.fast === 'string' && inputBuyGas.fast.trim() ? inputBuyGas.fast.trim() : cDef.buyGasGwei.fast,
+          turbo: typeof inputBuyGas?.turbo === 'string' && inputBuyGas.turbo.trim() ? inputBuyGas.turbo.trim() : cDef.buyGasGwei.turbo,
+        };
+        const sellGasGwei = {
+          slow: typeof inputSellGas?.slow === 'string' && inputSellGas.slow.trim() ? inputSellGas.slow.trim() : cDef.sellGasGwei.slow,
+          standard: typeof inputSellGas?.standard === 'string' && inputSellGas.standard.trim() ? inputSellGas.standard.trim() : cDef.sellGasGwei.standard,
+          fast: typeof inputSellGas?.fast === 'string' && inputSellGas.fast.trim() ? inputSellGas.fast.trim() : cDef.sellGasGwei.fast,
+          turbo: typeof inputSellGas?.turbo === 'string' && inputSellGas.turbo.trim() ? inputSellGas.turbo.trim() : cDef.sellGasGwei.turbo,
+        };
+        const defaultBuyGasPreset = (cDef as any).buyGasPreset ?? cDef.gasPreset;
+        const defaultSellGasPreset = (cDef as any).sellGasPreset ?? cDef.gasPreset;
+        const buyGasPreset = allowedGasPresets.includes(inputBuyGasPreset) ? inputBuyGasPreset : defaultBuyGasPreset;
+        const sellGasPreset = allowedGasPresets.includes(inputSellGasPreset) ? inputSellGasPreset : defaultSellGasPreset;
         chains[cid] = {
           rpcUrls: (cInput.rpcUrls || []).map((x) => x.trim()).filter(Boolean),
           protectedRpcUrls: (cInput.protectedRpcUrls || []).map((x) => x.trim()).filter(Boolean),
           antiMev: !!cInput.antiMev,
           gasPreset: ['slow', 'standard', 'fast', 'turbo'].includes(cInput.gasPreset) ? cInput.gasPreset : cDef.gasPreset,
+          buyGasPreset,
+          sellGasPreset,
           executionMode: cInput.executionMode === 'turbo' ? 'turbo' : cDef.executionMode,
           slippageBps: clampNumber(cInput.slippageBps, 0, 9000, cDef.slippageBps),
           deadlineSeconds: clampNumber(cInput.deadlineSeconds, 10, 3600, cDef.deadlineSeconds),
           buyPresets: Array.isArray(cInput.buyPresets) ? cInput.buyPresets.map(String) : cDef.buyPresets,
           sellPresets: Array.isArray(cInput.sellPresets) ? cInput.sellPresets.map(String) : cDef.sellPresets,
+          buyGasGwei,
+          sellGasGwei,
         };
         // Fallback for RPCs if empty
         if (chains[cid].rpcUrls.length === 0) {
@@ -125,6 +157,8 @@ export function validateSettings(input: Settings): Settings | null {
     accountAliases,
     toastPosition,
     seedreamApiKey,
+    gmgnQuickBuy1Bnb,
+    gmgnQuickBuy2Bnb,
     autoTrade,
   };
 }

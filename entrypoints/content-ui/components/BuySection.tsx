@@ -44,6 +44,12 @@ export function BuySection({
       : t('contentUi.slippage.high', locale);
   const slippagePct = (slippageBps / 100).toFixed(0);
   const executionMode = settings?.chains[settings.chainId].executionMode === 'turbo' ? 'turbo' : 'default';
+  const chainSettings = settings?.chains[settings.chainId];
+  const gasPreset = chainSettings?.buyGasPreset ?? chainSettings?.gasPreset ?? 'standard';
+  const defaultGasGwei = { slow: '0.06', standard: '0.12', fast: '1', turbo: '5' } as const;
+  const gasValue =
+    (chainSettings?.buyGasGwei && chainSettings.buyGasGwei[gasPreset]) ||
+    defaultGasGwei[gasPreset as keyof typeof defaultGasGwei];
 
   return (
     <div className="p-3">
@@ -100,7 +106,9 @@ export function BuySection({
             onClick={onToggleGas}
           >
             <Fuel size={10} />
-            <span>{t(`popup.settings.gas.${settings?.chains[settings.chainId].gasPreset}`, locale) }</span>
+            <span>
+              {t(`popup.settings.gas.${gasPreset}`, locale)} {gasValue} gwei
+            </span>
           </div>
         </div>
         <div

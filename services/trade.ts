@@ -3,7 +3,7 @@ import { bsc } from 'viem/chains';
 import { RpcService } from './rpc';
 import { WalletService } from './wallet';
 import { SettingsService } from './settings';
-import type { TxBuyInput, TxSellInput, GasPreset } from '../types/extention';
+import type { TxBuyInput, TxSellInput, GasPreset, ChainSettings } from '../types/extention';
 import { TokenInfo } from '../types/token';
 import { ContractNames } from '../constants/contracts/names';
 import { DeployAddress } from '../constants/contracts/address';
@@ -29,14 +29,37 @@ enum SwapType {
   FLAP_EXACT_INPUT = 7,
 }
 
-function getGasMultiplier(preset: GasPreset): bigint {
-  switch (preset) {
-    case 'slow': return 100n;
-    case 'standard': return 110n;
-    case 'fast': return 125n;
-    case 'turbo': return 200n;
-    default: return 100n;
+function parseGweiToWei(value: string): bigint {
+  const trimmed = value.trim();
+  if (!trimmed) return 0n;
+  const match = trimmed.match(/^(\d+)(?:\.(\d+))?$/);
+  if (!match) return 0n;
+  const intPart = match[1] || '0';
+  const fracPartRaw = match[2] || '';
+  const fracPadded = (fracPartRaw + '000000000').slice(0, 9);
+  const intBig = BigInt(intPart);
+  const fracBig = BigInt(fracPadded);
+  return intBig * 1000000000n + fracBig;
+}
+
+function getGasPriceWei(chainSettings: ChainSettings, preset: GasPreset, side: 'buy' | 'sell'): bigint {
+  const baseConfig = side === 'buy' ? chainSettings.buyGasGwei : chainSettings.sellGasGwei;
+  const fallbackConfig = {
+    slow: '0.06',
+    standard: '0.12',
+    fast: '1',
+    turbo: '5',
+  };
+  const cfg = baseConfig || fallbackConfig;
+  let value = cfg.standard;
+  if (preset === 'slow') value = cfg.slow;
+  else if (preset === 'fast') value = cfg.fast;
+  else if (preset === 'turbo') value = cfg.turbo;
+  const wei = parseGweiToWei(value);
+  if (wei <= 0n) {
+    return parseGweiToWei(fallbackConfig.standard);
   }
+  return wei;
 }
 
 export class TradeService {
@@ -328,6 +351,9 @@ export class TradeService {
     const baseFee = input.poolFee ?? 2500;
     const executionMode = settings.chains[input.chainId]?.executionMode ?? 'default';
     const isTurbo = executionMode === 'turbo';
+    const chainSettings = settings.chains[input.chainId];
+    const gasPreset = input.gasPreset ?? chainSettings.buyGasPreset ?? chainSettings.gasPreset;
+    const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'buy');
 
     const isInner = this.isInnerDisk(input.tokenInfo);
     const launchpadConfig = isInner ? this.getLaunchpadConfig(input.tokenInfo, input.chainId) : null;
@@ -427,7 +453,7 @@ export class TradeService {
     });
 
     const txOpts = isTurbo ? { skipEstimateGas: true, gasLimit: 900000n } : undefined;
-    const txHash = await this.sendTransaction(client, account, routerAddress, data, amountIn, input.gasPreset ?? settings.chains[input.chainId].gasPreset, input.chainId, txOpts);
+    const txHash = await this.sendTransaction(client, account, routerAddress, data, amountIn, gasPriceWei, input.chainId, txOpts);
     return { txHash, tokenMinOutWei: minOut.toString() };
   }
 
@@ -477,6 +503,9 @@ export class TradeService {
     const executionMode = settings.chains[input.chainId]?.executionMode ?? 'default';
     const isTurbo = executionMode === 'turbo';
     const percentBps = isTurbo ? (input.sellPercentBps ?? 0) : 0;
+    const chainSettings = settings.chains[input.chainId];
+    const gasPreset = input.gasPreset ?? chainSettings.sellGasPreset ?? chainSettings.gasPreset;
+    const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
 
     const isInner = this.isInnerDisk(input.tokenInfo);
     const launchpadConfig = isInner ? this.getLaunchpadConfig(input.tokenInfo, input.chainId) : null;
@@ -613,13 +642,16 @@ export class TradeService {
       });
 
     const txOpts = isTurbo ? { skipEstimateGas: true, gasLimit: 900000n } : undefined;
-    return this.sendTransaction(client, account, routerAddress, data, 0n, input.gasPreset ?? settings.chains[input.chainId].gasPreset, input.chainId, txOpts);
+    return this.sendTransaction(client, account, routerAddress, data, 0n, gasPriceWei, input.chainId, txOpts);
   }
 
   static async approve(chainId: number, tokenAddress: string, spender: string, amountWei: string) {
     const settings = await SettingsService.get();
     const account = await WalletService.getSigner();
     const client = await RpcService.getClient();
+    const chainSettings = settings.chains[chainId];
+    const gasPreset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;
+    const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
 
     const data = encodeFunctionData({
       abi: erc20Abi,
@@ -627,7 +659,7 @@ export class TradeService {
       args: [spender as `0x${string}`, BigInt(amountWei)]
     });
 
-    return this.sendTransaction(client, account, tokenAddress, data, 0n, settings.chains[chainId].gasPreset, chainId);
+    return this.sendTransaction(client, account, tokenAddress, data, 0n, gasPriceWei, chainId);
   }
 
   static async sendTransaction(
@@ -636,12 +668,10 @@ export class TradeService {
     to: string,
     data: any,
     value: bigint,
-    preset: GasPreset,
+    gasPriceWei: bigint,
     chainId: number,
     opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint }
   ) {
-    const gasMultiplier = getGasMultiplier(preset || 'standard');
-    const gasPricePromise = client.getGasPrice();
     const noncePromise = opts?.nonce !== undefined
       ? Promise.resolve(opts.nonce)
       : this.reserveNonce(client, chainId, account.address);
@@ -661,8 +691,7 @@ export class TradeService {
       }
     }
 
-    const [gasPrice, nonce] = await Promise.all([gasPricePromise, noncePromise]);
-    const adjustedGasPrice = gasPrice * gasMultiplier / 100n;
+    const nonce = await noncePromise;
 
     try {
       const signed = await account.signTransaction({
@@ -670,7 +699,7 @@ export class TradeService {
         data,
         value,
         gas: gasLimit,
-        gasPrice: adjustedGasPrice,
+        gasPrice: gasPriceWei,
         chain: bsc,
         nonce,
       });

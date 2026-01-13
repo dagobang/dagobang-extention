@@ -83,6 +83,8 @@
       "slippageBps": "滑點（bps）",
       "deadlineSeconds": "截止時間（秒）",
       "gasPreset": "Gas 檔位",
+      "buyGasGwei": "買入 Gas（gwei）",
+      "sellGasGwei": "賣出 Gas（gwei）",
       "autoLockSeconds": "自動鎖定（秒）",
       "toastPosition": "Toast 彈出位置",
       "security": "安全",

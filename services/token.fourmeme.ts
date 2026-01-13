@@ -3,6 +3,40 @@ import { RpcService } from './rpc';
 import { WalletService } from './wallet';
 import { SettingsService } from './settings';
 import { TradeService } from './trade';
+import type { GasPreset, ChainSettings } from '../types/extention';
+
+function parseGweiToWei(value: string): bigint {
+  const trimmed = value.trim();
+  if (!trimmed) return 0n;
+  const match = trimmed.match(/^(\d+)(?:\.(\d+))?$/);
+  if (!match) return 0n;
+  const intPart = match[1] || '0';
+  const fracPartRaw = match[2] || '';
+  const fracPadded = (fracPartRaw + '000000000').slice(0, 9);
+  const intBig = BigInt(intPart);
+  const fracBig = BigInt(fracPadded);
+  return intBig * 1000000000n + fracBig;
+}
+
+function getGasPriceWei(chainSettings: ChainSettings, preset: GasPreset): bigint {
+  const baseConfig = chainSettings.buyGasGwei;
+  const fallbackConfig = {
+    slow: '0.06',
+    standard: '0.12',
+    fast: '1',
+    turbo: '5',
+  };
+  const cfg = baseConfig || fallbackConfig;
+  let value = cfg.standard;
+  if (preset === 'slow') value = cfg.slow;
+  else if (preset === 'fast') value = cfg.fast;
+  else if (preset === 'turbo') value = cfg.turbo;
+  const wei = parseGweiToWei(value);
+  if (wei <= 0n) {
+    return parseGweiToWei(fallbackConfig.standard);
+  }
+  return wei;
+}
 import { FourmemeTokenInfo } from '@/types/token';
 import { DeployAddress } from '../constants/contracts/address';
 import { ChainId } from '../constants/chains/chainId';
@@ -83,7 +117,8 @@ export class TokenFourmemeService {
     const account = await WalletService.getSigner();
     const client = await RpcService.getClient();
     const settings = await SettingsService.get();
-    const gasPreset = settings.chains[chainId as ChainId].gasPreset;
+    const chainSettings = settings.chains[chainId as ChainId] as ChainSettings;
+    const gasPreset: GasPreset = chainSettings.buyGasPreset ?? chainSettings.gasPreset;
 
     const data = encodeFunctionData({
       abi: fourMemeTokenManagerAbi,
@@ -91,13 +126,15 @@ export class TokenFourmemeService {
       args: [createArg as `0x${string}`, sign as `0x${string}`],
     });
 
+    const gasPriceWei = getGasPriceWei(chainSettings, gasPreset);
+
     const txHash = await TradeService.sendTransaction(
       client,
       account,
       managerAddress,
       data,
       0n,
-      gasPreset,
+      gasPriceWei,
       chainId
     );
 

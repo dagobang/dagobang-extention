@@ -1,15 +1,26 @@
-import type { Settings, ChainSettings, AutoTradeConfig } from '../types/extention';
+import type { Settings, ChainSettings, AutoTradeConfig, GasGweiConfig } from '../types/extention';
+
+const DEFAULT_GAS_GWEI: GasGweiConfig = {
+  slow: '0.06',
+  standard: '0.12',
+  fast: '1',
+  turbo: '5',
+};
 
 const BSC_MAINNET: ChainSettings = {
   rpcUrls: ['https://bsc-dataseed.bnbchain.org'],
   protectedRpcUrls: [],
   antiMev: true,
   gasPreset: 'standard',
+  buyGasPreset: 'standard',
+  sellGasPreset: 'standard',
   executionMode: 'default',
   slippageBps: 4000,
   deadlineSeconds: 60,
   buyPresets: ['0.1', '0.5', '1.0', '2.0'],
   sellPresets: ['25', '50', '75', '100'],
+  buyGasGwei: DEFAULT_GAS_GWEI,
+  sellGasGwei: DEFAULT_GAS_GWEI,
 };
 
 const DEFAULT_AUTOTRADE: AutoTradeConfig = {
@@ -38,6 +49,8 @@ export function defaultSettings(): Settings {
     accountAliases: {},
     toastPosition: 'top-center',
     seedreamApiKey: '',
+    gmgnQuickBuy1Bnb: '0.02',
+    gmgnQuickBuy2Bnb: '0.1',
     autoTrade: DEFAULT_AUTOTRADE,
   };
 }
