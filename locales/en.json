@@ -86,6 +86,7 @@
       "buyGasGwei": "Buy gas (gwei)",
       "sellGasGwei": "Sell gas (gwei)",
       "autoLockSeconds": "Auto Lock (s)",
+      "uiSection": "UI",
       "toastPosition": "Toast position",
       "security": "Security",
       "exportPassword": "Password for export",
@@ -103,6 +104,11 @@
         "fast": "Fast",
         "turbo": "Instant"
       },
+      "apiKeysSection": "API KEYS",
+      "seedreamApiKeyLabel": "Seedream API Key",
+      "seedreamApiKeyPlaceholder": "Seedream API Key for logo generation",
+      "bloxrouteAuthHeaderLabel": "Bloxroute Auth Header",
+      "bloxrouteAuthHeaderPlaceholder": "Authorization header used for Bloxroute",
       "toastPositionOptions": {
         "topLeft": "Top left",
         "topCenter": "Top center",
@@ -134,6 +140,19 @@
       "sellDone": "[{0}] Sell confirmed: {1}%",
       "approveSubmitted": "[{0}] Approve submitted"
     },
+    "rpcPanel": {
+      "title": "RPC Nodes",
+      "subtitle": "Show current network RPC nodes and test latency",
+      "close": "Close",
+      "nodeCount": "Node count",
+      "measuring": "Measuring...",
+      "measure": "Measure latency",
+      "empty": "No RPC nodes configured for current network. Please add them in Settings.",
+      "measureFailed": "Measure failed",
+      "settingsNotLoaded": "Settings not loaded",
+      "rpcNotConfigured": "No RPC nodes configured for current network",
+      "latencyUpdated": "RPC latency updated"
+    },
     "status": {
       "txSent": "Tx Sent"
     },
@@ -141,6 +160,7 @@
       "buy": "Buy",
       "sell": "Sell"
     },
+    "gmgnOrder": "GMGN Order",
     "mode": {
       "default": "Default",
       "turbo": "Turbo"

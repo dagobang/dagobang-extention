@@ -18,6 +18,8 @@ type HeaderProps = {
   cookingActive: boolean;
   onToggleAutotrade: () => void;
   autotradeActive: boolean;
+  onToggleRpc: () => void;
+  rpcActive: boolean;
 };
 
 export function Header({
@@ -29,18 +31,20 @@ export function Header({
   cookingActive,
   onToggleAutotrade,
   autotradeActive,
+  onToggleRpc,
+  rpcActive,
 }: HeaderProps) {
   return (
     <div
       className="flex-shrink-0 flex cursor-grab items-center justify-between px-3 py-2 border-b border-zinc-800/50"
       onPointerDown={onDragStart}
     >
-      <div className="flex items-center gap-3 text-zinc-400">
+      <div className="flex items-center gap-2 text-zinc-400">
         <div className="flex items-center">
           <Logo size={{ width: '24px', height: '24px' }} />
         </div>
 
-        <button
+        {/* <button
           type="button"
           className={
             autotradeActive
@@ -56,9 +60,9 @@ export function Header({
           }}
         >
           <Zap size={14} />
-        </button>
+        </button> */}
 
-        <button
+        {/* <button
           type="button"
           className={
             cookingActive
@@ -74,6 +78,24 @@ export function Header({
           }}
         >
           <Flame size={14} />
+        </button> */}
+
+        <button
+          type="button"
+          className={
+            rpcActive
+              ? 'flex items-center justify-center rounded-full bg-sky-500/20 text-sky-300 px-2 py-1 text-[11px] font-semibold'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-sky-300 px-2 py-1 text-[11px] hover:border-sky-400'
+          }
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleRpc();
+          }}
+        >
+          RPC
         </button>
 
         {isEditing ? (
@@ -98,7 +120,7 @@ export function Header({
       </div>
 
       {/* Drag Handle */}
-      <div className="absolute left-1/2 -translate-x-1/2 text-zinc-600">
+      <div className="-translate-x-1/2 text-zinc-600">
         <GripHorizontal size={16} />
       </div>
 

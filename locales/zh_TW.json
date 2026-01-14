@@ -86,6 +86,7 @@
       "buyGasGwei": "買入 Gas（gwei）",
       "sellGasGwei": "賣出 Gas（gwei）",
       "autoLockSeconds": "自動鎖定（秒）",
+      "uiSection": "界面",
       "toastPosition": "Toast 彈出位置",
       "security": "安全",
       "exportPassword": "用於匯出的密碼",
@@ -103,6 +104,11 @@
         "fast": "快",
         "turbo": "抢跑"
       },
+      "apiKeysSection": "API 金鑰",
+      "seedreamApiKeyLabel": "Seedream API Key",
+      "seedreamApiKeyPlaceholder": "用於產生 Logo 的 Seedream API Key",
+      "bloxrouteAuthHeaderLabel": "Bloxroute Auth Header",
+      "bloxrouteAuthHeaderPlaceholder": "用於 Bloxroute 的 Authorization 標頭",
       "toastPositionOptions": {
         "topLeft": "左上",
         "topCenter": "上中",
@@ -134,6 +140,19 @@
       "sellDone": "[{0}] 賣出完成：{1}%",
       "approveSubmitted": "[{0}] 授權已提交"
     },
+    "rpcPanel": {
+      "title": "RPC 節點",
+      "subtitle": "顯示當前網路的 RPC 節點，並測試延遲",
+      "close": "關閉",
+      "nodeCount": "節點數量",
+      "measuring": "查詢中...",
+      "measure": "查詢延遲",
+      "empty": "當前網路未配置任何 RPC 節點，請在設定中新增。",
+      "measureFailed": "測量失敗",
+      "settingsNotLoaded": "設定尚未載入",
+      "rpcNotConfigured": "當前網路未配置 RPC 節點",
+      "latencyUpdated": "RPC 節點延遲已更新"
+    },
     "status": {
       "txSent": "交易已送出"
     },
@@ -141,6 +160,7 @@
       "buy": "買入",
       "sell": "賣出"
     },
+    "gmgnOrder": "GMGN 下單",
     "mode": {
       "default": "預設",
       "turbo": "極速"

@@ -88,6 +88,7 @@
       "gmgnQuickBuy1Bnb": "GMGN 列表快捷买入 1（BNB）",
       "gmgnQuickBuy2Bnb": "GMGN 列表快捷买入 2（BNB）",
       "autoLockSeconds": "自动锁定（秒）",
+      "uiSection": "界面",
       "toastPosition": "Toast 弹出位置",
       "security": "安全",
       "exportPassword": "用于导出的密码",
@@ -105,6 +106,11 @@
         "fast": "快",
         "turbo": "抢跑"
       },
+      "apiKeysSection": "API 密钥",
+      "seedreamApiKeyLabel": "Seedream API Key",
+      "seedreamApiKeyPlaceholder": "用于生成 Logo 的 Seedream API Key",
+      "bloxrouteAuthHeaderLabel": "Bloxroute Auth Header",
+      "bloxrouteAuthHeaderPlaceholder": "用于 Bloxroute 的 Authorization 头",
       "toastPositionOptions": {
         "topLeft": "左上",
         "topCenter": "上中",
@@ -136,6 +142,19 @@
       "sellDone": "[{0}] 卖出完毕：{1}%",
       "approveSubmitted": "[{0}] 授权提交"
     },
+    "rpcPanel": {
+      "title": "RPC 节点",
+      "subtitle": "显示当前网络的 RPC 节点，并测试延迟",
+      "close": "关闭",
+      "nodeCount": "节点数量",
+      "measuring": "查询中...",
+      "measure": "查询延迟",
+      "empty": "当前网络未配置任何 RPC 节点，请在设置中添加。",
+      "measureFailed": "测量失败",
+      "settingsNotLoaded": "设置尚未加载",
+      "rpcNotConfigured": "当前网络未配置 RPC 节点",
+      "latencyUpdated": "RPC 节点延迟已更新"
+    },
     "status": {
       "txSent": "交易已发送"
     },
@@ -143,6 +162,7 @@
       "buy": "买入",
       "sell": "卖出"
     },
+    "gmgnOrder": "GMGN 下单",
     "mode": {
       "default": "默认",
       "turbo": "极速"

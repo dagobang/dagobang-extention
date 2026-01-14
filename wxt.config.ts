@@ -23,7 +23,8 @@ export default defineConfig({
       'https://dexscreener.com/*',
       'https://*.xxyy.io/*',
       'https://xxyy.io/*',
-      'https://ark.ap-southeast.bytepluses.com/*',
+      // 'https://ark.cn-beijing.volces.com/*',
+      'https://api.blxrbdn.com/*',
     ],
     action: {
       default_title: 'Dagobang 打狗棒',

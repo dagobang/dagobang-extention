@@ -9,6 +9,7 @@ import type { BgRequest, Settings } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token.fourmeme';
 import FourmemeAPI from '@/hooks/FourmemeAPI';
 import FlapAPI from '@/hooks/FlapAPI';
+import BloxRouterAPI from '@/hooks/BloxRouterAPI';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
@@ -458,6 +459,15 @@ export default defineBackground(() => {
             const txHash = await TradeService.approveMaxForSellIfNeeded(msg.chainId, msg.tokenAddress, msg.tokenInfo);
             broadcastStateChange();
             return txHash ? { ok: true, txHash } : { ok: true };
+          }
+
+          case 'tx:bloxroutePrivate': {
+            try {
+              const txHash = await BloxRouterAPI.sendBscPrivateTx(msg.signedTx);
+              return { ok: true, txHash: txHash ?? undefined };
+            } catch {
+              return { ok: true };
+            }
           }
 
         case 'tx:waitForReceipt': {

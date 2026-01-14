@@ -1,13 +1,15 @@
 import { createPublicClient, http, fallback, type PublicClient } from 'viem';
 import { bsc } from 'viem/chains';
 import { SettingsService } from './settings';
+import BloxRouterAPI from '@/hooks/BloxRouterAPI';
 
 export class RpcService {
   private static clientCache: { chainId: number; urls: string[]; client: PublicClient } | null = null;
+  private static readonly bloxroutePrivateTxEnabled = true;
 
   static async getClient(): Promise<PublicClient> {
     const settings = await SettingsService.get();
-    
+
     // Check cache
     if (
       this.clientCache &&
@@ -35,11 +37,18 @@ export class RpcService {
     return client;
   }
 
-  /**
-   * Broadcasts a signed transaction to ALL configured RPCs simultaneously (Race).
-   * Returns the hash from the first one to succeed.
-   * Respects Anti-MEV settings by using protected RPCs if enabled.
-   */
+  static async measureLatency(url: string): Promise<number> {
+    const chain = bsc;
+    const client = createPublicClient({
+      chain,
+      transport: http(url),
+    });
+    const start = performance.now();
+    await client.getBlockNumber();
+    const end = performance.now();
+    return end - start;
+  }
+
   static async broadcastTx(signedTx: `0x${string}`): Promise<`0x${string}`> {
     const settings = await SettingsService.get();
     const chain = bsc;
@@ -54,21 +63,31 @@ export class RpcService {
       throw new Error('No RPC URLs configured (check Anti-MEV settings)');
     }
 
-    // Create a promise for each RPC endpoint
-    const promises = targetUrls.map(async (url) => {
-      try {
-        // Create a temporary single-transport client for this specific URL
-        const client = createPublicClient({
-          chain,
-          transport: http(url),
-        });
-        return await client.sendRawTransaction({ serializedTransaction: signedTx });
-      } catch (e) {
-        // Log but don't throw yet, Promise.any will throw if ALL fail
-        // console.warn(`Broadcast failed for ${url}`, e);
-        throw e;
-      }
-    });
+    const promises: Promise<`0x${string}`>[] = [];
+
+    if (this.bloxroutePrivateTxEnabled) {
+      promises.push(
+        (async () => {
+          const txHash = await BloxRouterAPI.sendBscPrivateTx(signedTx);
+          if (!txHash) {
+            throw new Error('BloxRoute did not return tx hash');
+          }
+          return txHash;
+        })(),
+      );
+    }
+
+    for (const url of targetUrls) {
+      promises.push(
+        (async () => {
+          const client = createPublicClient({
+            chain,
+            transport: http(url),
+          });
+          return await client.sendRawTransaction({ serializedTransaction: signedTx });
+        })(),
+      );
+    }
 
     try {
       // Return the first successful result

@@ -21,9 +21,10 @@ declare module '#imports' {
   export { BNBCoinIcon, ChainCoinIcon } from '../components/Coins';
   export { Logo } from '../components/Logo';
   export { default as AxiomAPI, AxiomAPI, AxiomPairInfoResponse } from '../hooks/AxiomAPI';
+  export { default as BloxRouterAPI, BloxRouterAPI } from '../hooks/BloxRouterAPI';
   export { default as FlapAPI, FlapAPI } from '../hooks/FlapAPI';
   export { default as FourmemeAPI, FourmemeAPI, FourmemeTokenPrice, FourmemeTokenData, FourmemeTokenInfoResponse } from '../hooks/FourmemeAPI';
-  export { default as GmgnAPI, extractGmgnAuthData, GmgnAPI, MultiTokenInfoResponse, TokenCandle, TokenCandlesResponse, ApiUrlParams, TokenCandlesParams } from '../hooks/GmgnAPI';
+  export { default as GmgnAPI, extractGmgnAuthData, GmgnAPI, MultiTokenInfoResponse, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams } from '../hooks/GmgnAPI';
   export { TokenAPI, TokenAPI } from '../hooks/TokenAPI';
   export { loadContractAbi, useContractAbi, ContractAddress } from '../hooks/useContractAbi';
   export { encryptJson, decryptJson } from '../utils/crypto';

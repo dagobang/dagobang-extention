@@ -16,6 +16,9 @@ type BuySectionProps = {
   onUpdatePreset: (index: number, val: string) => void;
   draftPresets?: string[];
   locale: Locale;
+  gmgnVisible: boolean;
+  gmgnEnabled: boolean;
+  onToggleGmgn: () => void;
 };
 
 export function BuySection({
@@ -31,6 +34,9 @@ export function BuySection({
   onUpdatePreset,
   draftPresets,
   locale,
+  gmgnVisible,
+  gmgnEnabled,
+  onToggleGmgn,
 }: BuySectionProps) {
   const buyPresets = isEditing && draftPresets ? draftPresets : (settings?.chains[settings.chainId]?.buyPresets || ['0.01', '0.2', '0.5', '1.0']);
   const slippageBps = settings?.chains[settings.chainId]?.slippageBps ?? 4000;
@@ -38,10 +44,10 @@ export function BuySection({
     slippageBps === 3000
       ? t('contentUi.slippage.low', locale)
       : slippageBps === 4000
-      ? t('contentUi.slippage.default', locale)
-      : slippageBps === 5000
-      ? t('contentUi.slippage.medium', locale)
-      : t('contentUi.slippage.high', locale);
+        ? t('contentUi.slippage.default', locale)
+        : slippageBps === 5000
+          ? t('contentUi.slippage.medium', locale)
+          : t('contentUi.slippage.high', locale);
   const slippagePct = (slippageBps / 100).toFixed(0);
   const executionMode = settings?.chains[settings.chainId].executionMode === 'turbo' ? 'turbo' : 'default';
   const chainSettings = settings?.chains[settings.chainId];
@@ -56,11 +62,17 @@ export function BuySection({
       <div className="mb-2 flex items-center justify-between text-xs">
         <div className="flex items-center gap-2">
           <span className="font-bold text-zinc-200 text-sm">{t('contentUi.section.buy', locale)}</span>
-          {/* <div className="flex gap-1 text-[12px] text-zinc-500">
-              <span className="text-emerald-500 cursor-pointer">P1</span>
-              <span className="hover:text-zinc-300 cursor-pointer">P2</span>
-              <span className="hover:text-zinc-300 cursor-pointer">P3</span>
-            </div> */}
+          {gmgnVisible && (
+            <label className="flex items-center gap-1 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="h-3 w-3 accent-emerald-500"
+                checked={gmgnEnabled}
+                onChange={onToggleGmgn}
+              />
+              <span>{t('contentUi.gmgnOrder', locale)}</span>
+            </label>
+          )}
         </div>
         <div className="flex items-center gap-1 text-[14px] text-emerald-400">
           <ChainCoinIcon chainId={settings?.chainId} size={{ width: '12px', height: '12px' }} />
@@ -110,6 +122,7 @@ export function BuySection({
               {t(`popup.settings.gas.${gasPreset}`, locale)} {gasValue} gwei
             </span>
           </div>
+
         </div>
         <div
           className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"

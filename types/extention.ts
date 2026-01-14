@@ -54,6 +54,7 @@ export type Settings = {
   accountAliases?: Record<string, string>;
   toastPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
   seedreamApiKey?: string;
+  bloxrouteAuthHeader?: string;
   gmgnQuickBuy1Bnb?: string;
   gmgnQuickBuy2Bnb?: string;
   autoTrade: AutoTradeConfig;
@@ -158,6 +159,7 @@ export type BgRequest =
   | { type: 'tx:approve'; chainId: number; tokenAddress: `0x${string}`; spender: `0x${string}`; amountWei: string }
   | { type: 'tx:waitForReceipt'; hash: `0x${string}`; chainId: number }
   | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
+  | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
   | { type: 'autotrade:ws'; payload: any };
 
 export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
@@ -211,6 +213,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'tx:waitForReceipt' }
   ? { ok: true; blockNumber: number }
   : T extends { type: 'tx:approveMaxForSellIfNeeded' }
+  ? { ok: true; txHash?: `0x${string}` }
+  : T extends { type: 'tx:bloxroutePrivate' }
   ? { ok: true; txHash?: `0x${string}` }
   : T extends { type: 'autotrade:ws' }
   ? { ok: true }

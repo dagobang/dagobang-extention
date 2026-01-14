@@ -49,6 +49,7 @@ export function defaultSettings(): Settings {
     accountAliases: {},
     toastPosition: 'top-center',
     seedreamApiKey: '',
+    bloxrouteAuthHeader: '',
     gmgnQuickBuy1Bnb: '0.02',
     gmgnQuickBuy2Bnb: '0.1',
     autoTrade: DEFAULT_AUTOTRADE,

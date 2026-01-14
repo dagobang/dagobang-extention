@@ -7,13 +7,14 @@ import { SellSection } from './components/SellSection';
 import { Overlays } from './components/Overlays';
 import { CookingPanel } from './components/CookingPanel';
 import { AutotradePanel } from './components/AutotradePanel';
+import { RpcPanel } from './components/RpcPanel';
 import type { BgGetStateResponse, Settings } from '@/types/extention';
 import { parseCurrentUrl, type SiteInfo } from '@/utils/sites';
 import { call } from '@/utils/messaging';
 import { parseEther, zeroAddress } from 'viem';
 import { TokenAPI } from '@/hooks/TokenAPI';
-import { getChainIdByName } from '@/constants/chains';
-import { FourmemeTokenInfo, type TokenStat } from '@/types/token';
+import GmgnAPI from '@/hooks/GmgnAPI';
+import { type TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { Logo } from '@/components/Logo';
 
@@ -38,6 +39,8 @@ export default function App() {
   const [marketCapDisplay, setMarketCapDisplay] = useState<string | null>(null);
   const [liquidityDisplay, setLiquidityDisplay] = useState<string | null>(null);
   const [pendingQuickBuy, setPendingQuickBuy] = useState<{ tokenAddress: string; amount: string } | null>(null);
+  const [gmgnBuyEnabled, setGmgnBuyEnabled] = useState(false);
+  const [gmgnSellEnabled, setGmgnSellEnabled] = useState(false);
 
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
@@ -48,6 +51,7 @@ export default function App() {
   const posRef = useRef(pos);
   const [showCookingPanel, setShowCookingPanel] = useState(false);
   const [showAutotradePanel, setShowAutotradePanel] = useState(false);
+  const [showRpcPanel, setShowRpcPanel] = useState(false);
   const dragging = useRef<null | { target: 'main'; startX: number; startY: number; baseX: number; baseY: number }>(null);
 
   const isUnlocked = !!state?.wallet.isUnlocked;
@@ -168,6 +172,16 @@ export default function App() {
     }
     return null;
   }, [tokenStat, tokenInfo]);
+
+  const isGmgnPlatform = siteInfo?.platform === 'gmgn';
+
+  const handleToggleGmgnBuy = () => {
+    setGmgnBuyEnabled((v) => !v);
+  };
+
+  const handleToggleGmgnSell = () => {
+    setGmgnSellEnabled((v) => !v);
+  };
 
   async function refreshAll() {
     if (document.hidden) return;
@@ -338,39 +352,61 @@ export default function App() {
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: '🔄' });
       const startTime = Date.now();
 
-      const res = await call({
-        type: 'tx:buy',
-        input: { chainId: settings.chainId, tokenAddress: tokenAddressNormalized, bnbAmountWei: amountIn.toString(), tokenInfo: tokenInfo ?? undefined },
-      } as const);
+      const mainTrade = (async () => {
+        const res = await call({
+          type: 'tx:buy',
+          input: { chainId: settings.chainId, tokenAddress: tokenAddressNormalized, bnbAmountWei: amountIn.toString(), tokenInfo: tokenInfo ?? undefined },
+        } as const);
 
-      const elapsed = (Date.now() - startTime) / 1000;
-      setTxHash(res.txHash);
-      setPendingBuyTokenMinOutWei(res.tokenMinOutWei ?? null);
-      toast.success(t('contentUi.toast.buySuccessTime', locale, [sym, elapsed.toFixed(2)]), { id: toastId, icon: '✅' });
+        const elapsed = (Date.now() - startTime) / 1000;
+        setTxHash(res.txHash);
+        setPendingBuyTokenMinOutWei(res.tokenMinOutWei ?? null);
+        toast.success(t('contentUi.toast.buySuccessTime', locale, [sym, elapsed.toFixed(2)]), { id: toastId, icon: '✅' });
 
-      if (tokenInfo) {
-        void call({
-          type: 'tx:approveMaxForSellIfNeeded',
-          chainId: settings.chainId,
-          tokenAddress: tokenAddressNormalized,
-          tokenInfo: tokenInfo,
-        } as const).catch(() => { });
+        if (tokenInfo) {
+          void call({
+            type: 'tx:approveMaxForSellIfNeeded',
+            chainId: settings.chainId,
+            tokenAddress: tokenAddressNormalized,
+            tokenInfo: tokenInfo,
+          } as const).catch(() => { });
+        }
+
+        await Promise.all([refreshToken(true), refreshAll()]);
+        startFastPolling();
+
+        const receipt = await call({
+          type: 'tx:waitForReceipt',
+          hash: res.txHash,
+          chainId: settings.chainId
+        });
+        if (!receipt.ok) throw new Error('Transaction failed');
+        toast.success(t('contentUi.toast.buyDone', locale, [sym, amountStr]), { icon: '✅' });
+        setPendingBuyTokenMinOutWei(null);
+
+        await Promise.all([refreshToken(true), refreshAll()]);
+      })();
+
+      let gmgnTrade: Promise<unknown> | null = null;
+      if (gmgnBuyEnabled && siteInfo?.platform === 'gmgn') {
+        gmgnTrade = (async () => {
+          try {
+            // await new Promise((resolve) => setTimeout(resolve, 300));
+            await GmgnAPI.buyToken({
+              tokenAddress: tokenAddressNormalized,
+              amount: amountIn.toString(),
+            });
+          } catch (e) {
+            console.error('GMGN buy failed', e);
+          }
+        })();
       }
 
-      // Trigger immediate refresh and start fast polling
-      await Promise.all([refreshToken(true), refreshAll()]);
-      startFastPolling();
-
-      const receipt = await call({
-        type: 'tx:waitForReceipt',
-        hash: res.txHash,
-        chainId: settings.chainId
-      });
-      if (!receipt.ok) throw new Error('Transaction failed');
-      toast.success(t('contentUi.toast.buyDone', locale, [sym, amountStr]), { icon: '✅' });
-      setPendingBuyTokenMinOutWei(null);
-
-      await Promise.all([refreshToken(true), refreshAll()]);
+      if (gmgnTrade) {
+        await Promise.all([mainTrade, gmgnTrade]);
+      } else {
+        await mainTrade;
+      }
     });
   };
 
@@ -397,35 +433,57 @@ export default function App() {
       const startTime = Date.now();
 
       const percentBps = Math.max(1, Math.min(10000, Math.floor(pct * 100)));
-      const res = await call({
-        type: 'tx:sell',
-        input: {
-          chainId,
-          tokenAddress: tokenAddressNormalized,
-          tokenAmountWei: isTurbo ? '0' : amountWei.toString(),
-          sellPercentBps: isTurbo ? percentBps : undefined,
-          expectedTokenInWei: isTurbo ? (pendingBuyTokenMinOutWei ?? undefined) : undefined,
-          tokenInfo: tokenInfo ?? undefined
-        },
-      } as const);
+      const mainTrade = (async () => {
+        const res = await call({
+          type: 'tx:sell',
+          input: {
+            chainId,
+            tokenAddress: tokenAddressNormalized,
+            tokenAmountWei: isTurbo ? '0' : amountWei.toString(),
+            sellPercentBps: isTurbo ? percentBps : undefined,
+            expectedTokenInWei: isTurbo ? (pendingBuyTokenMinOutWei ?? undefined) : undefined,
+            tokenInfo: tokenInfo ?? undefined
+          },
+        } as const);
 
-      const elapsed = (Date.now() - startTime) / 1000;
-      setTxHash(res.txHash);
-      toast.success(t('contentUi.toast.sellSuccessTime', locale, [sym, elapsed.toFixed(2)]), { id: toastId, icon: '✅' });
+        const elapsed = (Date.now() - startTime) / 1000;
+        setTxHash(res.txHash);
+        toast.success(t('contentUi.toast.sellSuccessTime', locale, [sym, elapsed.toFixed(2)]), { id: toastId, icon: '✅' });
 
-      // Trigger immediate refresh and start fast polling
-      await Promise.all([refreshToken(true), refreshAll()]);
-      startFastPolling();
+        await Promise.all([refreshToken(true), refreshAll()]);
+        startFastPolling();
 
-      const receipt = await call({
-        type: 'tx:waitForReceipt',
-        hash: res.txHash,
-        chainId: settings.chainId
-      });
-      if (!receipt.ok) throw new Error('Transaction failed');
-      toast.success(t('contentUi.toast.sellDone', locale, [sym, pct]), { icon: '✅' });
-      await Promise.all([refreshToken(true), refreshAll()]);
-      setPendingBuyTokenMinOutWei(null);
+        const receipt = await call({
+          type: 'tx:waitForReceipt',
+          hash: res.txHash,
+          chainId: settings.chainId
+        });
+        if (!receipt.ok) throw new Error('Transaction failed');
+        toast.success(t('contentUi.toast.sellDone', locale, [sym, pct]), { icon: '✅' });
+        await Promise.all([refreshToken(true), refreshAll()]);
+        setPendingBuyTokenMinOutWei(null);
+      })();
+
+      let gmgnTrade: Promise<unknown> | null = null;
+      if (gmgnSellEnabled && siteInfo?.platform === 'gmgn' && amountWei > 0n) {
+        gmgnTrade = (async () => {
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            await GmgnAPI.sellToken({
+              tokenAddress: tokenAddressNormalized,
+              amount: amountWei.toString(),
+            });
+          } catch (e) {
+            console.error('GMGN sell failed', e);
+          }
+        })();
+      }
+
+      if (gmgnTrade) {
+        await Promise.all([mainTrade, gmgnTrade]);
+      } else {
+        await mainTrade;
+      }
     });
   };
 
@@ -614,6 +672,10 @@ export default function App() {
     setShowAutotradePanel((v) => !v);
   };
 
+  const handleToggleRpcPanel = () => {
+    setShowRpcPanel((v) => !v);
+  };
+
   return (
     <>
       <CustomToaster position={toastPosition} />
@@ -661,6 +723,8 @@ export default function App() {
                 cookingActive={showCookingPanel}
                 onToggleAutotrade={handleToggleAutotradePanel}
                 autotradeActive={showAutotradePanel}
+                onToggleRpc={handleToggleRpcPanel}
+                rpcActive={showRpcPanel}
               />
               <div className="relative flex flex-col">
                 <BuySection
@@ -676,6 +740,9 @@ export default function App() {
                   onUpdatePreset={handleUpdateBuyPreset}
                   draftPresets={draftBuyPresets}
                   locale={locale}
+                  gmgnVisible={false} //isGmgnPlatform
+                  gmgnEnabled={gmgnBuyEnabled}
+                  onToggleGmgn={handleToggleGmgnBuy}
                 />
 
                 <div className="h-px bg-zinc-800 mx-3"></div>
@@ -695,6 +762,9 @@ export default function App() {
                   onUpdatePreset={handleUpdateSellPreset}
                   draftPresets={draftSellPresets}
                   locale={locale}
+                  gmgnVisible={false} // isGmgnPlatform
+                  gmgnEnabled={gmgnSellEnabled}
+                  onToggleGmgn={handleToggleGmgnSell}
                 />
 
                 <Overlays
@@ -707,7 +777,7 @@ export default function App() {
             </div>
           )}
 
-          <CookingPanel
+          {/* <CookingPanel
             visible={showCookingPanel}
             onVisibleChange={setShowCookingPanel}
             address={address}
@@ -720,6 +790,13 @@ export default function App() {
             settings={settings}
             isUnlocked={isUnlocked}
             address={address}
+          /> */}
+
+          <RpcPanel
+            visible={showRpcPanel}
+            onVisibleChange={setShowRpcPanel}
+            settings={settings}
+            locale={locale}
           />
         </>
       )}

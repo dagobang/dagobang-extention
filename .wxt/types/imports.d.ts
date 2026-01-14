@@ -3,6 +3,7 @@ export {}
 declare global {
   const AxiomAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/AxiomAPI').default
   const BNBCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').BNBCoinIcon
+  const BloxRouterAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/BloxRouterAPI').default
   const ChainCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').ChainCoinIcon
   const ContentScriptContext: typeof import('wxt/utils/content-script-context').ContentScriptContext
   const FlapAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI').default
@@ -78,13 +79,16 @@ declare global {
   export type { AxiomAPI, AxiomPairInfoResponse } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/AxiomAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/AxiomAPI')
   // @ts-ignore
+  export type { BloxRouterAPI } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/BloxRouterAPI'
+  import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/BloxRouterAPI')
+  // @ts-ignore
   export type { FlapAPI } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI')
   // @ts-ignore
   export type { FourmemeAPI, FourmemeTokenPrice, FourmemeTokenData, FourmemeTokenInfoResponse } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FourmemeAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FourmemeAPI')
   // @ts-ignore
-  export type { GmgnAPI, MultiTokenInfoResponse, TokenCandle, TokenCandlesResponse, ApiUrlParams, TokenCandlesParams } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI'
+  export type { GmgnAPI, MultiTokenInfoResponse, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI')
   // @ts-ignore
   export type { TokenAPI } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/TokenAPI'

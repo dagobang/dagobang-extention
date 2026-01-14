@@ -109,6 +109,10 @@ export function validateSettings(input: Settings): Settings | null {
     ? (input as any).seedreamApiKey.trim()
     : defaults.seedreamApiKey ?? '';
 
+  const bloxrouteAuthHeader = typeof (input as any).bloxrouteAuthHeader === 'string'
+    ? (input as any).bloxrouteAuthHeader.trim()
+    : defaults.bloxrouteAuthHeader ?? '';
+
   const inputAutoTrade = (input as any).autoTrade as Partial<AutoTradeConfig> | undefined;
   const defaultAutoTrade = defaults.autoTrade;
   const autoTrade: AutoTradeConfig = {
@@ -157,6 +161,7 @@ export function validateSettings(input: Settings): Settings | null {
     accountAliases,
     toastPosition,
     seedreamApiKey,
+    bloxrouteAuthHeader,
     gmgnQuickBuy1Bnb,
     gmgnQuickBuy2Bnb,
     autoTrade,

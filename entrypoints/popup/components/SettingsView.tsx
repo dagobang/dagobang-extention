@@ -311,9 +311,9 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
         </div>
 
         <div className="space-y-3 pt-4 border-t border-zinc-800">
-          <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">AI</div>
-          <label className="block space-y-1">
-            <div className="text-[14px] text-zinc-400">Seedream API Key</div>
+          <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">{tt('popup.settings.apiKeysSection')}</div>
+          <label className="hidden block space-y-1">
+            <div className="text-[14px] text-zinc-400">{tt('popup.settings.seedreamApiKeyLabel')}</div>
             <input
               type="password"
               className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
@@ -324,7 +324,22 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
                   seedreamApiKey: e.target.value,
                 }))
               }
-              placeholder="用于生成 Logo 的 Seedream API Key"
+              placeholder={tt('popup.settings.seedreamApiKeyPlaceholder')}
+            />
+          </label>
+          <label className="block space-y-1">
+            <div className="text-[14px] text-zinc-400">{tt('popup.settings.bloxrouteAuthHeaderLabel')}</div>
+            <input
+              type="password"
+              className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+              value={settingsDraft.bloxrouteAuthHeader ?? ''}
+              onChange={(e) =>
+                setSettingsDraft((s) => ({
+                  ...s,
+                  bloxrouteAuthHeader: e.target.value,
+                }))
+              }
+              placeholder={tt('popup.settings.bloxrouteAuthHeaderPlaceholder')}
             />
           </label>
         </div>

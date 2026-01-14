@@ -1,7 +1,6 @@
 import './shared/style.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { browser } from 'wxt/browser';
 import App from './content-ui/App';
 import { call } from '@/utils/messaging';
 
@@ -105,12 +104,12 @@ export default defineContentScript({
 
     // injectWebSocketInterceptor();
 
-    window.addEventListener('message', (event) => {
-      if (event.source !== window) return;
-      const data = event.data as any;
-      if (!data || data.type !== 'GMGN_WEBSOCKET_DATA') return;
-      void call({ type: 'autotrade:ws', payload: data });
-    });
+    // window.addEventListener('message', (event) => {
+    //   if (event.source !== window) return;
+    //   const data = event.data as any;
+    //   if (!data || data.type !== 'GMGN_WEBSOCKET_DATA') return;
+    //   void call({ type: 'autotrade:ws', payload: data });
+    // });
 
     const ui = await createShadowRootUi(ctx, {
       name: 'dagobang-widget',
@@ -136,7 +135,7 @@ export default defineContentScript({
     } catch {
     }
 
-    if (window.location.hostname.includes('gmgn.ai')) {
+    if (window.location.hostname.includes('gmgn.ai') && window.location.pathname === '/') {
       setupGmgnQuickBuyButtons();
     }
   },

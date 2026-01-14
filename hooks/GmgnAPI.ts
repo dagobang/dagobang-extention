@@ -2,7 +2,6 @@
  * GMGN API Class
  * Handles API calls to GMGN with proper authentication and headers
  */
-import { TokenAPI } from "#imports";
 import { TokenStat, TokenInfo } from "@/types/token";
 import { zeroAddress } from "viem";
 
@@ -98,7 +97,71 @@ export interface ApiUrlParams {
   tz_offset: string;
   app_lang: string;
   os: string;
-  [key: string]: string; // Index signature for URLSearchParams compatibility
+  [key: string]: string;
+}
+
+export interface SwapOrderRequest {
+  token_in_chain: string;
+  token_out_chain: string;
+  from_address: string;
+  slippage: number;
+  token_in_address: string;
+  token_out_address: string;
+  token_in_price: string;
+  token_out_price: string;
+  is_anti_mev: boolean;
+  web_from_source: string;
+  fee: number;
+  tip_fee: string;
+  priority_fee: string;
+  auto_slippage: boolean;
+  chain: string;
+  retry_on_submit_failed: number;
+  simulate_before_submit: boolean;
+  input_token: string;
+  output_token: string;
+  priority_gas_price: string;
+  gas_price: string;
+  auto_approve_after_buy?: boolean;
+  source: string;
+  swap_mode: string;
+  input_amount: string;
+  max_priority_fee_per_gas: string;
+  max_fee_per_gas: string;
+}
+
+export interface SwapOrderResponse {
+  code: number;
+  reason: string;
+  message: string;
+  data: {
+    code: number;
+    state: number;
+    hash: string;
+    order_id: string;
+    error_code: string;
+    error_status: string;
+    confirmation: {
+      state: string;
+      detail: any;
+    };
+  };
+}
+
+export interface BuyOrderParams {
+  tokenAddress: string;
+  amount: string;
+  slippage?: number;
+  tokenPrice?: string;
+  nativePrice?: string;
+}
+
+export interface SellOrderParams {
+  tokenAddress: string;
+  amount: string;
+  slippage?: number;
+  tokenPrice?: string;
+  nativePrice?: string;
 }
 
 // Candlestick Query Parameters
@@ -141,6 +204,8 @@ export const extractGmgnAuthData = () => {
  */
 export class GmgnAPI {
   private static readonly BASE_URL = 'https://gmgn.ai/tapi/v1';
+  private static readonly SWAP_URL = 'https://gmgn.ai/mrtapi/v2';
+  private static readonly SWAP_ENDPOINT = '/swap_batch_order';
   private static readonly CANDLES_BASE_URL = 'https://gmgn.ai/api/v1';
   private static readonly TOKEN_INFO_BASE_URL = 'https://gmgn.ai/mrwapi/v1';
   private static readonly HOLDINGS_BASE_URL = 'https://gmgn.ai/td/api/v1';
@@ -280,7 +345,6 @@ export class GmgnAPI {
     baseUrl: string = this.BASE_URL
   ): Promise<string> {
     const storageParams = await this.getStorageParams();
-    console.log('storageParams', JSON.stringify(storageParams));
     const defaultParams: ApiUrlParams = {
       web_from_source: 'one_click_submit',
       device_id: storageParams.device_id!,
@@ -297,6 +361,182 @@ export class GmgnAPI {
 
     const urlParams = new URLSearchParams(defaultParams);
     return `${baseUrl}${endpoint}?${urlParams.toString()}`;
+  }
+
+  public static async buyToken(params: BuyOrderParams): Promise<SwapOrderResponse> {
+    const {
+      tokenAddress,
+      amount,
+      slippage = 4,
+      tokenPrice = '0',
+      nativePrice = '1000'
+    } = params;
+
+    const chain = await this.getChain();
+    const fromAddress = await this.getWalletAddress();
+
+    const requestPayload: SwapOrderRequest = {
+      token_in_chain: chain,
+      token_out_chain: chain,
+      from_address: fromAddress,
+      slippage,
+      token_in_address: '0x0000000000000000000000000000000000000000',
+      token_out_address: tokenAddress,
+      token_in_price: nativePrice,
+      token_out_price: tokenPrice,
+      is_anti_mev: false,
+      web_from_source: 'one_click_submit',
+      fee: 55000000,
+      tip_fee: '0',
+      priority_fee: '0',
+      auto_slippage: true,
+      chain,
+      retry_on_submit_failed: 0,
+      simulate_before_submit: false,
+      input_token: '0x0000000000000000000000000000000000000000',
+      output_token: tokenAddress,
+      priority_gas_price: '0.0002',
+      gas_price: '55000000',
+      auto_approve_after_buy: false,
+      source: 'swap_web',
+      swap_mode: 'ExactIn',
+      input_amount: amount,
+      max_priority_fee_per_gas: '100000000',
+      max_fee_per_gas: '100000000'
+    };
+
+    const url = await this.buildApiUrl(this.SWAP_ENDPOINT, {}, this.SWAP_URL);
+    const headers = await this.getHeaders();
+
+    const response = await this.makeRequest(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestPayload)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json() as SwapOrderResponse;
+  }
+
+  public static async sellToken(params: SellOrderParams): Promise<SwapOrderResponse> {
+    const {
+      tokenAddress,
+      amount,
+      slippage = 4,
+      tokenPrice = '0',
+      nativePrice = '1000'
+    } = params;
+
+    const chain = await this.getChain();
+    const fromAddress = await this.getWalletAddress();
+
+    const requestPayload: SwapOrderRequest = {
+      token_in_chain: chain,
+      token_out_chain: chain,
+      from_address: fromAddress,
+      slippage,
+      token_in_address: tokenAddress,
+      token_out_address: '0x0000000000000000000000000000000000000000',
+      token_in_price: tokenPrice,
+      token_out_price: nativePrice,
+      is_anti_mev: false,
+      web_from_source: 'one_click_submit',
+      fee: 1100000000,
+      tip_fee: '0.0001',
+      priority_fee: '0.0001',
+      auto_slippage: true,
+      chain,
+      retry_on_submit_failed: 0,
+      simulate_before_submit: false,
+      input_token: tokenAddress,
+      output_token: '0x0000000000000000000000000000000000000000',
+      priority_gas_price: '0.0002',
+      gas_price: '1100000000',
+      source: 'swap_web',
+      swap_mode: 'ExactIn',
+      input_amount: amount,
+      max_priority_fee_per_gas: '1100000000',
+      max_fee_per_gas: '1100000000'
+    };
+
+    const url = await this.buildApiUrl(this.SWAP_ENDPOINT, {}, this.SWAP_URL);
+    const headers = await this.getHeaders();
+
+    const response = await this.makeRequest(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestPayload)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json() as SwapOrderResponse;
+  }
+
+  public static async getOrderStatus(chain: string, orderId: string): Promise<SwapOrderResponse> {
+    const queryParams = {
+      order_id: orderId,
+      chain,
+      tgTrade: 'true'
+    };
+
+    const url = await this.buildApiUrl('/query_order', queryParams);
+    const headers = await this.getHeaders();
+
+    const response = await this.makeRequest(url, {
+      method: 'GET',
+      headers
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json() as SwapOrderResponse;
+  }
+
+  public static async getOrderStatusWithRetry(
+    orderId: string,
+    chain: string,
+    maxRetries: number = 5,
+    retryInterval: number = 500,
+    timeout: number = 30000
+  ): Promise<SwapOrderResponse> {
+    const startTime = Date.now();
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      if (Date.now() - startTime > timeout) {
+        throw new Error(`Order status check timeout after ${timeout}ms`);
+      }
+
+      try {
+        const orderStatus = await this.getOrderStatus(chain, orderId);
+        if (orderStatus.message === 'success' && orderStatus.data) {
+          const { state, hash, error_code } = orderStatus.data;
+          if (state === 20 || hash) {
+            return orderStatus;
+          }
+          if (error_code && error_code !== '') {
+            return orderStatus;
+          }
+        }
+      } catch (error) {
+        lastError = error as Error;
+      }
+
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, retryInterval));
+      }
+    }
+
+    const errorMessage = `Failed to get order status for ${orderId} after ${maxRetries} attempts`;
+    throw new Error(errorMessage + (lastError ? `: ${lastError.message}` : ''));
   }
 
   /**

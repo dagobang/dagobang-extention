@@ -17,6 +17,9 @@ type SellSectionProps = {
   onUpdatePreset: (index: number, val: string) => void;
   draftPresets?: string[];
   locale: Locale;
+  gmgnVisible: boolean;
+  gmgnEnabled: boolean;
+  onToggleGmgn: () => void;
 };
 
 export function SellSection({
@@ -34,6 +37,9 @@ export function SellSection({
   onUpdatePreset,
   draftPresets,
   locale,
+  gmgnVisible,
+  gmgnEnabled,
+  onToggleGmgn,
 }: SellSectionProps) {
   const sellPresets = isEditing && draftPresets ? draftPresets : (settings?.chains[settings.chainId]?.sellPresets || ['10', '25', '50', '100']);
   const slippageBps = settings?.chains[settings.chainId]?.slippageBps ?? 4000;
@@ -59,11 +65,17 @@ export function SellSection({
       <div className="mb-2 flex items-center justify-between text-xs">
         <div className="flex items-center gap-2">
           <span className="font-bold text-zinc-200 text-sm">{t('contentUi.section.sell', locale)}</span>
-          {/* <div className="flex gap-1 text-[12px] text-zinc-500">
-              <span className="text-rose-500 cursor-pointer">P1</span>
-              <span className="hover:text-zinc-300 cursor-pointer">P2</span>
-              <span className="hover:text-zinc-300 cursor-pointer">P3</span>
-            </div> */}
+          {gmgnVisible && (
+            <label className="flex items-center gap-1 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="h-3 w-3 accent-rose-500"
+                checked={gmgnEnabled}
+                onChange={onToggleGmgn}
+              />
+              <span>{t('contentUi.gmgnOrder', locale)}</span>
+            </label>
+          )}
         </div>
         <div className="flex items-center gap-1 text-[14px] text-zinc-300">
           <span>{formattedTokenBalance}</span>
@@ -124,6 +136,7 @@ export function SellSection({
             <RefreshCw size={10} />
             <span>{t('contentUi.approve.button', locale)}</span>
           </button>
+
         </div>
         <div
           className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
