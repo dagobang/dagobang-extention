@@ -5,6 +5,7 @@ import {
   Check,
   Zap,
   Flame,
+  LineChart,
 } from 'lucide-react';
 import type { PointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
@@ -20,6 +21,8 @@ type HeaderProps = {
   autotradeActive: boolean;
   onToggleRpc: () => void;
   rpcActive: boolean;
+  onToggleDailyAnalysis: () => void;
+  dailyAnalysisActive: boolean;
 };
 
 export function Header({
@@ -33,6 +36,8 @@ export function Header({
   autotradeActive,
   onToggleRpc,
   rpcActive,
+  onToggleDailyAnalysis,
+  dailyAnalysisActive,
 }: HeaderProps) {
   return (
     <div
@@ -96,6 +101,24 @@ export function Header({
           }}
         >
           RPC
+        </button>
+
+        <button
+          type="button"
+          className={
+            dailyAnalysisActive
+              ? 'flex items-center justify-center rounded-full bg-purple-500/20 text-purple-300 p-1'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-purple-300 p-1 hover:border-purple-400'
+          }
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleDailyAnalysis();
+          }}
+        >
+          <LineChart size={14} />
         </button>
 
         {isEditing ? (

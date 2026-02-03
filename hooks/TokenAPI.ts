@@ -4,11 +4,13 @@ import { FourmemeTokenInfo, TokenInfo } from "@/types/token";
 import { call } from "@/utils/messaging";
 import { parseEther } from "viem";
 import { getChainIdByName } from "@/constants/chains";
+import { MEME_SUFFIXS } from "@/constants/meme";
 
 const PLATFORM_API: Record<string, { getTokenInfo: (chain: string, address: string) => Promise<TokenInfo | null> }> = {
     "gmgn": GmgnAPI,
     "axiom": AxiomAPI,
 };
+
 
 export class TokenAPI {
     static async getTokenInfo(platform: string, chain: string, tokenAddress: string): Promise<TokenInfo | null> {
@@ -23,7 +25,8 @@ export class TokenAPI {
                         return fourmemeTokenInfo
                     }
                 }
-                if (["4444", "7777", "8888"].includes(address.substring(address.length - 4))) {
+                if (MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
+                    tokenInfo.launchpad_platform.includes('fourmeme')) {
                     return tokenInfo;
                 }
                 return null;
@@ -33,10 +36,8 @@ export class TokenAPI {
         if (address.endsWith("7777") || address.endsWith("8888")) {
             return await this.getTokenInfoByFlapHttp(platform, chain, address);
         }
-        if (address.endsWith("4444")) {
-            return await this.getTokenInfoByFourmeme(platform, chain, address);
-        }
-        return null;
+
+        return await this.getTokenInfoByFourmeme(platform, chain, address);
     }
 
     static async getBalance(platform: string, chain: string, address: string, tokenAddress: string): Promise<string | null> {

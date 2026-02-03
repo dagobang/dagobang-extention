@@ -1,11 +1,13 @@
 import { TokenAPI } from "#imports";
 import { getChainIdByName } from "@/constants/chains";
+import { MEME_SUFFIXS } from "@/constants/meme";
 import { getBridgeTokenAddresses } from "@/constants/tokens";
 
 export interface SiteInfo {
   chain: string;
   tokenAddress: string;
   platform: 'gmgn' | 'axiom' | 'flap' | 'fourmeme' | 'binance' | 'okx' | 'xxyy' | 'dexscreener';
+  walletAddress?: string;
 }
 
 export async function parseCurrentUrl(href: string): Promise<SiteInfo | null> {
@@ -22,6 +24,14 @@ export async function parseCurrentUrl(href: string): Promise<SiteInfo | null> {
         return {
           chain: parts[0].toLowerCase(),
           tokenAddress: parts[2],
+          platform: 'gmgn'
+        };
+      }
+      if (parts.length >= 3 && parts[1] === 'address') {
+        return {
+          chain: parts[0].toLowerCase(),
+          tokenAddress: '',
+          walletAddress: parts[2],
           platform: 'gmgn'
         };
       }
@@ -116,11 +126,11 @@ export async function parseCurrentUrl(href: string): Promise<SiteInfo | null> {
           platform: 'xxyy'
         };
 
-        if (!["7777", "8888", "4444"].includes(info.tokenAddress.substring(info.tokenAddress.length - 4))) {
+        if (!MEME_SUFFIXS.includes(info.tokenAddress.substring(info.tokenAddress.length - 4))) {
 
           const poolPair = await TokenAPI.getPoolPair(info.chain, info.tokenAddress);
           if (poolPair) {
-            if (["7777", "8888", "4444"].includes(poolPair.token0.substring(poolPair.token0.length - 4))) {
+            if (MEME_SUFFIXS.includes(poolPair.token0.substring(poolPair.token0.length - 4))) {
               info.tokenAddress = poolPair.token0;
             }
             else if (getBridgeTokenAddresses(getChainIdByName(info.chain)).find((addr) => addr.toLowerCase() === poolPair.token0.toLowerCase())) {
@@ -144,11 +154,11 @@ export async function parseCurrentUrl(href: string): Promise<SiteInfo | null> {
           platform: 'dexscreener'
         };
 
-        if (!["7777", "8888", "4444"].includes(info.tokenAddress.substring(info.tokenAddress.length - 4))) {
+        if (!MEME_SUFFIXS.includes(info.tokenAddress.substring(info.tokenAddress.length - 4))) {
 
           const poolPair = await TokenAPI.getPoolPair(info.chain, info.tokenAddress);
           if (poolPair) {
-            if (["7777", "8888", "4444"].includes(poolPair.token0.substring(poolPair.token0.length - 4))) {
+            if (MEME_SUFFIXS.includes(poolPair.token0.substring(poolPair.token0.length - 4))) {
               info.tokenAddress = poolPair.token0;
             }
             else if (getBridgeTokenAddresses(getChainIdByName(info.chain)).find((addr) => addr.toLowerCase() === poolPair.token0.toLowerCase())) {

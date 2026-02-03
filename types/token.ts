@@ -21,6 +21,11 @@ export interface TokenInfo {
   quote_token_address?: string;
   pool_pair?: string;
   dex_type?: string;
+  tokenPrice?: {
+    price: string;
+    marketCap: string;
+    timestamp: number;
+  };
 }
 
 export interface FourmemeTokenInfo {

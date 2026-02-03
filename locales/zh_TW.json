@@ -127,7 +127,8 @@
       "noBalance": "餘額不足",
       "tokenInfoRequired": "需要代幣資訊",
       "insufficientBalance": "餘額不足",
-      "transactionFailed": "交易失敗"
+      "transactionFailed": "交易失敗",
+      "erc20Input": "ERC20: 無效輸入"
     },
     "common": {
       "token": "代幣"
@@ -152,6 +153,20 @@
       "settingsNotLoaded": "設定尚未載入",
       "rpcNotConfigured": "當前網路未配置 RPC 節點",
       "latencyUpdated": "RPC 節點延遲已更新"
+    },
+    "autotrade": {
+      "title": "快速掛單",
+      "statusSettingsNotLoaded": "設定未載入",
+      "statusLocked": "錢包已鎖定",
+      "statusUnlocked": "錢包已解鎖",
+      "close": "關閉",
+      "wallet": "錢包",
+      "walletNotConnected": "未連線",
+      "buySection": "買入掛單",
+      "sellSection": "賣出掛單",
+      "price": "價格",
+      "buyAmount": "買入金額（BNB）",
+      "sellPercent": "賣出百分比（%）"
     },
     "status": {
       "txSent": "交易已送出"

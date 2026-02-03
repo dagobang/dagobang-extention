@@ -1,4 +1,4 @@
-import { encodeFunctionData, erc20Abi, getAddress } from 'viem';
+import { decodeAbiParameters, encodeFunctionData, erc20Abi, getAddress } from 'viem';
 import { bsc } from 'viem/chains';
 import { RpcService } from './rpc';
 import { WalletService } from './wallet';
@@ -60,6 +60,108 @@ function getGasPriceWei(chainSettings: ChainSettings, preset: GasPreset, side: '
     return parseGweiToWei(fallbackConfig.standard);
   }
   return wei;
+}
+
+function scoreRevertReason(reason: string) {
+  const r = reason.toLowerCase();
+  let v = 0;
+  if (/^0x[0-9a-f]*$/i.test(reason)) v -= 120;
+  if (r.includes('zero_input')) v -= 80;
+  if (r.includes('insufficient allowance') || r.includes('allowance')) v += 200;
+  if (r.includes('insufficient balance') || r.includes('balance')) v += 120;
+  if (r.includes('transfer') || r.includes('transferfrom')) v += 80;
+  if (r.includes('slippage') || r.includes('min') || r.includes('amount')) v += 20;
+  if (/^[A-Z0-9_]{3,}$/.test(reason)) v -= 30;
+  if (reason.includes('0x') && reason.length > 60) v -= 40;
+  v += Math.min(30, Math.floor(reason.length / 10));
+  return v;
+}
+
+function decodeRevertDataToReason(data: any) {
+  if (typeof data !== 'string') return null;
+  const hex = data.trim();
+  if (!/^0x[0-9a-fA-F]*$/.test(hex)) return null;
+  if (hex === '0x' || hex.length < 10) return null;
+  const sel = hex.slice(0, 10).toLowerCase();
+  if (sel === '0x08c379a0') {
+    const body = (`0x${hex.slice(10)}`) as `0x${string}`;
+    try {
+      const [msg] = decodeAbiParameters([{ type: 'string' }], body);
+      return typeof msg === 'string' && msg.trim() ? msg.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+  if (sel === '0x4e487b71') {
+    const body = (`0x${hex.slice(10)}`) as `0x${string}`;
+    try {
+      const [code] = decodeAbiParameters([{ type: 'uint256' }], body);
+      const n = typeof code === 'bigint' ? code : BigInt(code as any);
+      const key = `0x${n.toString(16)}`;
+      return `Panic(${key})`;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function extractRevertReasonFromError(e: any) {
+  const texts: string[] = [];
+  const push = (s: any) => {
+    if (typeof s !== 'string') return;
+    const t = s.trim();
+    if (!t) return;
+    texts.push(t);
+  };
+
+  if (Array.isArray(e?.metaMessages)) {
+    for (const x of e.metaMessages) push(x);
+  }
+  push(e?.details);
+  push(e?.shortMessage);
+  push(e?.message);
+  push(e?.data);
+  push(e?.cause?.data);
+  push(e?.cause?.message);
+
+  const reasons: string[] = [];
+  const patterns = [
+    /Fail with error\s+'([^']+)'/i,
+    /reverted with reason string\s+'([^']+)'/i,
+    /execution reverted(?::\s*([^\n]+))?/i,
+    /revert(?:ed)?(?::\s*([^\n]+))?/i,
+  ];
+
+  for (const t of texts) {
+    const direct = decodeRevertDataToReason(t);
+    if (direct) reasons.push(direct);
+
+    const hexes = t.match(/0x[0-9a-fA-F]{8,}/g) ?? [];
+    for (const h of hexes) {
+      const decoded = decodeRevertDataToReason(h);
+      if (decoded) reasons.push(decoded);
+    }
+
+    for (const re of patterns) {
+      const m = re.exec(t);
+      if (!m) continue;
+      const g = (m[1] ?? '').trim();
+      if (g && !/^0x[0-9a-f]*$/i.test(g)) reasons.push(g);
+    }
+  }
+
+  if (!reasons.length) return null;
+  let best = reasons[0];
+  let bestScore = scoreRevertReason(best);
+  for (const r of reasons.slice(1)) {
+    const s = scoreRevertReason(r);
+    if (s > bestScore) {
+      best = r;
+      bestScore = s;
+    }
+  }
+  return best;
 }
 
 export class TradeService {
@@ -171,14 +273,23 @@ export class TradeService {
       });
 
       return result[0];
-    } catch (e) {
-      console.warn('Quote failed', e);
+    } catch (e: any) {
+      const s = typeof e?.shortMessage === 'string' ? e.shortMessage : '';
+      const m = typeof e?.message === 'string' ? e.message : '';
+      const raw = (s || m).trim();
+      const low = raw.toLowerCase();
+      if (raw && !low.includes('execution reverted') && !low.includes('revert')) {
+        console.warn('Quote failed', raw);
+      }
       return 0n;
     }
   }
 
   private static async getBestV3Quote(chainId: number, tokenIn: string, tokenOut: string, amountIn: bigint, explicitFee?: number) {
-    const fees = explicitFee !== undefined ? [explicitFee] : [2500, 500, 100, 10000];
+    const isValidFee = (v: number | undefined) => v === 100 || v === 500 || v === 2500 || v === 10000;
+    const fees = explicitFee !== undefined
+      ? (isValidFee(explicitFee) ? [explicitFee, 2500, 500, 100, 10000] : [2500, 500, 100, 10000])
+      : [2500, 500, 100, 10000];
     const attempts = fees.map((f) =>
       this.getQuote(chainId, tokenIn, tokenOut, amountIn, f).then((out) => {
         if (out > 0n) return { amountOut: out, fee: f };
@@ -503,6 +614,7 @@ export class TradeService {
     const executionMode = settings.chains[input.chainId]?.executionMode ?? 'default';
     const isTurbo = executionMode === 'turbo';
     const percentBps = isTurbo ? (input.sellPercentBps ?? 0) : 0;
+    if (!isTurbo && amountIn <= 0n) throw new Error('Invalid amount');
     const chainSettings = settings.chains[input.chainId];
     const gasPreset = input.gasPreset ?? chainSettings.sellGasPreset ?? chainSettings.gasPreset;
     const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
@@ -537,26 +649,24 @@ export class TradeService {
     let amountInForQuote = amountIn;
     if (isTurbo) {
       if (percentBps <= 0 || percentBps > 10000) throw new Error('Invalid percent');
-      let baseBal = 0n;
-      try {
-        baseBal = await client.readContract({
-          address: input.tokenAddress as `0x${string}`,
-          abi: erc20Abi,
-          functionName: 'balanceOf',
-          args: [account.address],
-          blockTag: 'pending' as any,
-        });
-      } catch {
-        baseBal = await client.readContract({
-          address: input.tokenAddress as `0x${string}`,
-          abi: erc20Abi,
-          functionName: 'balanceOf',
-          args: [account.address],
-        });
-      }
-
-      if (baseBal === 0n && input.expectedTokenInWei) {
-        baseBal = BigInt(input.expectedTokenInWei);
+      let baseBal = input.expectedTokenInWei ? BigInt(input.expectedTokenInWei) : 0n;
+      if (baseBal <= 0n) {
+        try {
+          baseBal = await client.readContract({
+            address: input.tokenAddress as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [account.address],
+            blockTag: 'pending' as any,
+          });
+        } catch {
+          baseBal = await client.readContract({
+            address: input.tokenAddress as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [account.address],
+          });
+        }
       }
       amountInForQuote = (baseBal * BigInt(percentBps)) / 10000n;
       if (amountInForQuote <= 0n) throw new Error('No balance');
@@ -686,7 +796,11 @@ export class TradeService {
           value,
         });
         gasLimit = gasLimit * 120n / 100n;
-      } catch (e) {
+      } catch (e: any) {
+        const reason = extractRevertReasonFromError(e);
+        if (reason && scoreRevertReason(reason) >= 60) {
+          throw new Error(reason);
+        }
         console.warn('Gas estimation failed, using default', e);
       }
     }

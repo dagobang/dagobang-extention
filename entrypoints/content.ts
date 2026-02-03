@@ -136,7 +136,7 @@ export default defineContentScript({
     }
 
     if (window.location.hostname.includes('gmgn.ai') && window.location.pathname === '/') {
-      setupGmgnQuickBuyButtons();
+      // setupGmgnQuickBuyButtons();
     }
   },
 });

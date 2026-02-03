@@ -88,7 +88,7 @@ declare global {
   export type { FourmemeAPI, FourmemeTokenPrice, FourmemeTokenData, FourmemeTokenInfoResponse } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FourmemeAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FourmemeAPI')
   // @ts-ignore
-  export type { GmgnAPI, MultiTokenInfoResponse, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI'
+  export type { GmgnAPI, MultiTokenInfoResponse, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI')
   // @ts-ignore
   export type { TokenAPI } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/TokenAPI'

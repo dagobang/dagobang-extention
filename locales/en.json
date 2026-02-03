@@ -127,7 +127,8 @@
       "noBalance": "No balance",
       "tokenInfoRequired": "Token info required",
       "insufficientBalance": "Insufficient balance",
-      "transactionFailed": "Transaction failed"
+      "transactionFailed": "Transaction failed",
+      "erc20Input": "ERC20: Invalid input"
     },
     "common": {
       "token": "Token"
@@ -152,6 +153,20 @@
       "settingsNotLoaded": "Settings not loaded",
       "rpcNotConfigured": "No RPC nodes configured for current network",
       "latencyUpdated": "RPC latency updated"
+    },
+    "autotrade": {
+      "title": "Quick Limit Order",
+      "statusSettingsNotLoaded": "Settings not loaded",
+      "statusLocked": "Wallet locked",
+      "statusUnlocked": "Wallet unlocked",
+      "close": "Close",
+      "wallet": "Wallet",
+      "walletNotConnected": "Not connected",
+      "buySection": "Buy order",
+      "sellSection": "Sell order",
+      "price": "Price",
+      "buyAmount": "Buy amount (BNB)",
+      "sellPercent": "Sell percent (%)"
     },
     "status": {
       "txSent": "Tx Sent"

@@ -1,0 +1,1 @@
+export const MEME_SUFFIXS = ['4444', 'ffff', '7777', '8888']

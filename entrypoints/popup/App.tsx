@@ -41,7 +41,7 @@ function App() {
 
   const handleChildError = (raw: string) => {
     const msg = (() => {
-      if (raw === 'Invalid password') return t('popup.error.invalidPassword', locale);
+      if (raw === 'Invalid password' || raw.includes('Invalid password')) return t('popup.error.invalidPassword', locale);
       return raw;
     })();
     setError(msg);
@@ -107,22 +107,18 @@ function App() {
     return () => clearInterval(timer);
   }, []); // eslint-disable-line
 
-  // --- Views ---
+  let content: React.ReactNode;
 
   if (backupMnemonic) {
-    return <BackupView mnemonic={backupMnemonic} onConfirm={() => setBackupMnemonic(null)} locale={locale} />;
-  }
-
-  if (view === 'loading') {
-    return (
+    content = <BackupView mnemonic={backupMnemonic} onConfirm={() => setBackupMnemonic(null)} locale={locale} />;
+  } else if (view === 'loading') {
+    content = (
       <div className="w-[360px] h-[500px] bg-zinc-950 flex items-center justify-center text-zinc-500 text-xs">
         {t('common.loading', locale)}
       </div>
     );
-  }
-
-  if (view === 'welcome') {
-    return (
+  } else if (view === 'welcome') {
+    content = (
       <WelcomeView
         onBackup={setBackupMnemonic}
         onRefresh={refresh}
@@ -131,10 +127,8 @@ function App() {
         onLocaleChange={handleLocaleChange}
       />
     );
-  }
-
-  if (view === 'unlock') {
-    return (
+  } else if (view === 'unlock') {
+    content = (
       <UnlockView
         onRefresh={refresh}
         onError={handleChildError}
@@ -142,10 +136,8 @@ function App() {
         onLocaleChange={handleLocaleChange}
       />
     );
-  }
-
-  if (view === 'settings') {
-    return (
+  } else if (view === 'settings') {
+    content = (
       <SettingsView
         initialSettings={state?.settings ?? defaultSettings()}
         onRefresh={refresh}
@@ -156,11 +148,8 @@ function App() {
         onLocaleChange={handleLocaleChange}
       />
     );
-  }
-
-  // Home View
-  if (state && view === 'home') {
-    return (
+  } else if (state && view === 'home') {
+    content = (
       <HomeView
         state={state}
         balances={balances}
@@ -171,18 +160,23 @@ function App() {
         onLocaleChange={handleLocaleChange}
       />
     );
+  } else {
+    content = (
+      <div className="w-[360px] h-[500px] bg-zinc-950 flex items-center justify-center text-zinc-500 text-xs">
+        {t('common.initializing', locale)}
+      </div>
+    );
   }
 
-  // Fallback
   return (
-    <div className="w-[360px] h-[500px] bg-zinc-950 flex items-center justify-center text-zinc-500 text-xs">
-        {error ? error : t('common.initializing', locale)}
-        {error && (
-             <div className="absolute bottom-4 left-4 right-4 bg-red-950 border border-red-900 text-red-200 p-2 rounded-md text-xs shadow-lg">
-                {error}
-                <button className="absolute top-1 right-1 p-1 hover:text-white" onClick={() => setError(null)}>×</button>
-            </div>
-        )}
+    <div className="relative">
+      {content}
+      {error && (
+        <div className="absolute bottom-4 left-4 right-4 bg-red-950 border border-red-900 text-red-200 p-2 rounded-md text-xs shadow-lg">
+          {error}
+          <button className="absolute top-1 right-1 p-1 hover:text-white" onClick={() => setError(null)}>×</button>
+        </div>
+      )}
     </div>
   );
 }

@@ -5,9 +5,9 @@ import { Header } from './components/Header';
 import { BuySection } from './components/BuySection';
 import { SellSection } from './components/SellSection';
 import { Overlays } from './components/Overlays';
-import { CookingPanel } from './components/CookingPanel';
 import { AutotradePanel } from './components/AutotradePanel';
 import { RpcPanel } from './components/RpcPanel';
+import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
 import type { BgGetStateResponse, Settings } from '@/types/extention';
 import { parseCurrentUrl, type SiteInfo } from '@/utils/sites';
 import { call } from '@/utils/messaging';
@@ -52,6 +52,7 @@ export default function App() {
   const [showCookingPanel, setShowCookingPanel] = useState(false);
   const [showAutotradePanel, setShowAutotradePanel] = useState(false);
   const [showRpcPanel, setShowRpcPanel] = useState(false);
+  const [showDailyAnalysisPanel, setShowDailyAnalysisPanel] = useState(false);
   const dragging = useRef<null | { target: 'main'; startX: number; startY: number; baseX: number; baseY: number }>(null);
 
   const isUnlocked = !!state?.wallet.isUnlocked;
@@ -315,6 +316,7 @@ export default function App() {
         if (raw === 'Token info required') return t('contentUi.error.tokenInfoRequired', locale);
         if (raw === 'Insufficient balance') return t('contentUi.error.insufficientBalance', locale);
         if (raw === 'Transaction failed') return t('contentUi.error.transactionFailed', locale);
+        if (raw === 'ERC20_INPUT' || raw === 'ERC20: Invalid input') return t('contentUi.error.erc20Input', locale);
         return raw;
       })();
       setError(message);
@@ -357,6 +359,10 @@ export default function App() {
           type: 'tx:buy',
           input: { chainId: settings.chainId, tokenAddress: tokenAddressNormalized, bnbAmountWei: amountIn.toString(), tokenInfo: tokenInfo ?? undefined },
         } as const);
+        if (!res.ok) {
+          const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
+          throw new Error(detail || 'Transaction failed');
+        }
 
         const elapsed = (Date.now() - startTime) / 1000;
         setTxHash(res.txHash);
@@ -380,7 +386,10 @@ export default function App() {
           hash: res.txHash,
           chainId: settings.chainId
         });
-        if (!receipt.ok) throw new Error('Transaction failed');
+        if (!receipt.ok) {
+          const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
+          throw new Error(detail || 'Transaction failed');
+        }
         toast.success(t('contentUi.toast.buyDone', locale, [sym, amountStr]), { icon: '✅' });
         setPendingBuyTokenMinOutWei(null);
 
@@ -427,6 +436,7 @@ export default function App() {
         if (bal <= 0n && pending <= 0n) throw new Error('No balance');
       }
       const amountWei = bal > 0n ? (bal * BigInt(pct)) / 100n : 0n;
+      if (!isTurbo && amountWei <= 0n) throw new Error('Invalid amount');
 
       const sym = tokenSymbol ?? '';
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: '🔄' });
@@ -445,6 +455,10 @@ export default function App() {
             tokenInfo: tokenInfo ?? undefined
           },
         } as const);
+        if (!res.ok) {
+          const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
+          throw new Error(detail || 'Transaction failed');
+        }
 
         const elapsed = (Date.now() - startTime) / 1000;
         setTxHash(res.txHash);
@@ -458,7 +472,10 @@ export default function App() {
           hash: res.txHash,
           chainId: settings.chainId
         });
-        if (!receipt.ok) throw new Error('Transaction failed');
+        if (!receipt.ok) {
+          const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
+          throw new Error(detail || 'Transaction failed');
+        }
         toast.success(t('contentUi.toast.sellDone', locale, [sym, pct]), { icon: '✅' });
         await Promise.all([refreshToken(true), refreshAll()]);
         setPendingBuyTokenMinOutWei(null);
@@ -676,6 +693,10 @@ export default function App() {
     setShowRpcPanel((v) => !v);
   };
 
+  const handleToggleDailyAnalysisPanel = () => {
+    setShowDailyAnalysisPanel((v) => !v);
+  };
+
   return (
     <>
       <CustomToaster position={toastPosition} />
@@ -725,6 +746,8 @@ export default function App() {
                 autotradeActive={showAutotradePanel}
                 onToggleRpc={handleToggleRpcPanel}
                 rpcActive={showRpcPanel}
+                onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
+                dailyAnalysisActive={showDailyAnalysisPanel}
               />
               <div className="relative flex flex-col">
                 <BuySection
@@ -782,7 +805,7 @@ export default function App() {
             onVisibleChange={setShowCookingPanel}
             address={address}
             seedreamApiKey={settings?.seedreamApiKey ?? ''}
-          />
+          /> */}
 
           <AutotradePanel
             visible={showAutotradePanel}
@@ -790,13 +813,24 @@ export default function App() {
             settings={settings}
             isUnlocked={isUnlocked}
             address={address}
-          /> */}
+            formattedNativeBalance={formattedNativeBalance}
+            formattedTokenBalance={formattedTokenBalance}
+            tokenSymbol={tokenSymbol}
+            tokenPrice={tokenPrice}
+          />
 
           <RpcPanel
             visible={showRpcPanel}
             onVisibleChange={setShowRpcPanel}
             settings={settings}
             locale={locale}
+          />
+
+          <DailyAnalysisPanel
+            visible={showDailyAnalysisPanel}
+            onVisibleChange={setShowDailyAnalysisPanel}
+            settings={settings}
+            address={siteInfo?.walletAddress ?? address}
           />
         </>
       )}

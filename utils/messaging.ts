@@ -8,7 +8,7 @@ export async function call<T extends BgRequest>(req: T): Promise<BgResponse<T>> 
     const timeoutMs = (req.type === 'tx:waitForReceipt' || req.type === 'ai:generateLogo') ? 60000 : 5000;
     const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), timeoutMs));
     const res = (await Promise.race([p, timeout])) as any;
-    if (res?.error) {
+    if (typeof res?.error === 'string' && res.error) {
       throw new Error(res.error);
     }
     return res as BgResponse<T>;

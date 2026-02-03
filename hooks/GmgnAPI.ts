@@ -172,6 +172,38 @@ export interface TokenCandlesParams {
   limit?: number;
 }
 
+export interface DailyProfit {
+  date: number;
+  total_profit: string;
+  total_buys: number;
+  total_sells: number;
+  total_transfer_ins: number;
+  total_transfer_outs: number;
+  buy_amount_usd: string;
+  sell_amount_usd: string;
+  transfer_in_amount_usd: string;
+  transfer_out_amount_usd: string;
+  win_sells: number;
+  loss_sells: number;
+  win_profit: string;
+  loss_profit: string;
+}
+
+export interface DailyProfitResponse {
+  code: number;
+  message: string;
+  data: {
+    list: DailyProfit[];
+  };
+}
+
+export interface DailyProfitParams {
+  chain: string;
+  wallet_addresses: string[];
+  start_at: number;
+  end_at: number;
+}
+
 /**
  * Auto-extract GMGN authentication data when page loads
  */
@@ -209,6 +241,7 @@ export class GmgnAPI {
   private static readonly CANDLES_BASE_URL = 'https://gmgn.ai/api/v1';
   private static readonly TOKEN_INFO_BASE_URL = 'https://gmgn.ai/mrwapi/v1';
   private static readonly HOLDINGS_BASE_URL = 'https://gmgn.ai/td/api/v1';
+  private static readonly PROFIT_BASE_URL = 'https://gmgn.ai/pf/api/v1';
 
   /**
    * Make HTTP request using fetch API with proper headers
@@ -659,8 +692,8 @@ export class GmgnAPI {
     const queryParams = {
       worker: '0',
       chain,
-      token_address: tokenAddress,
-      wallet_addresses: walletAddress
+      token_address: tokenAddress.toLowerCase(),
+      wallet_addresses: walletAddress.toLowerCase()
     };
 
     const url = await this.buildApiUrl(endpoint, queryParams, this.HOLDINGS_BASE_URL);
@@ -734,6 +767,36 @@ export class GmgnAPI {
       return undefined;
     } catch (error) {
       console.error('Failed to fetch wallet balance:', error);
+      throw error;
+    }
+  }
+
+  public static async getDailyProfits(params: DailyProfitParams): Promise<DailyProfitResponse> {
+    const { chain, wallet_addresses, start_at, end_at } = params;
+    const endpoint = `/wallets/${chain}/daily_profits`;
+    const url = await this.buildApiUrl(endpoint, {}, this.PROFIT_BASE_URL);
+    const headers = await this.getHeaders();
+
+    const payload = {
+      wallet_addresses,
+      start_at,
+      end_at
+    };
+
+    try {
+      const response = await this.makeRequest(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      return await response.json() as DailyProfitResponse;
+    } catch (error) {
+      console.error('Failed to fetch daily profits:', error);
       throw error;
     }
   }

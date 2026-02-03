@@ -253,6 +253,11 @@ export class FourmemeAPI {
           quote_token_address: '',
           pool_pair: data.dexPair?.pairAddress,
           dex_type: `${data.dexType}${data.dexPair?.pancakeVersion ? `_V${data.dexPair?.pancakeVersion}` : ""}`,
+          tokenPrice: {
+            price: data.tokenPrice?.price || "0",
+            marketCap: data.tokenPrice?.marketCap || "0",
+            timestamp: Number(data.tokenPrice?.modifyDate || 0),
+          },
         };
       }
 

@@ -128,6 +128,17 @@ export type TxSellInput = {
   tokenInfo?: TokenInfo;
 };
 
+export type TxWaitForReceiptError = {
+  name?: string;
+  message: string;
+  shortMessage?: string;
+  details?: string;
+  meta?: string[];
+  cause?: string;
+  code?: string | number;
+  data?: unknown;
+};
+
 export type BgRequest =
   | { type: 'bg:ping' }
   | { type: 'bg:openPopup' }
@@ -207,11 +218,24 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'tx:approve' }
   ? { ok: true; txHash: `0x${string}` }
   : T extends { type: 'tx:buy' }
-  ? { ok: true; txHash: `0x${string}`; tokenMinOutWei: string }
+  ? (
+      | { ok: true; txHash: `0x${string}`; tokenMinOutWei: string }
+      | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
+    )
   : T extends { type: 'tx:sell' }
-  ? { ok: true; txHash: `0x${string}` }
+  ? (
+      | { ok: true; txHash: `0x${string}` }
+      | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
+    )
   : T extends { type: 'tx:waitForReceipt' }
-  ? { ok: true; blockNumber: number }
+  ? {
+      ok: boolean;
+      txHash: `0x${string}`;
+      blockNumber?: number;
+      status?: 'success' | 'reverted';
+      revertReason?: string;
+      error?: TxWaitForReceiptError;
+    }
   : T extends { type: 'tx:approveMaxForSellIfNeeded' }
   ? { ok: true; txHash?: `0x${string}` }
   : T extends { type: 'tx:bloxroutePrivate' }
