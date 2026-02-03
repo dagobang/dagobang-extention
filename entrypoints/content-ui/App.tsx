@@ -5,7 +5,7 @@ import { Header } from './components/Header';
 import { BuySection } from './components/BuySection';
 import { SellSection } from './components/SellSection';
 import { Overlays } from './components/Overlays';
-import { AutotradePanel } from './components/AutotradePanel';
+import { LimitTradePanel } from './components/LimitTradePanel';
 import { RpcPanel } from './components/RpcPanel';
 import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
 import type { BgGetStateResponse, Settings } from '@/types/extention';
@@ -49,8 +49,7 @@ export default function App() {
     return { x: defaultX, y: defaultY };
   });
   const posRef = useRef(pos);
-  const [showCookingPanel, setShowCookingPanel] = useState(false);
-  const [showAutotradePanel, setShowAutotradePanel] = useState(false);
+  const [showLimitTradePanel, setShowLimitTradePanel] = useState(false);
   const [showRpcPanel, setShowRpcPanel] = useState(false);
   const [showDailyAnalysisPanel, setShowDailyAnalysisPanel] = useState(false);
   const dragging = useRef<null | { target: 'main'; startX: number; startY: number; baseX: number; baseY: number }>(null);
@@ -681,12 +680,8 @@ export default function App() {
     call({ type: 'bg:openPopup' });
   };
 
-  const handleToggleCookingPanel = () => {
-    setShowCookingPanel((v) => !v);
-  };
-
-  const handleToggleAutotradePanel = () => {
-    setShowAutotradePanel((v) => !v);
+  const handleToggleLimitTradePanel = () => {
+    setShowLimitTradePanel((v) => !v);
   };
 
   const handleToggleRpcPanel = () => {
@@ -740,10 +735,8 @@ export default function App() {
                 onMinimize={() => setMinimized(true)}
                 isEditing={isEditing}
                 onEditToggle={handleEditToggle}
-                onToggleCooking={handleToggleCookingPanel}
-                cookingActive={showCookingPanel}
-                onToggleAutotrade={handleToggleAutotradePanel}
-                autotradeActive={showAutotradePanel}
+                onToggleLimitTrade={handleToggleLimitTradePanel}
+                autotradeActive={showLimitTradePanel}
                 onToggleRpc={handleToggleRpcPanel}
                 rpcActive={showRpcPanel}
                 onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
@@ -800,16 +793,9 @@ export default function App() {
             </div>
           )}
 
-          {/* <CookingPanel
-            visible={showCookingPanel}
-            onVisibleChange={setShowCookingPanel}
-            address={address}
-            seedreamApiKey={settings?.seedreamApiKey ?? ''}
-          /> */}
-
-          <AutotradePanel
-            visible={showAutotradePanel}
-            onVisibleChange={setShowAutotradePanel}
+          <LimitTradePanel
+            visible={showLimitTradePanel}
+            onVisibleChange={setShowLimitTradePanel}
             settings={settings}
             isUnlocked={isUnlocked}
             address={address}

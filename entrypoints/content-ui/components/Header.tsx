@@ -3,9 +3,7 @@ import {
   X,
   GripHorizontal,
   Check,
-  Zap,
-  Flame,
-  LineChart,
+  Zap, LineChart
 } from 'lucide-react';
 import type { PointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
@@ -15,9 +13,7 @@ type HeaderProps = {
   onMinimize: () => void;
   isEditing: boolean;
   onEditToggle: () => void;
-  onToggleCooking: () => void;
-  cookingActive: boolean;
-  onToggleAutotrade: () => void;
+  onToggleLimitTrade: () => void;
   autotradeActive: boolean;
   onToggleRpc: () => void;
   rpcActive: boolean;
@@ -30,9 +26,7 @@ export function Header({
   onMinimize,
   isEditing,
   onEditToggle,
-  onToggleCooking,
-  cookingActive,
-  onToggleAutotrade,
+  onToggleLimitTrade,
   autotradeActive,
   onToggleRpc,
   rpcActive,
@@ -49,7 +43,7 @@ export function Header({
           <Logo size={{ width: '24px', height: '24px' }} />
         </div>
 
-        {/* <button
+        <button
           type="button"
           className={
             autotradeActive
@@ -61,29 +55,13 @@ export function Header({
           }}
           onClick={(e) => {
             e.stopPropagation();
-            onToggleAutotrade();
+            onToggleLimitTrade();
           }}
         >
           <Zap size={14} />
-        </button> */}
+        </button>
 
-        {/* <button
-          type="button"
-          className={
-            cookingActive
-              ? 'flex items-center justify-center rounded-full bg-amber-500/20 text-amber-300 p-1'
-              : 'flex items-center justify-center rounded-full border border-zinc-700 text-amber-300 p-1 hover:border-amber-400'
-          }
-          onPointerDown={(e) => {
-            e.stopPropagation();
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleCooking();
-          }}
-        >
-          <Flame size={14} />
-        </button> */}
+       
 
         <button
           type="button"
