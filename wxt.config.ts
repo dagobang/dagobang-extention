@@ -7,7 +7,7 @@ export default defineConfig({
     name: 'Dagobang 打狗棒',
     description: 'Dagobang non-custodial Meme Trading Tool',
     version: '0.1.1',
-    permissions: ['storage'],
+    permissions: ['storage', 'alarms'],
     host_permissions: [
       'https://*.gmgn.ai/*',
       'https://gmgn.ai/*',

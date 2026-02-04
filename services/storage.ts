@@ -1,11 +1,12 @@
 import { browser } from 'wxt/browser';
-import type { Settings, WalletPayload, Account } from '../types/extention';
+import type { Settings, WalletPayload, Account, LimitOrder } from '../types/extention';
 import { defaultSettings } from '../utils/defaults';
 
 const KEYS = {
   wallet: 'db_wallet_v1',
   settings: 'db_settings_v1',
   unlocked: 'db_unlocked_v1',
+  limitOrders: 'db_limit_orders_v1',
 } as const;
 
 export type StoredWallet = {
@@ -69,4 +70,15 @@ export async function setUnlockedState(state: UnlockedState): Promise<void> {
 
 export async function clearUnlockedState(): Promise<void> {
   await browser.storage.session.remove(KEYS.unlocked);
+}
+
+export async function getLimitOrders(): Promise<LimitOrder[]> {
+  const res = await browser.storage.local.get(KEYS.limitOrders);
+  const stored = res[KEYS.limitOrders] as unknown;
+  if (!Array.isArray(stored)) return [];
+  return stored as LimitOrder[];
+}
+
+export async function setLimitOrders(orders: LimitOrder[]): Promise<void> {
+  await browser.storage.local.set({ [KEYS.limitOrders]: orders });
 }

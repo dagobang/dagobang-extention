@@ -803,6 +803,8 @@ export default function App() {
             formattedTokenBalance={formattedTokenBalance}
             tokenSymbol={tokenSymbol}
             tokenPrice={tokenPrice}
+            tokenAddress={tokenAddressNormalized}
+            tokenInfo={tokenInfo}
           />
 
           <RpcPanel

@@ -5,11 +5,12 @@ import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
 import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
-import type { BgRequest, Settings } from '@/types/extention';
+import { getLimitOrders, setLimitOrders } from '@/services/storage';
+import type { BgRequest, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token.fourmeme';
-import FourmemeAPI from '@/hooks/FourmemeAPI';
-import FlapAPI from '@/hooks/FlapAPI';
-import BloxRouterAPI from '@/hooks/BloxRouterAPI';
+import FourmemeAPI from '@/services/fourmeme.api';
+import FlapAPI from '@/services/flap.api';
+import BloxRouterAPI from '@/services/blox-router.api';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
@@ -379,6 +380,247 @@ export default defineBackground(() => {
     return true;
   };
 
+  const makeLimitOrderId = () => {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      return `lo_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    }
+  };
+
+  const listLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
+    const all = await getLimitOrders();
+    const filtered = all.filter((o) => {
+      if (o.chainId !== chainId) return false;
+      if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return false;
+      return true;
+    });
+    filtered.sort((a, b) => b.createdAtMs - a.createdAtMs);
+    return filtered;
+  };
+
+  const createLimitOrder = async (input: LimitOrderCreateInput) => {
+    const triggerPriceUsd = Number(input.triggerPriceUsd);
+    if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) throw new Error('Invalid trigger price');
+    if (!input.tokenInfo) throw new Error('Token info required');
+    if (input.side === 'buy') {
+      if (!input.buyBnbAmountWei) throw new Error('Buy amount required');
+      const v = BigInt(input.buyBnbAmountWei);
+      if (v <= 0n) throw new Error('Invalid buy amount');
+    } else {
+      const bps = input.sellPercentBps ?? 0;
+      if (!Number.isFinite(bps) || bps <= 0 || bps > 10000) throw new Error('Invalid sell percent');
+    }
+
+    const order: LimitOrder = {
+      id: makeLimitOrderId(),
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      tokenSymbol: input.tokenSymbol ?? null,
+      side: input.side,
+      triggerPriceUsd,
+      buyBnbAmountWei: input.buyBnbAmountWei,
+      sellPercentBps: input.sellPercentBps,
+      createdAtMs: Date.now(),
+      status: 'open',
+      tokenInfo: input.tokenInfo,
+    };
+
+    const all = await getLimitOrders();
+    await setLimitOrders([order, ...all]);
+    return order;
+  };
+
+  const cancelLimitOrder = async (id: string) => {
+    const all = await getLimitOrders();
+    const next = all.map((o) => (o.id === id && o.status !== 'executed' ? { ...o, status: 'cancelled' as const } : o));
+    await setLimitOrders(next);
+    return next;
+  };
+
+  const cancelAllLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
+    const all = await getLimitOrders();
+    const next = all.map((o) => {
+      if (o.chainId !== chainId) return o;
+      if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return o;
+      if (o.status === 'executed') return o;
+      return { ...o, status: 'cancelled' as const };
+    });
+    await setLimitOrders(next);
+    return next;
+  };
+
+  const executeLimitOrder = async (order: LimitOrder) => {
+    if (!order.tokenInfo) throw new Error('Token info required');
+    if (order.side === 'buy') {
+      if (!order.buyBnbAmountWei) throw new Error('Buy amount required');
+      const res = await TradeService.buy({
+        chainId: order.chainId,
+        tokenAddress: order.tokenAddress,
+        bnbAmountWei: order.buyBnbAmountWei,
+        tokenInfo: order.tokenInfo,
+      });
+      return res.txHash as `0x${string}`;
+    }
+
+    const percentBps = order.sellPercentBps ?? 0;
+    if (percentBps <= 0 || percentBps > 10000) throw new Error('Invalid sell percent');
+
+    const account = await WalletService.getSigner();
+    const client = await RpcService.getClient();
+    const balance = await client.readContract({
+      address: order.tokenAddress,
+      abi: erc20AbiLite,
+      functionName: 'balanceOf',
+      args: [account.address],
+    });
+    const amountIn = (balance * BigInt(percentBps)) / 10000n;
+    if (amountIn <= 0n) throw new Error('No balance');
+
+    const res = await TradeService.sell({
+      chainId: order.chainId,
+      tokenAddress: order.tokenAddress,
+      tokenAmountWei: amountIn.toString(),
+      tokenInfo: order.tokenInfo,
+    });
+    return res as `0x${string}`;
+  };
+
+  const tickLimitOrders = async (chainId: number, tokenAddress: `0x${string}`, priceUsd: number) => {
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return { triggered: [], executed: [], failed: [] as Array<{ id: string; error: string }> };
+
+    const all = await getLimitOrders();
+    const keyAddr = tokenAddress.toLowerCase();
+    const candidates = all.filter((o) => o.chainId === chainId && o.status === 'open' && o.tokenAddress.toLowerCase() === keyAddr);
+    if (!candidates.length) return { triggered: [], executed: [], failed: [] as Array<{ id: string; error: string }> };
+
+    const triggered: string[] = [];
+    const executed: string[] = [];
+    const failed: Array<{ id: string; error: string }> = [];
+
+    let next = all.slice();
+    for (const o of candidates) {
+      const hit = o.side === 'buy' ? priceUsd <= o.triggerPriceUsd : priceUsd >= o.triggerPriceUsd;
+      if (!hit) continue;
+
+      triggered.push(o.id);
+      next = next.map((x) => (x.id === o.id ? { ...x, status: 'triggered' as const } : x));
+      await setLimitOrders(next);
+
+      try {
+        const txHash = await executeLimitOrder({ ...o, status: 'triggered' });
+        executed.push(o.id);
+        next = next.map((x) => (x.id === o.id ? { ...x, status: 'executed' as const, txHash } : x));
+        await setLimitOrders(next);
+      } catch (e: any) {
+        const msg = typeof e?.message === 'string' ? e.message : String(e);
+        failed.push({ id: o.id, error: msg });
+        next = next.map((x) => (x.id === o.id ? { ...x, status: 'failed' as const, lastError: msg } : x));
+        await setLimitOrders(next);
+      }
+    }
+
+    return { triggered, executed, failed };
+  };
+
+  const LIMIT_SCAN_ALARM = 'limitOrder:scan';
+  const LIMIT_SCAN_INTERVAL_MS = 3000;
+  let limitScanRunning = false;
+  let limitScanLastAtMs = 0;
+  let limitScanLastOk = true;
+  let limitScanLastError: string | null = null;
+
+  const scanAndTriggerLimitOrdersOnce = async () => {
+    if (limitScanRunning) return;
+    limitScanRunning = true;
+    const startedAt = Date.now();
+    limitScanLastOk = true;
+    limitScanLastError = null;
+    broadcastStateChange().catch(() => { });
+    try {
+      const all = await getLimitOrders();
+      const openOrders = all.filter((o) => o.status === 'open');
+      if (!openOrders.length) return;
+
+      const walletStatus = await WalletService.getStatus();
+      if (walletStatus.locked || !walletStatus.address) return;
+
+      let next = all.slice();
+      let changed = false;
+
+      const byToken = new Map<string, LimitOrder[]>();
+      for (const o of openOrders) {
+        const k = `${o.chainId}:${o.tokenAddress.toLowerCase()}`;
+        const arr = byToken.get(k) ?? [];
+        arr.push(o);
+        byToken.set(k, arr);
+      }
+
+      for (const [, orders] of byToken) {
+        const base = orders[0];
+        const priceUsd = await TokenService.getTokenPriceUsdFromRpc({
+          chainId: base.chainId,
+          tokenAddress: base.tokenAddress,
+          tokenInfo: base.tokenInfo ?? null,
+          cacheTtlMs: LIMIT_SCAN_INTERVAL_MS,
+        });
+        if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
+
+        for (const o of orders) {
+          const hit = o.side === 'buy' ? priceUsd <= o.triggerPriceUsd : priceUsd >= o.triggerPriceUsd;
+          if (!hit) continue;
+
+          next = next.map((x) => (x.id === o.id ? { ...x, status: 'triggered' as const } : x));
+          await setLimitOrders(next);
+          changed = true;
+
+          try {
+            const txHash = await executeLimitOrder({ ...o, status: 'triggered' });
+            next = next.map((x) => (x.id === o.id ? { ...x, status: 'executed' as const, txHash } : x));
+            await setLimitOrders(next);
+          } catch (e: any) {
+            const msg = typeof e?.message === 'string' ? e.message : String(e);
+            next = next.map((x) => (x.id === o.id ? { ...x, status: 'failed' as const, lastError: msg } : x));
+            await setLimitOrders(next);
+          }
+        }
+      }
+
+      if (changed) {
+        broadcastStateChange();
+      }
+      limitScanLastOk = true;
+      limitScanLastError = null;
+    } catch (e: any) {
+      const msg = typeof e?.message === 'string' ? e.message : String(e);
+      limitScanLastOk = false;
+      limitScanLastError = msg;
+      throw e;
+    } finally {
+      limitScanLastAtMs = startedAt;
+      limitScanRunning = false;
+      broadcastStateChange().catch(() => { });
+    }
+  };
+
+  const scheduleNextLimitScan = () => {
+    try {
+      (browser as any).alarms?.create(LIMIT_SCAN_ALARM, { when: Date.now() + LIMIT_SCAN_INTERVAL_MS });
+    } catch {
+    }
+  };
+
+  try {
+    (browser as any).alarms?.onAlarm?.addListener((alarm: any) => {
+      if (!alarm || alarm.name !== LIMIT_SCAN_ALARM) return;
+      scanAndTriggerLimitOrdersOnce()
+        .catch(() => { })
+        .finally(() => scheduleNextLimitScan());
+    });
+    scheduleNextLimitScan();
+  } catch {
+  }
+
   const handleAutoTradeWebSocket = async (payload: any) => {
     try {
       if (!payload || payload.direction !== 'receive') return;
@@ -608,6 +850,16 @@ export default defineBackground(() => {
             return { ok: true, token0, token1 };
           }
 
+          case 'token:getPriceUsd': {
+            const priceUsd = await TokenService.getTokenPriceUsdFromRpc({
+              chainId: msg.chainId,
+              tokenAddress: msg.tokenAddress,
+              tokenInfo: msg.tokenInfo ?? null,
+              cacheTtlMs: 3000,
+            });
+            return { ok: true, priceUsd };
+          }
+
           case 'token:getTokenInfo:fourmeme':
             return { ok: true, ...(await TokenFourmemeService.getTokenInfo(msg.chainId, msg.tokenAddress)) };
 
@@ -700,6 +952,60 @@ export default defineBackground(() => {
               throw new Error('Seedream4.5 response missing image url');
             }
             return { ok: true, imageUrl };
+          }
+
+          case 'limitOrder:list': {
+            const orders = await listLimitOrders(msg.chainId, msg.tokenAddress);
+            return { ok: true, orders };
+          }
+
+          case 'limitOrder:create': {
+            const order = await createLimitOrder(msg.input);
+            broadcastStateChange();
+            return { ok: true, order };
+          }
+
+          case 'limitOrder:cancel': {
+            const orders = await cancelLimitOrder(msg.id);
+            broadcastStateChange();
+            return { ok: true, orders };
+          }
+
+          case 'limitOrder:cancelAll': {
+            const orders = await cancelAllLimitOrders(msg.chainId, msg.tokenAddress);
+            broadcastStateChange();
+            return { ok: true, orders };
+          }
+
+          case 'limitOrder:scanStatus': {
+            let totalOrders = 0;
+            let openOrders = 0;
+            try {
+              const all = await getLimitOrders();
+              totalOrders = all.filter((o) => o.chainId === msg.chainId).length;
+              openOrders = all.filter((o) => o.chainId === msg.chainId && o.status === 'open').length;
+            } catch {
+            }
+
+            const res: ({ ok: true } & LimitOrderScanStatus) = {
+              ok: true,
+              intervalMs: LIMIT_SCAN_INTERVAL_MS,
+              running: limitScanRunning,
+              lastScanAtMs: limitScanLastAtMs,
+              lastScanOk: limitScanLastOk,
+              lastScanError: limitScanLastError,
+              totalOrders,
+              openOrders,
+            };
+            return res;
+          }
+
+          case 'limitOrder:tick': {
+            const res = await tickLimitOrders(msg.chainId, msg.tokenAddress, msg.priceUsd);
+            if (res.triggered.length || res.executed.length || res.failed.length) {
+              broadcastStateChange();
+            }
+            return { ok: true, ...res };
           }
 
           case 'tx:buy': {

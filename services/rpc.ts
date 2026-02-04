@@ -1,7 +1,7 @@
 import { createPublicClient, http, fallback, type PublicClient } from 'viem';
 import { bsc } from 'viem/chains';
 import { SettingsService } from './settings';
-import BloxRouterAPI from '@/hooks/BloxRouterAPI';
+import BloxRouterAPI from '@/services/blox-router.api';
 
 export class RpcService {
   private static clientCache: { chainId: number; urls: string[]; client: PublicClient } | null = null;

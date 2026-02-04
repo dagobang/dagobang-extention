@@ -13,8 +13,6 @@ import { quoterV2Abi, pairV2Abi, factoryV2Abi, dagobangAbi } from '@/constants/c
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const ZERO32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
-
-
 const QUOTER_V2_BSC = '0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997';
 const WBNB_BSC = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
 
@@ -412,6 +410,17 @@ export class TradeService {
     }
 
     return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: undefined as number | undefined, poolAddress: ZERO_ADDRESS };
+  }
+
+  static async quoteBestExactIn(
+    chainId: number,
+    tokenIn: `0x${string}`,
+    tokenOut: `0x${string}`,
+    amountIn: bigint,
+    opts?: { v3Fee?: number; v2HintPair?: string }
+  ): Promise<{ amountOut: bigint; swapType: number; fee?: number; poolAddress: string }> {
+    const q = await this.getBestDexExactIn(chainId, tokenIn, tokenOut, amountIn, opts);
+    return { amountOut: q.amountOut, swapType: q.swapType, fee: q.fee, poolAddress: q.poolAddress };
   }
 
   private static isInnerDisk(tokenInfo: TokenInfo): boolean {

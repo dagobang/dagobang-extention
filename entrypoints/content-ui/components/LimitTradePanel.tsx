@@ -1,6 +1,10 @@
+import { browser } from 'wxt/browser';
 import { useEffect, useRef, useState } from 'react';
-import type { Settings } from '@/types/extention';
+import { parseEther, formatEther } from 'viem';
+import type { Settings, LimitOrder, LimitOrderScanStatus } from '@/types/extention';
+import type { TokenInfo } from '@/types/token';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
+import { call } from '@/utils/messaging';
 
 type LimitTradePanelProps = {
   visible: boolean;
@@ -12,19 +16,8 @@ type LimitTradePanelProps = {
   formattedNativeBalance: string;
   formattedTokenBalance: string;
   tokenSymbol: string | null;
-};
-
-type MockLimitOrder = {
-  id: string;
-  tokenSymbol: string;
-  tokenAddress: string;
-  side: 'buy' | 'sell';
-  triggerPrice: number;
-  payAmount: string;
-  paySymbol: string;
-  expectedReceive: string;
-  receiveSymbol: string;
-  createdAtMs: number;
+  tokenAddress: `0x${string}` | null;
+  tokenInfo: TokenInfo | null;
 };
 
 export function LimitTradePanel({
@@ -37,6 +30,8 @@ export function LimitTradePanel({
   formattedNativeBalance,
   formattedTokenBalance,
   tokenSymbol,
+  tokenAddress,
+  tokenInfo,
 }: LimitTradePanelProps) {
   const panelWidth = 780;
   const [pos, setPos] = useState(() => {
@@ -99,61 +94,8 @@ export function LimitTradePanel({
   const [buyAmount, setBuyAmount] = useState('');
   const [sellPercent, setSellPercent] = useState('');
   const [onlyCurrentToken, setOnlyCurrentToken] = useState(false);
-  const [orders, setOrders] = useState<MockLimitOrder[]>(() => {
-    const now = Date.now();
-    const currentSym = tokenSymbol || 'TOKEN';
-    const base: MockLimitOrder[] = [
-      {
-        id: 'o1',
-        tokenSymbol: currentSym,
-        tokenAddress: '0x1111111111111111111111111111111111111111',
-        side: 'buy',
-        triggerPrice: 0.0000123,
-        payAmount: '0.20',
-        paySymbol: 'BNB',
-        expectedReceive: '158000',
-        receiveSymbol: currentSym,
-        createdAtMs: now - 2 * 60 * 1000,
-      },
-      {
-        id: 'o2',
-        tokenSymbol: currentSym,
-        tokenAddress: '0x1111111111111111111111111111111111111111',
-        side: 'sell',
-        triggerPrice: 0.0000235,
-        payAmount: '25%',
-        paySymbol: currentSym,
-        expectedReceive: '0.45',
-        receiveSymbol: 'BNB',
-        createdAtMs: now - 15 * 60 * 1000,
-      },
-      {
-        id: 'o3',
-        tokenSymbol: 'FOO',
-        tokenAddress: '0x2222222222222222222222222222222222222222',
-        side: 'buy',
-        triggerPrice: 0.12,
-        payAmount: '50',
-        paySymbol: 'USDT',
-        expectedReceive: '420',
-        receiveSymbol: 'FOO',
-        createdAtMs: now - 60 * 60 * 1000,
-      },
-      {
-        id: 'o4',
-        tokenSymbol: 'BAR',
-        tokenAddress: '0x3333333333333333333333333333333333333333',
-        side: 'sell',
-        triggerPrice: 1.05,
-        payAmount: '100%',
-        paySymbol: 'BAR',
-        expectedReceive: '0.98',
-        receiveSymbol: 'BNB',
-        createdAtMs: now - 3 * 60 * 60 * 1000,
-      },
-    ];
-    return base;
-  });
+  const [orders, setOrders] = useState<LimitOrder[]>([]);
+  const [scanStatus, setScanStatus] = useState<LimitOrderScanStatus | null>(null);
 
   const locale: Locale = normalizeLocale(settings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
@@ -187,15 +129,142 @@ export function LimitTradePanel({
       return new Date(ms).toISOString();
     }
   };
-
-  const filteredOrders = onlyCurrentToken && tokenSymbol
-    ? orders.filter((o) => o.tokenSymbol === tokenSymbol)
+  const explorerTxUrl = (txHash: string) => {
+    return `https://bscscan.com/tx/${txHash}`;
+  };
+  const [copiedValue, setCopiedValue] = useState<string | null>(null);
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedValue(text);
+      window.setTimeout(() => setCopiedValue((v) => (v === text ? null : v)), 1000);
+    } catch {
+    }
+  };
+  const filteredOrders = onlyCurrentToken && tokenAddress
+    ? orders.filter((o) => o.tokenAddress.toLowerCase() === tokenAddress.toLowerCase())
     : orders;
+  const refreshOrders = async () => {
+    if (!settings) return;
+    const req = onlyCurrentToken && tokenAddress
+      ? ({ type: 'limitOrder:list', chainId, tokenAddress } as const)
+      : ({ type: 'limitOrder:list', chainId } as const);
+    const res = await call(req);
+    setOrders(res.orders);
+  };
+  const refreshScanStatus = async () => {
+    if (!settings) return;
+    const res = await call({ type: 'limitOrder:scanStatus', chainId } as const);
+    const { ok: _ok, ...status } = res;
+    setScanStatus(status);
+  };
+  const refreshRunningRef = useRef(false);
+  const lastRefreshAtRef = useRef(0);
+  const requestRefreshOrders = async (minIntervalMs = 800) => {
+    if (!visible) return;
+    if (!settings) return;
+    const now = Date.now();
+    if (refreshRunningRef.current) return;
+    if (now - lastRefreshAtRef.current < minIntervalMs) return;
+    refreshRunningRef.current = true;
+    lastRefreshAtRef.current = now;
+    try {
+      await refreshOrders();
+    } finally {
+      refreshRunningRef.current = false;
+    }
+  };
+  const scanRefreshRunningRef = useRef(false);
+  const lastScanRefreshAtRef = useRef(0);
+  const requestRefreshScanStatus = async (minIntervalMs = 800) => {
+    if (!visible) return;
+    if (!settings) return;
+    const now = Date.now();
+    if (scanRefreshRunningRef.current) return;
+    if (now - lastScanRefreshAtRef.current < minIntervalMs) return;
+    scanRefreshRunningRef.current = true;
+    lastScanRefreshAtRef.current = now;
+    try {
+      await refreshScanStatus();
+    } finally {
+      scanRefreshRunningRef.current = false;
+    }
+  };
+
+  const parsePositiveNumber = (v: string) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return n;
+  };
+
+  const toPercentBps = (v: string) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    const bps = Math.round(n * 100);
+    if (bps <= 0 || bps > 10000) return null;
+    return bps;
+  };
+
+  const formatPay = (o: LimitOrder) => {
+    if (o.side === 'buy') {
+      const wei = o.buyBnbAmountWei ? BigInt(o.buyBnbAmountWei) : 0n;
+      const v = Number(formatEther(wei));
+      return Number.isFinite(v) && v > 0 ? `${v} BNB` : '-';
+    }
+    const bps = o.sellPercentBps ?? 0;
+    if (!bps) return '-';
+    const pct = bps / 100;
+    return `${pct}%`;
+  };
+
+  const formatStatus = (o: LimitOrder) => {
+    if (o.status === 'open') return '等待触发';
+    if (o.status === 'triggered') return '触发中';
+    if (o.status === 'executed') return '已执行';
+    if (o.status === 'failed') return '失败';
+    if (o.status === 'cancelled') return '已取消';
+    return o.status;
+  };
+  const statusBadgeClass = (o: LimitOrder) => {
+    if (o.status === 'open') return 'border-zinc-700/70 bg-zinc-800/30 text-zinc-300';
+    if (o.status === 'triggered') return 'border-amber-700/60 bg-amber-900/20 text-amber-300';
+    if (o.status === 'executed') return 'border-emerald-700/60 bg-emerald-900/20 text-emerald-300';
+    if (o.status === 'failed') return 'border-rose-700/60 bg-rose-900/20 text-rose-300';
+    if (o.status === 'cancelled') return 'border-zinc-700/60 bg-zinc-900/20 text-zinc-400';
+    return 'border-zinc-700/60 bg-zinc-900/20 text-zinc-400';
+  };
 
   useEffect(() => {
     if (!visible) return;
-    if (tokenPrice == null || !Number.isFinite(tokenPrice) || tokenPrice <= 0) tokenPrice = 0;
-    const formatted = String(Number(tokenPrice.toFixed(6)));
+    refreshOrders().catch(() => { });
+    refreshScanStatus().catch(() => { });
+  }, [visible, chainId, onlyCurrentToken, tokenAddress]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const listener = (message: any) => {
+      if (message?.type === 'bg:stateChanged') {
+        requestRefreshOrders().catch(() => { });
+        requestRefreshScanStatus().catch(() => { });
+      }
+    };
+    browser.runtime.onMessage.addListener(listener);
+    requestRefreshOrders(0).catch(() => { });
+    requestRefreshScanStatus(0).catch(() => { });
+    const timer = setInterval(() => {
+      requestRefreshOrders().catch(() => { });
+      requestRefreshScanStatus().catch(() => { });
+    }, 3000);
+    return () => {
+      clearInterval(timer);
+      browser.runtime.onMessage.removeListener(listener);
+    };
+  }, [visible, chainId, onlyCurrentToken, tokenAddress, settings]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const price = tokenPrice == null || !Number.isFinite(tokenPrice) || tokenPrice <= 0 ? 0 : tokenPrice;
+    const formatted = String(Number(price.toFixed(6)));
     setBuyPrice((prev) => (prev ? prev : formatted));
     setSellPrice((prev) => (prev ? prev : formatted));
   }, [visible, tokenPrice]);
@@ -203,6 +272,12 @@ export function LimitTradePanel({
   if (!visible) {
     return null;
   }
+
+  const buyTrigger = parsePositiveNumber(buyPrice);
+  const sellTrigger = parsePositiveNumber(sellPrice);
+  const buyCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || !buyAmount || buyTrigger == null;
+  const sellBps = toPercentBps(sellPercent);
+  const sellCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || sellBps == null || sellTrigger == null;
 
   return (
     <div
@@ -298,6 +373,34 @@ export function LimitTradePanel({
                   </button>
                 ))}
               </div>
+
+              <button
+                type="button"
+                disabled={buyCreateDisabled}
+                className="w-full px-2 py-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={async () => {
+                  if (!tokenAddress || !tokenInfo) return;
+                  const trigger = parsePositiveNumber(buyPrice);
+                  if (trigger == null) return;
+                  const amountWei = parseEther(buyAmount).toString();
+                  await call({
+                    type: 'limitOrder:create',
+                    input: {
+                      chainId,
+                      tokenAddress,
+                      tokenSymbol,
+                      side: 'buy',
+                      triggerPriceUsd: trigger,
+                      buyBnbAmountWei: amountWei,
+                      tokenInfo,
+                    },
+                  });
+                  setBuyAmount('');
+                  await refreshOrders();
+                }}
+              >
+                创建买入限价单
+              </button>
             </div>
 
             <div className="flex-1 min-w-0 space-y-2 pl-3">
@@ -367,12 +470,59 @@ export function LimitTradePanel({
                   </button>
                 ))}
               </div>
+
+              <button
+                type="button"
+                disabled={sellCreateDisabled}
+                className="w-full px-2 py-1.5 rounded border border-rose-500/30 bg-rose-500/10 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={async () => {
+                  if (!tokenAddress || !tokenInfo) return;
+                  const trigger = parsePositiveNumber(sellPrice);
+                  const bps = toPercentBps(sellPercent);
+                  if (trigger == null || bps == null) return;
+                  await call({
+                    type: 'limitOrder:create',
+                    input: {
+                      chainId,
+                      tokenAddress,
+                      tokenSymbol,
+                      side: 'sell',
+                      triggerPriceUsd: trigger,
+                      sellPercentBps: bps,
+                      tokenInfo,
+                    },
+                  });
+                  setSellPercent('');
+                  await refreshOrders();
+                }}
+              >
+                创建卖出限价单
+              </button>
             </div>
           </div>
           <div className="pt-1">
             <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="text-[11px] font-semibold text-zinc-200">
-                限价单列表
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="text-[11px] font-semibold text-zinc-200">
+                  限价单列表
+                </div>
+                {scanStatus ? (
+                  <div className="flex items-center gap-1 text-[10px] text-zinc-500 min-w-0">
+                    <span
+                      className={[
+                        'h-2 w-2 rounded-full shrink-0',
+                        scanStatus.running ? 'bg-emerald-400 animate-pulse' : scanStatus.lastScanOk ? 'bg-emerald-400/70' : 'bg-rose-400/80',
+                      ].join(' ')}
+                    />
+                    <span className="shrink-0">
+                      {scanStatus.running ? '扫描中' : scanStatus.lastScanOk ? '空闲' : '异常'}
+                    </span>
+                    <span className="shrink-0">·</span>
+                    <span className="truncate" title={scanStatus.lastScanAtMs ? formatTime(scanStatus.lastScanAtMs) : ''}>
+                      {scanStatus.lastScanAtMs ? `上次: ${formatTime(scanStatus.lastScanAtMs)}` : '上次: -'}
+                    </span>
+                  </div>
+                ) : null}
               </div>
               <div className="flex items-center gap-2">
                 <label className="flex items-center gap-1 cursor-pointer select-none text-[11px] text-zinc-300">
@@ -380,7 +530,7 @@ export function LimitTradePanel({
                     type="checkbox"
                     className="h-3 w-3 accent-emerald-500"
                     checked={onlyCurrentToken}
-                    disabled={!tokenSymbol}
+                    disabled={!tokenAddress}
                     onChange={(e) => setOnlyCurrentToken(e.target.checked)}
                   />
                   <span>只看当前代币{tokenSymbol ? `（${tokenSymbol}）` : ''}</span>
@@ -389,7 +539,14 @@ export function LimitTradePanel({
                   type="button"
                   disabled={!orders.length}
                   className="px-2 py-1 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={() => setOrders([])}
+                  onClick={async () => {
+                    if (!settings) return;
+                    const req = onlyCurrentToken && tokenAddress
+                      ? ({ type: 'limitOrder:cancelAll', chainId, tokenAddress } as const)
+                      : ({ type: 'limitOrder:cancelAll', chainId } as const);
+                    const res = await call(req);
+                    setOrders(res.orders);
+                  }}
                 >
                   全部取消
                 </button>
@@ -408,29 +565,79 @@ export function LimitTradePanel({
               </div>
 
               {filteredOrders.length ? filteredOrders.map((o) => (
-                <div key={o.id} className="grid grid-cols-7 gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1">
+                <div
+                  key={o.id}
+                  className={[
+                    'grid grid-cols-7 gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
+                    o.status === 'executed' ? 'bg-emerald-500/5' : '',
+                    o.status === 'failed' ? 'bg-rose-500/5' : '',
+                  ].join(' ')}
+                >
                   <div className="min-w-0 text-zinc-200">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="font-semibold truncate">{o.tokenSymbol}</span>
+                      <span className="font-semibold truncate">{o.tokenSymbol || tt('contentUi.common.token')}</span>
                       <span className="text-[10px] text-zinc-500 truncate">
                         {o.tokenAddress.slice(0, 6)}...{o.tokenAddress.slice(-4)}
                       </span>
                     </div>
                   </div>
                   <div className="min-w-0 truncate">
-                    <span className={o.side === 'buy' ? 'text-emerald-300' : 'text-rose-300'}>
-                      {o.side === 'buy' ? '买入' : '卖出'}
-                    </span>
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className={o.side === 'buy' ? 'text-emerald-300' : 'text-rose-300'}>
+                        {o.side === 'buy' ? '买入' : '卖出'}
+                      </span>
+                      <span className={`inline-flex items-center rounded border px-1 py-0.5 text-[9px] leading-none ${statusBadgeClass(o)}`}>
+                        {formatStatus(o)}
+                      </span>
+                    </div>
+                    {o.status === 'executed' && o.txHash ? (
+                      <div className="flex items-center gap-2 text-[10px] text-zinc-600 min-w-0">
+                        <a
+                          href={explorerTxUrl(o.txHash)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="truncate hover:underline"
+                          title={o.txHash}
+                        >
+                          Tx: {o.txHash.slice(0, 10)}...{o.txHash.slice(-8)}
+                        </a>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded border border-zinc-700 px-1 py-0.5 text-[9px] text-zinc-300 hover:border-emerald-400"
+                          onClick={() => copyToClipboard(o.txHash!)}
+                        >
+                          {copiedValue === o.txHash ? '已复制' : '复制'}
+                        </button>
+                      </div>
+                    ) : null}
+                    {o.status === 'failed' && o.lastError ? (
+                      <div className="flex items-center gap-2 text-[10px] text-rose-400/80 min-w-0">
+                        <div className="truncate" title={o.lastError}>
+                          Err: {o.lastError}
+                        </div>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded border border-zinc-700 px-1 py-0.5 text-[9px] text-zinc-300 hover:border-rose-400"
+                          onClick={() => copyToClipboard(o.lastError!)}
+                        >
+                          {copiedValue === o.lastError ? '已复制' : '复制'}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="min-w-0 text-zinc-200">{String(o.triggerPrice)}</div>
-                  <div className="min-w-0 text-zinc-200">{o.payAmount} {o.paySymbol}</div>
-                  <div className="min-w-0 text-zinc-200">{o.expectedReceive} {o.receiveSymbol}</div>
+                  <div className="min-w-0 text-zinc-200">{String(o.triggerPriceUsd)}</div>
+                  <div className="min-w-0 text-zinc-200">{formatPay(o)}</div>
+                  <div className="min-w-0 text-zinc-200">-</div>
                   <div className="min-w-0 text-zinc-400">{formatTime(o.createdAtMs)}</div>
                   <div className="text-right">
                     <button
                       type="button"
-                      className="px-1 py-0.5 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-rose-400"
-                      onClick={() => setOrders((prev) => prev.filter((x) => x.id !== o.id))}
+                      disabled={o.status !== 'open' && o.status !== 'failed'}
+                      className="px-1 py-0.5 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                      onClick={async () => {
+                        const res = await call({ type: 'limitOrder:cancel', id: o.id });
+                        setOrders(res.orders);
+                      }}
                     >
                       取消
                     </button>

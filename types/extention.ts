@@ -128,6 +128,47 @@ export type TxSellInput = {
   tokenInfo?: TokenInfo;
 };
 
+export type LimitOrderSide = 'buy' | 'sell';
+
+export type LimitOrderStatus = 'open' | 'triggered' | 'executed' | 'failed' | 'cancelled';
+
+export type LimitOrder = {
+  id: string;
+  chainId: number;
+  tokenAddress: `0x${string}`;
+  tokenSymbol?: string | null;
+  side: LimitOrderSide;
+  triggerPriceUsd: number;
+  buyBnbAmountWei?: string;
+  sellPercentBps?: number;
+  createdAtMs: number;
+  status: LimitOrderStatus;
+  txHash?: `0x${string}`;
+  lastError?: string;
+  tokenInfo?: TokenInfo;
+};
+
+export type LimitOrderCreateInput = {
+  chainId: number;
+  tokenAddress: `0x${string}`;
+  tokenSymbol?: string | null;
+  side: LimitOrderSide;
+  triggerPriceUsd: number;
+  buyBnbAmountWei?: string;
+  sellPercentBps?: number;
+  tokenInfo?: TokenInfo;
+};
+
+export type LimitOrderScanStatus = {
+  intervalMs: number;
+  running: boolean;
+  lastScanAtMs: number;
+  lastScanOk: boolean;
+  lastScanError: string | null;
+  totalOrders: number;
+  openOrders: number;
+};
+
 export type TxWaitForReceiptError = {
   name?: string;
   message: string;
@@ -160,6 +201,7 @@ export type BgRequest =
   | { type: 'token:getMeta'; tokenAddress: `0x${string}` }
   | { type: 'token:getBalance'; tokenAddress: `0x${string}`; address: `0x${string}` }
   | { type: 'token:getPoolPair'; pair: `0x${string}` }
+  | { type: 'token:getPriceUsd'; chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo | null }
   | { type: 'token:getTokenInfo:fourmeme'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:fourmemeHttp'; platform: string; chain: string; address: `0x${string}` }
   | { type: 'token:getTokenInfo:flapHttp'; platform: string; chain: string; address: `0x${string}` }
@@ -171,7 +213,13 @@ export type BgRequest =
   | { type: 'tx:waitForReceipt'; hash: `0x${string}`; chainId: number }
   | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
-  | { type: 'autotrade:ws'; payload: any };
+  | { type: 'autotrade:ws'; payload: any }
+  | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
+  | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
+  | { type: 'limitOrder:cancel'; id: string }
+  | { type: 'limitOrder:cancelAll'; chainId: number; tokenAddress?: `0x${string}` }
+  | { type: 'limitOrder:scanStatus'; chainId: number }
+  | { type: 'limitOrder:tick'; chainId: number; tokenAddress: `0x${string}`; priceUsd: number };
 
 export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; time: number }
@@ -207,6 +255,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; balanceWei: string }
   : T extends { type: 'token:getPoolPair' }
   ? { ok: true; token0: `0x${string}`; token1: `0x${string}` }
+  : T extends { type: 'token:getPriceUsd' }
+  ? { ok: true; priceUsd: number }
   : T extends { type: 'token:getTokenInfo:fourmemeHttp' }
   ? { ok: true; tokenInfo: TokenInfo | null }
   : T extends { type: 'token:getTokenInfo:flapHttp' }
@@ -242,4 +292,16 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; txHash?: `0x${string}` }
   : T extends { type: 'autotrade:ws' }
   ? { ok: true }
+  : T extends { type: 'limitOrder:list' }
+  ? { ok: true; orders: LimitOrder[] }
+  : T extends { type: 'limitOrder:create' }
+  ? { ok: true; order: LimitOrder }
+  : T extends { type: 'limitOrder:cancel' }
+  ? { ok: true; orders: LimitOrder[] }
+  : T extends { type: 'limitOrder:cancelAll' }
+  ? { ok: true; orders: LimitOrder[] }
+  : T extends { type: 'limitOrder:scanStatus' }
+  ? ({ ok: true } & LimitOrderScanStatus)
+  : T extends { type: 'limitOrder:tick' }
+  ? { ok: true; triggered?: string[]; executed?: string[]; failed?: Array<{ id: string; error: string }> }
   : never;

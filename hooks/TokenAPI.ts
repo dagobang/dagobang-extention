@@ -118,4 +118,19 @@ export class TokenAPI {
         });
         return { token0: res.token0, token1: res.token1 };
     }
+
+    static async getTokenPriceUsd(chainId: number, tokenAddress: string, tokenInfo?: TokenInfo | null): Promise<number | null> {
+        try {
+            const res = await call({
+                type: 'token:getPriceUsd',
+                chainId,
+                tokenAddress: tokenAddress as `0x${string}`,
+                tokenInfo: tokenInfo ?? null,
+            });
+            const v = Number(res.priceUsd);
+            return Number.isFinite(v) && v > 0 ? v : null;
+        } catch {
+            return null;
+        }
+    }
 }

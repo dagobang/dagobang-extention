@@ -1,6 +1,4 @@
-import { getChainIdByName } from "@/constants/chains";
-import { FourmemeTokenInfo, TokenInfo } from "@/types/token";
-import { zeroAddress } from "viem";
+import { TokenInfo } from "@/types/token";
 
 export interface FourmemeTokenPrice {
   price: string;
@@ -250,7 +248,7 @@ export class FourmemeAPI {
           launchpad_platform: "fourmeme",
           launchpad_status: status === "TRADE" ? 1 : 0,
           quote_token: data.symbol,
-          quote_token_address: '',
+          quote_token_address: "",
           pool_pair: data.dexPair?.pairAddress,
           dex_type: `${data.dexType}${data.dexPair?.pancakeVersion ? `_V${data.dexPair?.pancakeVersion}` : ""}`,
           tokenPrice: {
