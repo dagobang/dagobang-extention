@@ -130,6 +130,8 @@ export type TxSellInput = {
 
 export type LimitOrderSide = 'buy' | 'sell';
 
+export type LimitOrderType = 'take_profit_sell' | 'stop_loss_sell' | 'low_buy' | 'high_buy';
+
 export type LimitOrderStatus = 'open' | 'triggered' | 'executed' | 'failed' | 'cancelled';
 
 export type LimitOrder = {
@@ -138,6 +140,7 @@ export type LimitOrder = {
   tokenAddress: `0x${string}`;
   tokenSymbol?: string | null;
   side: LimitOrderSide;
+  orderType?: LimitOrderType;
   triggerPriceUsd: number;
   buyBnbAmountWei?: string;
   sellPercentBps?: number;
@@ -153,6 +156,7 @@ export type LimitOrderCreateInput = {
   tokenAddress: `0x${string}`;
   tokenSymbol?: string | null;
   side: LimitOrderSide;
+  orderType?: LimitOrderType;
   triggerPriceUsd: number;
   buyBnbAmountWei?: string;
   sellPercentBps?: number;

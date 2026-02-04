@@ -1,8 +1,10 @@
 import { browser } from 'wxt/browser';
 import { useEffect, useRef, useState } from 'react';
 import { parseEther, formatEther } from 'viem';
-import type { Settings, LimitOrder, LimitOrderScanStatus } from '@/types/extention';
+import type { Settings, LimitOrder, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
+import { TokenAPI } from '@/hooks/TokenAPI';
+import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
 
@@ -93,9 +95,21 @@ export function LimitTradePanel({
   const [sellPrice, setSellPrice] = useState('');
   const [buyAmount, setBuyAmount] = useState('');
   const [sellPercent, setSellPercent] = useState('');
+  const [buyOrderType, setBuyOrderType] = useState<LimitOrderType>('low_buy');
+  const [sellOrderType, setSellOrderType] = useState<LimitOrderType>('take_profit_sell');
   const [onlyCurrentToken, setOnlyCurrentToken] = useState(false);
   const [orders, setOrders] = useState<LimitOrder[]>([]);
   const [scanStatus, setScanStatus] = useState<LimitOrderScanStatus | null>(null);
+  const [latestTokenPriceUsd, setLatestTokenPriceUsd] = useState<number | null>(null);
+  const [priceByTokenKey, setPriceByTokenKey] = useState<Record<string, { priceUsd: number | null; ts: number }>>({});
+  const priceByTokenKeyRef = useRef(priceByTokenKey);
+  const priceFetchRef = useRef<{ inFlight: Set<string> }>({ inFlight: new Set() });
+  const autoTriggerPriceRef = useRef<{ key: string | null; buy: string; sell: string; stage: 'none' | 'prop' | 'fetched' }>({
+    key: null,
+    buy: '',
+    sell: '',
+    stage: 'none',
+  });
 
   const locale: Locale = normalizeLocale(settings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
@@ -121,6 +135,31 @@ export function LimitTradePanel({
     return String(Number(next.toFixed(6)));
   };
 
+  const formatUsd = (value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return '-';
+    if (value < 0.000001) return value.toExponential(3);
+    if (value < 1) return String(Number(value.toFixed(8)));
+    return String(Number(value.toFixed(6)));
+  };
+
+  const toTokenKey = (chainId2: number, tokenAddress2: string) => `${chainId2}:${tokenAddress2.toLowerCase()}`;
+  const getWNativeAddress = (chainId2: number) => {
+    if (chainId2 === 56) return bscTokens.wbnb.address;
+    return null;
+  };
+  const parseNumberLoose = (v: string) => {
+    const n = Number(String(v).replace(/,/g, '').trim());
+    return Number.isFinite(n) ? n : null;
+  };
+  const formatAmount = (value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return '-';
+    if (value < 0.000001) return value.toExponential(3);
+    if (value < 1) return String(Number(value.toFixed(8)));
+    if (value < 1000) return String(Number(value.toFixed(6)));
+    if (value < 1_000_000) return String(Number(value.toFixed(3)));
+    return String(Number(value.toFixed(2)));
+  };
+
   const jsLocale = locale === 'zh_TW' ? 'zh-TW' : locale === 'en' ? 'en-US' : 'zh-CN';
   const formatTime = (ms: number) => {
     try {
@@ -144,6 +183,14 @@ export function LimitTradePanel({
   const filteredOrders = onlyCurrentToken && tokenAddress
     ? orders.filter((o) => o.tokenAddress.toLowerCase() === tokenAddress.toLowerCase())
     : orders;
+
+  const normalizedPropPriceUsd = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null;
+  const currentTokenPriceUsd = latestTokenPriceUsd ?? normalizedPropPriceUsd;
+
+  useEffect(() => {
+    priceByTokenKeyRef.current = priceByTokenKey;
+  }, [priceByTokenKey]);
+
   const refreshOrders = async () => {
     if (!settings) return;
     const req = onlyCurrentToken && tokenAddress
@@ -217,6 +264,71 @@ export function LimitTradePanel({
     return `${pct}%`;
   };
 
+  const estimateReceive = (o: LimitOrder): { main: string; sub?: string } => {
+    const triggerPriceUsd = Number(o.triggerPriceUsd);
+    if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) return { main: '-' };
+
+    const wNative = getWNativeAddress(o.chainId);
+    const bnbKey = wNative ? toTokenKey(o.chainId, wNative) : null;
+    const bnbCache = bnbKey ? priceByTokenKey[bnbKey] : undefined;
+    const bnbLoading = bnbKey ? priceFetchRef.current.inFlight.has(bnbKey) : false;
+    const bnbUsd = bnbCache?.priceUsd;
+    if (bnbLoading) return { main: '...' };
+    if (bnbUsd == null || !(bnbUsd > 0)) return { main: '-' };
+
+    if (o.side === 'buy') {
+      const wei = o.buyBnbAmountWei ? BigInt(o.buyBnbAmountWei) : 0n;
+      const payBnb = Number(formatEther(wei));
+      if (!Number.isFinite(payBnb) || payBnb <= 0) return { main: '-' };
+      const payUsd = payBnb * bnbUsd;
+      const tokensOut = payUsd / triggerPriceUsd;
+      const sym = o.tokenSymbol || tt('contentUi.common.token');
+      return {
+        main: `≈ ${formatAmount(tokensOut)} ${sym}`,
+        sub: payUsd > 0 ? `≈ $${formatUsd(payUsd)}` : undefined,
+      };
+    }
+
+    const bps = o.sellPercentBps ?? 0;
+    if (!Number.isFinite(bps) || bps <= 0 || bps > 10000) return { main: '-' };
+    if (!tokenAddress || o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return { main: '-' };
+
+    const bal = parseNumberLoose(formattedTokenBalance);
+    if (bal == null || bal <= 0) return { main: '-' };
+    const sellTokenAmount = bal * (bps / 10000);
+    const receiveUsd = sellTokenAmount * triggerPriceUsd;
+    const receiveBnb = receiveUsd / bnbUsd;
+    return {
+      main: `≈ ${formatAmount(receiveBnb)} BNB`,
+      sub: receiveUsd > 0 ? `≈ $${formatUsd(receiveUsd)}` : undefined,
+    };
+  };
+
+  const normalizeOrderType = (o: LimitOrder): LimitOrderType => {
+    if (o.orderType === 'take_profit_sell' || o.orderType === 'stop_loss_sell' || o.orderType === 'low_buy' || o.orderType === 'high_buy') {
+      return o.orderType;
+    }
+    return o.side === 'buy' ? 'low_buy' : 'take_profit_sell';
+  };
+
+  const formatOrderType = (o: LimitOrder) => {
+    const type = normalizeOrderType(o);
+    if (type === 'take_profit_sell') return '止盈';
+    if (type === 'stop_loss_sell') return '止损';
+    if (type === 'low_buy') return '低价买';
+    if (type === 'high_buy') return '高价买';
+    return type;
+  };
+
+  const formatOrderTypeLines = (o: LimitOrder): [string, string] => {
+    const type = normalizeOrderType(o);
+    if (type === 'take_profit_sell') return ['止盈', '高价卖'];
+    if (type === 'stop_loss_sell') return ['止损', '低价卖'];
+    if (type === 'low_buy') return ['低价', '买入'];
+    if (type === 'high_buy') return ['高价', '买入'];
+    return [formatOrderType(o), ''];
+  };
+
   const formatStatus = (o: LimitOrder) => {
     if (o.status === 'open') return '等待触发';
     if (o.status === 'triggered') return '触发中';
@@ -242,6 +354,31 @@ export function LimitTradePanel({
 
   useEffect(() => {
     if (!visible) return;
+    const key = `${chainId}:${tokenAddress ?? ''}`;
+    if (autoTriggerPriceRef.current.key === key) return;
+    autoTriggerPriceRef.current.key = key;
+    autoTriggerPriceRef.current.buy = '';
+    autoTriggerPriceRef.current.sell = '';
+    autoTriggerPriceRef.current.stage = 'none';
+    setBuyPrice('');
+    setSellPrice('');
+  }, [visible, chainId, tokenAddress]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (!normalizedPropPriceUsd) return;
+    if (autoTriggerPriceRef.current.stage !== 'none') return;
+    if (buyPrice !== autoTriggerPriceRef.current.buy || sellPrice !== autoTriggerPriceRef.current.sell) return;
+    const formatted = String(Number(normalizedPropPriceUsd.toFixed(6)));
+    autoTriggerPriceRef.current.buy = formatted;
+    autoTriggerPriceRef.current.sell = formatted;
+    autoTriggerPriceRef.current.stage = 'prop';
+    setBuyPrice(formatted);
+    setSellPrice(formatted);
+  }, [visible, normalizedPropPriceUsd, buyPrice, sellPrice]);
+
+  useEffect(() => {
+    if (!visible) return;
     const listener = (message: any) => {
       if (message?.type === 'bg:stateChanged') {
         requestRefreshOrders().catch(() => { });
@@ -263,11 +400,95 @@ export function LimitTradePanel({
 
   useEffect(() => {
     if (!visible) return;
-    const price = tokenPrice == null || !Number.isFinite(tokenPrice) || tokenPrice <= 0 ? 0 : tokenPrice;
-    const formatted = String(Number(price.toFixed(6)));
-    setBuyPrice((prev) => (prev ? prev : formatted));
-    setSellPrice((prev) => (prev ? prev : formatted));
-  }, [visible, tokenPrice]);
+    if (!tokenAddress) return;
+    let cancelled = false;
+    const fetchOnce = async () => {
+      const v = await TokenAPI.getTokenPriceUsd(chainId, tokenAddress, tokenInfo);
+      if (cancelled) return;
+      if (v == null) return;
+      setLatestTokenPriceUsd(v);
+      const key = toTokenKey(chainId, tokenAddress);
+      setPriceByTokenKey((prev) => ({ ...prev, [key]: { priceUsd: v, ts: Date.now() } }));
+      if (autoTriggerPriceRef.current.stage === 'fetched') return;
+      if (buyPrice !== autoTriggerPriceRef.current.buy || sellPrice !== autoTriggerPriceRef.current.sell) return;
+      const formatted = String(Number(v.toFixed(6)));
+      autoTriggerPriceRef.current.buy = formatted;
+      autoTriggerPriceRef.current.sell = formatted;
+      autoTriggerPriceRef.current.stage = 'fetched';
+      setBuyPrice(formatted);
+      setSellPrice(formatted);
+    };
+    fetchOnce().catch(() => { });
+    const timer = setInterval(() => fetchOnce().catch(() => { }), 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [visible, chainId, tokenAddress, tokenInfo]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+
+    const runWithLimit = async <T,>(items: T[], limit: number, fn: (item: T) => Promise<void>) => {
+      const queue = items.slice();
+      const workers = Array.from({ length: Math.max(1, limit) }, async () => {
+        while (queue.length) {
+          const item = queue.shift();
+          if (item === undefined) return;
+          await fn(item);
+        }
+      });
+      await Promise.all(workers);
+    };
+
+    const fetchOnce = async () => {
+      const unique = new Map<string, { chainId: number; tokenAddress: string; tokenInfo: TokenInfo | null }>();
+      for (const o of filteredOrders) {
+        const key = toTokenKey(o.chainId, o.tokenAddress);
+        if (!unique.has(key)) unique.set(key, { chainId: o.chainId, tokenAddress: o.tokenAddress, tokenInfo: o.tokenInfo ?? null });
+      }
+      for (const o of filteredOrders) {
+        const wNative = getWNativeAddress(o.chainId);
+        if (!wNative) continue;
+        const key = toTokenKey(o.chainId, wNative);
+        if (!unique.has(key)) unique.set(key, { chainId: o.chainId, tokenAddress: wNative, tokenInfo: null });
+      }
+
+      const now = Date.now();
+      const tasks = Array.from(unique.entries())
+        .filter(([key]) => {
+          if (priceFetchRef.current.inFlight.has(key)) return false;
+          const cached = priceByTokenKeyRef.current[key];
+          if (cached && now - cached.ts < 10_000) return false;
+          return true;
+        })
+        .map(([, v]) => v);
+
+      if (!tasks.length) return;
+
+      await runWithLimit(tasks, 5, async (t) => {
+        if (cancelled) return;
+        const key = toTokenKey(t.chainId, t.tokenAddress);
+        if (priceFetchRef.current.inFlight.has(key)) return;
+        priceFetchRef.current.inFlight.add(key);
+        try {
+          const v = await TokenAPI.getTokenPriceUsd(t.chainId, t.tokenAddress, t.tokenInfo);
+          if (cancelled) return;
+          setPriceByTokenKey((prev) => ({ ...prev, [key]: { priceUsd: v, ts: Date.now() } }));
+        } finally {
+          priceFetchRef.current.inFlight.delete(key);
+        }
+      });
+    };
+
+    fetchOnce().catch(() => { });
+    const timer = setInterval(() => fetchOnce().catch(() => { }), 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [visible, filteredOrders]);
 
   if (!visible) {
     return null;
@@ -320,39 +541,40 @@ export function LimitTradePanel({
               </div>
 
               <div className="flex items-center gap-2">
+                <select
+                  className="w-[110px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                  value={buyOrderType}
+                  onChange={(e) => setBuyOrderType(e.target.value as LimitOrderType)}
+                >
+                  <option value="low_buy">低价买</option>
+                  <option value="high_buy">高价买</option>
+                </select>
                 <input
-                  className="flex-1 w-[120px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                  className="flex-1 w-[90px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
                   value={buyPrice}
                   onChange={(e) => setBuyPrice(e.target.value)}
                 />
                 <div className="flex gap-1">
                   <button
                     type="button"
-                    className="px-1.5 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
-                    onClick={() => setBuyPrice((v) => adjustPrice(v, -0.1))}
+                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
+                    onClick={() => setBuyPrice((v) => adjustPrice(v, buyOrderType === 'high_buy' ? 0.1 : -0.1))}
                   >
-                    -10%
+                    {buyOrderType === 'high_buy' ? '+10%' : '-10%'}
                   </button>
                   <button
                     type="button"
-                    className="px-1.5 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
-                    onClick={() => setBuyPrice((v) => adjustPrice(v, -0.2))}
+                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
+                    onClick={() => setBuyPrice((v) => adjustPrice(v, buyOrderType === 'high_buy' ? 0.2 : -0.2))}
                   >
-                    -20%
+                    {buyOrderType === 'high_buy' ? '+20%' : '-20%'}
                   </button>
                   <button
                     type="button"
-                    className="px-1.5 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
-                    onClick={() => setBuyPrice((v) => adjustPrice(v, -0.5))}
+                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
+                    onClick={() => setBuyPrice((v) => adjustPrice(v, buyOrderType === 'high_buy' ? 0.5 : -0.5))}
                   >
-                    -50%
-                  </button>
-                  <button
-                    type="button"
-                    className="px-1.5 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
-                    onClick={() => setBuyPrice((v) => adjustPrice(v, -0.7))}
-                  >
-                    -70%
+                    {buyOrderType === 'high_buy' ? '+50%' : '-50%'}
                   </button>
                 </div>
               </div>
@@ -364,8 +586,8 @@ export function LimitTradePanel({
                     type="button"
                     className={
                       buyAmount === val
-                        ? 'rounded border border-emerald-400 bg-emerald-500/20 py-1.5 text-center text-xs font-medium text-emerald-200 active:scale-95 transition-all'
-                        : 'rounded border border-emerald-500/30 bg-emerald-500/10 py-1.5 text-center text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all'
+                        ? 'rounded border border-emerald-400 bg-emerald-500/20 py-1 text-center text-xs font-medium text-emerald-200 active:scale-95 transition-all'
+                        : 'rounded border border-emerald-500/30 bg-emerald-500/10 py-1 text-center text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all'
                     }
                     onClick={() => setBuyAmount(val)}
                   >
@@ -377,7 +599,7 @@ export function LimitTradePanel({
               <button
                 type="button"
                 disabled={buyCreateDisabled}
-                className="w-full px-2 py-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-2 py-1 rounded border border-emerald-500/30 bg-emerald-500/10 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={async () => {
                   if (!tokenAddress || !tokenInfo) return;
                   const trigger = parsePositiveNumber(buyPrice);
@@ -390,6 +612,7 @@ export function LimitTradePanel({
                       tokenAddress,
                       tokenSymbol,
                       side: 'buy',
+                      orderType: buyOrderType,
                       triggerPriceUsd: trigger,
                       buyBnbAmountWei: amountWei,
                       tokenInfo,
@@ -399,7 +622,7 @@ export function LimitTradePanel({
                   await refreshOrders();
                 }}
               >
-                创建买入限价单
+                {buyOrderType === 'high_buy' ? '创建高价买限价单' : '创建低价买限价单'}
               </button>
             </div>
 
@@ -417,39 +640,40 @@ export function LimitTradePanel({
               </div>
 
               <div className="flex items-center gap-2">
+                <select
+                  className="w-[110px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                  value={sellOrderType}
+                  onChange={(e) => setSellOrderType(e.target.value as LimitOrderType)}
+                >
+                  <option value="take_profit_sell">止盈</option>
+                  <option value="stop_loss_sell">止损</option>
+                </select>
                 <input
-                  className="flex-1  w-[120px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                  className="flex-1  w-[90px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
                   value={sellPrice}
                   onChange={(e) => setSellPrice(e.target.value)}
                 />
                 <div className="flex gap-1">
                   <button
                     type="button"
-                    className="px-1.5 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
-                    onClick={() => setSellPrice((v) => adjustPrice(v, 0.2))}
+                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
+                    onClick={() => setSellPrice((v) => adjustPrice(v, sellOrderType === 'stop_loss_sell' ? -0.2 : 0.2))}
                   >
-                    +20%
+                    {sellOrderType === 'stop_loss_sell' ? '-20%' : '+20%'}
                   </button>
                   <button
                     type="button"
-                    className="px-1.5 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
-                    onClick={() => setSellPrice((v) => adjustPrice(v, 0.5))}
+                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
+                    onClick={() => setSellPrice((v) => adjustPrice(v, sellOrderType === 'stop_loss_sell' ? -0.5 : 0.5))}
                   >
-                    +50%
+                    {sellOrderType === 'stop_loss_sell' ? '-50%' : '+50%'}
                   </button>
                   <button
                     type="button"
-                    className="px-1.5 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
-                    onClick={() => setSellPrice((v) => adjustPrice(v, 1))}
+                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
+                    onClick={() => setSellPrice((v) => adjustPrice(v, sellOrderType === 'stop_loss_sell' ? -1 : 1))}
                   >
-                    +100%
-                  </button>
-                  <button
-                    type="button"
-                    className="px-1.5 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
-                    onClick={() => setSellPrice((v) => adjustPrice(v, 2))}
-                  >
-                    +200%
+                    {sellOrderType === 'stop_loss_sell' ? '-100%' : '+100%'}
                   </button>
                 </div>
               </div>
@@ -461,8 +685,8 @@ export function LimitTradePanel({
                     type="button"
                     className={
                       sellPercent === val
-                        ? 'rounded border border-rose-300 bg-rose-500/20 py-1.5 text-center text-xs font-medium text-rose-200 active:scale-95 transition-all'
-                        : 'rounded border border-rose-500/30 bg-rose-500/10 py-1.5 text-center text-xs font-medium text-rose-400 hover:bg-rose-500/20 active:scale-95 transition-all'
+                        ? 'rounded border border-rose-300 bg-rose-500/20 py-1 text-center text-xs font-medium text-rose-200 active:scale-95 transition-all'
+                        : 'rounded border border-rose-500/30 bg-rose-500/10 py-1 text-center text-xs font-medium text-rose-400 hover:bg-rose-500/20 active:scale-95 transition-all'
                     }
                     onClick={() => setSellPercent(val)}
                   >
@@ -474,7 +698,7 @@ export function LimitTradePanel({
               <button
                 type="button"
                 disabled={sellCreateDisabled}
-                className="w-full px-2 py-1.5 rounded border border-rose-500/30 bg-rose-500/10 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-2 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={async () => {
                   if (!tokenAddress || !tokenInfo) return;
                   const trigger = parsePositiveNumber(sellPrice);
@@ -487,6 +711,7 @@ export function LimitTradePanel({
                       tokenAddress,
                       tokenSymbol,
                       side: 'sell',
+                      orderType: sellOrderType,
                       triggerPriceUsd: trigger,
                       sellPercentBps: bps,
                       tokenInfo,
@@ -496,7 +721,7 @@ export function LimitTradePanel({
                   await refreshOrders();
                 }}
               >
-                创建卖出限价单
+                {sellOrderType === 'stop_loss_sell' ? '创建止损限价单' : '创建止盈限价单'}
               </button>
             </div>
           </div>
@@ -510,14 +735,10 @@ export function LimitTradePanel({
                   <div className="flex items-center gap-1 text-[10px] text-zinc-500 min-w-0">
                     <span
                       className={[
-                        'h-2 w-2 rounded-full shrink-0',
+                        'h-2 w-2 rounded-full shrink-0 animate-pulse',
                         scanStatus.running ? 'bg-emerald-400 animate-pulse' : scanStatus.lastScanOk ? 'bg-emerald-400/70' : 'bg-rose-400/80',
                       ].join(' ')}
                     />
-                    <span className="shrink-0">
-                      {scanStatus.running ? '扫描中' : scanStatus.lastScanOk ? '空闲' : '异常'}
-                    </span>
-                    <span className="shrink-0">·</span>
                     <span className="truncate" title={scanStatus.lastScanAtMs ? formatTime(scanStatus.lastScanAtMs) : ''}>
                       {scanStatus.lastScanAtMs ? `上次: ${formatTime(scanStatus.lastScanAtMs)}` : '上次: -'}
                     </span>
@@ -544,8 +765,12 @@ export function LimitTradePanel({
                     const req = onlyCurrentToken && tokenAddress
                       ? ({ type: 'limitOrder:cancelAll', chainId, tokenAddress } as const)
                       : ({ type: 'limitOrder:cancelAll', chainId } as const);
-                    const res = await call(req);
-                    setOrders(res.orders);
+                    try {
+                      await call(req);
+                    } catch {
+                    } finally {
+                      await refreshOrders();
+                    }
                   }}
                 >
                   全部取消
@@ -554,7 +779,7 @@ export function LimitTradePanel({
             </div>
 
             <div className="max-h-[38vh] overflow-y-auto pr-1">
-              <div className="grid grid-cols-7 gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
+              <div className="grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.75fr)_minmax(0,0.55fr)] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
                 <div className="font-medium truncate">代币</div>
                 <div className="font-medium truncate">类型</div>
                 <div className="font-medium truncate">触发价格</div>
@@ -568,25 +793,30 @@ export function LimitTradePanel({
                 <div
                   key={o.id}
                   className={[
-                    'grid grid-cols-7 gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
+                    'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.75fr)_minmax(0,0.55fr)] gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
                     o.status === 'executed' ? 'bg-emerald-500/5' : '',
                     o.status === 'failed' ? 'bg-rose-500/5' : '',
                   ].join(' ')}
                 >
                   <div className="min-w-0 text-zinc-200">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="font-semibold truncate">{o.tokenSymbol || tt('contentUi.common.token')}</span>
+                      <span className="font-semibold break-all">{o.tokenSymbol || tt('contentUi.common.token')}</span>
                       <span className="text-[10px] text-zinc-500 truncate">
                         {o.tokenAddress.slice(0, 6)}...{o.tokenAddress.slice(-4)}
                       </span>
                     </div>
                   </div>
-                  <div className="min-w-0 truncate">
-                    <div className="flex items-center gap-1 min-w-0">
-                      <span className={o.side === 'buy' ? 'text-emerald-300' : 'text-rose-300'}>
-                        {o.side === 'buy' ? '买入' : '卖出'}
-                      </span>
-                      <span className={`inline-flex items-center rounded border px-1 py-0.5 text-[9px] leading-none ${statusBadgeClass(o)}`}>
+                  <div className="min-w-0">
+                    <div className="flex items-start justify-start gap-1 min-w-0">
+                      <div className="min-w-0 leading-tight">
+                        <div className={`${o.side === 'buy' ? 'text-emerald-300' : 'text-rose-300'} whitespace-normal break-words`}>
+                          {formatOrderTypeLines(o)[0]}
+                        </div>
+                        <div className="text-[10px] text-zinc-500 whitespace-normal break-words">
+                          {formatOrderTypeLines(o)[1]}
+                        </div>
+                      </div>
+                      <span className={`shrink-0 inline-flex items-center rounded border px-1 py-0.5 text-[9px] leading-none ${statusBadgeClass(o)}`}>
                         {formatStatus(o)}
                       </span>
                     </div>
@@ -625,18 +855,55 @@ export function LimitTradePanel({
                       </div>
                     ) : null}
                   </div>
-                  <div className="min-w-0 text-zinc-200">{String(o.triggerPriceUsd)}</div>
+                  <div className="min-w-0 text-zinc-200">
+                    <div className="truncate" title={String(o.triggerPriceUsd)}>
+                      {String(o.triggerPriceUsd)}
+                    </div>
+                    {(() => {
+                      const key = toTokenKey(o.chainId, o.tokenAddress);
+                      const cached = priceByTokenKey[key];
+                      const loading = priceFetchRef.current.inFlight.has(key);
+                      const v = cached?.priceUsd;
+                      const text = loading ? '...' : v != null && v > 0 ? formatUsd(v) : '-';
+                      return (
+                        <div className="text-[10px] text-zinc-500 truncate" title={text}>
+                          现价: {text}
+                        </div>
+                      );
+                    })()}
+                  </div>
                   <div className="min-w-0 text-zinc-200">{formatPay(o)}</div>
-                  <div className="min-w-0 text-zinc-200">-</div>
-                  <div className="min-w-0 text-zinc-400">{formatTime(o.createdAtMs)}</div>
+                  <div className="min-w-0 text-zinc-200">
+                    {(() => {
+                      const est = estimateReceive(o);
+                      return (
+                        <>
+                          <div className="truncate" title={est.main}>
+                            {est.main}
+                          </div>
+                          {est.sub ? (
+                            <div className="text-[10px] text-zinc-500 truncate" title={est.sub}>
+                              {est.sub}
+                            </div>
+                          ) : null}
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <div className="min-w-0 text-zinc-400 text-[10px]" title={formatTime(o.createdAtMs)}>
+                    {formatTime(o.createdAtMs)}
+                  </div>
                   <div className="text-right">
                     <button
                       type="button"
-                      disabled={o.status !== 'open' && o.status !== 'failed'}
                       className="px-1 py-0.5 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
                       onClick={async () => {
-                        const res = await call({ type: 'limitOrder:cancel', id: o.id });
-                        setOrders(res.orders);
+                        try {
+                          await call({ type: 'limitOrder:cancel', id: o.id });
+                        } catch {
+                        } finally {
+                          await refreshOrders();
+                        }
                       }}
                     >
                       取消

@@ -6,7 +6,7 @@ import { TradeService } from '@/services/trade';
 import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
 import { getLimitOrders, setLimitOrders } from '@/services/storage';
-import type { BgRequest, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus } from '@/types/extention';
+import type { BgRequest, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token.fourmeme';
 import FourmemeAPI from '@/services/fourmeme.api';
 import FlapAPI from '@/services/flap.api';
@@ -388,6 +388,24 @@ export default defineBackground(() => {
     }
   };
 
+  const normalizeLimitOrderType = (orderType: LimitOrderType | undefined, side: 'buy' | 'sell'): LimitOrderType => {
+    if (orderType === 'take_profit_sell' || orderType === 'stop_loss_sell' || orderType === 'low_buy' || orderType === 'high_buy') {
+      return orderType;
+    }
+    return side === 'buy' ? 'low_buy' : 'take_profit_sell';
+  };
+
+  const sideFromLimitOrderType = (orderType: LimitOrderType): 'buy' | 'sell' => {
+    return orderType === 'low_buy' || orderType === 'high_buy' ? 'buy' : 'sell';
+  };
+
+  const hitLimitOrder = (orderType: LimitOrderType, priceUsd: number, triggerPriceUsd: number) => {
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return false;
+    if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) return false;
+    if (orderType === 'high_buy' || orderType === 'take_profit_sell') return priceUsd >= triggerPriceUsd;
+    return priceUsd <= triggerPriceUsd;
+  };
+
   const listLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
     const all = await getLimitOrders();
     const filtered = all.filter((o) => {
@@ -403,7 +421,11 @@ export default defineBackground(() => {
     const triggerPriceUsd = Number(input.triggerPriceUsd);
     if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) throw new Error('Invalid trigger price');
     if (!input.tokenInfo) throw new Error('Token info required');
-    if (input.side === 'buy') {
+    const orderType = normalizeLimitOrderType(input.orderType, input.side);
+    const side = sideFromLimitOrderType(orderType);
+    if (input.orderType && side !== input.side) throw new Error('Order type mismatches side');
+
+    if (side === 'buy') {
       if (!input.buyBnbAmountWei) throw new Error('Buy amount required');
       const v = BigInt(input.buyBnbAmountWei);
       if (v <= 0n) throw new Error('Invalid buy amount');
@@ -417,7 +439,8 @@ export default defineBackground(() => {
       chainId: input.chainId,
       tokenAddress: input.tokenAddress,
       tokenSymbol: input.tokenSymbol ?? null,
-      side: input.side,
+      side,
+      orderType,
       triggerPriceUsd,
       buyBnbAmountWei: input.buyBnbAmountWei,
       sellPercentBps: input.sellPercentBps,
@@ -433,18 +456,18 @@ export default defineBackground(() => {
 
   const cancelLimitOrder = async (id: string) => {
     const all = await getLimitOrders();
-    const next = all.map((o) => (o.id === id && o.status !== 'executed' ? { ...o, status: 'cancelled' as const } : o));
+    const next = all.filter((o) => !(o.id === id));
     await setLimitOrders(next);
     return next;
   };
 
   const cancelAllLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
     const all = await getLimitOrders();
-    const next = all.map((o) => {
-      if (o.chainId !== chainId) return o;
-      if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return o;
-      if (o.status === 'executed') return o;
-      return { ...o, status: 'cancelled' as const };
+    const next = all.filter((o) => {
+      if (o.chainId !== chainId) return true;
+      if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return true;
+      if (o.status === 'executed') return true;
+      return false;
     });
     await setLimitOrders(next);
     return next;
@@ -460,6 +483,14 @@ export default defineBackground(() => {
         bnbAmountWei: order.buyBnbAmountWei,
         tokenInfo: order.tokenInfo,
       });
+
+      void call({
+        type: 'tx:approveMaxForSellIfNeeded',
+        chainId: order.chainId,
+        tokenAddress: order.tokenAddress,
+        tokenInfo: order.tokenInfo,
+      } as const).catch(() => { });
+      
       return res.txHash as `0x${string}`;
     }
 
@@ -482,6 +513,7 @@ export default defineBackground(() => {
       tokenAddress: order.tokenAddress,
       tokenAmountWei: amountIn.toString(),
       tokenInfo: order.tokenInfo,
+      sellPercentBps: percentBps,
     });
     return res as `0x${string}`;
   };
@@ -500,7 +532,8 @@ export default defineBackground(() => {
 
     let next = all.slice();
     for (const o of candidates) {
-      const hit = o.side === 'buy' ? priceUsd <= o.triggerPriceUsd : priceUsd >= o.triggerPriceUsd;
+      const orderType = normalizeLimitOrderType(o.orderType, o.side);
+      const hit = hitLimitOrder(orderType, priceUsd, o.triggerPriceUsd);
       if (!hit) continue;
 
       triggered.push(o.id);
@@ -567,7 +600,8 @@ export default defineBackground(() => {
         if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
 
         for (const o of orders) {
-          const hit = o.side === 'buy' ? priceUsd <= o.triggerPriceUsd : priceUsd >= o.triggerPriceUsd;
+          const orderType = normalizeLimitOrderType(o.orderType, o.side);
+          const hit = hitLimitOrder(orderType, priceUsd, o.triggerPriceUsd);
           if (!hit) continue;
 
           next = next.map((x) => (x.id === o.id ? { ...x, status: 'triggered' as const } : x));
@@ -1086,12 +1120,12 @@ export default defineBackground(() => {
             }
           }
 
-        case 'autotrade:ws': {
-          await handleAutoTradeWebSocket(msg.payload);
-          await handleAutoSellCheck(msg.payload);
-          return { ok: true };
+          case 'autotrade:ws': {
+            await handleAutoTradeWebSocket(msg.payload);
+            await handleAutoSellCheck(msg.payload);
+            return { ok: true };
+          }
         }
-      }
       } catch (e: any) {
         console.error('Handler error:', e);
         throw e;
