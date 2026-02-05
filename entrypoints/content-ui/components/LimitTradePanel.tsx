@@ -7,8 +7,10 @@ import { TokenAPI } from '@/hooks/TokenAPI';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
+import { formatAmount, parseNumberLoose, formatTime } from '@/utils/format';
 
 type LimitTradePanelProps = {
+  platform: string;
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
   settings: Settings | null;
@@ -23,6 +25,7 @@ type LimitTradePanelProps = {
 };
 
 export function LimitTradePanel({
+  platform,
   visible,
   onVisibleChange,
   settings,
@@ -147,27 +150,7 @@ export function LimitTradePanel({
     if (chainId2 === 56) return bscTokens.wbnb.address;
     return null;
   };
-  const parseNumberLoose = (v: string) => {
-    const n = Number(String(v).replace(/,/g, '').trim());
-    return Number.isFinite(n) ? n : null;
-  };
-  const formatAmount = (value: number) => {
-    if (!Number.isFinite(value) || value <= 0) return '-';
-    if (value < 0.000001) return value.toExponential(3);
-    if (value < 1) return String(Number(value.toFixed(8)));
-    if (value < 1000) return String(Number(value.toFixed(6)));
-    if (value < 1_000_000) return String(Number(value.toFixed(3)));
-    return String(Number(value.toFixed(2)));
-  };
 
-  const jsLocale = locale === 'zh_TW' ? 'zh-TW' : locale === 'en' ? 'en-US' : 'zh-CN';
-  const formatTime = (ms: number) => {
-    try {
-      return new Date(ms).toLocaleString(jsLocale, { hour12: false });
-    } catch {
-      return new Date(ms).toISOString();
-    }
-  };
   const explorerTxUrl = (txHash: string) => {
     return `https://bscscan.com/tx/${txHash}`;
   };
@@ -403,7 +386,7 @@ export function LimitTradePanel({
     if (!tokenAddress) return;
     let cancelled = false;
     const fetchOnce = async () => {
-      const v = await TokenAPI.getTokenPriceUsd(chainId, tokenAddress, tokenInfo);
+      const v = await TokenAPI.getTokenPriceUsd(platform, chainId, tokenAddress, tokenInfo);
       if (cancelled) return;
       if (v == null) return;
       setLatestTokenPriceUsd(v);
@@ -473,7 +456,7 @@ export function LimitTradePanel({
         if (priceFetchRef.current.inFlight.has(key)) return;
         priceFetchRef.current.inFlight.add(key);
         try {
-          const v = await TokenAPI.getTokenPriceUsd(t.chainId, t.tokenAddress, t.tokenInfo);
+          const v = await TokenAPI.getTokenPriceUsd(platform, t.chainId, t.tokenAddress, t.tokenInfo);
           if (cancelled) return;
           setPriceByTokenKey((prev) => ({ ...prev, [key]: { priceUsd: v, ts: Date.now() } }));
         } finally {
@@ -632,7 +615,7 @@ export function LimitTradePanel({
                   {tt('contentUi.autotrade.sellSection')}
                 </div>
                 <div className="flex items-center gap-1 text-[11px] text-zinc-300">
-                  <span>{formattedTokenBalance}</span>
+                  <span>{Number(formattedTokenBalance).toLocaleString()}</span>
                   <span className="text-amber-500 text-[11px]">
                     {tokenSymbol || tt('contentUi.common.token')}
                   </span>
@@ -739,8 +722,8 @@ export function LimitTradePanel({
                         scanStatus.running ? 'bg-emerald-400 animate-pulse' : scanStatus.lastScanOk ? 'bg-emerald-400/70' : 'bg-rose-400/80',
                       ].join(' ')}
                     />
-                    <span className="truncate" title={scanStatus.lastScanAtMs ? formatTime(scanStatus.lastScanAtMs) : ''}>
-                      {scanStatus.lastScanAtMs ? `上次: ${formatTime(scanStatus.lastScanAtMs)}` : '上次: -'}
+                    <span className="truncate" title={scanStatus.lastScanAtMs ? formatTime(scanStatus.lastScanAtMs, locale) : ''}>
+                      {scanStatus.lastScanAtMs ? `上次: ${formatTime(scanStatus.lastScanAtMs, locale)}` : '上次: -'}
                     </span>
                   </div>
                 ) : null}
@@ -890,8 +873,8 @@ export function LimitTradePanel({
                       );
                     })()}
                   </div>
-                  <div className="min-w-0 text-zinc-400 text-[10px]" title={formatTime(o.createdAtMs)}>
-                    {formatTime(o.createdAtMs)}
+                  <div className="min-w-0 text-zinc-400 text-[10px]" title={formatTime(o.createdAtMs, locale)}>
+                    {formatTime(o.createdAtMs, locale)}
                   </div>
                   <div className="text-right">
                     <button

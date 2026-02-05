@@ -139,7 +139,8 @@ export class TokenService {
             if (bnbUsd > 0) priceUsd = priceInQuote * bnbUsd;
           }
         }
-      } catch {
+      } catch (e) {
+        console.error('getTokenPriceUsdFromRpc: failed to get token price from fourmeme', e); 
       }
     }
 

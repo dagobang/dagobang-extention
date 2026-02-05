@@ -25,11 +25,14 @@ declare global {
   const encryptJson: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/crypto').encryptJson
   const extractGmgnAuthData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI').extractGmgnAuthData
   const fakeBrowser: typeof import('wxt/testing').fakeBrowser
+  const formatAmount: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatAmount
+  const formatTime: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatTime
   const injectScript: typeof import('wxt/utils/inject-script').injectScript
   const isHexPrivateKey: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').isHexPrivateKey
   const loadContractAbi: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi').loadContractAbi
   const normalizeLocale: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n').normalizeLocale
   const parseCurrentUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrl
+  const parseNumberLoose: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').parseNumberLoose
   const storage: typeof import('wxt/utils/storage').storage
   const t: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n').t
   const useAppConfig: typeof import('wxt/utils/app-config').useAppConfig

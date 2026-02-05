@@ -3,7 +3,7 @@ import AxiomAPI from "./AxiomAPI";
 import { FourmemeTokenInfo, TokenInfo } from "@/types/token";
 import { call } from "@/utils/messaging";
 import { parseEther } from "viem";
-import { getChainIdByName } from "@/constants/chains";
+import { chainNames, getChainIdByName } from "@/constants/chains";
 import { MEME_SUFFIXS } from "@/constants/meme";
 
 const PLATFORM_API: Record<string, { getTokenInfo: (chain: string, address: string) => Promise<TokenInfo | null> }> = {
@@ -65,6 +65,7 @@ export class TokenAPI {
                 return parseEther(holding).toString();
             }
         }
+
         const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
         const bal = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address: walletAddress as `0x${string}` });
         return bal?.balanceWei ?? null;
@@ -119,8 +120,20 @@ export class TokenAPI {
         return { token0: res.token0, token1: res.token1 };
     }
 
-    static async getTokenPriceUsd(chainId: number, tokenAddress: string, tokenInfo?: TokenInfo | null): Promise<number | null> {
+    static async getTokenPriceUsd(platform: string, chainId: number, tokenAddress: string, tokenInfo?: TokenInfo | null): Promise<number | null> {
+
         try {
+            // Try to get price from GMGN
+            const tokenStat = platform === 'gmgn' ? await GmgnAPI.getTokenPrice(chainNames[chainId], tokenAddress) : null;
+            if (tokenStat && tokenStat.price) {
+                return Number(tokenStat.price);
+            }
+        } catch {
+
+        }
+
+        try {
+            // Try to get price from DEX
             const res = await call({
                 type: 'token:getPriceUsd',
                 chainId,

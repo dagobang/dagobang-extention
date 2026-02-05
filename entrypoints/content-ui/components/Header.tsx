@@ -3,7 +3,9 @@ import {
   X,
   GripHorizontal,
   Check,
-  Zap, LineChart
+  Zap, LineChart,
+  SatelliteDish,
+  AlarmClockCheck
 } from 'lucide-react';
 import type { PointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
@@ -57,12 +59,10 @@ export function Header({
             e.stopPropagation();
             onToggleLimitTrade();
           }}
+          title='Limit Order'
         >
-          <Zap size={14} />
+          <AlarmClockCheck size={14} />
         </button>
-
-       
-
         <button
           type="button"
           className={
@@ -77,8 +77,9 @@ export function Header({
             e.stopPropagation();
             onToggleRpc();
           }}
+          title='RPC'
         >
-          RPC
+          <SatelliteDish size={14} />
         </button>
 
         <button
@@ -95,6 +96,7 @@ export function Header({
             e.stopPropagation();
             onToggleDailyAnalysis();
           }}
+          title='Daily Analysis'
         >
           <LineChart size={14} />
         </button>

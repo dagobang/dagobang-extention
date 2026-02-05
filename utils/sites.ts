@@ -45,9 +45,13 @@ export async function parseCurrentUrl(href: string): Promise<SiteInfo | null> {
       if (parts.length >= 2 && parts[0] === 'meme') {
         const chain = u.searchParams.get('chain');
         if (chain) {
+
+          const tokenInfo = await AxiomAPI.getTokenInfo(chain === 'bnb' ? 'bsc' : chain.toLowerCase(), parts[1]);
+          if (!tokenInfo) return null;
+
           return {
             chain: chain === 'bnb' ? 'bsc' : chain.toLowerCase(),
-            tokenAddress: parts[1],
+            tokenAddress: tokenInfo.address,
             platform: 'axiom'
           };
         }

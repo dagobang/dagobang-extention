@@ -78,7 +78,7 @@ export function SellSection({
           )}
         </div>
         <div className="flex items-center gap-1 text-[14px] text-zinc-300">
-          <span>{formattedTokenBalance}</span>
+          <span>{Number(formattedTokenBalance).toLocaleString()}</span>
           <span className="text-amber-500 text-[12px]">{tokenSymbol || t('contentUi.common.token', locale)}</span>
         </div>
       </div>

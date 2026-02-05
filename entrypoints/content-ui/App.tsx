@@ -478,6 +478,11 @@ export default function App() {
         toast.success(t('contentUi.toast.sellDone', locale, [sym, pct]), { icon: '✅' });
         await Promise.all([refreshToken(true), refreshAll()]);
         setPendingBuyTokenMinOutWei(null);
+
+        // Cancel limit order if exists
+        if (percentBps === 10000) {
+          await call({ type: 'limitOrder:cancelAll', chainId, tokenAddressNormalized } as const);
+        }
       })();
 
       let gmgnTrade: Promise<unknown> | null = null;
@@ -794,6 +799,7 @@ export default function App() {
           )}
 
           <LimitTradePanel
+            platform={siteInfo?.platform}
             visible={showLimitTradePanel}
             onVisibleChange={setShowLimitTradePanel}
             settings={settings}
