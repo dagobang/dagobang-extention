@@ -13,6 +13,12 @@ const PLATFORM_API: Record<string, { getTokenInfo: (chain: string, address: stri
 
 
 export class TokenAPI {
+    private static balanceCache = new Map<string, { ts: number; value: string | null }>();
+    private static balanceInFlight = new Map<string, Promise<string | null>>();
+    private static toBalanceKey(platform: string, chain: string, address: string, tokenAddress: string) {
+        return `${platform}:${chain}:${address.toLowerCase()}:${tokenAddress.toLowerCase()}`;
+    }
+
     static async getTokenInfo(platform: string, chain: string, tokenAddress: string): Promise<TokenInfo | null> {
         const api = PLATFORM_API[platform];
         let address = tokenAddress;
@@ -40,25 +46,45 @@ export class TokenAPI {
         return await this.getTokenInfoByFourmeme(platform, chain, address);
     }
 
-    static async getBalance(platform: string, chain: string, address: string, tokenAddress: string): Promise<string | null> {
+    static async getBalance(platform: string, chain: string, address: string, tokenAddress: string, opts?: { cacheTtlMs?: number }): Promise<string | null> {
+        const ttl = typeof opts?.cacheTtlMs === 'number' && opts.cacheTtlMs >= 0 ? opts.cacheTtlMs : 0;
+        const key = this.toBalanceKey(platform, chain, address, tokenAddress);
+        const now = Date.now();
+        const cached = this.balanceCache.get(key);
+        if (ttl > 0 && cached && now - cached.ts < ttl) return cached.value;
+        const inflight = this.balanceInFlight.get(key);
+        if (inflight) return inflight;
+
+        const p = (async (): Promise<string | null> => {
         if (platform === 'gmgn') {
             const balance = await GmgnAPI.getBalance(chain, address, tokenAddress) ?? null;
             if (balance) {
-                return parseEther(balance).toString();
+                    const v = parseEther(balance).toString();
+                    this.balanceCache.set(key, { ts: Date.now(), value: v });
+                    return v;
             }
         }
 
         if (tokenAddress === '0x0000000000000000000000000000000000000000') {
             const bal = await call({ type: 'chain:getBalance', address: address as `0x${string}` });
-            return bal?.balanceWei ?? null;
+                const v = bal?.balanceWei ?? null;
+                this.balanceCache.set(key, { ts: Date.now(), value: v });
+                return v;
         }
 
         const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
         const bal = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address: address as `0x${string}` });
-        return bal?.balanceWei ?? null;
+            const v = bal?.balanceWei ?? null;
+            this.balanceCache.set(key, { ts: Date.now(), value: v });
+            return v;
+        })().finally(() => {
+            this.balanceInFlight.delete(key);
+        });
+        this.balanceInFlight.set(key, p);
+        return p;
     }
 
-    static async getTokenHolding(platform: string, chain: string, walletAddress: string, tokenAddress: string): Promise<string | null> {
+    static async getTokenHolding(platform: string, chain: string, walletAddress: string, tokenAddress: string, opts?: { cacheTtlMs?: number }): Promise<string | null> {
         if (platform === 'gmgn') {
             const holding = await GmgnAPI.getTokenHolding(chain, walletAddress, tokenAddress) ?? null;
             if (holding) {
@@ -67,8 +93,7 @@ export class TokenAPI {
         }
 
         const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
-        const bal = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address: walletAddress as `0x${string}` });
-        return bal?.balanceWei ?? null;
+        return await this.getBalance(platform, chain, walletAddress, tokenAddressNormalized, opts);
     }
 
     static async getTokenInfoByFourmemeContract(chain: string, address: string): Promise<FourmemeTokenInfo | null> {
@@ -140,6 +165,7 @@ export class TokenAPI {
                 tokenAddress: tokenAddress as `0x${string}`,
                 tokenInfo: tokenInfo ?? null,
             });
+            console.warn('getTokenPriceUsd', tokenAddress, res);
             const v = Number(res.priceUsd);
             return Number.isFinite(v) && v > 0 ? v : null;
         } catch {

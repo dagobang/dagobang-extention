@@ -82,7 +82,7 @@ function setupGmgnQuickBuyButtons() {
 export default defineContentScript({
   matches: ['*://gmgn.ai/*', '*://axiom.trade/*', '*://web3.binance.com/*',
     "*://web3.okx.com/*", "*://www.xxyy.io/*", "*://dexscreener.com/*",
-    "*://four.meme/**", "*://flap.sh/**"
+    "*://four.meme/*", "*://flap.sh/*", "*://debot.ai/*",
   ],
   cssInjectionMode: 'ui',
   async main(ctx) {

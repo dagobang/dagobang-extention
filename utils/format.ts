@@ -17,16 +17,16 @@ export const formatAmount = (value: number) => {
 
   if (abs >= 1) {
     const truncated = truncByFactor(value, 100);
-    return String(Number(truncated.toFixed(2)));
+    return (truncated.toFixed(2));
   }
 
-  if (abs < 1e-9) return value.toExponential(2);
+  if (abs < 1e-15) return value.toExponential(2);
   const exponent = Math.floor(Math.log10(abs));
   const decimals = Math.max(0, 1 - exponent);
   const factor = 10 ** decimals;
   if (!Number.isFinite(factor) || factor <= 0) return String(value);
   const truncated = truncByFactor(value, factor);
-  return String(Number(truncated.toFixed(decimals)));
+  return truncated.toFixed(decimals);
 };
 
 export const formatTime = (ms: number, locale: string = 'zh_CN') => {

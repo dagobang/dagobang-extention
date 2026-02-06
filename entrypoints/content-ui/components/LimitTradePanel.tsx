@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { parseEther, formatEther } from 'viem';
 import type { Settings, LimitOrder, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
@@ -107,6 +107,10 @@ export function LimitTradePanel({
   const [priceByTokenKey, setPriceByTokenKey] = useState<Record<string, { priceUsd: number | null; ts: number }>>({});
   const priceByTokenKeyRef = useRef(priceByTokenKey);
   const priceFetchRef = useRef<{ inFlight: Set<string> }>({ inFlight: new Set() });
+  const didImmediateListPriceFetchRef = useRef(false);
+  const buyPriceRef = useRef(buyPrice);
+  const sellPriceRef = useRef(sellPrice);
+  const tokenPriceSnapshotRef = useRef<number | null>(null);
   const autoTriggerPriceRef = useRef<{ key: string | null; buy: string; sell: string; stage: 'none' | 'prop' | 'fetched' }>({
     key: null,
     buy: '',
@@ -130,12 +134,18 @@ export function LimitTradePanel({
 
   const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : tt('contentUi.autotrade.walletNotConnected');
 
+  const formatAmountForInput = (value: number) => {
+    const s = formatAmount(value);
+    return s === '-' ? '' : s;
+  };
+
   const adjustPrice = (value: string, delta: number) => {
-    const v = Number(value);
-    if (!Number.isFinite(v) || v <= 0) return value;
+    const v = parseNumberLoose(value);
+    if (v == null || v <= 0) return value;
     const next = v * (1 + delta);
     if (!Number.isFinite(next) || next <= 0) return value;
-    return String(Number(next.toFixed(6)));
+    const formatted = formatAmountForInput(next);
+    return formatted || value;
   };
 
   const formatUsd = (value: number) => {
@@ -167,12 +177,35 @@ export function LimitTradePanel({
     ? orders.filter((o) => o.tokenAddress.toLowerCase() === tokenAddress.toLowerCase())
     : orders;
 
-  const normalizedPropPriceUsd = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null;
-  const currentTokenPriceUsd = latestTokenPriceUsd ?? normalizedPropPriceUsd;
-
   useEffect(() => {
     priceByTokenKeyRef.current = priceByTokenKey;
   }, [priceByTokenKey]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (!tokenAddress) return;
+    const v = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null;
+    if (v == null) return;
+    const key = toTokenKey(chainId, tokenAddress);
+    const now = Date.now();
+    setPriceByTokenKey((prev) => {
+      const cached = prev[key];
+      if (cached && cached.priceUsd === v && now - cached.ts < 2000) return prev;
+      return { ...prev, [key]: { priceUsd: v, ts: now } };
+    });
+  }, [visible, chainId, tokenAddress, tokenPrice]);
+
+  useEffect(() => {
+    buyPriceRef.current = buyPrice;
+  }, [buyPrice]);
+
+  useEffect(() => {
+    sellPriceRef.current = sellPrice;
+  }, [sellPrice]);
+
+  useEffect(() => {
+    if (!visible) didImmediateListPriceFetchRef.current = false;
+  }, [visible]);
 
   const refreshOrders = async () => {
     if (!settings) return;
@@ -335,30 +368,49 @@ export function LimitTradePanel({
     refreshScanStatus().catch(() => { });
   }, [visible, chainId, onlyCurrentToken, tokenAddress]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!visible) return;
     const key = `${chainId}:${tokenAddress ?? ''}`;
     if (autoTriggerPriceRef.current.key === key) return;
+    tokenPriceSnapshotRef.current = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null;
     autoTriggerPriceRef.current.key = key;
     autoTriggerPriceRef.current.buy = '';
     autoTriggerPriceRef.current.sell = '';
     autoTriggerPriceRef.current.stage = 'none';
     setBuyPrice('');
     setSellPrice('');
+    buyPriceRef.current = '';
+    sellPriceRef.current = '';
+    setLatestTokenPriceUsd(null);
   }, [visible, chainId, tokenAddress]);
 
   useEffect(() => {
     if (!visible) return;
-    if (!normalizedPropPriceUsd) return;
-    if (autoTriggerPriceRef.current.stage !== 'none') return;
-    if (buyPrice !== autoTriggerPriceRef.current.buy || sellPrice !== autoTriggerPriceRef.current.sell) return;
-    const formatted = String(Number(normalizedPropPriceUsd.toFixed(6)));
+    if (!tokenAddress) return;
+    const key = `${chainId}:${tokenAddress}`;
+    const v = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null;
+    if (v == null) return;
+    if (autoTriggerPriceRef.current.key !== key) return;
+    if (autoTriggerPriceRef.current.stage === 'fetched') return;
+    const tokenLower = tokenAddress.toLowerCase();
+    const tokenInfoLower = tokenInfo?.address?.toLowerCase?.();
+    const tokenInfoMatches = tokenInfoLower === tokenLower;
+    const tokenPriceChangedSinceSwitch = tokenPriceSnapshotRef.current == null || tokenPriceSnapshotRef.current !== v;
+    if (!tokenInfoMatches && !tokenPriceChangedSinceSwitch) return;
+
+    setLatestTokenPriceUsd(v);
+    const tokenKey = toTokenKey(chainId, tokenAddress);
+    setPriceByTokenKey((prev) => ({ ...prev, [tokenKey]: { priceUsd: v, ts: Date.now() } }));
+
+    if (buyPriceRef.current !== autoTriggerPriceRef.current.buy || sellPriceRef.current !== autoTriggerPriceRef.current.sell) return;
+    const formatted = formatAmountForInput(v);
+    if (!formatted) return;
     autoTriggerPriceRef.current.buy = formatted;
     autoTriggerPriceRef.current.sell = formatted;
-    autoTriggerPriceRef.current.stage = 'prop';
+    autoTriggerPriceRef.current.stage = 'fetched';
     setBuyPrice(formatted);
     setSellPrice(formatted);
-  }, [visible, normalizedPropPriceUsd, buyPrice, sellPrice]);
+  }, [visible, chainId, tokenAddress, tokenInfo, tokenPrice]);
 
   useEffect(() => {
     if (!visible) return;
@@ -374,40 +426,12 @@ export function LimitTradePanel({
     const timer = setInterval(() => {
       requestRefreshOrders().catch(() => { });
       requestRefreshScanStatus().catch(() => { });
-    }, 3000);
+    }, 5000);
     return () => {
       clearInterval(timer);
       browser.runtime.onMessage.removeListener(listener);
     };
   }, [visible, chainId, onlyCurrentToken, tokenAddress, settings]);
-
-  useEffect(() => {
-    if (!visible) return;
-    if (!tokenAddress) return;
-    let cancelled = false;
-    const fetchOnce = async () => {
-      const v = await TokenAPI.getTokenPriceUsd(platform, chainId, tokenAddress, tokenInfo);
-      if (cancelled) return;
-      if (v == null) return;
-      setLatestTokenPriceUsd(v);
-      const key = toTokenKey(chainId, tokenAddress);
-      setPriceByTokenKey((prev) => ({ ...prev, [key]: { priceUsd: v, ts: Date.now() } }));
-      if (autoTriggerPriceRef.current.stage === 'fetched') return;
-      if (buyPrice !== autoTriggerPriceRef.current.buy || sellPrice !== autoTriggerPriceRef.current.sell) return;
-      const formatted = String(Number(v.toFixed(6)));
-      autoTriggerPriceRef.current.buy = formatted;
-      autoTriggerPriceRef.current.sell = formatted;
-      autoTriggerPriceRef.current.stage = 'fetched';
-      setBuyPrice(formatted);
-      setSellPrice(formatted);
-    };
-    fetchOnce().catch(() => { });
-    const timer = setInterval(() => fetchOnce().catch(() => { }), 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [visible, chainId, tokenAddress, tokenInfo]);
 
   useEffect(() => {
     if (!visible) return;
@@ -438,12 +462,23 @@ export function LimitTradePanel({
         if (!unique.has(key)) unique.set(key, { chainId: o.chainId, tokenAddress: wNative, tokenInfo: null });
       }
 
+      const tokenPriceValid = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0;
+      if (tokenPriceValid && tokenAddress) {
+        const addrLower = tokenAddress.toLowerCase();
+        for (const o of filteredOrders) {
+          if (o.tokenAddress.toLowerCase() !== addrLower) continue;
+          unique.delete(toTokenKey(o.chainId, o.tokenAddress));
+        }
+      }
+
       const now = Date.now();
       const tasks = Array.from(unique.entries())
-        .filter(([key]) => {
+        .filter(([key, v]) => {
           if (priceFetchRef.current.inFlight.has(key)) return false;
           const cached = priceByTokenKeyRef.current[key];
-          if (cached && now - cached.ts < 10_000) return false;
+          const wNative = getWNativeAddress(v.chainId);
+          const ttl = wNative && toTokenKey(v.chainId, wNative) === key ? 60_000 : 10_000;
+          if (cached && now - cached.ts < ttl) return false;
           return true;
         })
         .map(([, v]) => v);
@@ -465,13 +500,16 @@ export function LimitTradePanel({
       });
     };
 
-    fetchOnce().catch(() => { });
-    const timer = setInterval(() => fetchOnce().catch(() => { }), 3000);
+    if (!didImmediateListPriceFetchRef.current) {
+      didImmediateListPriceFetchRef.current = true;
+      fetchOnce().catch(() => { });
+    }
+    const timer = setInterval(() => fetchOnce().catch(() => { }), 5000);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [visible, filteredOrders]);
+  }, [visible, filteredOrders, platform]);
 
   if (!visible) {
     return null;

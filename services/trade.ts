@@ -288,17 +288,21 @@ export class TradeService {
     const fees = explicitFee !== undefined
       ? (isValidFee(explicitFee) ? [explicitFee, 2500, 500, 100, 10000] : [2500, 500, 100, 10000])
       : [2500, 500, 100, 10000];
-    const attempts = fees.map((f) =>
-      this.getQuote(chainId, tokenIn, tokenOut, amountIn, f).then((out) => {
-        if (out > 0n) return { amountOut: out, fee: f };
-        throw new Error('NO_QUOTE');
+    const results = await Promise.allSettled(
+      fees.map(async (fee) => {
+        const amountOut = await this.getQuote(chainId, tokenIn, tokenOut, amountIn, fee);
+        return { amountOut, fee };
       })
     );
-    try {
-      return await Promise.any(attempts);
-    } catch {
-      return { amountOut: 0n, fee: undefined as number | undefined };
+
+    let best: { amountOut: bigint; fee?: number } = { amountOut: 0n, fee: undefined as number | undefined };
+    for (const r of results) {
+      if (r.status !== 'fulfilled') continue;
+      const { amountOut, fee } = r.value;
+      if (amountOut > best.amountOut) best = { amountOut, fee };
     }
+
+    return best;
   }
 
   private static getV2Factories(chainId: number) {

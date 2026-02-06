@@ -23,7 +23,8 @@ export default defineConfig({
       'https://dexscreener.com/*',
       'https://*.xxyy.io/*',
       'https://xxyy.io/*',
-      // 'https://ark.cn-beijing.volces.com/*',
+      'https://*.debot.ai/*',
+      'https://debot.ai/*',
       'https://api.blxrbdn.com/*',
     ],
     action: {

@@ -6,7 +6,7 @@ import { getBridgeTokenAddresses } from "@/constants/tokens";
 export interface SiteInfo {
   chain: string;
   tokenAddress: string;
-  platform: 'gmgn' | 'axiom' | 'flap' | 'fourmeme' | 'binance' | 'okx' | 'xxyy' | 'dexscreener';
+  platform: 'gmgn' | 'axiom' | 'flap' | 'fourmeme' | 'binance' | 'okx' | 'xxyy' | 'debot' | 'dexscreener';
   walletAddress?: string;
 }
 
@@ -144,6 +144,22 @@ export async function parseCurrentUrl(href: string): Promise<SiteInfo | null> {
         }
 
         return info as any;
+      }
+    }
+
+    // https://debot.ai/token/bsc/0x379a08c44744ef5b222179d856056d7741d4ffff
+    if (u.hostname.includes('debot.ai')) {
+      const parts = u.pathname.split('/').filter(Boolean);
+      // Expected: ['token', chain, address]
+      if (parts.length >= 3 && parts[0] === 'token') {
+        const chain = parts[1];
+        if (chain) {
+          return {
+            chain: chain.toLowerCase(),
+            tokenAddress: parts[2],
+            platform: 'debot'
+          };
+        }
       }
     }
 

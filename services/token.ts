@@ -209,13 +209,6 @@ export class TokenService {
       }
     }
 
-    if (!(priceUsd > 0) && tokenInfo && typeof (tokenInfo as any).tokenPrice?.price === 'string') {
-      const v = Number((tokenInfo as any).tokenPrice.price);
-      if (Number.isFinite(v) && v > 0) {
-        priceUsd = v;
-      }
-    }
-
     const quoteAddr = tokenInfo?.quote_token_address;
     if (!(priceUsd > 0) && quoteAddr && stableByAddress.has(quoteAddr.toLowerCase())) {
       const stable = stableByAddress.get(quoteAddr.toLowerCase())!;
@@ -248,7 +241,18 @@ export class TokenService {
       }
     }
 
-    this.tokenUsdCache.set(key, { ts: now, value: priceUsd });
+    if (!(priceUsd > 0) && tokenInfo && typeof (tokenInfo as any).tokenPrice?.price === 'string') {
+      const v = Number((tokenInfo as any).tokenPrice.price);
+      if (Number.isFinite(v) && v > 0) {
+        priceUsd = v;
+      }
+    }
+
+    if (priceUsd > 0) {
+      this.tokenUsdCache.set(key, { ts: now, value: priceUsd });
+    } else {
+      this.tokenUsdCache.delete(key);
+    }
     return priceUsd;
   }
 

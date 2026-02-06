@@ -36,6 +36,7 @@ export default function App() {
   const [draftBuyPresets, setDraftBuyPresets] = useState<string[]>([]);
   const [draftSellPresets, setDraftSellPresets] = useState<string[]>([]);
   const [tokenStat, setTokenStat] = useState<TokenStat | null>(null);
+  const [tokenPriceUsd, setTokenPriceUsd] = useState<number | null>(null);
   const [marketCapDisplay, setMarketCapDisplay] = useState<string | null>(null);
   const [liquidityDisplay, setLiquidityDisplay] = useState<string | null>(null);
   const [pendingQuickBuy, setPendingQuickBuy] = useState<{ tokenAddress: string; amount: string } | null>(null);
@@ -163,17 +164,43 @@ export default function App() {
   }, [tokenInfo]);
 
   const tokenPrice = useMemo(() => {
-    if (tokenStat && Number.isFinite(tokenStat.price) && tokenStat.price > 0) {
-      return tokenStat.price;
-    }
-    if (tokenInfo && typeof (tokenInfo as any).tokenPrice?.price === 'string') {
-      const v = Number((tokenInfo as any).tokenPrice.price);
-      if (Number.isFinite(v) && v > 0) return v;
+    if (tokenPriceUsd && Number.isFinite(tokenPriceUsd) && tokenPriceUsd > 0) {
+      return tokenPriceUsd;
     }
     return null;
-  }, [tokenStat, tokenInfo]);
+  }, [tokenPriceUsd]);
 
-  const isGmgnPlatform = siteInfo?.platform === 'gmgn';
+  const lastTokenPriceRefresh = useRef(0);
+  const tokenPriceReqSeq = useRef(0);
+  useEffect(() => {
+    tokenPriceReqSeq.current += 1;
+    setTokenPriceUsd(null);
+  }, [tokenAddressNormalized, settings?.chainId, siteInfo?.platform]);
+  async function refreshTokenPrice(force = false) {
+    if (document.hidden && !force) return;
+    if (!settings || !siteInfo || !tokenAddressNormalized) {
+      setTokenPriceUsd(null);
+      return;
+    }
+    const now = Date.now();
+    if (!force && now - lastTokenPriceRefresh.current < 5000) return;
+    lastTokenPriceRefresh.current = now;
+
+    const chainId = settings.chainId ?? 56;
+    const tokenAddr = tokenAddressNormalized;
+    const addrLower = tokenAddr.toLowerCase();
+    const safeTokenInfo = tokenInfo && (tokenInfo as any).address?.toLowerCase?.() === addrLower ? tokenInfo : null;
+    const seq = tokenPriceReqSeq.current + 1;
+    tokenPriceReqSeq.current = seq;
+    try {
+      const v = await TokenAPI.getTokenPriceUsd(siteInfo.platform, chainId, tokenAddr, safeTokenInfo);
+      if (seq !== tokenPriceReqSeq.current) return;
+      setTokenPriceUsd(v && Number.isFinite(v) && v > 0 ? v : null);
+    } catch {
+      if (seq !== tokenPriceReqSeq.current) return;
+      setTokenPriceUsd(null);
+    }
+  }
 
   const handleToggleGmgnBuy = () => {
     setGmgnBuyEnabled((v) => !v);
@@ -189,7 +216,7 @@ export default function App() {
     setState(res);
     setError(null);
     if (res.wallet.address) {
-      const tokenBalanceWei = await TokenAPI.getBalance(siteInfo?.platform ?? '', siteInfo?.chain ?? '', res.wallet.address, zeroAddress);
+      const tokenBalanceWei = await TokenAPI.getBalance(siteInfo?.platform ?? '', siteInfo?.chain ?? '', res.wallet.address, zeroAddress, { cacheTtlMs: 2000 });
       setNativeBalanceWei(tokenBalanceWei ?? '0');
     }
   }
@@ -203,6 +230,7 @@ export default function App() {
       setTokenDecimals(null);
       setTokenBalanceWei('0');
       setTokenStat(null);
+      setTokenPriceUsd(null);
       setMarketCapDisplay(null);
       setLiquidityDisplay(null);
       return;
@@ -231,14 +259,17 @@ export default function App() {
       }
 
       if (address) {
-        const holding = await TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, address, tokenAddressNormalized);
+        const holding = await TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, address, tokenAddressNormalized, { cacheTtlMs: 2000 });
         setTokenBalanceWei(holding ?? '0');
       }
+
+      await refreshTokenPrice(force);
     } catch (e: any) {
       setTokenSymbol(null);
       setTokenDecimals(null);
       setTokenBalanceWei('0');
       setTokenStat(null);
+      setTokenPriceUsd(null);
       setMarketCapDisplay(null);
       setLiquidityDisplay(null);
       // Don't show error for token fetch to avoid noise
@@ -247,7 +278,7 @@ export default function App() {
 
   useEffect(() => {
     refreshAll();
-    const timer = setInterval(refreshAll, 5000);
+    const timer = setInterval(refreshAll, 10000);
     return () => clearInterval(timer);
   }, []);
 
@@ -257,6 +288,7 @@ export default function App() {
       if (message.type === 'bg:stateChanged') {
         refreshAll();
         refreshToken(true);
+        refreshTokenPrice(true);
       }
     };
     browser.runtime.onMessage.addListener(listener);
@@ -266,11 +298,13 @@ export default function App() {
   useEffect(() => {
     if (!tokenAddressNormalized || !siteInfo || !address) return;
     refreshToken(true);
+    refreshTokenPrice(true);
   }, [tokenAddressNormalized, siteInfo, address]);
 
   useEffect(() => {
     refreshToken();
-    const timer = setInterval(() => refreshToken(), 5000);
+    refreshTokenPrice();
+    const timer = setInterval(() => refreshToken(), 15000);
     return () => clearInterval(timer);
   }, [tokenAddressNormalized, address]);
 
@@ -328,17 +362,17 @@ export default function App() {
   const startFastPolling = () => {
     if (fastPollingRef.current) clearInterval(fastPollingRef.current);
 
-    // Poll every 300ms for 9s to catch balance updates
+    // Poll briefly to catch balance updates after tx
     let count = 0;
     fastPollingRef.current = setInterval(() => {
       count++;
       refreshAll();
       refreshToken(true); // force refresh
-      if (count >= 30) {
+      if (count >= 15) {
         if (fastPollingRef.current) clearInterval(fastPollingRef.current);
         fastPollingRef.current = null;
       }
-    }, 300);
+    }, 800);
   };
 
   const handleBuy = (amountStr: string) => {
