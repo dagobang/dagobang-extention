@@ -6,11 +6,10 @@ import { TradeService } from '@/services/trade';
 import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
 import { getLimitOrders, setLimitOrders } from '@/services/storage';
-import type { BgRequest, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
+import type { BgRequest, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token.fourmeme';
 import { TokenFlapService } from '@/services/token.flap';
 import FourmemeAPI from '@/services/fourmeme.api';
-import FlapAPI from '@/hooks/FlapAPI';
 import BloxRouterAPI from '@/services/blox-router.api';
 
 export default defineBackground(() => {
@@ -26,8 +25,6 @@ export default defineBackground(() => {
   }>();
 
   const getKey = (chainId: number, tokenAddress: `0x${string}`) => `${chainId}:${tokenAddress.toLowerCase()}`;
-
-  const settingsCache: { value: Settings | null } = { value: null };
 
   const scoreRevertReason = (reason: string) => {
     const r = reason.toLowerCase();
@@ -559,6 +556,7 @@ export default defineBackground(() => {
 
   const LIMIT_SCAN_ALARM = 'limitOrder:scan';
   const LIMIT_SCAN_INTERVAL_MS = 3000;
+  const LIMIT_SCAN_IDLE_INTERVAL_MS = 60_000;
   let limitScanRunning = false;
   let limitScanLastAtMs = 0;
   let limitScanLastOk = true;
@@ -636,11 +634,29 @@ export default defineBackground(() => {
     }
   };
 
-  const scheduleNextLimitScan = () => {
+  const scheduleNextLimitScan = (delayMs: number) => {
     try {
-      (browser as any).alarms?.create(LIMIT_SCAN_ALARM, { when: Date.now() + LIMIT_SCAN_INTERVAL_MS });
+      const safeDelayMs = Number.isFinite(delayMs) ? Math.max(0, delayMs) : LIMIT_SCAN_INTERVAL_MS;
+      (browser as any).alarms?.create(LIMIT_SCAN_ALARM, { when: Date.now() + safeDelayMs });
     } catch {
     }
+  };
+
+  const scheduleLimitScanFromStorage = async () => {
+    let hasOpen = false;
+    try {
+      const all = await getLimitOrders();
+      hasOpen = all.some((o) => o.status === 'open');
+    } catch {
+    }
+    if (!hasOpen) {
+      try {
+        (browser as any).alarms?.clear?.(LIMIT_SCAN_ALARM);
+      } catch {
+      }
+      return;
+    }
+    scheduleNextLimitScan(LIMIT_SCAN_INTERVAL_MS);
   };
 
   try {
@@ -648,9 +664,11 @@ export default defineBackground(() => {
       if (!alarm || alarm.name !== LIMIT_SCAN_ALARM) return;
       scanAndTriggerLimitOrdersOnce()
         .catch(() => { })
-        .finally(() => scheduleNextLimitScan());
+        .finally(() => {
+          scheduleLimitScanFromStorage().catch(() => { });
+        });
     });
-    scheduleNextLimitScan();
+    scheduleLimitScanFromStorage().catch(() => { });
   } catch {
   }
 
@@ -993,18 +1011,21 @@ export default defineBackground(() => {
           case 'limitOrder:create': {
             const order = await createLimitOrder(msg.input);
             broadcastStateChange();
+            scheduleLimitScanFromStorage().catch(() => { });
             return { ok: true, order };
           }
 
           case 'limitOrder:cancel': {
             const orders = await cancelLimitOrder(msg.id);
             broadcastStateChange();
+            scheduleLimitScanFromStorage().catch(() => { });
             return { ok: true, orders };
           }
 
           case 'limitOrder:cancelAll': {
             const orders = await cancelAllLimitOrders(msg.chainId, msg.tokenAddress);
             broadcastStateChange();
+            scheduleLimitScanFromStorage().catch(() => { });
             return { ok: true, orders };
           }
 
@@ -1020,7 +1041,7 @@ export default defineBackground(() => {
 
             const res: ({ ok: true } & LimitOrderScanStatus) = {
               ok: true,
-              intervalMs: LIMIT_SCAN_INTERVAL_MS,
+              intervalMs: openOrders > 0 ? LIMIT_SCAN_INTERVAL_MS : LIMIT_SCAN_IDLE_INTERVAL_MS,
               running: limitScanRunning,
               lastScanAtMs: limitScanLastAtMs,
               lastScanOk: limitScanLastOk,

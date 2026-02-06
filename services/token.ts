@@ -12,6 +12,11 @@ export class TokenService {
   private static poolPairCache = new Map<string, { token0: `0x${string}`; token1: `0x${string}` }>();
   private static bnbUsdCache = { ts: 0, value: 0 };
   private static tokenUsdCache = new Map<string, { ts: number; value: number }>();
+  private static balanceCacheTtlMs = 1000;
+  private static nativeBalanceCache = new Map<string, { ts: number; value: string }>();
+  private static nativeBalanceInFlight = new Map<string, Promise<string>>();
+  private static tokenBalanceCache = new Map<string, { ts: number; value: string }>();
+  private static tokenBalanceInFlight = new Map<string, Promise<string>>();
 
   static async getMeta(tokenAddress: string) {
     const client = await RpcService.getClient();
@@ -23,20 +28,50 @@ export class TokenService {
   }
 
   static async getBalance(tokenAddress: string, owner: string) {
+    const now = Date.now();
+    const key = `${owner.toLowerCase()}:${tokenAddress.toLowerCase()}`;
+    const cached = this.tokenBalanceCache.get(key);
+    if (cached && now - cached.ts < this.balanceCacheTtlMs) return cached.value;
+    const inFlight = this.tokenBalanceInFlight.get(key);
+    if (inFlight) return inFlight;
+
     const client = await RpcService.getClient();
-    const balance = await client.readContract({
-      address: tokenAddress as `0x${string}`,
-      abi: erc20Abi,
-      functionName: 'balanceOf',
-      args: [owner as `0x${string}`],
+    const p = (async () => {
+      const balance = await client.readContract({
+        address: tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [owner as `0x${string}`],
+      });
+      const v = balance.toString();
+      this.tokenBalanceCache.set(key, { ts: Date.now(), value: v });
+      return v;
+    })().finally(() => {
+      this.tokenBalanceInFlight.delete(key);
     });
-    return balance.toString();
+    this.tokenBalanceInFlight.set(key, p);
+    return p;
   }
 
   static async getNativeBalance(owner: string) {
+    const now = Date.now();
+    const key = owner.toLowerCase();
+    const cached = this.nativeBalanceCache.get(key);
+    if (cached && now - cached.ts < this.balanceCacheTtlMs) return cached.value;
+    const inFlight = this.nativeBalanceInFlight.get(key);
+    if (inFlight) return inFlight;
+
     const client = await RpcService.getClient();
-    const balance = await client.getBalance({ address: owner as `0x${string}` });
-    return balance.toString();
+    const p = (async () => {
+      const balance = await client.getBalance({ address: owner as `0x${string}` });
+      const v = balance.toString();
+      this.nativeBalanceCache.set(key, { ts: Date.now(), value: v });
+      return v;
+    })().finally(() => {
+      this.nativeBalanceInFlight.delete(key);
+    });
+    this.nativeBalanceInFlight.set(key, p);
+    return p;
   }
 
   static async getPoolPair(pair: string) {

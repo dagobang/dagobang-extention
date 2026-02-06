@@ -115,6 +115,7 @@ export default function App() {
   // Monitor URL changes
   useEffect(() => {
     const check = async () => {
+      if (document.hidden) return;
       if (pendingQuickBuy) return;
       const info = await parseCurrentUrl(window.location.href);
       if (info == null || (JSON.stringify(info) !== JSON.stringify(siteInfo))) {
@@ -122,8 +123,15 @@ export default function App() {
       }
     };
     check();
-    const timer = setInterval(check, 500);
-    return () => clearInterval(timer);
+    const timer = setInterval(check, 2000);
+    const onVis = () => {
+      if (!document.hidden) check();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [siteInfo, pendingQuickBuy]);
 
   const tokenAddressNormalized = useMemo(() => {
@@ -213,11 +221,12 @@ export default function App() {
 
   async function refreshAll() {
     if (document.hidden) return;
+    if (!siteInfo) return;
     const res = await call({ type: 'bg:getState' });
     setState(res);
     setError(null);
     if (res.wallet.address) {
-      const tokenBalanceWei = await TokenAPI.getBalance(siteInfo?.platform ?? '', siteInfo?.chain ?? '', res.wallet.address, zeroAddress, { cacheTtlMs: 2000 });
+      const tokenBalanceWei = await TokenAPI.getBalance(siteInfo.platform, siteInfo.chain, res.wallet.address, zeroAddress, { cacheTtlMs: 2000 });
       setNativeBalanceWei(tokenBalanceWei ?? '0');
     }
   }
@@ -278,22 +287,24 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!siteInfo) return;
     refreshAll();
     const timer = setInterval(refreshAll, 10000);
     return () => clearInterval(timer);
-  }, []);
+  }, [siteInfo]);
 
   // Listen for background state changes (immediate update)
   useEffect(() => {
+    if (!siteInfo) return;
     const listener = (message: any) => {
       if (message.type === 'bg:stateChanged') {
         refreshAll();
-        refreshToken(true);
+        refreshToken();
       }
     };
     browser.runtime.onMessage.addListener(listener);
     return () => browser.runtime.onMessage.removeListener(listener);
-  }, [address, tokenAddressNormalized]);
+  }, [siteInfo, address, tokenAddressNormalized]);
 
   useEffect(() => {
     if (!tokenAddressNormalized || !siteInfo || !address) return;
