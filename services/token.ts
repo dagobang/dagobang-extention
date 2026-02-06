@@ -6,6 +6,7 @@ import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { RpcService } from './rpc';
 import { TradeService } from './trade';
 import { TokenFourmemeService } from './token.fourmeme';
+import { TokenFlapService } from './token.flap';
 
 export class TokenService {
   private static poolPairCache = new Map<string, { token0: `0x${string}`; token1: `0x${string}` }>();
@@ -127,10 +128,16 @@ export class TokenService {
 
     if (platform.includes('fourmeme') && isInnerDisk) {
       try {
+        const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
         const contractInfo = await TokenFourmemeService.getTokenInfo(chainId, tokenAddress);
-        const quoteAddr = typeof contractInfo.quote === 'string' ? contractInfo.quote : '';
+        const quoteAddrRaw = typeof contractInfo.quote === 'string' ? contractInfo.quote : '';
+        const quoteAddrLower = quoteAddrRaw.toLowerCase();
+        const quoteAddr =
+          !quoteAddrRaw || quoteAddrLower === ZERO_ADDRESS
+            ? (bscTokens.wbnb.address as `0x${string}`)
+            : (quoteAddrRaw as `0x${string}`);
         const priceInQuote = contractInfo.lastPrice / 1e18;
-        if (quoteAddr && Number.isFinite(priceInQuote) && priceInQuote > 0) {
+        if (Number.isFinite(priceInQuote) && priceInQuote > 0) {
           const stable = stableByAddress.get(quoteAddr.toLowerCase());
           if (stable) {
             priceUsd = priceInQuote;
@@ -140,72 +147,42 @@ export class TokenService {
           }
         }
       } catch (e) {
-        console.error('getTokenPriceUsdFromRpc: failed to get token price from fourmeme', e); 
+        console.error('getTokenPriceUsdFromRpc: failed to get token price from fourmeme', e);
       }
     }
 
-    if (!(priceUsd > 0) && platform.includes('flap') && isInnerDisk && tokenInfo?.pool_pair) {
+    if (!(priceUsd > 0) && platform.includes('flap') && isInnerDisk) {
       try {
-        if (chainId === 56) {
-          const pair = tokenInfo.pool_pair as `0x${string}`;
-          const quoteToken = (tokenInfo.quote_token_address ?? bscTokens.wbnb.address) as `0x${string}`;
+        const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+        const contractInfo = await TokenFlapService.getTokenInfo(chainId, tokenAddress);
 
-          const client = await RpcService.getClient();
-          const [token0, token1, reserves] = await Promise.all([
-            client.readContract({
-              address: pair,
-              abi: pairV2Abi,
-              functionName: 'token0',
-            }) as Promise<`0x${string}`>,
-            client.readContract({
-              address: pair,
-              abi: pairV2Abi,
-              functionName: 'token1',
-            }) as Promise<`0x${string}`>,
-            client.readContract({
-              address: pair,
-              abi: pairV2Abi,
-              functionName: 'getReserves',
-            }) as Promise<[bigint, bigint, number]>,
-          ]);
+        const quoteAddrRaw = typeof contractInfo.quoteTokenAddress === 'string' ? contractInfo.quoteTokenAddress : '';
+        const quoteAddrLower = quoteAddrRaw.toLowerCase();
+        const quoteAddr =
+          !quoteAddrRaw || quoteAddrLower === ZERO_ADDRESS
+            ? (bscTokens.wbnb.address as `0x${string}`)
+            : (quoteAddrRaw as `0x${string}`);
 
-          const t0 = token0.toLowerCase();
-          const t1 = token1.toLowerCase();
-          const tokenLower = tokenAddress.toLowerCase();
-          const quoteLower = quoteToken.toLowerCase();
-
-          let reserveIn = 0n;
-          let reserveOut = 0n;
-          if (t0 === tokenLower && t1 === quoteLower) {
-            reserveIn = reserves[0];
-            reserveOut = reserves[1];
-          } else if (t1 === tokenLower && t0 === quoteLower) {
-            reserveIn = reserves[1];
-            reserveOut = reserves[0];
+        const priceWei = (() => {
+          try {
+            return BigInt(contractInfo.price);
+          } catch {
+            return 0n;
           }
+        })();
 
-          if (reserveIn > 0n && reserveOut > 0n) {
-            const feeBps = 25n;
-            const amountInWithFee = oneToken * (10000n - feeBps);
-            const numerator = amountInWithFee * reserveOut;
-            const denominator = reserveIn * 10000n + amountInWithFee;
-            const amountOut = denominator > 0n ? numerator / denominator : 0n;
-
-            if (amountOut > 0n) {
-              const stable = stableByAddress.get(quoteLower);
-              if (stable) {
-                priceUsd = toNumberFromUnits(amountOut, stable.decimals);
-              } else if (quoteLower === bscTokens.wbnb.address.toLowerCase()) {
-                const outBnb = toNumberFromUnits(amountOut, bscTokens.wbnb.decimals);
-                const bnbUsd = await getBnbPriceUsd();
-                if (bnbUsd > 0 && outBnb > 0) {
-                  priceUsd = outBnb * bnbUsd;
-                }
-              }
-            }
+        const priceInQuote = priceWei > 0n ? toNumberFromUnits(priceWei, 18) : 0;
+        if (Number.isFinite(priceInQuote) && priceInQuote > 0) {
+          const stable = stableByAddress.get(quoteAddr.toLowerCase());
+          if (stable) {
+            priceUsd = priceInQuote;
+          } else if (quoteAddr.toLowerCase() === bscTokens.wbnb.address.toLowerCase()) {
+            const bnbUsd = await getBnbPriceUsd();
+            if (bnbUsd > 0) priceUsd = priceInQuote * bnbUsd;
           }
         }
-      } catch {
+      } catch (e) {
+        console.error('getTokenPriceUsdFromRpc: failed to get token price from flap', e);
       }
     }
 
@@ -247,7 +224,6 @@ export class TokenService {
         priceUsd = v;
       }
     }
-
     if (priceUsd > 0) {
       this.tokenUsdCache.set(key, { ts: now, value: priceUsd });
     } else {

@@ -91,7 +91,7 @@ export class TokenFourmemeService {
       version: Number(version),
       tokenManager,
       quote,
-      lastPrice: Number(lastPrice),
+      lastPrice: Number(lastPrice), // BNB
       tradingFeeRate: Number(tradingFeeRate),
       minTradingFee: Number(minTradingFee),
       launchTime: Number(launchTime),

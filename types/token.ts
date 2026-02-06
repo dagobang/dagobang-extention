@@ -42,3 +42,25 @@ export interface FourmemeTokenInfo {
   maxFunds: number;
   liquidityAdded: boolean;
 }
+
+export interface FlapTokenStateV7 {
+  symbol: string;
+  decimals: number;
+  status: number;
+  reserve: string;
+  circulatingSupply: string;
+  price: string;
+  tokenVersion: number;
+  r: string;
+  h: string;
+  k: string;
+  dexSupplyThresh: string;
+  quoteTokenAddress: string;
+  nativeToQuoteSwapEnabled: boolean;
+  extensionID: string;
+  taxRate: string;
+  pool: string;
+  progress: string;
+  lpFeeProfile: number;
+  dexId: number;
+}

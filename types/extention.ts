@@ -1,4 +1,4 @@
-import { TokenInfo } from "./token";
+import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "./token";
 
 export type GasPreset = 'slow' | 'standard' | 'fast' | 'turbo';
 
@@ -207,8 +207,8 @@ export type BgRequest =
   | { type: 'token:getPoolPair'; pair: `0x${string}` }
   | { type: 'token:getPriceUsd'; chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo | null }
   | { type: 'token:getTokenInfo:fourmeme'; chainId: number; tokenAddress: `0x${string}` }
+  | { type: 'token:getTokenInfo:flap'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:fourmemeHttp'; platform: string; chain: string; address: `0x${string}` }
-  | { type: 'token:getTokenInfo:flapHttp'; platform: string; chain: string; address: `0x${string}` }
   | { type: 'token:createFourmeme'; input: { name: string; shortName: string; desc: string; imgUrl: string; webUrl?: string; twitterUrl?: string; telegramUrl?: string; preSale: string; onlyMPC: boolean } }
   | { type: 'ai:generateLogo'; prompt: string; size?: string; apiKey: string }
   | { type: 'tx:buy'; input: TxBuyInput }
@@ -261,9 +261,11 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; token0: `0x${string}`; token1: `0x${string}` }
   : T extends { type: 'token:getPriceUsd' }
   ? { ok: true; priceUsd: number }
+  : T extends { type: 'token:getTokenInfo:fourmeme' }
+  ? ({ ok: true } & FourmemeTokenInfo)
+  : T extends { type: 'token:getTokenInfo:flap' }
+  ? ({ ok: true } & FlapTokenStateV7)
   : T extends { type: 'token:getTokenInfo:fourmemeHttp' }
-  ? { ok: true; tokenInfo: TokenInfo | null }
-  : T extends { type: 'token:getTokenInfo:flapHttp' }
   ? { ok: true; tokenInfo: TokenInfo | null }
   : T extends { type: 'token:createFourmeme' }
   ? { ok: true; data?: any }

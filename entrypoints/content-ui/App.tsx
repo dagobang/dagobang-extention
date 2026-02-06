@@ -14,7 +14,7 @@ import { call } from '@/utils/messaging';
 import { parseEther, zeroAddress } from 'viem';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import GmgnAPI from '@/hooks/GmgnAPI';
-import { type TokenStat } from '@/types/token';
+import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { Logo } from '@/components/Logo';
 
@@ -176,7 +176,7 @@ export default function App() {
     tokenPriceReqSeq.current += 1;
     setTokenPriceUsd(null);
   }, [tokenAddressNormalized, settings?.chainId, siteInfo?.platform]);
-  async function refreshTokenPrice(force = false) {
+  async function refreshTokenPrice(force = false, tokenInfoOverride?: TokenInfo | null) {
     if (document.hidden && !force) return;
     if (!settings || !siteInfo || !tokenAddressNormalized) {
       setTokenPriceUsd(null);
@@ -189,7 +189,8 @@ export default function App() {
     const chainId = settings.chainId ?? 56;
     const tokenAddr = tokenAddressNormalized;
     const addrLower = tokenAddr.toLowerCase();
-    const safeTokenInfo = tokenInfo && (tokenInfo as any).address?.toLowerCase?.() === addrLower ? tokenInfo : null;
+    const baseTokenInfo = tokenInfoOverride !== undefined ? tokenInfoOverride : tokenInfo;
+    const safeTokenInfo = baseTokenInfo && (baseTokenInfo as any).address?.toLowerCase?.() === addrLower ? baseTokenInfo : null;
     const seq = tokenPriceReqSeq.current + 1;
     tokenPriceReqSeq.current = seq;
     try {
@@ -263,7 +264,7 @@ export default function App() {
         setTokenBalanceWei(holding ?? '0');
       }
 
-      await refreshTokenPrice(force);
+      await refreshTokenPrice(force, meta ?? null);
     } catch (e: any) {
       setTokenSymbol(null);
       setTokenDecimals(null);
@@ -288,7 +289,6 @@ export default function App() {
       if (message.type === 'bg:stateChanged') {
         refreshAll();
         refreshToken(true);
-        refreshTokenPrice(true);
       }
     };
     browser.runtime.onMessage.addListener(listener);
@@ -298,12 +298,10 @@ export default function App() {
   useEffect(() => {
     if (!tokenAddressNormalized || !siteInfo || !address) return;
     refreshToken(true);
-    refreshTokenPrice(true);
   }, [tokenAddressNormalized, siteInfo, address]);
 
   useEffect(() => {
     refreshToken();
-    refreshTokenPrice();
     const timer = setInterval(() => refreshToken(), 15000);
     return () => clearInterval(timer);
   }, [tokenAddressNormalized, address]);

@@ -5,6 +5,7 @@ declare global {
   const BNBCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').BNBCoinIcon
   const ChainCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').ChainCoinIcon
   const ContentScriptContext: typeof import('wxt/utils/content-script-context').ContentScriptContext
+  const FlapAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI').default
   const GmgnAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI').default
   const InvalidMatchPattern: typeof import('wxt/utils/match-patterns').InvalidMatchPattern
   const Logo: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Logo').Logo
@@ -78,6 +79,9 @@ declare global {
   // @ts-ignore
   export type { AxiomAPI, AxiomPairInfoResponse } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/AxiomAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/AxiomAPI')
+  // @ts-ignore
+  export type { FlapAPI } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI'
+  import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI')
   // @ts-ignore
   export type { GmgnAPI, MultiTokenInfoResponse, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI')

@@ -8,8 +8,9 @@ import { RpcService } from '@/services/rpc';
 import { getLimitOrders, setLimitOrders } from '@/services/storage';
 import type { BgRequest, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token.fourmeme';
+import { TokenFlapService } from '@/services/token.flap';
 import FourmemeAPI from '@/services/fourmeme.api';
-import FlapAPI from '@/services/flap.api';
+import FlapAPI from '@/hooks/FlapAPI';
 import BloxRouterAPI from '@/services/blox-router.api';
 
 export default defineBackground(() => {
@@ -569,7 +570,6 @@ export default defineBackground(() => {
     const startedAt = Date.now();
     limitScanLastOk = true;
     limitScanLastError = null;
-    broadcastStateChange().catch(() => { });
     try {
       const all = await getLimitOrders();
       const openOrders = all.filter((o) => o.status === 'open');
@@ -633,7 +633,6 @@ export default defineBackground(() => {
     } finally {
       limitScanLastAtMs = startedAt;
       limitScanRunning = false;
-      broadcastStateChange().catch(() => { });
     }
   };
 
@@ -897,13 +896,11 @@ export default defineBackground(() => {
           case 'token:getTokenInfo:fourmeme':
             return { ok: true, ...(await TokenFourmemeService.getTokenInfo(msg.chainId, msg.tokenAddress)) };
 
+          case 'token:getTokenInfo:flap':
+            return { ok: true, ...(await TokenFlapService.getTokenInfo(msg.chainId, msg.tokenAddress)) };
+
           case 'token:getTokenInfo:fourmemeHttp': {
             const tokenInfo = await FourmemeAPI.getTokenInfo(msg.chain, msg.address);
-            return { ok: true, tokenInfo };
-          }
-
-          case 'token:getTokenInfo:flapHttp': {
-            const tokenInfo = await FlapAPI.getTokenInfo(msg.chain, msg.address);
             return { ok: true, tokenInfo };
           }
 
