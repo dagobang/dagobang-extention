@@ -48,9 +48,9 @@ function App() {
   };
 
   async function refresh() {
+    if (document.hidden) return;
     setError(null);
     try {
-      await call({ type: 'bg:ping' });
       const res = await call({ type: 'bg:getState' });
       setState(res);
       setLocale(normalizeLocale(res.settings.locale));
@@ -102,9 +102,15 @@ function App() {
   });
 
   useEffect(() => {
+    const onVis = () => {
+      if (!document.hidden) savedRefresh.current();
+    };
+    document.addEventListener('visibilitychange', onVis);
+
     refresh();
-    const timer = setInterval(() => savedRefresh.current(), 5000); // Auto refresh
-    return () => clearInterval(timer);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, []); // eslint-disable-line
 
   let content: React.ReactNode;

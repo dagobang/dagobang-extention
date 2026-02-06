@@ -222,12 +222,15 @@ export default function App() {
   async function refreshAll() {
     if (document.hidden) return;
     if (!siteInfo) return;
+    if (!tokenAddressNormalized) return;
     const res = await call({ type: 'bg:getState' });
     setState(res);
     setError(null);
-    if (res.wallet.address) {
+    if (res.wallet.isUnlocked && res.wallet.address) {
       const tokenBalanceWei = await TokenAPI.getBalance(siteInfo.platform, siteInfo.chain, res.wallet.address, zeroAddress, { cacheTtlMs: 2000 });
       setNativeBalanceWei(tokenBalanceWei ?? '0');
+    } else {
+      setNativeBalanceWei('0');
     }
   }
 
@@ -268,9 +271,11 @@ export default function App() {
         }
       }
 
-      if (address) {
+      if (isUnlocked && address) {
         const holding = await TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, address, tokenAddressNormalized, { cacheTtlMs: 2000 });
         setTokenBalanceWei(holding ?? '0');
+      } else {
+        setTokenBalanceWei('0');
       }
 
       await refreshTokenPrice(force, meta ?? null);
@@ -287,15 +292,15 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!siteInfo) return;
+    if (!siteInfo || !tokenAddressNormalized) return;
     refreshAll();
     const timer = setInterval(refreshAll, 10000);
     return () => clearInterval(timer);
-  }, [siteInfo]);
+  }, [siteInfo, tokenAddressNormalized]);
 
   // Listen for background state changes (immediate update)
   useEffect(() => {
-    if (!siteInfo) return;
+    if (!siteInfo || !tokenAddressNormalized) return;
     const listener = (message: any) => {
       if (message.type === 'bg:stateChanged') {
         refreshAll();
@@ -304,7 +309,7 @@ export default function App() {
     };
     browser.runtime.onMessage.addListener(listener);
     return () => browser.runtime.onMessage.removeListener(listener);
-  }, [siteInfo, address, tokenAddressNormalized]);
+  }, [siteInfo, tokenAddressNormalized, address]);
 
   useEffect(() => {
     if (!tokenAddressNormalized || !siteInfo || !address) return;

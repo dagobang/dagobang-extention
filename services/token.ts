@@ -34,7 +34,7 @@ export class TokenService {
     if (cached && now - cached.ts < this.balanceCacheTtlMs) return cached.value;
     const inFlight = this.tokenBalanceInFlight.get(key);
     if (inFlight) return inFlight;
-
+    console.log('getBalance', tokenAddress, owner);
     const client = await RpcService.getClient();
     const p = (async () => {
       const balance = await client.readContract({

@@ -135,7 +135,7 @@ export function LimitTradePanel({
   const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : tt('contentUi.autotrade.walletNotConnected');
 
   const formatAmountForInput = (value: number) => {
-    const s = formatAmount(value);
+    const s = formatAmount(value, 4);
     return s === '-' ? '' : s;
   };
 

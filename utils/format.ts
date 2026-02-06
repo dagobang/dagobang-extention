@@ -6,7 +6,7 @@ export const parseNumberLoose = (v: string) => {
   const n = Number(String(v).replace(/,/g, '').trim());
   return Number.isFinite(n) ? n : null;
 };
-export const formatAmount = (value: number) => {
+export const formatAmount = (value: number, fixed = 2) => {
   if (!Number.isFinite(value) || value <= 0) return '-';
   const abs = Math.abs(value);
   if (abs === 0) return '0';
@@ -17,10 +17,10 @@ export const formatAmount = (value: number) => {
 
   if (abs >= 1) {
     const truncated = truncByFactor(value, 100);
-    return (truncated.toFixed(2));
+    return (truncated.toFixed(fixed));
   }
 
-  if (abs < 1e-15) return value.toExponential(2);
+  if (abs < 1e-15) return value.toExponential(fixed);
   const exponent = Math.floor(Math.log10(abs));
   const decimals = Math.max(0, 1 - exponent);
   const factor = 10 ** decimals;

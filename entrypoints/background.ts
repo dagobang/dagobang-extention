@@ -781,7 +781,14 @@ export default defineBackground(() => {
 
   browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
     const msg = message as BgRequest;
-    console.log('Bg received:', msg.type);
+    if (msg.type === 'chain:getBalance' || msg.type === 'token:getBalance' || msg.type === 'bg:getState') {
+      const from = sender?.url || sender?.tab?.url || '';
+      const tabId = typeof sender?.tab?.id === 'number' ? sender.tab.id : null;
+      const active = sender?.tab ? !!sender.tab.active : null;
+      console.log('Bg received:', msg.type, { from, tabId, active });
+    } else {
+      console.log('Bg received:', msg.type);
+    }
 
     // Return true to indicate async response
     const handle = async () => {
