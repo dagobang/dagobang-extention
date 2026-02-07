@@ -45,6 +45,20 @@ export type AutoTradeConfig = {
   maxHoldMinutes: string;
 };
 
+export type AdvancedAutoSellRuleType = 'take_profit' | 'stop_loss';
+
+export type AdvancedAutoSellRule = {
+  id: string;
+  type: AdvancedAutoSellRuleType;
+  triggerPercent: number;
+  sellPercent: number;
+};
+
+export type AdvancedAutoSellConfig = {
+  enabled: boolean;
+  rules: AdvancedAutoSellRule[];
+};
+
 export type Settings = {
   chainId: 56;
   chains: Record<number, ChainSettings>;
@@ -59,6 +73,7 @@ export type Settings = {
   gmgnQuickBuy2Bnb?: string;
   limitOrderScanIntervalMs?: number;
   autoTrade: AutoTradeConfig;
+  advancedAutoSell: AdvancedAutoSellConfig;
 };
 
 export type Account = {
@@ -145,6 +160,7 @@ export type LimitOrder = {
   triggerPriceUsd: number;
   buyBnbAmountWei?: string;
   sellPercentBps?: number;
+  sellTokenAmountWei?: string;
   createdAtMs: number;
   status: LimitOrderStatus;
   txHash?: `0x${string}`;
@@ -161,6 +177,7 @@ export type LimitOrderCreateInput = {
   triggerPriceUsd: number;
   buyBnbAmountWei?: string;
   sellPercentBps?: number;
+  sellTokenAmountWei?: string;
   tokenInfo?: TokenInfo;
 };
 
@@ -172,6 +189,7 @@ export type LimitOrderScanStatus = {
   lastScanError: string | null;
   totalOrders: number;
   openOrders: number;
+  pricesByTokenKey?: Record<string, { priceUsd: number; ts: number }>;
 };
 
 export type TxWaitForReceiptError = {

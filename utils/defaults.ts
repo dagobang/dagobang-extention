@@ -1,4 +1,4 @@
-import type { Settings, ChainSettings, AutoTradeConfig, GasGweiConfig } from '../types/extention';
+import type { Settings, ChainSettings, AutoTradeConfig, GasGweiConfig, AdvancedAutoSellConfig } from '../types/extention';
 
 const DEFAULT_GAS_GWEI: GasGweiConfig = {
   slow: '0.06',
@@ -38,6 +38,15 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
   maxHoldMinutes: '',
 };
 
+const DEFAULT_ADVANCED_AUTO_SELL: AdvancedAutoSellConfig = {
+  enabled: false,
+  rules: [
+    { id: 'tp_100', type: 'take_profit', triggerPercent: 100, sellPercent: 50 },
+    { id: 'tp_300', type: 'take_profit', triggerPercent: 300, sellPercent: 50 },
+    { id: 'sl_50', type: 'stop_loss', triggerPercent: -50, sellPercent: 100 },
+  ],
+};
+
 export function defaultSettings(): Settings {
   return {
     chainId: 56,
@@ -54,5 +63,6 @@ export function defaultSettings(): Settings {
     gmgnQuickBuy2Bnb: '0.1',
     limitOrderScanIntervalMs: 3000,
     autoTrade: DEFAULT_AUTOTRADE,
+    advancedAutoSell: DEFAULT_ADVANCED_AUTO_SELL,
   };
 }

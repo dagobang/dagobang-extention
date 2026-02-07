@@ -1,6 +1,6 @@
 import { browser } from 'wxt/browser';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { parseEther, formatEther } from 'viem';
+import { parseEther, formatEther, formatUnits } from 'viem';
 import type { Settings, LimitOrder, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { TokenAPI } from '@/hooks/TokenAPI';
@@ -8,6 +8,7 @@ import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
 import { formatAmount, parseNumberLoose, formatTime } from '@/utils/format';
+import { AutoSell } from './AutoSell';
 
 type LimitTradePanelProps = {
   platform: string;
@@ -143,6 +144,12 @@ export function LimitTradePanel({
   })();
 
   const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : tt('contentUi.autotrade.walletNotConnected');
+  const advancedAutoSell = settings?.advancedAutoSell ?? null;
+  const canEditAdvanced = !!settings && !!isUnlocked;
+  const onUpdateAdvancedAutoSell = (next: Settings['advancedAutoSell']) => {
+    if (!settings) return;
+    void call({ type: 'settings:set', settings: { ...settings, advancedAutoSell: next } } as const);
+  };
 
   const formatAmountForInput = (value: number) => {
     const s = formatAmount(value, 4);
@@ -230,6 +237,22 @@ export function LimitTradePanel({
     const res = await call({ type: 'limitOrder:scanStatus', chainId } as const);
     const { ok: _ok, ...status } = res;
     setScanStatus(status);
+    const prices = (status as any).pricesByTokenKey as undefined | Record<string, { priceUsd: number; ts: number }>;
+    if (prices && typeof prices === 'object') {
+      setPriceByTokenKey((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [k, v] of Object.entries(prices)) {
+          if (!v || typeof v.priceUsd !== 'number' || typeof v.ts !== 'number') continue;
+          const old = prev[k];
+          if (!old || old.ts < v.ts || old.priceUsd !== v.priceUsd) {
+            next[k] = { priceUsd: v.priceUsd, ts: v.ts };
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
   };
   const refreshRunningRef = useRef(false);
   const lastRefreshAtRef = useRef(0);
@@ -284,10 +307,24 @@ export function LimitTradePanel({
       const v = Number(formatEther(wei));
       return Number.isFinite(v) && v > 0 ? `${v} BNB` : '-';
     }
+    const fixedAmountWei = (() => {
+      try {
+        return o.sellTokenAmountWei ? BigInt(o.sellTokenAmountWei) : 0n;
+      } catch {
+        return 0n;
+      }
+    })();
     const bps = o.sellPercentBps ?? 0;
-    if (!bps) return '-';
-    const pct = bps / 100;
-    return `${pct}%`;
+    const pct = Number.isFinite(bps) && bps > 0 ? (bps / 100) : null;
+    if (fixedAmountWei > 0n && o.tokenInfo) {
+      const decimals = typeof (o.tokenInfo as any).decimals === 'number' ? (o.tokenInfo as any).decimals : 18;
+      const tokens = Number(formatUnits(fixedAmountWei, decimals));
+      const sym = o.tokenSymbol || tt('contentUi.common.token');
+      const amtText = Number.isFinite(tokens) && tokens > 0 ? `${formatAmount(tokens)} ${sym}` : '-';
+      return pct != null ? `${amtText} (${pct}%)` : amtText;
+    }
+    if (pct != null) return `${pct}%`;
+    return '-';
   };
 
   const estimateReceive = (o: LimitOrder): { main: string; sub?: string } => {
@@ -315,13 +352,28 @@ export function LimitTradePanel({
       };
     }
 
-    const bps = o.sellPercentBps ?? 0;
-    if (!Number.isFinite(bps) || bps <= 0 || bps > 10000) return { main: '-' };
     if (!tokenAddress || o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return { main: '-' };
 
-    const bal = parseNumberLoose(formattedTokenBalance);
-    if (bal == null || bal <= 0) return { main: '-' };
-    const sellTokenAmount = bal * (bps / 10000);
+    const fixedAmountWei = (() => {
+      try {
+        return o.sellTokenAmountWei ? BigInt(o.sellTokenAmountWei) : 0n;
+      } catch {
+        return 0n;
+      }
+    })();
+    let sellTokenAmount = 0;
+    if (fixedAmountWei > 0n && o.tokenInfo) {
+      const decimals = typeof (o.tokenInfo as any).decimals === 'number' ? (o.tokenInfo as any).decimals : 18;
+      const v = Number(formatUnits(fixedAmountWei, decimals));
+      sellTokenAmount = Number.isFinite(v) ? v : 0;
+    } else {
+      const bps = o.sellPercentBps ?? 0;
+      if (!Number.isFinite(bps) || bps <= 0 || bps > 10000) return { main: '-' };
+      const bal = parseNumberLoose(formattedTokenBalance);
+      if (bal == null || bal <= 0) return { main: '-' };
+      sellTokenAmount = bal * (bps / 10000);
+    }
+    if (!Number.isFinite(sellTokenAmount) || sellTokenAmount <= 0) return { main: '-' };
     const receiveUsd = sellTokenAmount * triggerPriceUsd;
     const receiveBnb = receiveUsd / bnbUsd;
     return {
@@ -353,6 +405,15 @@ export function LimitTradePanel({
     if (type === 'low_buy') return ['低价', '买入'];
     if (type === 'high_buy') return ['高价', '买入'];
     return [formatOrderType(o), ''];
+  };
+
+  const orderTypeColorClass = (o: LimitOrder) => {
+    const type = normalizeOrderType(o);
+    if (type === 'take_profit_sell') return 'text-emerald-300';
+    if (type === 'stop_loss_sell') return 'text-rose-300';
+    if (type === 'low_buy') return 'text-emerald-300';
+    if (type === 'high_buy') return 'text-rose-300';
+    return o.side === 'buy' ? 'text-emerald-300' : 'text-rose-300';
   };
 
   const formatStatus = (o: LimitOrder) => {
@@ -518,14 +579,19 @@ export function LimitTradePanel({
 
     if (!didImmediateListPriceFetchRef.current) {
       didImmediateListPriceFetchRef.current = true;
-      fetchOnce().catch(() => { });
+      if ((scanStatus?.openOrders ?? 0) <= 0) fetchOnce().catch(() => { });
     }
-    const timer = setInterval(() => fetchOnce().catch(() => { }), 5000);
+    if ((scanStatus?.openOrders ?? 0) > 0) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    const timer = setInterval(() => fetchOnce().catch(() => { }), 30000);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [visible, filteredOrders, platform]);
+  }, [visible, filteredOrders, platform, scanStatus?.openOrders]);
 
   if (!visible) {
     return null;
@@ -536,6 +602,8 @@ export function LimitTradePanel({
   const buyCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || !buyAmount || buyTrigger == null;
   const sellBps = toPercentBps(sellPercent);
   const sellCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || sellBps == null || sellTrigger == null;
+  const advancedSellCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || !advancedAutoSell?.enabled || !(advancedAutoSell.rules?.length > 0);
+  const sellButtonDisabled = advancedAutoSell?.enabled ? advancedSellCreateDisabled : sellCreateDisabled;
 
   return (
     <div
@@ -632,35 +700,37 @@ export function LimitTradePanel({
                   </button>
                 ))}
               </div>
-
-              <button
-                type="button"
-                disabled={buyCreateDisabled}
-                className="w-full px-2 py-1 rounded border border-emerald-500/30 bg-emerald-500/10 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={async () => {
-                  if (!tokenAddress || !tokenInfo) return;
-                  const trigger = parsePositiveNumber(buyPrice);
-                  if (trigger == null) return;
-                  const amountWei = parseEther(buyAmount).toString();
-                  await call({
-                    type: 'limitOrder:create',
-                    input: {
-                      chainId,
-                      tokenAddress,
-                      tokenSymbol,
-                      side: 'buy',
-                      orderType: buyOrderType,
-                      triggerPriceUsd: trigger,
-                      buyBnbAmountWei: amountWei,
-                      tokenInfo,
-                    },
-                  });
-                  setBuyAmount('');
-                  await refreshOrders();
-                }}
-              >
-                {buyOrderType === 'high_buy' ? '创建高价买限价单' : '创建低价买限价单'}
-              </button>
+              <div className="w-full flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={buyCreateDisabled}
+                  className="flex-1 px-2 py-1 rounded border border-emerald-500/30 bg-emerald-500/10 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={async () => {
+                    if (!tokenAddress || !tokenInfo) return;
+                    const trigger = parsePositiveNumber(buyPrice);
+                    if (trigger == null) return;
+                    const amountWei = parseEther(buyAmount).toString();
+                    await call({
+                      type: 'limitOrder:create',
+                      input: {
+                        chainId,
+                        tokenAddress,
+                        tokenSymbol,
+                        side: 'buy',
+                        orderType: buyOrderType,
+                        triggerPriceUsd: trigger,
+                        buyBnbAmountWei: amountWei,
+                        tokenInfo,
+                      },
+                    });
+                    setBuyAmount('');
+                    await refreshOrders();
+                  }}
+                >
+                  {buyOrderType === 'high_buy' ? '创建高价买限价单' : '创建低价买限价单'}
+                </button>
+                <AutoSell canEdit={canEditAdvanced} value={advancedAutoSell} onChange={onUpdateAdvancedAutoSell} />
+              </div>
             </div>
 
             <div className="flex-1 min-w-0 space-y-2 pl-3">
@@ -732,34 +802,84 @@ export function LimitTradePanel({
                 ))}
               </div>
 
-              <button
-                type="button"
-                disabled={sellCreateDisabled}
-                className="w-full px-2 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={async () => {
-                  if (!tokenAddress || !tokenInfo) return;
-                  const trigger = parsePositiveNumber(sellPrice);
-                  const bps = toPercentBps(sellPercent);
-                  if (trigger == null || bps == null) return;
-                  await call({
-                    type: 'limitOrder:create',
-                    input: {
-                      chainId,
-                      tokenAddress,
-                      tokenSymbol,
-                      side: 'sell',
-                      orderType: sellOrderType,
-                      triggerPriceUsd: trigger,
-                      sellPercentBps: bps,
-                      tokenInfo,
-                    },
-                  });
-                  setSellPercent('');
-                  await refreshOrders();
-                }}
-              >
-                {sellOrderType === 'stop_loss_sell' ? '创建止损限价单' : '创建止盈限价单'}
-              </button>
+              <div className="w-full flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={sellButtonDisabled}
+                  className="flex-1 px-2 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={async () => {
+                    if (!tokenAddress || !tokenInfo) return;
+
+                    if (advancedAutoSell?.enabled && advancedAutoSell.rules?.length) {
+                      const tryGetBasePriceUsd = async () => {
+                        const fromProp = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null;
+                        if (fromProp != null) return fromProp;
+                        const cached = priceByTokenKey[toTokenKey(chainId, tokenAddress)];
+                        const fromCache = cached?.priceUsd != null && cached.priceUsd > 0 ? cached.priceUsd : null;
+                        if (fromCache != null) return fromCache;
+                        try {
+                          const fetched = await TokenAPI.getTokenPriceUsd(platform, chainId, tokenAddress, tokenInfo);
+                          return fetched != null && fetched > 0 ? fetched : null;
+                        } catch {
+                          return null;
+                        }
+                      };
+
+                      const basePriceUsd = (await tryGetBasePriceUsd()) ?? sellTrigger;
+                      if (basePriceUsd == null || !(basePriceUsd > 0)) return;
+
+                      for (const r of advancedAutoSell.rules) {
+                        const pct = Number(r.triggerPercent);
+                        const rawSellPct = Number(r.sellPercent);
+                        if (!Number.isFinite(pct)) continue;
+                        if (!Number.isFinite(rawSellPct)) continue;
+                        const triggerPriceUsd = basePriceUsd * (1 + pct / 100);
+                        if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) continue;
+                        const bps = Math.round(Math.max(0, Math.min(100, rawSellPct)) * 100);
+                        if (bps <= 0 || bps > 10000) continue;
+                        const orderType: LimitOrderType = r.type === 'stop_loss' ? 'stop_loss_sell' : 'take_profit_sell';
+                        await call({
+                          type: 'limitOrder:create',
+                          input: {
+                            chainId,
+                            tokenAddress,
+                            tokenSymbol,
+                            side: 'sell',
+                            orderType,
+                            triggerPriceUsd,
+                            sellPercentBps: bps,
+                            tokenInfo,
+                          },
+                        });
+                      }
+
+                      await refreshOrders();
+                      return;
+                    }
+
+                    const trigger = parsePositiveNumber(sellPrice);
+                    const bps = toPercentBps(sellPercent);
+                    if (trigger == null || bps == null) return;
+                    await call({
+                      type: 'limitOrder:create',
+                      input: {
+                        chainId,
+                        tokenAddress,
+                        tokenSymbol,
+                        side: 'sell',
+                        orderType: sellOrderType,
+                        triggerPriceUsd: trigger,
+                        sellPercentBps: bps,
+                        tokenInfo,
+                      },
+                    });
+                    setSellPercent('');
+                    await refreshOrders();
+                  }}
+                >
+                  {advancedAutoSell?.enabled ? '按高级策略创建限价卖单' : (sellOrderType === 'stop_loss_sell' ? '创建止损限价单' : '创建止盈限价单')}
+                </button>
+              </div>
             </div>
           </div>
           <div className="pt-1">
@@ -870,7 +990,7 @@ export function LimitTradePanel({
                   <div className="min-w-0">
                     <div className="flex items-start justify-start gap-1 min-w-0">
                       <div className="min-w-0 leading-tight">
-                        <div className={`${o.side === 'buy' ? 'text-emerald-300' : 'text-rose-300'} whitespace-normal break-words`}>
+                        <div className={`${orderTypeColorClass(o)} whitespace-normal break-words`}>
                           {formatOrderTypeLines(o)[0]}
                         </div>
                         <div className="text-[10px] text-zinc-500 whitespace-normal break-words">

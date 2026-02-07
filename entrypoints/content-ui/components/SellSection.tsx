@@ -128,24 +128,24 @@ export function SellSection({
               {t(`popup.settings.gas.${gasPreset}`, locale)} {gasValue} gwei
             </span>
           </div>
-          <button
-            onClick={onApprove}
-            className="flex items-center gap-1 cursor-pointer hover:text-amber-400 text-zinc-500"
-            title={t('contentUi.approve.title', locale)}
-          >
-            <RefreshCw size={10} />
-            <span>{t('contentUi.approve.button', locale)}</span>
-          </button>
 
+          <div
+            className="flex items-center gap-1 cursor-pointer hover:text-amber-400 text-zinc-500"
+            title={t('contentUi.slippage.toggleSlippage', locale)}
+            onClick={onToggleSlippage}
+          >
+            <Sliders size={10} />
+            <span>{slippageLabel}{slippagePct}%</span>
+          </div>
         </div>
-        <div
+        <button
+          onClick={onApprove}
           className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-          title={t('contentUi.slippage.toggleSlippage', locale)}
-          onClick={onToggleSlippage}
+          title={t('contentUi.approve.title', locale)}
         >
-          <Sliders size={10} />
-          <span>{slippageLabel}{slippagePct}%</span>
-        </div>
+          <RefreshCw size={10} />
+          <span>{t('contentUi.approve.button', locale)}</span>
+        </button>
       </div>
     </div>
   );

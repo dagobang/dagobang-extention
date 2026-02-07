@@ -396,7 +396,6 @@ export default function App() {
       const amountIn = parseEther(amountStr);
       if (!amountIn) throw new Error('Invalid amount');
       if (BigInt(nativeBalanceWei || '0') < amountIn) throw new Error('Insufficient balance');
-
       const sym = tokenSymbol ?? '';
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: '🔄' });
       const startTime = Date.now();
@@ -410,10 +409,11 @@ export default function App() {
           const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
           throw new Error(detail || 'Transaction failed');
         }
+        const tokenMinOutWei = res.tokenMinOutWei ?? null;
 
         const elapsed = (Date.now() - startTime) / 1000;
         setTxHash(res.txHash);
-        setPendingBuyTokenMinOutWei(res.tokenMinOutWei ?? null);
+        setPendingBuyTokenMinOutWei(tokenMinOutWei);
         toast.success(t('contentUi.toast.buySuccessTime', locale, [sym, elapsed.toFixed(2)]), { id: toastId, icon: '✅' });
 
         if (tokenInfo) {
@@ -441,6 +441,50 @@ export default function App() {
         setPendingBuyTokenMinOutWei(null);
 
         await Promise.all([refreshToken(true), refreshAll()]);
+
+        try {
+          const config = settings.advancedAutoSell;
+          if (!config?.enabled) return;
+          if (!siteInfo) return;
+          if (!tokenInfo) return;
+          const chainId = settings.chainId ?? 56;
+          const basePriceUsd = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0
+            ? tokenPrice
+            : await TokenAPI.getTokenPriceUsd(siteInfo.platform, chainId, tokenAddressNormalized, tokenInfo);
+          if (basePriceUsd == null || !(basePriceUsd > 0)) return;
+
+          const ordersToCreate = (config.rules || []).map((r) => {
+            const type = r.type === 'stop_loss' ? 'stop_loss_sell' : 'take_profit_sell';
+            const pct = r.type === 'stop_loss' ? -Math.abs(Number(r.triggerPercent)) : Math.abs(Number(r.triggerPercent));
+            const sellPct = Number(r.sellPercent);
+            if (!Number.isFinite(pct) || !Number.isFinite(sellPct)) return null;
+            if (!(sellPct > 0) || sellPct > 100) return null;
+            const trigger = basePriceUsd * (1 + pct / 100);
+            if (!Number.isFinite(trigger) || trigger <= 0) return null;
+            const sellPercentBps = Math.max(1, Math.min(10000, Math.floor(sellPct * 100)));
+            return { type, trigger, sellPercentBps };
+          }).filter(Boolean) as Array<{ type: any; trigger: number; sellPercentBps: number }>;
+
+          if (!ordersToCreate.length) return;
+          for (const o of ordersToCreate) {
+            await call({
+              type: 'limitOrder:create',
+              input: {
+                chainId,
+                tokenAddress: tokenAddressNormalized,
+                tokenSymbol: tokenSymbol ?? null,
+                side: 'sell',
+                orderType: o.type,
+                triggerPriceUsd: o.trigger,
+                sellPercentBps: o.sellPercentBps,
+                tokenInfo: tokenInfo ?? undefined,
+              },
+            } as const);
+          }
+          toast.success(`已创建自动卖出挂单 ${ordersToCreate.length} 个`, { icon: '✅' });
+        } catch (e) {
+          console.error('auto sell strategy create orders failed', e);
+        }
       })();
 
       let gmgnTrade: Promise<unknown> | null = null;
@@ -812,6 +856,11 @@ export default function App() {
                   gmgnVisible={false} //isGmgnPlatform
                   gmgnEnabled={gmgnBuyEnabled}
                   onToggleGmgn={handleToggleGmgnBuy}
+                  advancedAutoSell={settings?.advancedAutoSell ?? null}
+                  onUpdateAdvancedAutoSell={(next) => {
+                    if (!settings) return;
+                    void call({ type: 'settings:set', settings: { ...settings, advancedAutoSell: next } } as const).then(() => refreshAll());
+                  }}
                 />
 
                 <div className="h-px bg-zinc-800 mx-3"></div>

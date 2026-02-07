@@ -428,8 +428,17 @@ export default defineBackground(() => {
       const v = BigInt(input.buyBnbAmountWei);
       if (v <= 0n) throw new Error('Invalid buy amount');
     } else {
+      const tokenAmountWei = (() => {
+        try {
+          return input.sellTokenAmountWei ? BigInt(input.sellTokenAmountWei) : 0n;
+        } catch {
+          return 0n;
+        }
+      })();
       const bps = input.sellPercentBps ?? 0;
-      if (!Number.isFinite(bps) || bps <= 0 || bps > 10000) throw new Error('Invalid sell percent');
+      const hasTokenAmount = tokenAmountWei > 0n;
+      const hasPercent = Number.isFinite(bps) && bps > 0 && bps <= 10000;
+      if (!hasTokenAmount && !hasPercent) throw new Error('Invalid sell amount');
     }
 
     const order: LimitOrder = {
@@ -442,6 +451,7 @@ export default defineBackground(() => {
       triggerPriceUsd,
       buyBnbAmountWei: input.buyBnbAmountWei,
       sellPercentBps: input.sellPercentBps,
+      sellTokenAmountWei: input.sellTokenAmountWei,
       createdAtMs: Date.now(),
       status: 'open',
       tokenInfo: input.tokenInfo,
@@ -488,13 +498,11 @@ export default defineBackground(() => {
         tokenAddress: order.tokenAddress,
         tokenInfo: order.tokenInfo,
       } as const).catch(() => { });
-      
+
       return res.txHash as `0x${string}`;
     }
 
-    const percentBps = order.sellPercentBps ?? 0;
-    if (percentBps <= 0 || percentBps > 10000) throw new Error('Invalid sell percent');
-
+    // Sell
     const account = await WalletService.getSigner();
     const client = await RpcService.getClient();
     const balance = await client.readContract({
@@ -503,7 +511,19 @@ export default defineBackground(() => {
       functionName: 'balanceOf',
       args: [account.address],
     });
-    const amountIn = (balance * BigInt(percentBps)) / 10000n;
+    const fixedAmount = (() => {
+      try {
+        return order.sellTokenAmountWei ? BigInt(order.sellTokenAmountWei) : 0n;
+      } catch {
+        return 0n;
+      }
+    })();
+    const percentBps = order.sellPercentBps ?? 0;
+    const amountByPercent = (Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000)
+      ? (balance * BigInt(percentBps)) / 10000n
+      : 0n;
+    const rawAmountIn = fixedAmount > 0n ? fixedAmount : amountByPercent;
+    const amountIn = rawAmountIn > balance ? balance : rawAmountIn;
     if (amountIn <= 0n) throw new Error('No balance');
 
     const res = await TradeService.sell({
@@ -511,8 +531,18 @@ export default defineBackground(() => {
       tokenAddress: order.tokenAddress,
       tokenAmountWei: amountIn.toString(),
       tokenInfo: order.tokenInfo,
-      sellPercentBps: percentBps,
+      sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
     });
+
+    // Cancel limit order if exists
+    if (percentBps === 10000) {
+      setTimeout(() => {
+        void cancelAllLimitOrders(order.chainId, order.tokenAddress);
+        broadcastStateChange();
+        scheduleLimitScanFromStorage().catch(() => { });
+      }, 2000);
+    }
+
     return res as `0x${string}`;
   };
 
@@ -558,6 +588,7 @@ export default defineBackground(() => {
   const LIMIT_SCAN_INTERVAL_DEFAULT_MS = 3000;
   const LIMIT_SCAN_INTERVAL_OPTIONS_MS = [1000, 3000, 5000, 10000, 30000, 60000, 120000] as const;
   let limitScanIntervalMs = LIMIT_SCAN_INTERVAL_DEFAULT_MS;
+  const limitScanPricesByTokenKey = new Map<string, { priceUsd: number; ts: number }>();
   let limitScanRunning = false;
   let limitScanLastAtMs = 0;
   let limitScanLastOk = true;
@@ -612,6 +643,7 @@ export default defineBackground(() => {
           cacheTtlMs: limitScanIntervalMs,
         });
         if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
+        limitScanPricesByTokenKey.set(`${base.chainId}:${base.tokenAddress.toLowerCase()}`, { priceUsd, ts: Date.now() });
 
         for (const o of orders) {
           const orderType = normalizeLimitOrderType(o.orderType, o.side);
@@ -1072,6 +1104,11 @@ export default defineBackground(() => {
             } catch {
             }
 
+            const pricesByTokenKey: Record<string, { priceUsd: number; ts: number }> = {};
+            for (const [k, v] of limitScanPricesByTokenKey.entries()) {
+              if (k.startsWith(`${msg.chainId}:`)) pricesByTokenKey[k] = v;
+            }
+
             const res: ({ ok: true } & LimitOrderScanStatus) = {
               ok: true,
               intervalMs: limitScanIntervalMs,
@@ -1081,6 +1118,7 @@ export default defineBackground(() => {
               lastScanError: limitScanLastError,
               totalOrders,
               openOrders,
+              pricesByTokenKey,
             };
             return res;
           }

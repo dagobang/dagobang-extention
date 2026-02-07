@@ -165,20 +165,22 @@ export class TokenService {
       try {
         const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
         const contractInfo = await TokenFourmemeService.getTokenInfo(chainId, tokenAddress);
-        const quoteAddrRaw = typeof contractInfo.quote === 'string' ? contractInfo.quote : '';
-        const quoteAddrLower = quoteAddrRaw.toLowerCase();
-        const quoteAddr =
-          !quoteAddrRaw || quoteAddrLower === ZERO_ADDRESS
-            ? (bscTokens.wbnb.address as `0x${string}`)
-            : (quoteAddrRaw as `0x${string}`);
-        const priceInQuote = contractInfo.lastPrice / 1e18;
-        if (Number.isFinite(priceInQuote) && priceInQuote > 0) {
-          const stable = stableByAddress.get(quoteAddr.toLowerCase());
-          if (stable) {
-            priceUsd = priceInQuote;
-          } else if (quoteAddr.toLowerCase() === bscTokens.wbnb.address.toLowerCase()) {
-            const bnbUsd = await getBnbPriceUsd();
-            if (bnbUsd > 0) priceUsd = priceInQuote * bnbUsd;
+        if (!contractInfo.liquidityAdded) {
+          const quoteAddrRaw = typeof contractInfo.quote === 'string' ? contractInfo.quote : '';
+          const quoteAddrLower = quoteAddrRaw.toLowerCase();
+          const quoteAddr =
+            !quoteAddrRaw || quoteAddrLower === ZERO_ADDRESS
+              ? (bscTokens.wbnb.address as `0x${string}`)
+              : (quoteAddrRaw as `0x${string}`);
+          const priceInQuote = contractInfo.lastPrice / 1e18;
+          if (Number.isFinite(priceInQuote) && priceInQuote > 0) {
+            const stable = stableByAddress.get(quoteAddr.toLowerCase());
+            if (stable) {
+              priceUsd = priceInQuote;
+            } else if (quoteAddr.toLowerCase() === bscTokens.wbnb.address.toLowerCase()) {
+              const bnbUsd = await getBnbPriceUsd();
+              if (bnbUsd > 0) priceUsd = priceInQuote * bnbUsd;
+            }
           }
         }
       } catch (e) {
@@ -190,30 +192,32 @@ export class TokenService {
       try {
         const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
         const contractInfo = await TokenFlapService.getTokenInfo(chainId, tokenAddress);
+        const poolLower = typeof contractInfo.pool === 'string' ? contractInfo.pool.toLowerCase() : '';
+        if (!poolLower || poolLower === ZERO_ADDRESS) {
+          const quoteAddrRaw = typeof contractInfo.quoteTokenAddress === 'string' ? contractInfo.quoteTokenAddress : '';
+          const quoteAddrLower = quoteAddrRaw.toLowerCase();
+          const quoteAddr =
+            !quoteAddrRaw || quoteAddrLower === ZERO_ADDRESS
+              ? (bscTokens.wbnb.address as `0x${string}`)
+              : (quoteAddrRaw as `0x${string}`);
 
-        const quoteAddrRaw = typeof contractInfo.quoteTokenAddress === 'string' ? contractInfo.quoteTokenAddress : '';
-        const quoteAddrLower = quoteAddrRaw.toLowerCase();
-        const quoteAddr =
-          !quoteAddrRaw || quoteAddrLower === ZERO_ADDRESS
-            ? (bscTokens.wbnb.address as `0x${string}`)
-            : (quoteAddrRaw as `0x${string}`);
+          const priceWei = (() => {
+            try {
+              return BigInt(contractInfo.price);
+            } catch {
+              return 0n;
+            }
+          })();
 
-        const priceWei = (() => {
-          try {
-            return BigInt(contractInfo.price);
-          } catch {
-            return 0n;
-          }
-        })();
-
-        const priceInQuote = priceWei > 0n ? toNumberFromUnits(priceWei, 18) : 0;
-        if (Number.isFinite(priceInQuote) && priceInQuote > 0) {
-          const stable = stableByAddress.get(quoteAddr.toLowerCase());
-          if (stable) {
-            priceUsd = priceInQuote;
-          } else if (quoteAddr.toLowerCase() === bscTokens.wbnb.address.toLowerCase()) {
-            const bnbUsd = await getBnbPriceUsd();
-            if (bnbUsd > 0) priceUsd = priceInQuote * bnbUsd;
+          const priceInQuote = priceWei > 0n ? toNumberFromUnits(priceWei, 18) : 0;
+          if (Number.isFinite(priceInQuote) && priceInQuote > 0) {
+            const stable = stableByAddress.get(quoteAddr.toLowerCase());
+            if (stable) {
+              priceUsd = priceInQuote;
+            } else if (quoteAddr.toLowerCase() === bscTokens.wbnb.address.toLowerCase()) {
+              const bnbUsd = await getBnbPriceUsd();
+              if (bnbUsd > 0) priceUsd = priceInQuote * bnbUsd;
+            }
           }
         }
       } catch (e) {

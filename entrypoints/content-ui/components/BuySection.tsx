@@ -1,7 +1,8 @@
 import { Zap, Fuel, Sliders } from 'lucide-react';
-import type { Settings } from '@/types/extention';
+import type { AdvancedAutoSellConfig, Settings } from '@/types/extention';
 import { ChainCoinIcon } from '@/components/Coins';
 import { t, type Locale } from '@/utils/i18n';
+import { AutoSell } from './AutoSell';
 
 type BuySectionProps = {
   formattedNativeBalance: string;
@@ -19,6 +20,8 @@ type BuySectionProps = {
   gmgnVisible: boolean;
   gmgnEnabled: boolean;
   onToggleGmgn: () => void;
+  advancedAutoSell: AdvancedAutoSellConfig | null;
+  onUpdateAdvancedAutoSell: (next: AdvancedAutoSellConfig) => void;
 };
 
 export function BuySection({
@@ -37,6 +40,8 @@ export function BuySection({
   gmgnVisible,
   gmgnEnabled,
   onToggleGmgn,
+  advancedAutoSell,
+  onUpdateAdvancedAutoSell,
 }: BuySectionProps) {
   const buyPresets = isEditing && draftPresets ? draftPresets : (settings?.chains[settings.chainId]?.buyPresets || ['0.01', '0.2', '0.5', '1.0']);
   const slippageBps = settings?.chains[settings.chainId]?.slippageBps ?? 4000;
@@ -56,6 +61,8 @@ export function BuySection({
   const gasValue =
     (chainSettings?.buyGasGwei && chainSettings.buyGasGwei[gasPreset]) ||
     defaultGasGwei[gasPreset as keyof typeof defaultGasGwei];
+
+  const canEditAdvanced = !!settings && !!isUnlocked && !isEditing;
 
   return (
     <div className="p-3">
@@ -122,15 +129,17 @@ export function BuySection({
               {t(`popup.settings.gas.${gasPreset}`, locale)} {gasValue} gwei
             </span>
           </div>
-
+          <div
+            className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
+            title={t('contentUi.slippage.toggleSlippage', locale)}
+            onClick={onToggleSlippage}
+          >
+            <Sliders size={10} />
+            <span>{slippageLabel}{slippagePct}%</span>
+          </div>
         </div>
-        <div
-          className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-          title={t('contentUi.slippage.toggleSlippage', locale)}
-          onClick={onToggleSlippage}
-        >
-          <Sliders size={10} />
-          <span>{slippageLabel}{slippagePct}%</span>
+        <div className="flex items-center gap-2">
+          <AutoSell canEdit={canEditAdvanced} value={advancedAutoSell} onChange={onUpdateAdvancedAutoSell} />
         </div>
       </div>
     </div>

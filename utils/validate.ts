@@ -1,4 +1,4 @@
-import type { Settings, AutoTradeConfig } from '../types/extention';
+import type { Settings, AutoTradeConfig, AdvancedAutoSellConfig } from '../types/extention';
 import { defaultSettings } from './defaults';
 
 // Simple normalization helper (could be moved to a formatter util if needed)
@@ -157,6 +157,29 @@ export function validateSettings(input: Settings): Settings | null {
       : defaultAutoTrade.maxHoldMinutes,
   };
 
+  const inputAdvancedAutoSell = (input as any).advancedAutoSell as Partial<AdvancedAutoSellConfig> | undefined;
+  const defaultAdvancedAutoSell = (defaults as any).advancedAutoSell as AdvancedAutoSellConfig;
+  const rules = Array.isArray(inputAdvancedAutoSell?.rules)
+    ? inputAdvancedAutoSell!.rules
+      .map((r: any) => {
+        const id = typeof r?.id === 'string' && r.id.trim() ? r.id.trim() : '';
+        const type = r?.type === 'take_profit' || r?.type === 'stop_loss' ? r.type : null;
+        const triggerPercent = Number(r?.triggerPercent);
+        const sellPercent = Number(r?.sellPercent);
+        if (!id || !type) return null;
+        if (!Number.isFinite(triggerPercent)) return null;
+        if (!Number.isFinite(sellPercent)) return null;
+        const safeSell = Math.max(0, Math.min(100, sellPercent));
+        const safeTrigger = Math.max(-99.9, Math.min(100000, triggerPercent));
+        return { id, type, triggerPercent: safeTrigger, sellPercent: safeSell };
+      })
+      .filter(Boolean)
+    : defaultAdvancedAutoSell.rules;
+  const advancedAutoSell: AdvancedAutoSellConfig = {
+    enabled: typeof inputAdvancedAutoSell?.enabled === 'boolean' ? inputAdvancedAutoSell.enabled : defaultAdvancedAutoSell.enabled,
+    rules: rules as any,
+  };
+
   return {
     chainId,
     chains,
@@ -171,5 +194,6 @@ export function validateSettings(input: Settings): Settings | null {
     gmgnQuickBuy2Bnb,
     limitOrderScanIntervalMs,
     autoTrade,
+    advancedAutoSell,
   };
 }
