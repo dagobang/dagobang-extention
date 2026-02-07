@@ -227,6 +227,30 @@
       "sell": "卖出",
       "addRule": "添加规则"
     },
+    "dailyAnalysis": {
+      "title": "P小将分析",
+      "placeholder": {
+        "walletAddress": "输入钱包地址"
+      },
+      "range": {
+        "days30": "30 天（1M）",
+        "days90": "90 天（3M）",
+        "days180": "180 天（6M）",
+        "days365": "365 天（1Y）"
+      },
+      "series": {
+        "totalProfit": "总收益",
+        "totalBuys": "买入次数",
+        "totalSells": "卖出次数",
+        "buyAmountUsd": "买入量（USD）",
+        "sellAmountUsd": "卖出量（USD）",
+        "lossProfit": "亏损额"
+      },
+      "error": {
+        "fetchFailed": "获取失败",
+        "networkError": "网络错误"
+      }
+    },
     "status": {
       "txSent": "交易已发送"
     },

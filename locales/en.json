@@ -225,6 +225,30 @@
       "sell": "Sell",
       "addRule": "Add Rule"
     },
+    "dailyAnalysis": {
+      "title": "P Analyst",
+      "placeholder": {
+        "walletAddress": "Enter wallet address"
+      },
+      "range": {
+        "days30": "30 Days (1M)",
+        "days90": "90 Days (3M)",
+        "days180": "180 Days (6M)",
+        "days365": "365 Days (1Y)"
+      },
+      "series": {
+        "totalProfit": "Total Profit",
+        "totalBuys": "Buy Count",
+        "totalSells": "Sell Count",
+        "buyAmountUsd": "Buy Volume (USD)",
+        "sellAmountUsd": "Sell Volume (USD)",
+        "lossProfit": "Loss"
+      },
+      "error": {
+        "fetchFailed": "Fetch failed",
+        "networkError": "Network error"
+      }
+    },
     "status": {
       "txSent": "Tx Sent"
     },

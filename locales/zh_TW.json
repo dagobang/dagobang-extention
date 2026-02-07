@@ -225,6 +225,30 @@
       "sell": "賣出",
       "addRule": "新增規則"
     },
+    "dailyAnalysis": {
+      "title": "P小將分析",
+      "placeholder": {
+        "walletAddress": "輸入錢包地址"
+      },
+      "range": {
+        "days30": "30 天（1M）",
+        "days90": "90 天（3M）",
+        "days180": "180 天（6M）",
+        "days365": "365 天（1Y）"
+      },
+      "series": {
+        "totalProfit": "總收益",
+        "totalBuys": "買入次數",
+        "totalSells": "賣出次數",
+        "buyAmountUsd": "買入量（USD）",
+        "sellAmountUsd": "賣出量（USD）",
+        "lossProfit": "虧損額"
+      },
+      "error": {
+        "fetchFailed": "取得失敗",
+        "networkError": "網路錯誤"
+      }
+    },
     "status": {
       "txSent": "交易已送出"
     },

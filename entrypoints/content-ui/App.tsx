@@ -805,7 +805,7 @@ export default function App() {
             </div>
           ) : (
             <div
-              className="fixed z-[2147483647] w-[300px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col"
+              className="fixed z-[2147483647] w-[320px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col"
               style={{ left: pos.x, top: pos.y }}
             >
               <Header

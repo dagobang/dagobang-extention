@@ -151,7 +151,7 @@ export function DailyAnalysisPanel({
           allList = allList.concat(res.data.list);
         } else if (res.code !== 0) {
           hasError = true;
-          errorMessage = res.message || 'Fetch failed';
+          errorMessage = res.message || tt('contentUi.dailyAnalysis.error.fetchFailed');
         }
       }
 
@@ -176,7 +176,7 @@ export function DailyAnalysisPanel({
       setData(sorted as any);
 
     } catch (err: any) {
-      setError(err.message || 'Network error');
+      setError(err.message || tt('contentUi.dailyAnalysis.error.networkError'));
     } finally {
       setLoading(false);
     }
@@ -202,12 +202,12 @@ export function DailyAnalysisPanel({
   const off = gradientOffset();
 
   const seriesConfig = [
-    { key: 'total_profit_num', name: '总收益', color: '#fbbf24', stroke: 'url(#splitColor)', yAxisId: 'left', strokeWidth: 2 },
-    { key: 'total_buys', name: '买入次数', color: '#60a5fa', stroke: '#60a5fa', yAxisId: 'right', strokeWidth: 1 },
-    { key: 'total_sells', name: '卖出次数', color: '#c084fc', stroke: '#c084fc', yAxisId: 'right', strokeWidth: 1 },
-    { key: 'buy_amount_usd_num', name: '买入量 (USD)', color: '#34d399', stroke: '#34d399', yAxisId: 'left', strokeWidth: 1 },
-    { key: 'sell_amount_usd_num', name: '卖出量 (USD)', color: '#f87171', stroke: '#f87171', yAxisId: 'left', strokeWidth: 1 },
-    { key: 'loss_profit_num', name: '亏损额', color: '#a1a1aa', stroke: '#a1a1aa', yAxisId: 'left', strokeWidth: 1, strokeDasharray: '5 5' },
+    { key: 'total_profit_num', name: tt('contentUi.dailyAnalysis.series.totalProfit'), color: '#fbbf24', stroke: 'url(#splitColor)', yAxisId: 'left', strokeWidth: 2 },
+    { key: 'total_buys', name: tt('contentUi.dailyAnalysis.series.totalBuys'), color: '#60a5fa', stroke: '#60a5fa', yAxisId: 'right', strokeWidth: 1 },
+    { key: 'total_sells', name: tt('contentUi.dailyAnalysis.series.totalSells'), color: '#c084fc', stroke: '#c084fc', yAxisId: 'right', strokeWidth: 1 },
+    { key: 'buy_amount_usd_num', name: tt('contentUi.dailyAnalysis.series.buyAmountUsd'), color: '#34d399', stroke: '#34d399', yAxisId: 'left', strokeWidth: 1 },
+    { key: 'sell_amount_usd_num', name: tt('contentUi.dailyAnalysis.series.sellAmountUsd'), color: '#f87171', stroke: '#f87171', yAxisId: 'left', strokeWidth: 1 },
+    { key: 'loss_profit_num', name: tt('contentUi.dailyAnalysis.series.lossProfit'), color: '#a1a1aa', stroke: '#a1a1aa', yAxisId: 'left', strokeWidth: 1, strokeDasharray: '5 5' },
   ];
 
   const renderLegend = () => {
@@ -266,7 +266,7 @@ export function DailyAnalysisPanel({
           }}
         >
           <div className="flex items-center gap-2 flex-1">
-            <div className="text-sm font-semibold text-emerald-300 whitespace-nowrap">P小将分析</div>
+            <div className="text-sm font-semibold text-emerald-300 whitespace-nowrap">{tt('contentUi.dailyAnalysis.title')}</div>
             <div className="relative flex-1 max-w-[280px]">
               <input
                 type="text"
@@ -282,7 +282,7 @@ export function DailyAnalysisPanel({
                     setTargetAddress(inputAddress);
                   }
                 }}
-                placeholder="Enter wallet address"
+                placeholder={tt('contentUi.dailyAnalysis.placeholder.walletAddress')}
                 className="w-full bg-zinc-900 border border-zinc-700 rounded pl-2 pr-7 py-0.5 text-[10px] text-zinc-300 focus:outline-none focus:border-emerald-500/50 font-mono"
               />
               <Search
@@ -300,10 +300,10 @@ export function DailyAnalysisPanel({
                 value={days}
                 onChange={(e) => setDays(Number(e.target.value))}
               >
-                <option value={30}>30 Days (1M)</option>
-                <option value={90}>90 Days (3M)</option>
-                <option value={180}>180 Days (6M)</option>
-                <option value={365}>365 Days (1Y)</option>
+                <option value={30}>{tt('contentUi.dailyAnalysis.range.days30')}</option>
+                <option value={90}>{tt('contentUi.dailyAnalysis.range.days90')}</option>
+                <option value={180}>{tt('contentUi.dailyAnalysis.range.days180')}</option>
+                <option value={365}>{tt('contentUi.dailyAnalysis.range.days365')}</option>
               </select>
             </div>
             <button
