@@ -14,6 +14,7 @@ import { call } from '@/utils/messaging';
 import { parseEther, zeroAddress } from 'viem';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import GmgnAPI from '@/hooks/GmgnAPI';
+import { buildAdvancedAutoSellSellLimitOrderInputs } from '@/services/advancedAutoSell';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { Logo } from '@/components/Logo';
@@ -453,35 +454,23 @@ export default function App() {
             : await TokenAPI.getTokenPriceUsd(siteInfo.platform, chainId, tokenAddressNormalized, tokenInfo);
           if (basePriceUsd == null || !(basePriceUsd > 0)) return;
 
-          const ordersToCreate = (config.rules || []).map((r) => {
-            const type = r.type === 'stop_loss' ? 'stop_loss_sell' : 'take_profit_sell';
-            const pct = r.type === 'stop_loss' ? -Math.abs(Number(r.triggerPercent)) : Math.abs(Number(r.triggerPercent));
-            const sellPct = Number(r.sellPercent);
-            if (!Number.isFinite(pct) || !Number.isFinite(sellPct)) return null;
-            if (!(sellPct > 0) || sellPct > 100) return null;
-            const trigger = basePriceUsd * (1 + pct / 100);
-            if (!Number.isFinite(trigger) || trigger <= 0) return null;
-            const sellPercentBps = Math.max(1, Math.min(10000, Math.floor(sellPct * 100)));
-            return { type, trigger, sellPercentBps };
-          }).filter(Boolean) as Array<{ type: any; trigger: number; sellPercentBps: number }>;
+          const inputs = buildAdvancedAutoSellSellLimitOrderInputs({
+            config,
+            chainId,
+            tokenAddress: tokenAddressNormalized,
+            tokenSymbol: tokenSymbol ?? null,
+            tokenInfo,
+            basePriceUsd,
+          });
 
-          if (!ordersToCreate.length) return;
-          for (const o of ordersToCreate) {
+          if (!inputs.length) return;
+          for (const input of inputs) {
             await call({
               type: 'limitOrder:create',
-              input: {
-                chainId,
-                tokenAddress: tokenAddressNormalized,
-                tokenSymbol: tokenSymbol ?? null,
-                side: 'sell',
-                orderType: o.type,
-                triggerPriceUsd: o.trigger,
-                sellPercentBps: o.sellPercentBps,
-                tokenInfo: tokenInfo ?? undefined,
-              },
+              input,
             } as const);
           }
-          toast.success(`已创建自动卖出挂单 ${ordersToCreate.length} 个`, { icon: '✅' });
+          toast.success(`已创建自动卖出挂单 ${inputs.length} 个`, { icon: '✅' });
         } catch (e) {
           console.error('auto sell strategy create orders failed', e);
         }

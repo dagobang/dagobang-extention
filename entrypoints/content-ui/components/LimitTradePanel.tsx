@@ -8,7 +8,6 @@ import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
 import { formatAmount, parseNumberLoose, formatTime } from '@/utils/format';
-import { AutoSell } from './AutoSell';
 
 type LimitTradePanelProps = {
   platform: string;
@@ -144,12 +143,6 @@ export function LimitTradePanel({
   })();
 
   const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : tt('contentUi.autotrade.walletNotConnected');
-  const advancedAutoSell = settings?.advancedAutoSell ?? null;
-  const canEditAdvanced = !!settings && !!isUnlocked;
-  const onUpdateAdvancedAutoSell = (next: Settings['advancedAutoSell']) => {
-    if (!settings) return;
-    void call({ type: 'settings:set', settings: { ...settings, advancedAutoSell: next } } as const);
-  };
 
   const formatAmountForInput = (value: number) => {
     const s = formatAmount(value, 4);
@@ -602,8 +595,6 @@ export function LimitTradePanel({
   const buyCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || !buyAmount || buyTrigger == null;
   const sellBps = toPercentBps(sellPercent);
   const sellCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || sellBps == null || sellTrigger == null;
-  const advancedSellCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || !advancedAutoSell?.enabled || !(advancedAutoSell.rules?.length > 0);
-  const sellButtonDisabled = advancedAutoSell?.enabled ? advancedSellCreateDisabled : sellCreateDisabled;
 
   return (
     <div
@@ -700,37 +691,34 @@ export function LimitTradePanel({
                   </button>
                 ))}
               </div>
-              <div className="w-full flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  disabled={buyCreateDisabled}
-                  className="flex-1 px-2 py-1 rounded border border-emerald-500/30 bg-emerald-500/10 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={async () => {
-                    if (!tokenAddress || !tokenInfo) return;
-                    const trigger = parsePositiveNumber(buyPrice);
-                    if (trigger == null) return;
-                    const amountWei = parseEther(buyAmount).toString();
-                    await call({
-                      type: 'limitOrder:create',
-                      input: {
-                        chainId,
-                        tokenAddress,
-                        tokenSymbol,
-                        side: 'buy',
-                        orderType: buyOrderType,
-                        triggerPriceUsd: trigger,
-                        buyBnbAmountWei: amountWei,
-                        tokenInfo,
-                      },
-                    });
-                    setBuyAmount('');
-                    await refreshOrders();
-                  }}
-                >
-                  {buyOrderType === 'high_buy' ? '创建高价买限价单' : '创建低价买限价单'}
-                </button>
-                <AutoSell canEdit={canEditAdvanced} value={advancedAutoSell} onChange={onUpdateAdvancedAutoSell} />
-              </div>
+              <button
+                type="button"
+                disabled={buyCreateDisabled}
+                className="w-full px-2 py-1 rounded border border-emerald-500/30 bg-emerald-500/10 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={async () => {
+                  if (!tokenAddress || !tokenInfo) return;
+                  const trigger = parsePositiveNumber(buyPrice);
+                  if (trigger == null) return;
+                  const amountWei = parseEther(buyAmount).toString();
+                  await call({
+                    type: 'limitOrder:create',
+                    input: {
+                      chainId,
+                      tokenAddress,
+                      tokenSymbol,
+                      side: 'buy',
+                      orderType: buyOrderType,
+                      triggerPriceUsd: trigger,
+                      buyBnbAmountWei: amountWei,
+                      tokenInfo,
+                    },
+                  });
+                  setBuyAmount('');
+                  await refreshOrders();
+                }}
+              >
+                {buyOrderType === 'high_buy' ? '创建高价买限价单' : '创建低价买限价单'}
+              </button>
             </div>
 
             <div className="flex-1 min-w-0 space-y-2 pl-3">
@@ -805,58 +793,10 @@ export function LimitTradePanel({
               <div className="w-full flex items-center justify-between gap-2">
                 <button
                   type="button"
-                  disabled={sellButtonDisabled}
+                  disabled={sellCreateDisabled}
                   className="flex-1 px-2 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={async () => {
                     if (!tokenAddress || !tokenInfo) return;
-
-                    if (advancedAutoSell?.enabled && advancedAutoSell.rules?.length) {
-                      const tryGetBasePriceUsd = async () => {
-                        const fromProp = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null;
-                        if (fromProp != null) return fromProp;
-                        const cached = priceByTokenKey[toTokenKey(chainId, tokenAddress)];
-                        const fromCache = cached?.priceUsd != null && cached.priceUsd > 0 ? cached.priceUsd : null;
-                        if (fromCache != null) return fromCache;
-                        try {
-                          const fetched = await TokenAPI.getTokenPriceUsd(platform, chainId, tokenAddress, tokenInfo);
-                          return fetched != null && fetched > 0 ? fetched : null;
-                        } catch {
-                          return null;
-                        }
-                      };
-
-                      const basePriceUsd = (await tryGetBasePriceUsd()) ?? sellTrigger;
-                      if (basePriceUsd == null || !(basePriceUsd > 0)) return;
-
-                      for (const r of advancedAutoSell.rules) {
-                        const pct = Number(r.triggerPercent);
-                        const rawSellPct = Number(r.sellPercent);
-                        if (!Number.isFinite(pct)) continue;
-                        if (!Number.isFinite(rawSellPct)) continue;
-                        const triggerPriceUsd = basePriceUsd * (1 + pct / 100);
-                        if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) continue;
-                        const bps = Math.round(Math.max(0, Math.min(100, rawSellPct)) * 100);
-                        if (bps <= 0 || bps > 10000) continue;
-                        const orderType: LimitOrderType = r.type === 'stop_loss' ? 'stop_loss_sell' : 'take_profit_sell';
-                        await call({
-                          type: 'limitOrder:create',
-                          input: {
-                            chainId,
-                            tokenAddress,
-                            tokenSymbol,
-                            side: 'sell',
-                            orderType,
-                            triggerPriceUsd,
-                            sellPercentBps: bps,
-                            tokenInfo,
-                          },
-                        });
-                      }
-
-                      await refreshOrders();
-                      return;
-                    }
-
                     const trigger = parsePositiveNumber(sellPrice);
                     const bps = toPercentBps(sellPercent);
                     if (trigger == null || bps == null) return;
@@ -877,7 +817,7 @@ export function LimitTradePanel({
                     await refreshOrders();
                   }}
                 >
-                  {advancedAutoSell?.enabled ? '按高级策略创建限价卖单' : (sellOrderType === 'stop_loss_sell' ? '创建止损限价单' : '创建止盈限价单')}
+                  {sellOrderType === 'stop_loss_sell' ? '创建止损限价单' : '创建止盈限价单'}
                 </button>
               </div>
             </div>

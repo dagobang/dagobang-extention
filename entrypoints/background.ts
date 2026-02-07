@@ -6,6 +6,7 @@ import { TradeService } from '@/services/trade';
 import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
 import { getLimitOrders, setLimitOrders } from '@/services/storage';
+import { buildAdvancedAutoSellSellLimitOrderInputs } from '@/services/advancedAutoSell';
 import type { BgRequest, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token.fourmeme';
 import { TokenFlapService } from '@/services/token.flap';
@@ -481,7 +482,7 @@ export default defineBackground(() => {
     return next;
   };
 
-  const executeLimitOrder = async (order: LimitOrder) => {
+  const executeLimitOrder = async (order: LimitOrder, ctx?: { priceUsd?: number }) => {
     if (!order.tokenInfo) throw new Error('Token info required');
     if (order.side === 'buy') {
       if (!order.buyBnbAmountWei) throw new Error('Buy amount required');
@@ -492,12 +493,31 @@ export default defineBackground(() => {
         tokenInfo: order.tokenInfo,
       });
 
-      void call({
-        type: 'tx:approveMaxForSellIfNeeded',
-        chainId: order.chainId,
-        tokenAddress: order.tokenAddress,
-        tokenInfo: order.tokenInfo,
-      } as const).catch(() => { });
+      // Approve max for sell if needed
+      await TradeService.approveMaxForSellIfNeeded(order.chainId, order.tokenAddress, order.tokenInfo);
+
+      // Auto sell limit orders
+      try {
+        const settings = await SettingsService.get();
+        const config = (settings as any).advancedAutoSell;
+        const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
+        const orders = buildAdvancedAutoSellSellLimitOrderInputs({
+          config,
+          chainId: order.chainId,
+          tokenAddress: order.tokenAddress,
+          tokenSymbol: order.tokenSymbol ?? null,
+          tokenInfo: order.tokenInfo,
+          basePriceUsd,
+        });
+        if (orders.length) {
+          for (const o of orders) {
+            await createLimitOrder(o);
+          }
+          broadcastStateChange();
+          scheduleLimitScanFromStorage().catch(() => { });
+        }
+      } catch {
+      }
 
       return res.txHash as `0x${string}`;
     }
@@ -569,7 +589,7 @@ export default defineBackground(() => {
       await setLimitOrders(next);
 
       try {
-        const txHash = await executeLimitOrder({ ...o, status: 'triggered' });
+        const txHash = await executeLimitOrder({ ...o, status: 'triggered' }, { priceUsd });
         executed.push(o.id);
         next = next.map((x) => (x.id === o.id ? { ...x, status: 'executed' as const, txHash } : x));
         await setLimitOrders(next);
@@ -655,7 +675,7 @@ export default defineBackground(() => {
           changed = true;
 
           try {
-            const txHash = await executeLimitOrder({ ...o, status: 'triggered' });
+            const txHash = await executeLimitOrder({ ...o, status: 'triggered' }, { priceUsd });
             next = next.map((x) => (x.id === o.id ? { ...x, status: 'executed' as const, txHash } : x));
             await setLimitOrders(next);
           } catch (e: any) {
