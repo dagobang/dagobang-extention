@@ -482,6 +482,28 @@ export default defineBackground(() => {
     return next;
   };
 
+  const cancelAllSellLimitOrdersForToken = async (chainId: number, tokenAddress: `0x${string}` | null | undefined) => {
+    if (!tokenAddress) return getLimitOrders();
+    const keyAddr = tokenAddress.toLowerCase();
+    const all = await getLimitOrders();
+    const next = all.filter((o) => {
+      if (o.chainId !== chainId) return true;
+      if (o.tokenAddress.toLowerCase() !== keyAddr) return true;
+      if (o.side !== 'sell') return true;
+      if (o.status === 'executed') return true;
+      return false;
+    });
+    await setLimitOrders(next);
+    return next;
+  };
+
+  const patchLimitOrder = async (id: string, patch: Partial<LimitOrder>) => {
+    const all = await getLimitOrders();
+    const next = all.map((o) => (o.id === id ? { ...o, ...patch } : o));
+    await setLimitOrders(next);
+    return next;
+  };
+
   const executeLimitOrder = async (order: LimitOrder, ctx?: { priceUsd?: number }) => {
     if (!order.tokenInfo) throw new Error('Token info required');
     if (order.side === 'buy') {
@@ -557,7 +579,7 @@ export default defineBackground(() => {
     // Cancel limit order if exists
     if (percentBps === 10000) {
       setTimeout(() => {
-        void cancelAllLimitOrders(order.chainId, order.tokenAddress);
+        void cancelAllSellLimitOrdersForToken(order.chainId, order.tokenAddress);
         broadcastStateChange();
         scheduleLimitScanFromStorage().catch(() => { });
       }, 2000);
@@ -578,26 +600,22 @@ export default defineBackground(() => {
     const executed: string[] = [];
     const failed: Array<{ id: string; error: string }> = [];
 
-    let next = all.slice();
     for (const o of candidates) {
       const orderType = normalizeLimitOrderType(o.orderType, o.side);
       const hit = hitLimitOrder(orderType, priceUsd, o.triggerPriceUsd);
       if (!hit) continue;
 
       triggered.push(o.id);
-      next = next.map((x) => (x.id === o.id ? { ...x, status: 'triggered' as const } : x));
-      await setLimitOrders(next);
+      await patchLimitOrder(o.id, { status: 'triggered' as const });
 
       try {
         const txHash = await executeLimitOrder({ ...o, status: 'triggered' }, { priceUsd });
         executed.push(o.id);
-        next = next.map((x) => (x.id === o.id ? { ...x, status: 'executed' as const, txHash } : x));
-        await setLimitOrders(next);
+        await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
       } catch (e: any) {
         const msg = typeof e?.message === 'string' ? e.message : String(e);
         failed.push({ id: o.id, error: msg });
-        next = next.map((x) => (x.id === o.id ? { ...x, status: 'failed' as const, lastError: msg } : x));
-        await setLimitOrders(next);
+        await patchLimitOrder(o.id, { status: 'failed' as const, lastError: msg });
       }
     }
 
@@ -643,7 +661,6 @@ export default defineBackground(() => {
       const walletStatus = await WalletService.getStatus();
       if (walletStatus.locked || !walletStatus.address) return;
 
-      let next = all.slice();
       let changed = false;
 
       const byToken = new Map<string, LimitOrder[]>();
@@ -670,18 +687,15 @@ export default defineBackground(() => {
           const hit = hitLimitOrder(orderType, priceUsd, o.triggerPriceUsd);
           if (!hit) continue;
 
-          next = next.map((x) => (x.id === o.id ? { ...x, status: 'triggered' as const } : x));
-          await setLimitOrders(next);
+          await patchLimitOrder(o.id, { status: 'triggered' as const });
           changed = true;
 
           try {
             const txHash = await executeLimitOrder({ ...o, status: 'triggered' }, { priceUsd });
-            next = next.map((x) => (x.id === o.id ? { ...x, status: 'executed' as const, txHash } : x));
-            await setLimitOrders(next);
+            await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
           } catch (e: any) {
             const msg = typeof e?.message === 'string' ? e.message : String(e);
-            next = next.map((x) => (x.id === o.id ? { ...x, status: 'failed' as const, lastError: msg } : x));
-            await setLimitOrders(next);
+            await patchLimitOrder(o.id, { status: 'failed' as const, lastError: msg });
           }
         }
       }
