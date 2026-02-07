@@ -555,12 +555,28 @@ export default defineBackground(() => {
   };
 
   const LIMIT_SCAN_ALARM = 'limitOrder:scan';
-  const LIMIT_SCAN_INTERVAL_MS = 3000;
-  const LIMIT_SCAN_IDLE_INTERVAL_MS = 60_000;
+  const LIMIT_SCAN_INTERVAL_DEFAULT_MS = 3000;
+  const LIMIT_SCAN_INTERVAL_OPTIONS_MS = [1000, 3000, 5000, 10000, 30000, 60000, 120000] as const;
+  let limitScanIntervalMs = LIMIT_SCAN_INTERVAL_DEFAULT_MS;
   let limitScanRunning = false;
   let limitScanLastAtMs = 0;
   let limitScanLastOk = true;
   let limitScanLastError: string | null = null;
+
+  const normalizeLimitScanIntervalMs = (value: any) => {
+    const v = Math.floor(Number(value));
+    if (!Number.isFinite(v)) return LIMIT_SCAN_INTERVAL_DEFAULT_MS;
+    if (LIMIT_SCAN_INTERVAL_OPTIONS_MS.includes(v as any)) return v;
+    return LIMIT_SCAN_INTERVAL_DEFAULT_MS;
+  };
+
+  const refreshLimitScanIntervalFromSettings = async () => {
+    try {
+      const settings = await SettingsService.get();
+      limitScanIntervalMs = normalizeLimitScanIntervalMs((settings as any).limitOrderScanIntervalMs);
+    } catch {
+    }
+  };
 
   const scanAndTriggerLimitOrdersOnce = async () => {
     if (limitScanRunning) return;
@@ -593,7 +609,7 @@ export default defineBackground(() => {
           chainId: base.chainId,
           tokenAddress: base.tokenAddress,
           tokenInfo: base.tokenInfo ?? null,
-          cacheTtlMs: LIMIT_SCAN_INTERVAL_MS,
+          cacheTtlMs: limitScanIntervalMs,
         });
         if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
 
@@ -636,7 +652,7 @@ export default defineBackground(() => {
 
   const scheduleNextLimitScan = (delayMs: number) => {
     try {
-      const safeDelayMs = Number.isFinite(delayMs) ? Math.max(0, delayMs) : LIMIT_SCAN_INTERVAL_MS;
+      const safeDelayMs = Number.isFinite(delayMs) ? Math.max(0, delayMs) : limitScanIntervalMs;
       (browser as any).alarms?.create(LIMIT_SCAN_ALARM, { when: Date.now() + safeDelayMs });
     } catch {
     }
@@ -656,7 +672,7 @@ export default defineBackground(() => {
       }
       return;
     }
-    scheduleNextLimitScan(LIMIT_SCAN_INTERVAL_MS);
+    scheduleNextLimitScan(limitScanIntervalMs);
   };
 
   try {
@@ -668,7 +684,11 @@ export default defineBackground(() => {
           scheduleLimitScanFromStorage().catch(() => { });
         });
     });
-    scheduleLimitScanFromStorage().catch(() => { });
+    refreshLimitScanIntervalFromSettings()
+      .catch(() => { })
+      .finally(() => {
+        scheduleLimitScanFromStorage().catch(() => { });
+      });
   } catch {
   }
 
@@ -826,7 +846,13 @@ export default defineBackground(() => {
           }
 
           case 'settings:set':
+            limitScanIntervalMs = normalizeLimitScanIntervalMs((msg.settings as any).limitOrderScanIntervalMs);
             await SettingsService.update(msg.settings);
+            try {
+              await (browser as any).alarms?.clear?.(LIMIT_SCAN_ALARM);
+            } catch {
+            }
+            scheduleLimitScanFromStorage().catch(() => { });
             broadcastStateChange();
             return { ok: true };
 
@@ -1048,7 +1074,7 @@ export default defineBackground(() => {
 
             const res: ({ ok: true } & LimitOrderScanStatus) = {
               ok: true,
-              intervalMs: openOrders > 0 ? LIMIT_SCAN_INTERVAL_MS : LIMIT_SCAN_IDLE_INTERVAL_MS,
+              intervalMs: limitScanIntervalMs,
               running: limitScanRunning,
               lastScanAtMs: limitScanLastAtMs,
               lastScanOk: limitScanLastOk,

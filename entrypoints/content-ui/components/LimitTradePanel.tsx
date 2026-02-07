@@ -125,6 +125,16 @@ export function LimitTradePanel({
   const chain = settings?.chains?.[chainId];
   const buyPresets = chain?.buyPresets ?? ['0.1', '0.5', '1.0', '2.0'];
   const sellPresets = chain?.sellPresets ?? ['25', '50', '75', '100'];
+  const limitOrderScanIntervalMs = settings?.limitOrderScanIntervalMs ?? 3000;
+  const limitOrderScanIntervalOptions = [
+    { label: '1s', value: 1000 },
+    { label: '3s', value: 3000 },
+    { label: '5s', value: 5000 },
+    { label: '10s', value: 10000 },
+    { label: '30s', value: 30000 },
+    { label: '60s', value: 60000 },
+    { label: '120s', value: 120000 },
+  ];
 
   const statusText = (() => {
     if (!settings) return tt('contentUi.autotrade.statusSettingsNotLoaded');
@@ -423,15 +433,21 @@ export function LimitTradePanel({
     browser.runtime.onMessage.addListener(listener);
     requestRefreshOrders(0).catch(() => { });
     requestRefreshScanStatus(0).catch(() => { });
-    const timer = setInterval(() => {
+    const openOrders = scanStatus?.openOrders ?? 0;
+    const ordersPollMs = openOrders > 0 ? Math.max(30000, limitOrderScanIntervalMs) : 120000;
+    const ordersTimer = setInterval(() => {
       requestRefreshOrders().catch(() => { });
+    }, ordersPollMs);
+    const scanStatusPollMs = Math.max(5000, limitOrderScanIntervalMs);
+    const scanStatusTimer = setInterval(() => {
       requestRefreshScanStatus().catch(() => { });
-    }, 5000);
+    }, scanStatusPollMs);
     return () => {
-      clearInterval(timer);
+      clearInterval(ordersTimer);
+      clearInterval(scanStatusTimer);
       browser.runtime.onMessage.removeListener(listener);
     };
-  }, [visible, chainId, onlyCurrentToken, tokenAddress, settings]);
+  }, [visible, chainId, onlyCurrentToken, tokenAddress, settings, limitOrderScanIntervalMs, scanStatus?.openOrders]);
 
   useEffect(() => {
     if (!visible) return;
@@ -776,6 +792,30 @@ export function LimitTradePanel({
                     onChange={(e) => setOnlyCurrentToken(e.target.checked)}
                   />
                   <span>只看当前代币{tokenSymbol ? `（${tokenSymbol}）` : ''}</span>
+                </label>
+                <label className="flex items-center gap-1 select-none text-[11px] text-zinc-300">
+                  <span>扫描间隔</span>
+                  <select
+                    className="rounded border border-zinc-800 bg-zinc-950 px-1 py-1 text-[11px] text-zinc-200 outline-none"
+                    value={String(limitOrderScanIntervalMs)}
+                    disabled={!settings}
+                    onChange={(e) => {
+                      if (!settings) return;
+                      const next = Number(e.target.value);
+                      call({
+                        type: 'settings:set',
+                        settings: { ...settings, limitOrderScanIntervalMs: next },
+                      }).finally(() => {
+                        requestRefreshScanStatus(0);
+                      });
+                    }}
+                  >
+                    {limitOrderScanIntervalOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <button
                   type="button"

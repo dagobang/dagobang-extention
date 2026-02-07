@@ -52,6 +52,7 @@ export function defaultSettings(): Settings {
     bloxrouteAuthHeader: '',
     gmgnQuickBuy1Bnb: '0.02',
     gmgnQuickBuy2Bnb: '0.1',
+    limitOrderScanIntervalMs: 3000,
     autoTrade: DEFAULT_AUTOTRADE,
   };
 }

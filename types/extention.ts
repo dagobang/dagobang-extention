@@ -57,6 +57,7 @@ export type Settings = {
   bloxrouteAuthHeader?: string;
   gmgnQuickBuy1Bnb?: string;
   gmgnQuickBuy2Bnb?: string;
+  limitOrderScanIntervalMs?: number;
   autoTrade: AutoTradeConfig;
 };
 

@@ -20,6 +20,11 @@ export function validateSettings(input: Settings): Settings | null {
   const defaults = defaultSettings();
   const chainId = 56;
   const autoLockSeconds = clampNumber(input.autoLockSeconds, 30, 3600, defaults.autoLockSeconds);
+  const limitOrderScanIntervalOptionsMs = [1000, 3000, 5000, 10000, 30000, 60000, 120000] as const;
+  const inputLimitOrderScanIntervalMs = Number((input as any).limitOrderScanIntervalMs);
+  const limitOrderScanIntervalMs = Number.isFinite(inputLimitOrderScanIntervalMs) && limitOrderScanIntervalOptionsMs.includes(Math.floor(inputLimitOrderScanIntervalMs) as any)
+    ? Math.floor(inputLimitOrderScanIntervalMs)
+    : (defaults as any).limitOrderScanIntervalMs ?? 3000;
   const locale = (['zh_CN', 'zh_TW', 'en'] as const).includes(input.locale as any)
     ? (input.locale as 'zh_CN' | 'zh_TW' | 'en')
     : defaults.locale;
@@ -164,6 +169,7 @@ export function validateSettings(input: Settings): Settings | null {
     bloxrouteAuthHeader,
     gmgnQuickBuy1Bnb,
     gmgnQuickBuy2Bnb,
+    limitOrderScanIntervalMs,
     autoTrade,
   };
 }
