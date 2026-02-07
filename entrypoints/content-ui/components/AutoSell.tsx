@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { TrendingUp, TrendingDown, X, Trash2, Plus } from 'lucide-react';
 import type { AdvancedAutoSellConfig, AdvancedAutoSellRuleType } from '@/types/extention';
+import { t, type Locale } from '@/utils/i18n';
 
 type AutoSellProps = {
   canEdit: boolean;
+  locale: Locale;
   value: AdvancedAutoSellConfig | null;
   onChange: (next: AdvancedAutoSellConfig) => void;
 };
@@ -15,7 +17,7 @@ type DraftRule = {
   sellPercent: string;
 };
 
-export function AutoSell({ canEdit, value, onChange }: AutoSellProps) {
+export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
   const defaultConfig = useMemo<AdvancedAutoSellConfig>(() => {
     return value ?? { enabled: false, rules: [] };
   }, [value]);
@@ -93,7 +95,7 @@ export function AutoSell({ canEdit, value, onChange }: AutoSellProps) {
             setOpen(true);
           }}
         >
-          高级
+          {t('contentUi.autoSell.advanced', locale)}
         </span>
       </label>
 
@@ -110,7 +112,7 @@ export function AutoSell({ canEdit, value, onChange }: AutoSellProps) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
-              <div className="text-sm font-semibold text-zinc-100">高级交易策略</div>
+              <div className="text-sm font-semibold text-zinc-100">{t('contentUi.autoSell.title', locale)}</div>
               <button
                 type="button"
                 className="text-zinc-400 hover:text-zinc-200"
@@ -149,7 +151,7 @@ export function AutoSell({ canEdit, value, onChange }: AutoSellProps) {
                           }}
                         >
                           <TrendingUp size={12} className="text-emerald-400" />
-                          <span>止盈</span>
+                          <span>{t('contentUi.limitOrder.type.takeProfitSell', locale)}</span>
                         </button>
                         <button
                           type="button"
@@ -171,7 +173,7 @@ export function AutoSell({ canEdit, value, onChange }: AutoSellProps) {
                           }}
                         >
                           <TrendingDown size={12} className="text-rose-400" />
-                          <span>止损</span>
+                          <span>{t('contentUi.limitOrder.type.stopLossSell', locale)}</span>
                         </button>
                       </div>
 
@@ -190,7 +192,7 @@ export function AutoSell({ canEdit, value, onChange }: AutoSellProps) {
                     </div>
 
                     <div className="flex-1 flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2">
-                      <span className="text-[12px] text-zinc-400">卖出</span>
+                      <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.sell', locale)}</span>
                       <div className="flex-1 relative">
                         <input
                           type="number"
@@ -232,7 +234,7 @@ export function AutoSell({ canEdit, value, onChange }: AutoSellProps) {
               >
                 <span className="inline-flex items-center gap-2">
                   <Plus size={14} />
-                  添加规则
+                  {t('contentUi.autoSell.addRule', locale)}
                 </span>
               </button>
             </div>

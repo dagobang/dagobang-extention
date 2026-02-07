@@ -139,7 +139,7 @@ export function BuySection({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <AutoSell canEdit={canEditAdvanced} value={advancedAutoSell} onChange={onUpdateAdvancedAutoSell} />
+          <AutoSell canEdit={canEditAdvanced} locale={locale} value={advancedAutoSell} onChange={onUpdateAdvancedAutoSell} />
         </div>
       </div>
     </div>

@@ -168,6 +168,63 @@
       "buyAmount": "買入金額（BNB）",
       "sellPercent": "賣出百分比（%）"
     },
+    "limitOrder": {
+      "type": {
+        "takeProfitSell": "止盈",
+        "stopLossSell": "止損",
+        "lowBuy": "低價買",
+        "highBuy": "高價買"
+      },
+      "typeLine": {
+        "takeProfitSell": "高價賣",
+        "stopLossSell": "低價賣",
+        "lowBuy1": "低價",
+        "lowBuy2": "買入",
+        "highBuy1": "高價",
+        "highBuy2": "買入"
+      },
+      "status": {
+        "open": "等待觸發",
+        "triggered": "觸發中",
+        "executed": "已執行",
+        "failed": "失敗",
+        "cancelled": "已取消"
+      }
+    },
+    "limitTradePanel": {
+      "createLowBuy": "建立低價買限價單",
+      "createHighBuy": "建立高價買限價單",
+      "createTakeProfitSell": "建立止盈限價單",
+      "createStopLossSell": "建立止損限價單",
+      "orderListTitle": "限價單列表",
+      "lastScanAt": "上次: {0}",
+      "lastScanAtEmpty": "上次: -",
+      "onlyCurrentToken": "只看當前代幣",
+      "onlyCurrentTokenWithSymbol": "只看當前代幣（{0}）",
+      "scanInterval": "掃描間隔",
+      "cancelAll": "全部取消",
+      "table": {
+        "token": "代幣",
+        "type": "類型",
+        "triggerPrice": "觸發價格",
+        "payAmount": "支付數量",
+        "estimateReceive": "預計獲得",
+        "createdAt": "委託時間",
+        "action": "操作"
+      },
+      "copy": "複製",
+      "copied": "已複製",
+      "txPrefix": "Tx: {0}",
+      "errPrefix": "Err: {0}",
+      "currentPrice": "現價: {0}",
+      "empty": "暫無委託訂單"
+    },
+    "autoSell": {
+      "advanced": "高級",
+      "title": "高級交易策略",
+      "sell": "賣出",
+      "addRule": "新增規則"
+    },
     "status": {
       "txSent": "交易已送出"
     },

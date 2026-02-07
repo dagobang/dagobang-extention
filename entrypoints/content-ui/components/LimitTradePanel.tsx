@@ -384,19 +384,19 @@ export function LimitTradePanel({
 
   const formatOrderType = (o: LimitOrder) => {
     const type = normalizeOrderType(o);
-    if (type === 'take_profit_sell') return '止盈';
-    if (type === 'stop_loss_sell') return '止损';
-    if (type === 'low_buy') return '低价买';
-    if (type === 'high_buy') return '高价买';
+    if (type === 'take_profit_sell') return tt('contentUi.limitOrder.type.takeProfitSell');
+    if (type === 'stop_loss_sell') return tt('contentUi.limitOrder.type.stopLossSell');
+    if (type === 'low_buy') return tt('contentUi.limitOrder.type.lowBuy');
+    if (type === 'high_buy') return tt('contentUi.limitOrder.type.highBuy');
     return type;
   };
 
   const formatOrderTypeLines = (o: LimitOrder): [string, string] => {
     const type = normalizeOrderType(o);
-    if (type === 'take_profit_sell') return ['止盈', '高价卖'];
-    if (type === 'stop_loss_sell') return ['止损', '低价卖'];
-    if (type === 'low_buy') return ['低价', '买入'];
-    if (type === 'high_buy') return ['高价', '买入'];
+    if (type === 'take_profit_sell') return [tt('contentUi.limitOrder.type.takeProfitSell'), tt('contentUi.limitOrder.typeLine.takeProfitSell')];
+    if (type === 'stop_loss_sell') return [tt('contentUi.limitOrder.type.stopLossSell'), tt('contentUi.limitOrder.typeLine.stopLossSell')];
+    if (type === 'low_buy') return [tt('contentUi.limitOrder.typeLine.lowBuy1'), tt('contentUi.limitOrder.typeLine.lowBuy2')];
+    if (type === 'high_buy') return [tt('contentUi.limitOrder.typeLine.highBuy1'), tt('contentUi.limitOrder.typeLine.highBuy2')];
     return [formatOrderType(o), ''];
   };
 
@@ -410,11 +410,11 @@ export function LimitTradePanel({
   };
 
   const formatStatus = (o: LimitOrder) => {
-    if (o.status === 'open') return '等待触发';
-    if (o.status === 'triggered') return '触发中';
-    if (o.status === 'executed') return '已执行';
-    if (o.status === 'failed') return '失败';
-    if (o.status === 'cancelled') return '已取消';
+    if (o.status === 'open') return tt('contentUi.limitOrder.status.open');
+    if (o.status === 'triggered') return tt('contentUi.limitOrder.status.triggered');
+    if (o.status === 'executed') return tt('contentUi.limitOrder.status.executed');
+    if (o.status === 'failed') return tt('contentUi.limitOrder.status.failed');
+    if (o.status === 'cancelled') return tt('contentUi.limitOrder.status.cancelled');
     return o.status;
   };
   const statusBadgeClass = (o: LimitOrder) => {
@@ -642,8 +642,8 @@ export function LimitTradePanel({
                   value={buyOrderType}
                   onChange={(e) => setBuyOrderType(e.target.value as LimitOrderType)}
                 >
-                  <option value="low_buy">低价买</option>
-                  <option value="high_buy">高价买</option>
+                  <option value="low_buy">{tt('contentUi.limitOrder.type.lowBuy')}</option>
+                  <option value="high_buy">{tt('contentUi.limitOrder.type.highBuy')}</option>
                 </select>
                 <input
                   className="flex-1 w-[90px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
@@ -717,7 +717,7 @@ export function LimitTradePanel({
                   await refreshOrders();
                 }}
               >
-                {buyOrderType === 'high_buy' ? '创建高价买限价单' : '创建低价买限价单'}
+                {buyOrderType === 'high_buy' ? tt('contentUi.limitTradePanel.createHighBuy') : tt('contentUi.limitTradePanel.createLowBuy')}
               </button>
             </div>
 
@@ -740,8 +740,8 @@ export function LimitTradePanel({
                   value={sellOrderType}
                   onChange={(e) => setSellOrderType(e.target.value as LimitOrderType)}
                 >
-                  <option value="take_profit_sell">止盈</option>
-                  <option value="stop_loss_sell">止损</option>
+                  <option value="take_profit_sell">{tt('contentUi.limitOrder.type.takeProfitSell')}</option>
+                  <option value="stop_loss_sell">{tt('contentUi.limitOrder.type.stopLossSell')}</option>
                 </select>
                 <input
                   className="flex-1  w-[90px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
@@ -817,7 +817,7 @@ export function LimitTradePanel({
                     await refreshOrders();
                   }}
                 >
-                  {sellOrderType === 'stop_loss_sell' ? '创建止损限价单' : '创建止盈限价单'}
+                  {sellOrderType === 'stop_loss_sell' ? tt('contentUi.limitTradePanel.createStopLossSell') : tt('contentUi.limitTradePanel.createTakeProfitSell')}
                 </button>
               </div>
             </div>
@@ -826,7 +826,7 @@ export function LimitTradePanel({
             <div className="flex items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-2 min-w-0">
                 <div className="text-[11px] font-semibold text-zinc-200">
-                  限价单列表
+                  {tt('contentUi.limitTradePanel.orderListTitle')}
                 </div>
                 {scanStatus ? (
                   <div className="flex items-center gap-1 text-[10px] text-zinc-500 min-w-0">
@@ -837,7 +837,9 @@ export function LimitTradePanel({
                       ].join(' ')}
                     />
                     <span className="truncate" title={scanStatus.lastScanAtMs ? formatTime(scanStatus.lastScanAtMs, locale) : ''}>
-                      {scanStatus.lastScanAtMs ? `上次: ${formatTime(scanStatus.lastScanAtMs, locale)}` : '上次: -'}
+                      {scanStatus.lastScanAtMs
+                        ? tt('contentUi.limitTradePanel.lastScanAt', [formatTime(scanStatus.lastScanAtMs, locale)])
+                        : tt('contentUi.limitTradePanel.lastScanAtEmpty')}
                     </span>
                   </div>
                 ) : null}
@@ -851,10 +853,12 @@ export function LimitTradePanel({
                     disabled={!tokenAddress}
                     onChange={(e) => setOnlyCurrentToken(e.target.checked)}
                   />
-                  <span>只看当前代币{tokenSymbol ? `（${tokenSymbol}）` : ''}</span>
+                  <span>
+                    {tokenSymbol ? tt('contentUi.limitTradePanel.onlyCurrentTokenWithSymbol', [tokenSymbol]) : tt('contentUi.limitTradePanel.onlyCurrentToken')}
+                  </span>
                 </label>
                 <label className="flex items-center gap-1 select-none text-[11px] text-zinc-300">
-                  <span>扫描间隔</span>
+                  <span>{tt('contentUi.limitTradePanel.scanInterval')}</span>
                   <select
                     className="rounded border border-zinc-800 bg-zinc-950 px-1 py-1 text-[11px] text-zinc-200 outline-none"
                     value={String(limitOrderScanIntervalMs)}
@@ -894,20 +898,20 @@ export function LimitTradePanel({
                     }
                   }}
                 >
-                  全部取消
+                  {tt('contentUi.limitTradePanel.cancelAll')}
                 </button>
               </div>
             </div>
 
             <div className="max-h-[38vh] overflow-y-auto pr-1">
               <div className="grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.75fr)_minmax(0,0.55fr)] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
-                <div className="font-medium truncate">代币</div>
-                <div className="font-medium truncate">类型</div>
-                <div className="font-medium truncate">触发价格</div>
-                <div className="font-medium truncate">支付数量</div>
-                <div className="font-medium truncate">预计获得</div>
-                <div className="font-medium truncate">委托时间</div>
-                <div className="font-medium text-right truncate">操作</div>
+                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.token')}</div>
+                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.type')}</div>
+                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.triggerPrice')}</div>
+                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.payAmount')}</div>
+                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.estimateReceive')}</div>
+                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.createdAt')}</div>
+                <div className="font-medium text-right truncate">{tt('contentUi.limitTradePanel.table.action')}</div>
               </div>
 
               {filteredOrders.length ? filteredOrders.map((o) => (
@@ -950,28 +954,28 @@ export function LimitTradePanel({
                           className="truncate hover:underline"
                           title={o.txHash}
                         >
-                          Tx: {o.txHash.slice(0, 10)}...{o.txHash.slice(-8)}
+                          {tt('contentUi.limitTradePanel.txPrefix', [`${o.txHash.slice(0, 10)}...${o.txHash.slice(-8)}`])}
                         </a>
                         <button
                           type="button"
                           className="shrink-0 rounded border border-zinc-700 px-1 py-0.5 text-[9px] text-zinc-300 hover:border-emerald-400"
                           onClick={() => copyToClipboard(o.txHash!)}
                         >
-                          {copiedValue === o.txHash ? '已复制' : '复制'}
+                          {copiedValue === o.txHash ? tt('contentUi.limitTradePanel.copied') : tt('contentUi.limitTradePanel.copy')}
                         </button>
                       </div>
                     ) : null}
                     {o.status === 'failed' && o.lastError ? (
                       <div className="flex items-center gap-2 text-[10px] text-rose-400/80 min-w-0">
                         <div className="truncate" title={o.lastError}>
-                          Err: {o.lastError}
+                          {tt('contentUi.limitTradePanel.errPrefix', [o.lastError])}
                         </div>
                         <button
                           type="button"
                           className="shrink-0 rounded border border-zinc-700 px-1 py-0.5 text-[9px] text-zinc-300 hover:border-rose-400"
                           onClick={() => copyToClipboard(o.lastError!)}
                         >
-                          {copiedValue === o.lastError ? '已复制' : '复制'}
+                          {copiedValue === o.lastError ? tt('contentUi.limitTradePanel.copied') : tt('contentUi.limitTradePanel.copy')}
                         </button>
                       </div>
                     ) : null}
@@ -988,7 +992,7 @@ export function LimitTradePanel({
                       const text = loading ? '...' : v != null && v > 0 ? formatUsd(v) : '-';
                       return (
                         <div className="text-[10px] text-zinc-500 truncate" title={text}>
-                          现价: {text}
+                          {tt('contentUi.limitTradePanel.currentPrice', [text])}
                         </div>
                       );
                     })()}
@@ -1027,13 +1031,13 @@ export function LimitTradePanel({
                         }
                       }}
                     >
-                      取消
+                      {tt('common.cancel')}
                     </button>
                   </div>
                 </div>
               )) : (
                 <div className="py-6 text-center text-zinc-500">
-                  暂无委托订单
+                  {tt('contentUi.limitTradePanel.empty')}
                 </div>
               )}
             </div>

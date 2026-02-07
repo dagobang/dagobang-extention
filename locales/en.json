@@ -168,6 +168,63 @@
       "buyAmount": "Buy amount (BNB)",
       "sellPercent": "Sell percent (%)"
     },
+    "limitOrder": {
+      "type": {
+        "takeProfitSell": "Take Profit",
+        "stopLossSell": "Stop Loss",
+        "lowBuy": "Low Buy",
+        "highBuy": "High Buy"
+      },
+      "typeLine": {
+        "takeProfitSell": "Sell Higher",
+        "stopLossSell": "Sell Lower",
+        "lowBuy1": "Low",
+        "lowBuy2": "Buy",
+        "highBuy1": "High",
+        "highBuy2": "Buy"
+      },
+      "status": {
+        "open": "Waiting",
+        "triggered": "Triggering",
+        "executed": "Executed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      }
+    },
+    "limitTradePanel": {
+      "createLowBuy": "Create Low Buy Limit Order",
+      "createHighBuy": "Create High Buy Limit Order",
+      "createTakeProfitSell": "Create Take Profit Limit Order",
+      "createStopLossSell": "Create Stop Loss Limit Order",
+      "orderListTitle": "Limit Orders",
+      "lastScanAt": "Last: {0}",
+      "lastScanAtEmpty": "Last: -",
+      "onlyCurrentToken": "Only current token",
+      "onlyCurrentTokenWithSymbol": "Only current token ({0})",
+      "scanInterval": "Scan interval",
+      "cancelAll": "Cancel all",
+      "table": {
+        "token": "Token",
+        "type": "Type",
+        "triggerPrice": "Trigger",
+        "payAmount": "Pay",
+        "estimateReceive": "Est. receive",
+        "createdAt": "Created",
+        "action": "Action"
+      },
+      "copy": "Copy",
+      "copied": "Copied",
+      "txPrefix": "Tx: {0}",
+      "errPrefix": "Err: {0}",
+      "currentPrice": "Price: {0}",
+      "empty": "No orders"
+    },
+    "autoSell": {
+      "advanced": "Advanced",
+      "title": "Advanced Strategy",
+      "sell": "Sell",
+      "addRule": "Add Rule"
+    },
     "status": {
       "txSent": "Tx Sent"
     },

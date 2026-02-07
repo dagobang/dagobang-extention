@@ -170,6 +170,63 @@
       "buyAmount": "买入金额（BNB）",
       "sellPercent": "卖出百分比（%）"
     },
+    "limitOrder": {
+      "type": {
+        "takeProfitSell": "止盈",
+        "stopLossSell": "止损",
+        "lowBuy": "低价买",
+        "highBuy": "高价买"
+      },
+      "typeLine": {
+        "takeProfitSell": "高价卖",
+        "stopLossSell": "低价卖",
+        "lowBuy1": "低价",
+        "lowBuy2": "买入",
+        "highBuy1": "高价",
+        "highBuy2": "买入"
+      },
+      "status": {
+        "open": "等待触发",
+        "triggered": "触发中",
+        "executed": "已执行",
+        "failed": "失败",
+        "cancelled": "已取消"
+      }
+    },
+    "limitTradePanel": {
+      "createLowBuy": "创建低价买限价单",
+      "createHighBuy": "创建高价买限价单",
+      "createTakeProfitSell": "创建止盈限价单",
+      "createStopLossSell": "创建止损限价单",
+      "orderListTitle": "限价单列表",
+      "lastScanAt": "上次: {0}",
+      "lastScanAtEmpty": "上次: -",
+      "onlyCurrentToken": "只看当前代币",
+      "onlyCurrentTokenWithSymbol": "只看当前代币（{0}）",
+      "scanInterval": "扫描间隔",
+      "cancelAll": "全部取消",
+      "table": {
+        "token": "代币",
+        "type": "类型",
+        "triggerPrice": "触发价格",
+        "payAmount": "支付数量",
+        "estimateReceive": "预计获得",
+        "createdAt": "委托时间",
+        "action": "操作"
+      },
+      "copy": "复制",
+      "copied": "已复制",
+      "txPrefix": "Tx: {0}",
+      "errPrefix": "Err: {0}",
+      "currentPrice": "现价: {0}",
+      "empty": "暂无委托订单"
+    },
+    "autoSell": {
+      "advanced": "高级",
+      "title": "高级交易策略",
+      "sell": "卖出",
+      "addRule": "添加规则"
+    },
     "status": {
       "txSent": "交易已发送"
     },
