@@ -172,12 +172,14 @@
       "type": {
         "takeProfitSell": "Take Profit",
         "stopLossSell": "Stop Loss",
+        "trailingStopSell": "Trailing Stop",
         "lowBuy": "Low Buy",
         "highBuy": "High Buy"
       },
       "typeLine": {
         "takeProfitSell": "Sell Higher",
         "stopLossSell": "Sell Lower",
+        "trailingStopSell": "Callback Sell",
         "lowBuy1": "Low",
         "lowBuy2": "Buy",
         "highBuy1": "High",
@@ -223,7 +225,9 @@
       "advanced": "Advanced",
       "title": "Advanced Strategy",
       "sell": "Sell",
-      "addRule": "Add Rule"
+      "addRule": "Add Rule",
+      "trailingStop": "Trailing Stop (Remaining)",
+      "trailingStopCallback": "Callback"
     },
     "dailyAnalysis": {
       "title": "P Analyst",

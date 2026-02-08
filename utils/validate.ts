@@ -16,6 +16,13 @@ function clampNumber(value: any, min: number, max: number, fallback: number) {
   return Math.max(min, Math.min(max, Math.floor(v)));
 }
 
+function clampFloat(value: any, min: number, max: number, fallback: number) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return fallback;
+  const clamped = Math.max(min, Math.min(max, v));
+  return Math.round(clamped * 100) / 100;
+}
+
 export function validateSettings(input: Settings): Settings | null {
   const defaults = defaultSettings();
   const chainId = 56;
@@ -175,9 +182,24 @@ export function validateSettings(input: Settings): Settings | null {
       })
       .filter(Boolean)
     : defaultAdvancedAutoSell.rules;
+  const inputTrailingStop = (inputAdvancedAutoSell as any)?.trailingStop as any;
+  const defaultTrailingStop = (defaultAdvancedAutoSell as any)?.trailingStop as any;
+  const trailingStopEnabled = typeof inputTrailingStop?.enabled === 'boolean'
+    ? inputTrailingStop.enabled
+    : !!defaultTrailingStop?.enabled;
+  const trailingStopCallbackPercent = clampFloat(
+    inputTrailingStop?.callbackPercent,
+    0.1,
+    99.9,
+    typeof defaultTrailingStop?.callbackPercent === 'number' ? defaultTrailingStop.callbackPercent : 15
+  );
   const advancedAutoSell: AdvancedAutoSellConfig = {
     enabled: typeof inputAdvancedAutoSell?.enabled === 'boolean' ? inputAdvancedAutoSell.enabled : defaultAdvancedAutoSell.enabled,
     rules: rules as any,
+    trailingStop: {
+      enabled: trailingStopEnabled,
+      callbackPercent: trailingStopCallbackPercent,
+    },
   };
 
   return {

@@ -376,7 +376,7 @@ export function LimitTradePanel({
   };
 
   const normalizeOrderType = (o: LimitOrder): LimitOrderType => {
-    if (o.orderType === 'take_profit_sell' || o.orderType === 'stop_loss_sell' || o.orderType === 'low_buy' || o.orderType === 'high_buy') {
+    if (o.orderType === 'take_profit_sell' || o.orderType === 'stop_loss_sell' || o.orderType === 'trailing_stop_sell' || o.orderType === 'low_buy' || o.orderType === 'high_buy') {
       return o.orderType;
     }
     return o.side === 'buy' ? 'low_buy' : 'take_profit_sell';
@@ -386,6 +386,7 @@ export function LimitTradePanel({
     const type = normalizeOrderType(o);
     if (type === 'take_profit_sell') return tt('contentUi.limitOrder.type.takeProfitSell');
     if (type === 'stop_loss_sell') return tt('contentUi.limitOrder.type.stopLossSell');
+    if (type === 'trailing_stop_sell') return tt('contentUi.limitOrder.type.trailingStopSell');
     if (type === 'low_buy') return tt('contentUi.limitOrder.type.lowBuy');
     if (type === 'high_buy') return tt('contentUi.limitOrder.type.highBuy');
     return type;
@@ -395,6 +396,7 @@ export function LimitTradePanel({
     const type = normalizeOrderType(o);
     if (type === 'take_profit_sell') return [tt('contentUi.limitOrder.type.takeProfitSell'), tt('contentUi.limitOrder.typeLine.takeProfitSell')];
     if (type === 'stop_loss_sell') return [tt('contentUi.limitOrder.type.stopLossSell'), tt('contentUi.limitOrder.typeLine.stopLossSell')];
+    if (type === 'trailing_stop_sell') return [tt('contentUi.limitOrder.type.trailingStopSell'), tt('contentUi.limitOrder.typeLine.trailingStopSell')];
     if (type === 'low_buy') return [tt('contentUi.limitOrder.typeLine.lowBuy1'), tt('contentUi.limitOrder.typeLine.lowBuy2')];
     if (type === 'high_buy') return [tt('contentUi.limitOrder.typeLine.highBuy1'), tt('contentUi.limitOrder.typeLine.highBuy2')];
     return [formatOrderType(o), ''];
@@ -404,6 +406,7 @@ export function LimitTradePanel({
     const type = normalizeOrderType(o);
     if (type === 'take_profit_sell') return 'text-emerald-300';
     if (type === 'stop_loss_sell') return 'text-rose-300';
+    if (type === 'trailing_stop_sell') return 'text-amber-300';
     if (type === 'low_buy') return 'text-emerald-300';
     if (type === 'high_buy') return 'text-rose-300';
     return o.side === 'buy' ? 'text-emerald-300' : 'text-rose-300';

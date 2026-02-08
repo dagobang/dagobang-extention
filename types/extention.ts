@@ -54,9 +54,15 @@ export type AdvancedAutoSellRule = {
   sellPercent: number;
 };
 
+export type AdvancedAutoSellTrailingStop = {
+  enabled: boolean;
+  callbackPercent: number;
+};
+
 export type AdvancedAutoSellConfig = {
   enabled: boolean;
   rules: AdvancedAutoSellRule[];
+  trailingStop?: AdvancedAutoSellTrailingStop;
 };
 
 export type Settings = {
@@ -146,7 +152,7 @@ export type TxSellInput = {
 
 export type LimitOrderSide = 'buy' | 'sell';
 
-export type LimitOrderType = 'take_profit_sell' | 'stop_loss_sell' | 'low_buy' | 'high_buy';
+export type LimitOrderType = 'take_profit_sell' | 'stop_loss_sell' | 'trailing_stop_sell' | 'low_buy' | 'high_buy';
 
 export type LimitOrderStatus = 'open' | 'triggered' | 'executed' | 'failed' | 'cancelled';
 
@@ -158,6 +164,8 @@ export type LimitOrder = {
   side: LimitOrderSide;
   orderType?: LimitOrderType;
   triggerPriceUsd: number;
+  trailingStopBps?: number;
+  trailingPeakPriceUsd?: number;
   buyBnbAmountWei?: string;
   sellPercentBps?: number;
   sellTokenAmountWei?: string;
@@ -175,6 +183,8 @@ export type LimitOrderCreateInput = {
   side: LimitOrderSide;
   orderType?: LimitOrderType;
   triggerPriceUsd: number;
+  trailingStopBps?: number;
+  trailingPeakPriceUsd?: number;
   buyBnbAmountWei?: string;
   sellPercentBps?: number;
   sellTokenAmountWei?: string;

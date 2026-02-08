@@ -6,7 +6,7 @@ import { TradeService } from '@/services/trade';
 import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
 import { getLimitOrders, setLimitOrders } from '@/services/storage';
-import { buildAdvancedAutoSellSellLimitOrderInputs } from '@/services/advancedAutoSell';
+import { buildAdvancedAutoSellSellLimitOrderInputs, buildAdvancedAutoSellTrailingStopSellLimitOrderInput } from '@/services/advancedAutoSell';
 import type { BgRequest, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token.fourmeme';
 import { TokenFlapService } from '@/services/token.flap';
@@ -388,7 +388,7 @@ export default defineBackground(() => {
   };
 
   const normalizeLimitOrderType = (orderType: LimitOrderType | undefined, side: 'buy' | 'sell'): LimitOrderType => {
-    if (orderType === 'take_profit_sell' || orderType === 'stop_loss_sell' || orderType === 'low_buy' || orderType === 'high_buy') {
+    if (orderType === 'take_profit_sell' || orderType === 'stop_loss_sell' || orderType === 'trailing_stop_sell' || orderType === 'low_buy' || orderType === 'high_buy') {
       return orderType;
     }
     return side === 'buy' ? 'low_buy' : 'take_profit_sell';
@@ -403,6 +403,22 @@ export default defineBackground(() => {
     if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) return false;
     if (orderType === 'high_buy' || orderType === 'take_profit_sell') return priceUsd >= triggerPriceUsd;
     return priceUsd <= triggerPriceUsd;
+  };
+
+  const applyTrailingStopUpdate = async (order: LimitOrder, priceUsd: number) => {
+    if (order.orderType !== 'trailing_stop_sell') return order;
+    const bps = order.trailingStopBps ?? 0;
+    if (!Number.isFinite(bps) || bps <= 0 || bps >= 10000) return order;
+    const prevPeak = Number(order.trailingPeakPriceUsd);
+    const peak = Number.isFinite(prevPeak) && prevPeak > 0 ? prevPeak : priceUsd;
+    const nextPeak = priceUsd > peak ? priceUsd : peak;
+    const nextTrigger = nextPeak * (1 - bps / 10000);
+    if (!Number.isFinite(nextTrigger) || nextTrigger <= 0) return order;
+
+    const needPatch = (nextPeak !== peak) || (Math.abs(nextTrigger - order.triggerPriceUsd) / nextTrigger > 0.000001);
+    if (!needPatch) return { ...order, trailingPeakPriceUsd: nextPeak, triggerPriceUsd: nextTrigger };
+    await patchLimitOrder(order.id, { trailingPeakPriceUsd: nextPeak, triggerPriceUsd: nextTrigger });
+    return { ...order, trailingPeakPriceUsd: nextPeak, triggerPriceUsd: nextTrigger };
   };
 
   const listLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
@@ -423,6 +439,14 @@ export default defineBackground(() => {
     const orderType = normalizeLimitOrderType(input.orderType, input.side);
     const side = sideFromLimitOrderType(orderType);
     if (input.orderType && side !== input.side) throw new Error('Order type mismatches side');
+
+    const trailingStopBps = input.trailingStopBps != null ? Number(input.trailingStopBps) : null;
+    const trailingPeakPriceUsd = input.trailingPeakPriceUsd != null ? Number(input.trailingPeakPriceUsd) : null;
+    if (orderType === 'trailing_stop_sell') {
+      if (!(side === 'sell')) throw new Error('Trailing stop must be sell');
+      if (trailingStopBps == null || !Number.isFinite(trailingStopBps) || !(trailingStopBps > 0 && trailingStopBps < 10000)) throw new Error('Invalid trailing bps');
+      if (trailingPeakPriceUsd != null && (!Number.isFinite(trailingPeakPriceUsd) || trailingPeakPriceUsd <= 0)) throw new Error('Invalid trailing peak');
+    }
 
     if (side === 'buy') {
       if (!input.buyBnbAmountWei) throw new Error('Buy amount required');
@@ -450,6 +474,10 @@ export default defineBackground(() => {
       side,
       orderType,
       triggerPriceUsd,
+      trailingStopBps: orderType === 'trailing_stop_sell' ? (trailingStopBps as number) : undefined,
+      trailingPeakPriceUsd: orderType === 'trailing_stop_sell'
+        ? (trailingPeakPriceUsd != null && Number.isFinite(trailingPeakPriceUsd) && trailingPeakPriceUsd > 0 ? trailingPeakPriceUsd : triggerPriceUsd)
+        : undefined,
       buyBnbAmountWei: input.buyBnbAmountWei,
       sellPercentBps: input.sellPercentBps,
       sellTokenAmountWei: input.sellTokenAmountWei,
@@ -576,6 +604,50 @@ export default defineBackground(() => {
       sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
     });
 
+    try {
+      const type = normalizeLimitOrderType(order.orderType, order.side);
+      if (type === 'take_profit_sell' && percentBps > 0 && percentBps < 10000) {
+        const all = await getLimitOrders();
+        const keyAddr = order.tokenAddress.toLowerCase();
+        const hasHigherTakeProfit = all.some((o) => {
+          if (o.chainId !== order.chainId) return false;
+          if (o.status !== 'open') return false;
+          if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+          const ot = normalizeLimitOrderType(o.orderType, o.side);
+          if (ot !== 'take_profit_sell') return false;
+          return o.triggerPriceUsd > order.triggerPriceUsd;
+        });
+        if (!hasHigherTakeProfit) {
+          const hasTrailing = all.some((o) => {
+            if (o.chainId !== order.chainId) return false;
+            if (o.status !== 'open') return false;
+            if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+            const ot = normalizeLimitOrderType(o.orderType, o.side);
+            return ot === 'trailing_stop_sell';
+          });
+          if (!hasTrailing) {
+            const settings = await SettingsService.get();
+            const config = (settings as any).advancedAutoSell;
+            const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
+            const input = buildAdvancedAutoSellTrailingStopSellLimitOrderInput({
+              config,
+              chainId: order.chainId,
+              tokenAddress: order.tokenAddress,
+              tokenSymbol: order.tokenSymbol ?? null,
+              tokenInfo: order.tokenInfo,
+              basePriceUsd,
+            });
+            if (input) {
+              await createLimitOrder(input);
+              broadcastStateChange();
+              scheduleLimitScanFromStorage().catch(() => { });
+            }
+          }
+        }
+      }
+    } catch {
+    }
+
     // Cancel limit order if exists
     if (percentBps === 10000) {
       setTimeout(() => {
@@ -601,15 +673,16 @@ export default defineBackground(() => {
     const failed: Array<{ id: string; error: string }> = [];
 
     for (const o of candidates) {
-      const orderType = normalizeLimitOrderType(o.orderType, o.side);
-      const hit = hitLimitOrder(orderType, priceUsd, o.triggerPriceUsd);
+      const prepared = await applyTrailingStopUpdate(o, priceUsd);
+      const orderType = normalizeLimitOrderType(prepared.orderType, prepared.side);
+      const hit = hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
       if (!hit) continue;
 
       triggered.push(o.id);
       await patchLimitOrder(o.id, { status: 'triggered' as const });
 
       try {
-        const txHash = await executeLimitOrder({ ...o, status: 'triggered' }, { priceUsd });
+        const txHash = await executeLimitOrder({ ...prepared, status: 'triggered' }, { priceUsd });
         executed.push(o.id);
         await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
       } catch (e: any) {
@@ -683,15 +756,25 @@ export default defineBackground(() => {
         limitScanPricesByTokenKey.set(`${base.chainId}:${base.tokenAddress.toLowerCase()}`, { priceUsd, ts: Date.now() });
 
         for (const o of orders) {
-          const orderType = normalizeLimitOrderType(o.orderType, o.side);
-          const hit = hitLimitOrder(orderType, priceUsd, o.triggerPriceUsd);
+          const prepared = await applyTrailingStopUpdate(o, priceUsd);
+          if (
+            prepared.orderType === 'trailing_stop_sell' &&
+            (
+              prepared.triggerPriceUsd !== o.triggerPriceUsd ||
+              prepared.trailingPeakPriceUsd !== o.trailingPeakPriceUsd
+            )
+          ) {
+            changed = true;
+          }
+          const orderType = normalizeLimitOrderType(prepared.orderType, prepared.side);
+          const hit = hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
           if (!hit) continue;
 
           await patchLimitOrder(o.id, { status: 'triggered' as const });
           changed = true;
 
           try {
-            const txHash = await executeLimitOrder({ ...o, status: 'triggered' }, { priceUsd });
+            const txHash = await executeLimitOrder({ ...prepared, status: 'triggered' }, { priceUsd });
             await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
           } catch (e: any) {
             const msg = typeof e?.message === 'string' ? e.message : String(e);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, TrendingDown, X, Trash2, Plus } from 'lucide-react';
+import { TrendingUp, TrendingDown, RefreshCw, X, Trash2, Plus } from 'lucide-react';
 import type { AdvancedAutoSellConfig, AdvancedAutoSellRuleType } from '@/types/extention';
 import { t, type Locale } from '@/utils/i18n';
 
@@ -19,7 +19,7 @@ type DraftRule = {
 
 export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
   const defaultConfig = useMemo<AdvancedAutoSellConfig>(() => {
-    return value ?? { enabled: false, rules: [] };
+    return value ?? { enabled: false, rules: [], trailingStop: { enabled: false, callbackPercent: 15 } };
   }, [value]);
 
   const [enabled, setEnabled] = useState<boolean>(defaultConfig.enabled);
@@ -31,6 +31,8 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
       sellPercent: String(r.sellPercent),
     }))
   );
+  const [trailingEnabled, setTrailingEnabled] = useState<boolean>(defaultConfig.trailingStop?.enabled ?? false);
+  const [trailingCallbackPercent, setTrailingCallbackPercent] = useState<string>(String(defaultConfig.trailingStop?.callbackPercent ?? 15));
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -44,9 +46,11 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
         sellPercent: String(r.sellPercent),
       }))
     );
+    setTrailingEnabled(defaultConfig.trailingStop?.enabled ?? false);
+    setTrailingCallbackPercent(String(defaultConfig.trailingStop?.callbackPercent ?? 15));
   }, [open, defaultConfig]);
 
-  const commit = (next?: { enabled?: boolean; rules?: DraftRule[] }) => {
+  const commit = (next?: { enabled?: boolean; rules?: DraftRule[]; trailingEnabled?: boolean; trailingCallbackPercent?: string }) => {
     const nextEnabled = next?.enabled ?? enabled;
     const rulesDraft = next?.rules ?? rules;
     const parsed = rulesDraft
@@ -62,7 +66,16 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
         return { id: r.id, type: r.type, triggerPercent, sellPercent };
       })
       .filter(Boolean) as AdvancedAutoSellConfig['rules'];
-    onChange({ enabled: nextEnabled, rules: parsed });
+    const nextTrailingEnabled = next?.trailingEnabled ?? trailingEnabled;
+    const rawTrailingCallback = Number(next?.trailingCallbackPercent ?? trailingCallbackPercent);
+    const safeTrailingCallback = Number.isFinite(rawTrailingCallback)
+      ? Math.round(Math.max(0.1, Math.min(99.9, rawTrailingCallback)) * 100) / 100
+      : 15;
+    onChange({
+      enabled: nextEnabled,
+      rules: parsed,
+      trailingStop: { enabled: nextTrailingEnabled, callbackPercent: safeTrailingCallback },
+    });
   };
 
   return (
@@ -237,6 +250,47 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
                   {t('contentUi.autoSell.addRule', locale)}
                 </span>
               </button>
+
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 flex items-center justify-between gap-3">
+                <label
+                  className={`flex items-center gap-2 select-none ${canEdit ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    className="h-3 w-3 accent-amber-500"
+                    checked={trailingEnabled}
+                    disabled={!canEdit}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setTrailingEnabled(next);
+                      commit({ trailingEnabled: next });
+                    }}
+                  />
+                  <span className="inline-flex items-center gap-1 text-[13px] text-zinc-200">
+                    <RefreshCw size={12} className="text-amber-400" />
+                    {t('contentUi.autoSell.trailingStop', locale)}
+                  </span>
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.trailingStopCallback', locale)}</span>
+                  <div className="relative w-[92px]">
+                    <input
+                      type="number"
+                      className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
+                      value={trailingCallbackPercent}
+                      disabled={!canEdit || !trailingEnabled}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setTrailingCallbackPercent(v);
+                        commit({ trailingCallbackPercent: v });
+                      }}
+                    />
+                    <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

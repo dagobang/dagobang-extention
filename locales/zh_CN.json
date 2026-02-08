@@ -174,12 +174,14 @@
       "type": {
         "takeProfitSell": "止盈",
         "stopLossSell": "止损",
+        "trailingStopSell": "移动止盈",
         "lowBuy": "低价买",
         "highBuy": "高价买"
       },
       "typeLine": {
         "takeProfitSell": "高价卖",
         "stopLossSell": "低价卖",
+        "trailingStopSell": "回撤卖",
         "lowBuy1": "低价",
         "lowBuy2": "买入",
         "highBuy1": "高价",
@@ -225,7 +227,9 @@
       "advanced": "高级",
       "title": "高级交易策略",
       "sell": "卖出",
-      "addRule": "添加规则"
+      "addRule": "添加规则",
+      "trailingStop": "移动止盈（剩仓）",
+      "trailingStopCallback": "回撤距离"
     },
     "dailyAnalysis": {
       "title": "P小将分析",

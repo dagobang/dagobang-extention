@@ -14,7 +14,6 @@ export function buildAdvancedAutoSellSellLimitOrderInputs(input: {
   if (!Number.isFinite(basePriceUsd) || basePriceUsd <= 0) return [];
   if (!config?.enabled) return [];
   const rules = Array.isArray(config.rules) ? config.rules : [];
-  if (!rules.length) return [];
 
   const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
@@ -50,3 +49,40 @@ export function buildAdvancedAutoSellSellLimitOrderInputs(input: {
   return orders;
 }
 
+export function buildAdvancedAutoSellTrailingStopSellLimitOrderInput(input: {
+  config: AdvancedAutoSellConfig | null | undefined;
+  chainId: number;
+  tokenAddress: `0x${string}`;
+  tokenSymbol?: string | null;
+  tokenInfo: TokenInfo;
+  basePriceUsd: number;
+}): LimitOrderCreateInput | null {
+  const { config, chainId, tokenAddress, tokenSymbol, tokenInfo } = input;
+  const basePriceUsd = Number(input.basePriceUsd);
+  if (!Number.isFinite(basePriceUsd) || basePriceUsd <= 0) return null;
+  if (!config?.enabled) return null;
+
+  const trailing = (config as any).trailingStop as any;
+  if (!trailing?.enabled) return null;
+
+  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+  const rawCallback = Number(trailing?.callbackPercent);
+  const callbackPercent = Number.isFinite(rawCallback) ? clamp(rawCallback, 0.1, 99.9) : 15;
+  const trailingStopBps = Math.round(callbackPercent * 100);
+  const triggerPriceUsd = basePriceUsd * (1 - callbackPercent / 100);
+  if (!(Number.isFinite(triggerPriceUsd) && triggerPriceUsd > 0 && trailingStopBps > 0 && trailingStopBps < 10000)) return null;
+
+  const orderType: LimitOrderType = 'trailing_stop_sell';
+  return {
+    chainId,
+    tokenAddress,
+    tokenSymbol: tokenSymbol ?? null,
+    side: 'sell',
+    orderType,
+    triggerPriceUsd,
+    trailingStopBps,
+    trailingPeakPriceUsd: basePriceUsd,
+    sellPercentBps: 10000,
+    tokenInfo,
+  };
+}

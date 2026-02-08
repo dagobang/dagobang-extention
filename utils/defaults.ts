@@ -45,6 +45,10 @@ const DEFAULT_ADVANCED_AUTO_SELL: AdvancedAutoSellConfig = {
     { id: 'tp_300', type: 'take_profit', triggerPercent: 300, sellPercent: 50 },
     { id: 'sl_50', type: 'stop_loss', triggerPercent: -50, sellPercent: 100 },
   ],
+  trailingStop: {
+    enabled: false,
+    callbackPercent: 15,
+  },
 };
 
 export function defaultSettings(): Settings {
