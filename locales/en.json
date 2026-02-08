@@ -227,7 +227,13 @@
       "sell": "Sell",
       "addRule": "Add Rule",
       "trailingStop": "Trailing Stop (Remaining)",
-      "trailingStopCallback": "Callback"
+      "trailingStopCallback": "Callback",
+      "trailingStopActivationMode": "Activation",
+      "trailingStopActivationModeOption": {
+        "immediate": "Immediate",
+        "afterFirstTakeProfit": "After First Take Profit",
+        "afterLastTakeProfit": "After Last Take Profit"
+      }
     },
     "dailyAnalysis": {
       "title": "P Analyst",

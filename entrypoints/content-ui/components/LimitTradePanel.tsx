@@ -375,6 +375,20 @@ export function LimitTradePanel({
     };
   };
 
+  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const switchTokenInCurrentUrl = (nextTokenAddress: `0x${string}`) => {
+    try {
+      const href = window.location.href;
+      const match = href.match(/0x[a-fA-F0-9]{40}/);
+      if (!match) return;
+      const current = match[0];
+      if (current.toLowerCase() === nextTokenAddress.toLowerCase()) return;
+      const nextHref = href.replace(new RegExp(escapeRegex(current), 'i'), nextTokenAddress);
+      window.location.href = nextHref;
+    } catch {
+    }
+  };
+
   const normalizeOrderType = (o: LimitOrder): LimitOrderType => {
     if (o.orderType === 'take_profit_sell' || o.orderType === 'stop_loss_sell' || o.orderType === 'trailing_stop_sell' || o.orderType === 'low_buy' || o.orderType === 'high_buy') {
       return o.orderType;
@@ -928,7 +942,14 @@ export function LimitTradePanel({
                 >
                   <div className="min-w-0 text-zinc-200">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="font-semibold break-all">{o.tokenSymbol || tt('contentUi.common.token')}</span>
+                      <button
+                        type="button"
+                        className="font-semibold break-all hover:underline"
+                        onClick={() => switchTokenInCurrentUrl(o.tokenAddress)}
+                        title={o.tokenAddress}
+                      >
+                        {o.tokenSymbol || tt('contentUi.common.token')}
+                      </button>
                       <span className="text-[10px] text-zinc-500 truncate">
                         {o.tokenAddress.slice(0, 6)}...{o.tokenAddress.slice(-4)}
                       </span>

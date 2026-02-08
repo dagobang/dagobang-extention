@@ -57,6 +57,7 @@ export type AdvancedAutoSellRule = {
 export type AdvancedAutoSellTrailingStop = {
   enabled: boolean;
   callbackPercent: number;
+  activationMode?: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit';
 };
 
 export type AdvancedAutoSellConfig = {

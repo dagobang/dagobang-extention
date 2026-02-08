@@ -229,7 +229,13 @@
       "sell": "卖出",
       "addRule": "添加规则",
       "trailingStop": "移动止盈（剩仓）",
-      "trailingStopCallback": "回撤距离"
+      "trailingStopCallback": "回撤距离",
+      "trailingStopActivationMode": "启用时机",
+      "trailingStopActivationModeOption": {
+        "immediate": "立即启用",
+        "afterFirstTakeProfit": "首次止盈后启用",
+        "afterLastTakeProfit": "最后一次止盈后启用"
+      }
     },
     "dailyAnalysis": {
       "title": "P小将分析",

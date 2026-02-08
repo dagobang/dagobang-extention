@@ -551,6 +551,7 @@ export default defineBackground(() => {
         const settings = await SettingsService.get();
         const config = (settings as any).advancedAutoSell;
         const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
+        let created = 0;
         const orders = buildAdvancedAutoSellSellLimitOrderInputs({
           config,
           chainId: order.chainId,
@@ -559,10 +560,26 @@ export default defineBackground(() => {
           tokenInfo: order.tokenInfo,
           basePriceUsd,
         });
-        if (orders.length) {
-          for (const o of orders) {
-            await createLimitOrder(o);
+        for (const o of orders) {
+          await createLimitOrder(o);
+          created += 1;
+        }
+        const mode = (config as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
+        if (mode === 'immediate' && (config as any)?.trailingStop?.enabled) {
+          const trailing = buildAdvancedAutoSellTrailingStopSellLimitOrderInput({
+            config,
+            chainId: order.chainId,
+            tokenAddress: order.tokenAddress,
+            tokenSymbol: order.tokenSymbol ?? null,
+            tokenInfo: order.tokenInfo,
+            basePriceUsd,
+          });
+          if (trailing) {
+            await createLimitOrder(trailing);
+            created += 1;
           }
+        }
+        if (created > 0) {
           broadcastStateChange();
           scheduleLimitScanFromStorage().catch(() => { });
         }
@@ -609,38 +626,43 @@ export default defineBackground(() => {
       if (type === 'take_profit_sell' && percentBps > 0 && percentBps < 10000) {
         const all = await getLimitOrders();
         const keyAddr = order.tokenAddress.toLowerCase();
-        const hasHigherTakeProfit = all.some((o) => {
+        const hasTrailing = all.some((o) => {
           if (o.chainId !== order.chainId) return false;
           if (o.status !== 'open') return false;
           if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
           const ot = normalizeLimitOrderType(o.orderType, o.side);
-          if (ot !== 'take_profit_sell') return false;
-          return o.triggerPriceUsd > order.triggerPriceUsd;
+          return ot === 'trailing_stop_sell';
         });
-        if (!hasHigherTakeProfit) {
-          const hasTrailing = all.some((o) => {
-            if (o.chainId !== order.chainId) return false;
-            if (o.status !== 'open') return false;
-            if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
-            const ot = normalizeLimitOrderType(o.orderType, o.side);
-            return ot === 'trailing_stop_sell';
-          });
-          if (!hasTrailing) {
-            const settings = await SettingsService.get();
-            const config = (settings as any).advancedAutoSell;
-            const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
-            const input = buildAdvancedAutoSellTrailingStopSellLimitOrderInput({
-              config,
-              chainId: order.chainId,
-              tokenAddress: order.tokenAddress,
-              tokenSymbol: order.tokenSymbol ?? null,
-              tokenInfo: order.tokenInfo,
-              basePriceUsd,
-            });
-            if (input) {
-              await createLimitOrder(input);
-              broadcastStateChange();
-              scheduleLimitScanFromStorage().catch(() => { });
+        if (!hasTrailing) {
+          const settings = await SettingsService.get();
+          const config = (settings as any).advancedAutoSell;
+          const mode = (config as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
+          if (mode === 'after_first_take_profit' || mode === 'after_last_take_profit') {
+            const shouldCreate = mode === 'after_first_take_profit'
+              ? true
+              : !all.some((o) => {
+                if (o.chainId !== order.chainId) return false;
+                if (o.status !== 'open') return false;
+                if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+                const ot = normalizeLimitOrderType(o.orderType, o.side);
+                if (ot !== 'take_profit_sell') return false;
+                return o.triggerPriceUsd > order.triggerPriceUsd;
+              });
+            if (shouldCreate) {
+              const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
+              const input = buildAdvancedAutoSellTrailingStopSellLimitOrderInput({
+                config,
+                chainId: order.chainId,
+                tokenAddress: order.tokenAddress,
+                tokenSymbol: order.tokenSymbol ?? null,
+                tokenInfo: order.tokenInfo,
+                basePriceUsd,
+              });
+              if (input) {
+                await createLimitOrder(input);
+                broadcastStateChange();
+                scheduleLimitScanFromStorage().catch(() => { });
+              }
             }
           }
         }

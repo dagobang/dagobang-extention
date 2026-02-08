@@ -19,7 +19,7 @@ type DraftRule = {
 
 export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
   const defaultConfig = useMemo<AdvancedAutoSellConfig>(() => {
-    return value ?? { enabled: false, rules: [], trailingStop: { enabled: false, callbackPercent: 15 } };
+    return value ?? { enabled: false, rules: [], trailingStop: { enabled: false, callbackPercent: 15, activationMode: 'after_last_take_profit' } };
   }, [value]);
 
   const [enabled, setEnabled] = useState<boolean>(defaultConfig.enabled);
@@ -33,6 +33,9 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
   );
   const [trailingEnabled, setTrailingEnabled] = useState<boolean>(defaultConfig.trailingStop?.enabled ?? false);
   const [trailingCallbackPercent, setTrailingCallbackPercent] = useState<string>(String(defaultConfig.trailingStop?.callbackPercent ?? 15));
+  const [trailingActivationMode, setTrailingActivationMode] = useState<'immediate' | 'after_first_take_profit' | 'after_last_take_profit'>(
+    defaultConfig.trailingStop?.activationMode ?? 'after_last_take_profit'
+  );
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -48,9 +51,10 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
     );
     setTrailingEnabled(defaultConfig.trailingStop?.enabled ?? false);
     setTrailingCallbackPercent(String(defaultConfig.trailingStop?.callbackPercent ?? 15));
+    setTrailingActivationMode(defaultConfig.trailingStop?.activationMode ?? 'after_last_take_profit');
   }, [open, defaultConfig]);
 
-  const commit = (next?: { enabled?: boolean; rules?: DraftRule[]; trailingEnabled?: boolean; trailingCallbackPercent?: string }) => {
+  const commit = (next?: { enabled?: boolean; rules?: DraftRule[]; trailingEnabled?: boolean; trailingCallbackPercent?: string; trailingActivationMode?: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit' }) => {
     const nextEnabled = next?.enabled ?? enabled;
     const rulesDraft = next?.rules ?? rules;
     const parsed = rulesDraft
@@ -71,10 +75,11 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
     const safeTrailingCallback = Number.isFinite(rawTrailingCallback)
       ? Math.round(Math.max(0.1, Math.min(99.9, rawTrailingCallback)) * 100) / 100
       : 15;
+    const nextTrailingActivationMode = next?.trailingActivationMode ?? trailingActivationMode;
     onChange({
       enabled: nextEnabled,
       rules: parsed,
-      trailingStop: { enabled: nextTrailingEnabled, callbackPercent: safeTrailingCallback },
+      trailingStop: { enabled: nextTrailingEnabled, callbackPercent: safeTrailingCallback, activationMode: nextTrailingActivationMode },
     });
   };
 
@@ -290,6 +295,25 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
                     <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
                   </div>
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 flex items-center justify-between gap-3">
+                <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.trailingStopActivationMode', locale)}</span>
+                <select
+                  className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] text-zinc-200 outline-none disabled:opacity-60"
+                  value={trailingActivationMode}
+                  disabled={!canEdit || !trailingEnabled}
+                  onChange={(e) => {
+                    const v = e.target.value as any;
+                    if (v !== 'immediate' && v !== 'after_first_take_profit' && v !== 'after_last_take_profit') return;
+                    setTrailingActivationMode(v);
+                    commit({ trailingActivationMode: v });
+                  }}
+                >
+                  <option value="immediate">{t('contentUi.autoSell.trailingStopActivationModeOption.immediate', locale)}</option>
+                  <option value="after_first_take_profit">{t('contentUi.autoSell.trailingStopActivationModeOption.afterFirstTakeProfit', locale)}</option>
+                  <option value="after_last_take_profit">{t('contentUi.autoSell.trailingStopActivationModeOption.afterLastTakeProfit', locale)}</option>
+                </select>
               </div>
             </div>
           </div>
