@@ -1,987 +1,27 @@
 import { browser } from 'wxt/browser';
-import { parseEther, decodeAbiParameters, decodeFunctionData, parseAbi } from 'viem';
 import { WalletService } from '@/services/wallet';
 import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
 import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
-import { getLimitOrders, setLimitOrders } from '@/services/storage';
-import { buildAdvancedAutoSellSellLimitOrderInputs, buildAdvancedAutoSellTrailingStopSellLimitOrderInput } from '@/services/advancedAutoSell';
-import type { BgRequest, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
-import { TokenFourmemeService } from '@/services/token.fourmeme';
-import { TokenFlapService } from '@/services/token.flap';
-import FourmemeAPI from '@/services/fourmeme.api';
-import BloxRouterAPI from '@/services/blox-router.api';
+import {
+  cancelAllLimitOrders, cancelLimitOrder,
+  createLimitOrder,
+  listLimitOrders
+} from '@/services/limitOrders/store';
+import { debugLogTxError, extractRevertReasonFromError, serializeTxError, tryGetReceiptRevertReason } from '@/services/tx/errors';
+import { createLimitOrderScanner } from './background/limitOrderScanner';
+import { createAutoTrade } from '@/services/autoTrade';
+import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/limitOrders/executor';
+import type { BgRequest, LimitOrderScanStatus } from '@/types/extention';
+import { TokenFourmemeService } from '@/services/token/fourmeme';
+import { TokenFlapService } from '@/services/token/flap';
+import FourmemeAPI from '@/services/api/fourmeme';
+import BloxRouterAPI from '@/services/api/bloxRouter';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
 
-  const recentAutoBuys = new Map<string, number>();
-  const autoPositions = new Map<string, {
-    chainId: number;
-    tokenAddress: `0x${string}`;
-    entryPriceUsd: number | null;
-    entryTime: number;
-    lastPriceUsd: number | null;
-  }>();
-
-  const getKey = (chainId: number, tokenAddress: `0x${string}`) => `${chainId}:${tokenAddress.toLowerCase()}`;
-
-  const scoreRevertReason = (reason: string) => {
-    const r = reason.toLowerCase();
-    let v = 0;
-    if (/^0x[0-9a-f]*$/i.test(reason)) v -= 120;
-    if (r.includes('zero_input')) v -= 80;
-    if (r.includes('insufficient allowance') || r.includes('allowance')) v += 200;
-    if (r.includes('insufficient balance') || r.includes('balance')) v += 120;
-    if (r.includes('transfer') || r.includes('transferfrom')) v += 80;
-    if (r.includes('slippage') || r.includes('min') || r.includes('amount')) v += 20;
-    if (/^[A-Z0-9_]{3,}$/.test(reason)) v -= 30;
-    if (reason.includes('0x') && reason.length > 60) v -= 40;
-    v += Math.min(30, Math.floor(reason.length / 10));
-    return v;
-  };
-
-  const decodeRevertDataToReason = (data: any) => {
-    if (typeof data !== 'string') return null;
-    const hex = data.trim();
-    if (!/^0x[0-9a-fA-F]*$/.test(hex)) return null;
-    if (hex === '0x' || hex.length < 10) return null;
-    const sel = hex.slice(0, 10).toLowerCase();
-    if (sel === '0x08c379a0') {
-      const body = (`0x${hex.slice(10)}`) as `0x${string}`;
-      try {
-        const [msg] = decodeAbiParameters([{ type: 'string' }], body);
-        return typeof msg === 'string' && msg.trim() ? msg.trim() : null;
-      } catch {
-        return null;
-      }
-    }
-    if (sel === '0x4e487b71') {
-      const body = (`0x${hex.slice(10)}`) as `0x${string}`;
-      try {
-        const [code] = decodeAbiParameters([{ type: 'uint256' }], body);
-        const n = typeof code === 'bigint' ? code : BigInt(code as any);
-        const map: Record<string, string> = {
-          '0x01': 'Panic(0x01)',
-          '0x11': 'Panic(0x11)',
-          '0x12': 'Panic(0x12)',
-          '0x21': 'Panic(0x21)',
-          '0x22': 'Panic(0x22)',
-          '0x31': 'Panic(0x31)',
-          '0x32': 'Panic(0x32)',
-          '0x41': 'Panic(0x41)',
-          '0x51': 'Panic(0x51)',
-        };
-        const key = `0x${n.toString(16)}`;
-        return map[key] ?? `Panic(${key})`;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  };
-
-  const routerSwapAbi = parseAbi([
-    'struct SwapDesc { uint8 swapType; address tokenIn; address tokenOut; address poolAddress; uint24 fee; int24 tickSpacing; address hooks; bytes hookData; address poolManager; bytes32 parameters; bytes data; }',
-    'function swap(SwapDesc[] descs, address feeToken, uint256 amountIn, uint256 minReturn, uint256 deadline) payable',
-    'function swapPercent(SwapDesc[] descs, address feeToken, uint16 percentBps, uint256 minReturn, uint256 deadline) payable'
-  ]);
-  const erc20AbiLite = parseAbi([
-    'function balanceOf(address owner) view returns (uint256)',
-    'function allowance(address owner, address spender) view returns (uint256)',
-  ]);
-
-  const tryDecodeSwapInput = (input: any) => {
-    if (typeof input !== 'string') return null;
-    try {
-      const decoded = decodeFunctionData({ abi: routerSwapAbi, data: input as `0x${string}` }) as any;
-      const fn = decoded?.functionName as string | undefined;
-      const args = decoded?.args as any[] | undefined;
-      if (!args || args.length < 5) return null;
-      const descs = args[0] as any[];
-      const tokenIn = descs?.[0]?.tokenIn as string | undefined;
-      if (!tokenIn || !/^0x[a-fA-F0-9]{40}$/.test(tokenIn)) return null;
-      if (fn === 'swap') {
-        const amountIn = args[2] as bigint | number;
-        const a = typeof amountIn === 'bigint' ? amountIn : BigInt(amountIn as any);
-        return { kind: 'swap' as const, tokenIn: tokenIn as `0x${string}`, amountIn: a };
-      }
-      if (fn === 'swapPercent') {
-        const percentBps = args[2] as bigint | number;
-        const p = typeof percentBps === 'bigint' ? percentBps : BigInt(percentBps as any);
-        return { kind: 'swapPercent' as const, tokenIn: tokenIn as `0x${string}`, percentBps: p };
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  };
-
-  const extractRevertReasonFromText = (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return null;
-    const directPatterns = [
-      /ERC20:[^\n]{0,160}insufficient allowance[^\n]{0,80}/i,
-      /ERC20:[^\n]{0,160}insufficient balance[^\n]{0,80}/i,
-      /insufficient allowance/i,
-      /insufficient balance/i,
-    ];
-    for (const re of directPatterns) {
-      const m = re.exec(trimmed);
-      if (!m) continue;
-      const g = (m[0] ?? '').trim();
-      if (g) return g;
-    }
-    const hexes = trimmed.match(/0x[0-9a-fA-F]{8,}/g) ?? [];
-    for (const h of hexes) {
-      const decoded = decodeRevertDataToReason(h);
-      if (decoded) return decoded;
-    }
-    const patterns = [
-      /Fail with error\s+'([^']+)'/i,
-      /reverted with reason string\s+'([^']+)'/i,
-      /execution reverted(?::\s*([^\n]+))?/i,
-      /revert(?:ed)?(?::\s*([^\n]+))?/i,
-    ];
-    for (const re of patterns) {
-      const m = re.exec(trimmed);
-      if (!m) continue;
-      const g = (m[1] ?? '').trim();
-      if (g && !/^0x[0-9a-f]*$/i.test(g)) return g;
-    }
-    return null;
-  };
-
-  const collectErrorTexts = (e: any) => {
-    const seen = new Set<any>();
-    const texts: string[] = [];
-    const visit = (err: any, depth: number) => {
-      if (!err || depth > 4) return;
-      if (seen.has(err)) return;
-      seen.add(err);
-      const push = (s: any) => {
-        if (typeof s !== 'string') return;
-        const t = s.trim();
-        if (!t) return;
-        texts.push(t);
-      };
-      if (Array.isArray(err?.metaMessages)) {
-        for (const x of err.metaMessages) push(x);
-      }
-      push(err?.details);
-      push(err?.shortMessage);
-      push(err?.message);
-      push(err?.data);
-      const cause = err?.cause;
-      if (cause) visit(cause, depth + 1);
-    };
-    visit(e as any, 0);
-    return texts;
-  };
-
-  const extractRevertReasonFromError = (e: any) => {
-    const texts = collectErrorTexts(e);
-
-    const reasons: string[] = [];
-    for (const s of texts) {
-      const reason = extractRevertReasonFromText(s);
-      if (reason) reasons.push(reason);
-      const decoded = decodeRevertDataToReason(s);
-      if (decoded) reasons.push(decoded);
-    }
-
-    if (!reasons.length) return null;
-
-    let best = reasons[0];
-    let bestScore = scoreRevertReason(best);
-    for (const r of reasons.slice(1)) {
-      const s = scoreRevertReason(r);
-      if (s > bestScore) {
-        best = r;
-        bestScore = s;
-      }
-    }
-
-    return best;
-  };
-
-  const debugLogTxError = (tag: string, e: any, extra?: Record<string, unknown>) => {
-    const texts = collectErrorTexts(e);
-    const reasons: string[] = [];
-    for (const s of texts) {
-      const reason = extractRevertReasonFromText(s);
-      if (reason) reasons.push(reason);
-      const decoded = decodeRevertDataToReason(s);
-      if (decoded) reasons.push(decoded);
-    }
-    const uniqueReasons = Array.from(new Set(reasons));
-    const scored = uniqueReasons
-      .map((r) => ({ reason: r, score: scoreRevertReason(r) }))
-      .sort((a, b) => b.score - a.score);
-
-    console.error(tag, {
-      ...extra,
-      parsedBest: scored[0]?.reason,
-      parsedAll: scored,
-      raw: serializeTxError(e),
-      rawTexts: texts,
-    });
-  };
-
-  const tryGetTxFailureReasonByAuthorization = async (client: any, bn: bigint, tx: any) => {
-    const decoded = tryDecodeSwapInput(tx?.input);
-    if (!decoded) return null;
-    const tokenInLower = decoded.tokenIn.toLowerCase();
-    if (tokenInLower === '0x0000000000000000000000000000000000000000') return null;
-    try {
-      const [balance, allowanceToRouter] = await Promise.all([
-        client.readContract({
-          address: decoded.tokenIn,
-          abi: erc20AbiLite,
-          functionName: 'balanceOf',
-          args: [tx.from],
-          blockNumber: bn,
-        }) as Promise<bigint>,
-        client.readContract({
-          address: decoded.tokenIn,
-          abi: erc20AbiLite,
-          functionName: 'allowance',
-          args: [tx.from, tx.to],
-          blockNumber: bn,
-        }) as Promise<bigint>,
-      ]);
-      const requiredAmountIn = decoded.kind === 'swap'
-        ? decoded.amountIn
-        : (balance * decoded.percentBps) / 10000n;
-      if (requiredAmountIn <= 0n) return 'ZERO_INPUT';
-      if (allowanceToRouter < requiredAmountIn) return 'ERC20: insufficient allowance';
-      if (balance < requiredAmountIn) return 'ERC20: insufficient balance';
-      return null;
-    } catch {
-      return null;
-    }
-  };
-
-  const serializeTxError = (e: any) => {
-    const err = e as any;
-    const cause = err?.cause as any;
-    const metaMessages = Array.isArray(err?.metaMessages) ? err.metaMessages.filter((x: any) => typeof x === 'string') : [];
-    const message = typeof err?.message === 'string' ? err.message : String(err);
-    const shortMessage = typeof err?.shortMessage === 'string' ? err.shortMessage : undefined;
-    const details = typeof err?.details === 'string' ? err.details : undefined;
-    const code = cause?.code ?? err?.code;
-    const data = cause?.data ?? err?.data;
-    return {
-      name: typeof err?.name === 'string' ? err.name : undefined,
-      message,
-      shortMessage,
-      details,
-      meta: metaMessages.length ? metaMessages : undefined,
-      cause: cause?.message ? String(cause.message) : undefined,
-      code: code != null ? (typeof code === 'string' || typeof code === 'number' ? code : String(code)) : undefined,
-      data,
-    };
-  };
-
-  const tryGetReceiptRevertReason = async (client: any, hash: `0x${string}`, bn: bigint) => {
-    let tx: any;
-    try {
-      tx = await client.getTransaction({ hash });
-    } catch {
-      return null;
-    }
-    if (!tx?.to || !tx?.input) return null;
-    return await tryGetTxFailureReasonByAuthorization(client, bn, tx);
-  };
-
-  const parseNumber = (v: string | null | undefined) => {
-    if (!v) return null;
-    const n = Number(v.trim());
-    if (!Number.isFinite(n)) return null;
-    return n;
-  };
-
-  const extractTokenMetrics = (data: any) => {
-    if (!data || typeof data !== 'object') return null;
-    let obj = data;
-    if (obj.data && typeof obj.data === 'object') obj = obj.data;
-    const metrics: {
-      tokenAddress?: `0x${string}`;
-      marketCapUsd?: number;
-      liquidityUsd?: number;
-      holders?: number;
-      createdAtMs?: number;
-      devAddress?: `0x${string}`;
-      devHoldPercent?: number;
-      devHasSold?: boolean;
-      priceUsd?: number;
-    } = {};
-    const visit = (source: any) => {
-      if (!source || typeof source !== 'object') return;
-      for (const [k, v] of Object.entries(source)) {
-        const key = k.toLowerCase();
-        if (!metrics.tokenAddress && typeof v === 'string' && /^0x[a-fA-F0-9]{40}$/.test(v)) {
-          if (key.includes('token') || key.includes('contract') || key === 'ca' || key === 'address') {
-            metrics.tokenAddress = v as `0x${string}`;
-          }
-        }
-        if (!metrics.marketCapUsd && typeof v === 'number' && key.includes('market') && key.includes('cap')) {
-          metrics.marketCapUsd = v;
-        }
-        if (!metrics.liquidityUsd && typeof v === 'number' && key.includes('liquidity')) {
-          metrics.liquidityUsd = v;
-        }
-        if (!metrics.holders && typeof v === 'number' && (key.includes('holder') || key.includes('holders'))) {
-          metrics.holders = v;
-        }
-        if (!metrics.priceUsd && typeof v === 'number' && (key === 'price' || key.includes('price_usd'))) {
-          metrics.priceUsd = v;
-        }
-        if (!metrics.createdAtMs && typeof v === 'number' && (key.includes('create_time') || key.includes('launch_time') || key.includes('created_at'))) {
-          metrics.createdAtMs = v * (v < 10_000_000_000 ? 1000 : 1);
-        }
-        if (!metrics.devAddress && typeof v === 'string' && /^0x[a-fA-F0-9]{40}$/.test(v) && (key.includes('dev') || key.includes('owner') || key.includes('creator'))) {
-          metrics.devAddress = v as `0x${string}`;
-        }
-        if (!metrics.devHoldPercent && typeof v === 'number' && (key.includes('dev') && key.includes('percent'))) {
-          metrics.devHoldPercent = v;
-        }
-        if (metrics.devHasSold == null && typeof v === 'boolean' && (key.includes('dev') && key.includes('sell'))) {
-          metrics.devHasSold = v;
-        }
-        if (v && typeof v === 'object') {
-          visit(v);
-        }
-      }
-    };
-    visit(obj);
-    if (!metrics.tokenAddress) return null;
-    return metrics;
-  };
-
-  const shouldBuyByConfig = (metrics: ReturnType<typeof extractTokenMetrics>, config: any) => {
-    if (!metrics || !config) return false;
-    const maxMcap = parseNumber(config.maxMarketCapUsd);
-    if (maxMcap != null && metrics.marketCapUsd != null && metrics.marketCapUsd > maxMcap) return false;
-    const minLiq = parseNumber(config.minLiquidityUsd);
-    if (minLiq != null && metrics.liquidityUsd != null && metrics.liquidityUsd < minLiq) return false;
-    const minHolders = parseNumber(config.minHolders);
-    if (minHolders != null && metrics.holders != null && metrics.holders < minHolders) return false;
-    const maxAgeMin = parseNumber(config.maxTokenAgeMinutes);
-    if (maxAgeMin != null && metrics.createdAtMs != null) {
-      const ageMin = (Date.now() - metrics.createdAtMs) / 60000;
-      if (ageMin > maxAgeMin) return false;
-    }
-    const maxDevPct = parseNumber(config.maxDevHoldPercent);
-    if (maxDevPct != null && metrics.devHoldPercent != null && metrics.devHoldPercent > maxDevPct) return false;
-    if (config.blockIfDevSell && metrics.devHasSold === true) return false;
-    return true;
-  };
-
-  const makeLimitOrderId = () => {
-    try {
-      return crypto.randomUUID();
-    } catch {
-      return `lo_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    }
-  };
-
-  const normalizeLimitOrderType = (orderType: LimitOrderType | undefined, side: 'buy' | 'sell'): LimitOrderType => {
-    if (orderType === 'take_profit_sell' || orderType === 'stop_loss_sell' || orderType === 'trailing_stop_sell' || orderType === 'low_buy' || orderType === 'high_buy') {
-      return orderType;
-    }
-    return side === 'buy' ? 'low_buy' : 'take_profit_sell';
-  };
-
-  const sideFromLimitOrderType = (orderType: LimitOrderType): 'buy' | 'sell' => {
-    return orderType === 'low_buy' || orderType === 'high_buy' ? 'buy' : 'sell';
-  };
-
-  const hitLimitOrder = (orderType: LimitOrderType, priceUsd: number, triggerPriceUsd: number) => {
-    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return false;
-    if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) return false;
-    if (orderType === 'high_buy' || orderType === 'take_profit_sell') return priceUsd >= triggerPriceUsd;
-    return priceUsd <= triggerPriceUsd;
-  };
-
-  const applyTrailingStopUpdate = async (order: LimitOrder, priceUsd: number) => {
-    if (order.orderType !== 'trailing_stop_sell') return order;
-    const bps = order.trailingStopBps ?? 0;
-    if (!Number.isFinite(bps) || bps <= 0 || bps >= 10000) return order;
-    const prevPeak = Number(order.trailingPeakPriceUsd);
-    const peak = Number.isFinite(prevPeak) && prevPeak > 0 ? prevPeak : priceUsd;
-    const nextPeak = priceUsd > peak ? priceUsd : peak;
-    const nextTrigger = nextPeak * (1 - bps / 10000);
-    if (!Number.isFinite(nextTrigger) || nextTrigger <= 0) return order;
-
-    const needPatch = (nextPeak !== peak) || (Math.abs(nextTrigger - order.triggerPriceUsd) / nextTrigger > 0.000001);
-    if (!needPatch) return { ...order, trailingPeakPriceUsd: nextPeak, triggerPriceUsd: nextTrigger };
-    await patchLimitOrder(order.id, { trailingPeakPriceUsd: nextPeak, triggerPriceUsd: nextTrigger });
-    return { ...order, trailingPeakPriceUsd: nextPeak, triggerPriceUsd: nextTrigger };
-  };
-
-  const listLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
-    const all = await getLimitOrders();
-    const filtered = all.filter((o) => {
-      if (o.chainId !== chainId) return false;
-      if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return false;
-      return true;
-    });
-    filtered.sort((a, b) => b.createdAtMs - a.createdAtMs);
-    return filtered;
-  };
-
-  const createLimitOrder = async (input: LimitOrderCreateInput) => {
-    const triggerPriceUsd = Number(input.triggerPriceUsd);
-    if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) throw new Error('Invalid trigger price');
-    if (!input.tokenInfo) throw new Error('Token info required');
-    const orderType = normalizeLimitOrderType(input.orderType, input.side);
-    const side = sideFromLimitOrderType(orderType);
-    if (input.orderType && side !== input.side) throw new Error('Order type mismatches side');
-
-    const trailingStopBps = input.trailingStopBps != null ? Number(input.trailingStopBps) : null;
-    const trailingPeakPriceUsd = input.trailingPeakPriceUsd != null ? Number(input.trailingPeakPriceUsd) : null;
-    if (orderType === 'trailing_stop_sell') {
-      if (!(side === 'sell')) throw new Error('Trailing stop must be sell');
-      if (trailingStopBps == null || !Number.isFinite(trailingStopBps) || !(trailingStopBps > 0 && trailingStopBps < 10000)) throw new Error('Invalid trailing bps');
-      if (trailingPeakPriceUsd != null && (!Number.isFinite(trailingPeakPriceUsd) || trailingPeakPriceUsd <= 0)) throw new Error('Invalid trailing peak');
-    }
-
-    if (side === 'buy') {
-      if (!input.buyBnbAmountWei) throw new Error('Buy amount required');
-      const v = BigInt(input.buyBnbAmountWei);
-      if (v <= 0n) throw new Error('Invalid buy amount');
-    } else {
-      const tokenAmountWei = (() => {
-        try {
-          return input.sellTokenAmountWei ? BigInt(input.sellTokenAmountWei) : 0n;
-        } catch {
-          return 0n;
-        }
-      })();
-      const bps = input.sellPercentBps ?? 0;
-      const hasTokenAmount = tokenAmountWei > 0n;
-      const hasPercent = Number.isFinite(bps) && bps > 0 && bps <= 10000;
-      if (!hasTokenAmount && !hasPercent) throw new Error('Invalid sell amount');
-    }
-
-    const order: LimitOrder = {
-      id: makeLimitOrderId(),
-      chainId: input.chainId,
-      tokenAddress: input.tokenAddress,
-      tokenSymbol: input.tokenSymbol ?? null,
-      side,
-      orderType,
-      triggerPriceUsd,
-      trailingStopBps: orderType === 'trailing_stop_sell' ? (trailingStopBps as number) : undefined,
-      trailingPeakPriceUsd: orderType === 'trailing_stop_sell'
-        ? (trailingPeakPriceUsd != null && Number.isFinite(trailingPeakPriceUsd) && trailingPeakPriceUsd > 0 ? trailingPeakPriceUsd : triggerPriceUsd)
-        : undefined,
-      buyBnbAmountWei: input.buyBnbAmountWei,
-      sellPercentBps: input.sellPercentBps,
-      sellTokenAmountWei: input.sellTokenAmountWei,
-      createdAtMs: Date.now(),
-      status: 'open',
-      tokenInfo: input.tokenInfo,
-    };
-
-    const all = await getLimitOrders();
-    await setLimitOrders([order, ...all]);
-    return order;
-  };
-
-  const cancelLimitOrder = async (id: string) => {
-    const all = await getLimitOrders();
-    const next = all.filter((o) => !(o.id === id));
-    await setLimitOrders(next);
-    return next;
-  };
-
-  const cancelAllLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
-    const all = await getLimitOrders();
-    const next = all.filter((o) => {
-      if (o.chainId !== chainId) return true;
-      if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return true;
-      if (o.status === 'executed') return true;
-      return false;
-    });
-    await setLimitOrders(next);
-    return next;
-  };
-
-  const cancelAllSellLimitOrdersForToken = async (chainId: number, tokenAddress: `0x${string}` | null | undefined) => {
-    if (!tokenAddress) return getLimitOrders();
-    const keyAddr = tokenAddress.toLowerCase();
-    const all = await getLimitOrders();
-    const next = all.filter((o) => {
-      if (o.chainId !== chainId) return true;
-      if (o.tokenAddress.toLowerCase() !== keyAddr) return true;
-      if (o.side !== 'sell') return true;
-      if (o.status === 'executed') return true;
-      return false;
-    });
-    await setLimitOrders(next);
-    return next;
-  };
-
-  const patchLimitOrder = async (id: string, patch: Partial<LimitOrder>) => {
-    const all = await getLimitOrders();
-    const next = all.map((o) => (o.id === id ? { ...o, ...patch } : o));
-    await setLimitOrders(next);
-    return next;
-  };
-
-  const executeLimitOrder = async (order: LimitOrder, ctx?: { priceUsd?: number }) => {
-    if (!order.tokenInfo) throw new Error('Token info required');
-    if (order.side === 'buy') {
-      if (!order.buyBnbAmountWei) throw new Error('Buy amount required');
-      const res = await TradeService.buy({
-        chainId: order.chainId,
-        tokenAddress: order.tokenAddress,
-        bnbAmountWei: order.buyBnbAmountWei,
-        tokenInfo: order.tokenInfo,
-      });
-      const txHash = res.txHash as `0x${string}`;
-      await patchLimitOrder(order.id, { txHash });
-      try {
-        const client = await RpcService.getClient();
-        const receipt = await client.waitForTransactionReceipt({ hash: txHash });
-        if (receipt.status !== 'success') {
-          const reason = await tryGetReceiptRevertReason(client, txHash, receipt.blockNumber);
-          throw new Error(reason ?? 'Transaction failed');
-        }
-      } catch (e: any) {
-        const reason = extractRevertReasonFromError(e);
-        throw new Error(reason ?? (typeof e?.message === 'string' ? e.message : String(e)));
-      }
-
-      // Approve max for sell if needed
-      await TradeService.approveMaxForSellIfNeeded(order.chainId, order.tokenAddress, order.tokenInfo);
-
-      // Auto sell limit orders
-      try {
-        const settings = await SettingsService.get();
-        const config = (settings as any).advancedAutoSell;
-        const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
-        let created = 0;
-        const orders = buildAdvancedAutoSellSellLimitOrderInputs({
-          config,
-          chainId: order.chainId,
-          tokenAddress: order.tokenAddress,
-          tokenSymbol: order.tokenSymbol ?? null,
-          tokenInfo: order.tokenInfo,
-          basePriceUsd,
-        });
-        for (const o of orders) {
-          await createLimitOrder(o);
-          created += 1;
-        }
-        const mode = (config as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
-        if (mode === 'immediate' && (config as any)?.trailingStop?.enabled) {
-          const trailing = buildAdvancedAutoSellTrailingStopSellLimitOrderInput({
-            config,
-            chainId: order.chainId,
-            tokenAddress: order.tokenAddress,
-            tokenSymbol: order.tokenSymbol ?? null,
-            tokenInfo: order.tokenInfo,
-            basePriceUsd,
-          });
-          if (trailing) {
-            await createLimitOrder(trailing);
-            created += 1;
-          }
-        }
-        if (created > 0) {
-          broadcastStateChange();
-          scheduleLimitScanFromStorage().catch(() => { });
-        }
-      } catch {
-      }
-
-      return txHash;
-    }
-
-    // Sell
-    const account = await WalletService.getSigner();
-    const client = await RpcService.getClient();
-    const balance = await client.readContract({
-      address: order.tokenAddress,
-      abi: erc20AbiLite,
-      functionName: 'balanceOf',
-      args: [account.address],
-    });
-    const fixedAmount = (() => {
-      try {
-        return order.sellTokenAmountWei ? BigInt(order.sellTokenAmountWei) : 0n;
-      } catch {
-        return 0n;
-      }
-    })();
-    const percentBps = order.sellPercentBps ?? 0;
-    const amountByPercent = (Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000)
-      ? (balance * BigInt(percentBps)) / 10000n
-      : 0n;
-    const rawAmountIn = fixedAmount > 0n ? fixedAmount : amountByPercent;
-    const amountIn = rawAmountIn > balance ? balance : rawAmountIn;
-    if (amountIn <= 0n) throw new Error('No balance');
-
-    const txHash = await TradeService.sell({
-      chainId: order.chainId,
-      tokenAddress: order.tokenAddress,
-      tokenAmountWei: amountIn.toString(),
-      tokenInfo: order.tokenInfo,
-      sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
-    });
-    await patchLimitOrder(order.id, { txHash });
-    try {
-      const client = await RpcService.getClient();
-      const receipt = await client.waitForTransactionReceipt({ hash: txHash });
-      if (receipt.status !== 'success') {
-        const reason = await tryGetReceiptRevertReason(client, txHash, receipt.blockNumber);
-        throw new Error(reason ?? 'Transaction failed');
-      }
-    } catch (e: any) {
-      const reason = extractRevertReasonFromError(e);
-      throw new Error(reason ?? (typeof e?.message === 'string' ? e.message : String(e)));
-    }
-
-    try {
-      const type = normalizeLimitOrderType(order.orderType, order.side);
-      if (type === 'take_profit_sell' && percentBps > 0 && percentBps < 10000) {
-        const all = await getLimitOrders();
-        const keyAddr = order.tokenAddress.toLowerCase();
-        const hasTrailing = all.some((o) => {
-          if (o.chainId !== order.chainId) return false;
-          if (o.status !== 'open') return false;
-          if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
-          const ot = normalizeLimitOrderType(o.orderType, o.side);
-          return ot === 'trailing_stop_sell';
-        });
-        if (!hasTrailing) {
-          const settings = await SettingsService.get();
-          const config = (settings as any).advancedAutoSell;
-          const mode = (config as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
-          if (mode === 'after_first_take_profit' || mode === 'after_last_take_profit') {
-            const shouldCreate = mode === 'after_first_take_profit'
-              ? true
-              : !all.some((o) => {
-                if (o.chainId !== order.chainId) return false;
-                if (o.status !== 'open') return false;
-                if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
-                const ot = normalizeLimitOrderType(o.orderType, o.side);
-                if (ot !== 'take_profit_sell') return false;
-                return o.triggerPriceUsd > order.triggerPriceUsd;
-              });
-            if (shouldCreate) {
-              const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
-              const input = buildAdvancedAutoSellTrailingStopSellLimitOrderInput({
-                config,
-                chainId: order.chainId,
-                tokenAddress: order.tokenAddress,
-                tokenSymbol: order.tokenSymbol ?? null,
-                tokenInfo: order.tokenInfo,
-                basePriceUsd,
-              });
-              if (input) {
-                await createLimitOrder(input);
-                broadcastStateChange();
-                scheduleLimitScanFromStorage().catch(() => { });
-              }
-            }
-          }
-        }
-      }
-    } catch {
-    }
-
-    // Cancel limit order if exists
-    if (percentBps === 10000) {
-      setTimeout(() => {
-        void cancelAllSellLimitOrdersForToken(order.chainId, order.tokenAddress);
-        broadcastStateChange();
-        scheduleLimitScanFromStorage().catch(() => { });
-      }, 2000);
-    }
-
-    return txHash as `0x${string}`;
-  };
-
-  const tickLimitOrders = async (chainId: number, tokenAddress: `0x${string}`, priceUsd: number) => {
-    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return { triggered: [], executed: [], failed: [] as Array<{ id: string; error: string }> };
-
-    const all = await getLimitOrders();
-    const keyAddr = tokenAddress.toLowerCase();
-    const candidates = all.filter((o) => o.chainId === chainId && o.status === 'open' && o.tokenAddress.toLowerCase() === keyAddr);
-    if (!candidates.length) return { triggered: [], executed: [], failed: [] as Array<{ id: string; error: string }> };
-
-    const triggered: string[] = [];
-    const executed: string[] = [];
-    const failed: Array<{ id: string; error: string }> = [];
-
-    for (const o of candidates) {
-      const prepared = await applyTrailingStopUpdate(o, priceUsd);
-      const orderType = normalizeLimitOrderType(prepared.orderType, prepared.side);
-      const hit = hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
-      if (!hit) continue;
-
-      triggered.push(o.id);
-      await patchLimitOrder(o.id, { status: 'triggered' as const });
-
-      try {
-        const txHash = await executeLimitOrder({ ...prepared, status: 'triggered' }, { priceUsd });
-        executed.push(o.id);
-        await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
-      } catch (e: any) {
-        const msg = typeof e?.message === 'string' ? e.message : String(e);
-        failed.push({ id: o.id, error: msg });
-        await patchLimitOrder(o.id, { status: 'failed' as const, lastError: msg });
-      }
-    }
-
-    return { triggered, executed, failed };
-  };
-
-  const LIMIT_SCAN_ALARM = 'limitOrder:scan';
-  const LIMIT_SCAN_INTERVAL_DEFAULT_MS = 3000;
-  const LIMIT_SCAN_INTERVAL_OPTIONS_MS = [1000, 3000, 5000, 10000, 30000, 60000, 120000] as const;
-  let limitScanIntervalMs = LIMIT_SCAN_INTERVAL_DEFAULT_MS;
-  const limitScanPricesByTokenKey = new Map<string, { priceUsd: number; ts: number }>();
-  let limitScanRunning = false;
-  let limitScanLastAtMs = 0;
-  let limitScanLastOk = true;
-  let limitScanLastError: string | null = null;
-
-  const normalizeLimitScanIntervalMs = (value: any) => {
-    const v = Math.floor(Number(value));
-    if (!Number.isFinite(v)) return LIMIT_SCAN_INTERVAL_DEFAULT_MS;
-    if (LIMIT_SCAN_INTERVAL_OPTIONS_MS.includes(v as any)) return v;
-    return LIMIT_SCAN_INTERVAL_DEFAULT_MS;
-  };
-
-  const refreshLimitScanIntervalFromSettings = async () => {
-    try {
-      const settings = await SettingsService.get();
-      limitScanIntervalMs = normalizeLimitScanIntervalMs((settings as any).limitOrderScanIntervalMs);
-    } catch {
-    }
-  };
-
-  const scanAndTriggerLimitOrdersOnce = async () => {
-    if (limitScanRunning) return;
-    limitScanRunning = true;
-    const startedAt = Date.now();
-    limitScanLastOk = true;
-    limitScanLastError = null;
-    try {
-      const all = await getLimitOrders();
-      const openOrders = all.filter((o) => o.status === 'open');
-      if (!openOrders.length) return;
-
-      const walletStatus = await WalletService.getStatus();
-      if (walletStatus.locked || !walletStatus.address) return;
-
-      let changed = false;
-
-      const byToken = new Map<string, LimitOrder[]>();
-      for (const o of openOrders) {
-        const k = `${o.chainId}:${o.tokenAddress.toLowerCase()}`;
-        const arr = byToken.get(k) ?? [];
-        arr.push(o);
-        byToken.set(k, arr);
-      }
-
-      for (const [, orders] of byToken) {
-        const base = orders[0];
-        const priceUsd = await TokenService.getTokenPriceUsdFromRpc({
-          chainId: base.chainId,
-          tokenAddress: base.tokenAddress,
-          tokenInfo: base.tokenInfo ?? null,
-          cacheTtlMs: limitScanIntervalMs,
-        });
-        if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
-        limitScanPricesByTokenKey.set(`${base.chainId}:${base.tokenAddress.toLowerCase()}`, { priceUsd, ts: Date.now() });
-
-        for (const o of orders) {
-          const prepared = await applyTrailingStopUpdate(o, priceUsd);
-          if (
-            prepared.orderType === 'trailing_stop_sell' &&
-            (
-              prepared.triggerPriceUsd !== o.triggerPriceUsd ||
-              prepared.trailingPeakPriceUsd !== o.trailingPeakPriceUsd
-            )
-          ) {
-            changed = true;
-          }
-          const orderType = normalizeLimitOrderType(prepared.orderType, prepared.side);
-          const hit = hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
-          if (!hit) continue;
-
-          await patchLimitOrder(o.id, { status: 'triggered' as const });
-          changed = true;
-
-          try {
-            const txHash = await executeLimitOrder({ ...prepared, status: 'triggered' }, { priceUsd });
-            await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
-          } catch (e: any) {
-            const msg = typeof e?.message === 'string' ? e.message : String(e);
-            await patchLimitOrder(o.id, { status: 'failed' as const, lastError: msg });
-          }
-        }
-      }
-
-      if (changed) {
-        broadcastStateChange();
-      }
-      limitScanLastOk = true;
-      limitScanLastError = null;
-    } catch (e: any) {
-      const msg = typeof e?.message === 'string' ? e.message : String(e);
-      limitScanLastOk = false;
-      limitScanLastError = msg;
-      throw e;
-    } finally {
-      limitScanLastAtMs = startedAt;
-      limitScanRunning = false;
-    }
-  };
-
-  const scheduleNextLimitScan = (delayMs: number) => {
-    try {
-      const safeDelayMs = Number.isFinite(delayMs) ? Math.max(0, delayMs) : limitScanIntervalMs;
-      (browser as any).alarms?.create(LIMIT_SCAN_ALARM, { when: Date.now() + safeDelayMs });
-    } catch {
-    }
-  };
-
-  const scheduleLimitScanFromStorage = async () => {
-    let hasOpen = false;
-    try {
-      const all = await getLimitOrders();
-      hasOpen = all.some((o) => o.status === 'open');
-    } catch {
-    }
-    if (!hasOpen) {
-      try {
-        (browser as any).alarms?.clear?.(LIMIT_SCAN_ALARM);
-      } catch {
-      }
-      return;
-    }
-    scheduleNextLimitScan(limitScanIntervalMs);
-  };
-
-  try {
-    (browser as any).alarms?.onAlarm?.addListener((alarm: any) => {
-      if (!alarm || alarm.name !== LIMIT_SCAN_ALARM) return;
-      scanAndTriggerLimitOrdersOnce()
-        .catch(() => { })
-        .finally(() => {
-          scheduleLimitScanFromStorage().catch(() => { });
-        });
-    });
-    refreshLimitScanIntervalFromSettings()
-      .catch(() => { })
-      .finally(() => {
-        scheduleLimitScanFromStorage().catch(() => { });
-      });
-  } catch {
-  }
-
-  const handleAutoTradeWebSocket = async (payload: any) => {
-    try {
-      if (!payload || payload.direction !== 'receive') return;
-      const settings = await SettingsService.get();
-      const config = (settings as any).autoTrade;
-      if (!config || !config.enabled) return;
-      const metrics = extractTokenMetrics(payload.data);
-      if (!metrics || !metrics.tokenAddress) return;
-      if (!shouldBuyByConfig(metrics, config)) return;
-      const chainId = settings.chainId;
-      const key = getKey(chainId, metrics.tokenAddress);
-      const now = Date.now();
-      const last = recentAutoBuys.get(key);
-      if (last && now - last < 5 * 60 * 1000) return;
-      const amountNumber = parseNumber(config.buyAmountBnb) ?? 0;
-      if (amountNumber <= 0) return;
-      const amountWei = parseEther(String(amountNumber));
-      const status = await WalletService.getStatus();
-      if (status.locked || !status.address) return;
-      const rsp = await TradeService.buy({
-        chainId,
-        tokenAddress: metrics.tokenAddress,
-        bnbAmountWei: amountWei.toString(),
-      });
-      console.log('AutoTrade buy tx', rsp.txHash);
-      recentAutoBuys.set(key, now);
-      autoPositions.set(key, {
-        chainId,
-        tokenAddress: metrics.tokenAddress,
-        entryPriceUsd: metrics.priceUsd ?? null,
-        entryTime: now,
-        lastPriceUsd: metrics.priceUsd ?? null,
-      });
-      broadcastStateChange();
-    } catch (e) {
-      console.error('AutoTrade ws handler error', e);
-    }
-  };
-
-  const handleAutoSellCheck = async (payload: any) => {
-    try {
-      const settings = await SettingsService.get();
-      const config = (settings as any).autoTrade;
-      if (!config || !config.autoSellEnabled) return;
-      const metrics = extractTokenMetrics(payload.data);
-      if (!metrics || !metrics.tokenAddress) return;
-      const chainId = settings.chainId;
-      const key = getKey(chainId, metrics.tokenAddress);
-      const pos = autoPositions.get(key);
-      if (!pos) return;
-      const now = Date.now();
-      const price = metrics.priceUsd ?? pos.lastPriceUsd;
-      if (price != null) {
-        pos.lastPriceUsd = price;
-      }
-      const tp = parseNumber(config.takeProfitMultiple);
-      const sl = parseNumber(config.stopLossMultiple);
-      const maxHoldMin = parseNumber(config.maxHoldMinutes);
-      const entryPrice = pos.entryPriceUsd;
-      let shouldSell = false;
-      if (entryPrice && price) {
-        if (tp && tp > 0 && price >= entryPrice * tp) {
-          shouldSell = true;
-        }
-        if (!shouldSell && sl && sl > 0 && price <= entryPrice * sl) {
-          shouldSell = true;
-        }
-      }
-      if (!shouldSell && maxHoldMin && maxHoldMin > 0) {
-        const ageMin = (now - pos.entryTime) / 60000;
-        if (ageMin >= maxHoldMin) {
-          shouldSell = true;
-        }
-      }
-      if (!shouldSell) return;
-      autoPositions.delete(key);
-      const txHash = await TradeService.sell({
-        chainId,
-        tokenAddress: metrics.tokenAddress,
-        tokenAmountWei: '0',
-        sellPercentBps: 10000,
-      });
-      console.log('AutoTrade sell tx', txHash);
-      broadcastStateChange();
-    } catch (e) {
-      console.error('AutoTrade sell handler error', e);
-    }
-  };
-
-  browser.runtime.onInstalled.addListener(() => {
-    console.log('Extension installed');
-  });
-
-  // Helper to broadcast state changes
   const broadcastStateChange = async () => {
     try {
       const tabs = await browser.tabs.query({});
@@ -994,6 +34,25 @@ export default defineBackground(() => {
       console.error('Broadcast failed', e);
     }
   };
+
+  let limitOrderScanner: ReturnType<typeof createLimitOrderScanner> | null = null;
+  const limitOrderExecutor = createLimitOrderExecutor({
+    onOrdersChanged: () => {
+      broadcastStateChange();
+      limitOrderScanner?.scheduleFromStorage().catch(() => { });
+    }
+  });
+  limitOrderScanner = createLimitOrderScanner({
+    executeLimitOrder: limitOrderExecutor.executeLimitOrder,
+    onStateChanged: broadcastStateChange,
+  });
+  limitOrderScanner.start();
+
+  const AutoTrade = createAutoTrade({ onStateChanged: broadcastStateChange });
+
+  browser.runtime.onInstalled.addListener(() => {
+    console.log('Extension installed');
+  });
 
   browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
     const msg = message as BgRequest;
@@ -1042,13 +101,8 @@ export default defineBackground(() => {
           }
 
           case 'settings:set':
-            limitScanIntervalMs = normalizeLimitScanIntervalMs((msg.settings as any).limitOrderScanIntervalMs);
             await SettingsService.update(msg.settings);
-            try {
-              await (browser as any).alarms?.clear?.(LIMIT_SCAN_ALARM);
-            } catch {
-            }
-            scheduleLimitScanFromStorage().catch(() => { });
+            limitOrderScanner?.setIntervalMsFromValue((msg.settings as any).limitOrderScanIntervalMs);
             broadcastStateChange();
             return { ok: true };
 
@@ -1240,55 +294,45 @@ export default defineBackground(() => {
           case 'limitOrder:create': {
             const order = await createLimitOrder(msg.input);
             broadcastStateChange();
-            scheduleLimitScanFromStorage().catch(() => { });
+            limitOrderScanner?.scheduleFromStorage().catch(() => { });
             return { ok: true, order };
           }
 
           case 'limitOrder:cancel': {
             const orders = await cancelLimitOrder(msg.id);
             broadcastStateChange();
-            scheduleLimitScanFromStorage().catch(() => { });
+            limitOrderScanner?.scheduleFromStorage().catch(() => { });
             return { ok: true, orders };
           }
 
           case 'limitOrder:cancelAll': {
             const orders = await cancelAllLimitOrders(msg.chainId, msg.tokenAddress);
             broadcastStateChange();
-            scheduleLimitScanFromStorage().catch(() => { });
+            limitOrderScanner?.scheduleFromStorage().catch(() => { });
             return { ok: true, orders };
           }
 
           case 'limitOrder:scanStatus': {
-            let totalOrders = 0;
-            let openOrders = 0;
-            try {
-              const all = await getLimitOrders();
-              totalOrders = all.filter((o) => o.chainId === msg.chainId).length;
-              openOrders = all.filter((o) => o.chainId === msg.chainId && o.status === 'open').length;
-            } catch {
-            }
-
-            const pricesByTokenKey: Record<string, { priceUsd: number; ts: number }> = {};
-            for (const [k, v] of limitScanPricesByTokenKey.entries()) {
-              if (k.startsWith(`${msg.chainId}:`)) pricesByTokenKey[k] = v;
-            }
-
-            const res: ({ ok: true } & LimitOrderScanStatus) = {
-              ok: true,
-              intervalMs: limitScanIntervalMs,
-              running: limitScanRunning,
-              lastScanAtMs: limitScanLastAtMs,
-              lastScanOk: limitScanLastOk,
-              lastScanError: limitScanLastError,
-              totalOrders,
-              openOrders,
-              pricesByTokenKey,
-            };
-            return res;
+            const status = await (limitOrderScanner?.getStatus(msg.chainId) ?? Promise.resolve({
+              intervalMs: 3000,
+              running: false,
+              lastScanAtMs: 0,
+              lastScanOk: true,
+              lastScanError: null,
+              totalOrders: 0,
+              openOrders: 0,
+              pricesByTokenKey: {},
+            } as LimitOrderScanStatus));
+            return { ok: true, ...status };
           }
 
           case 'limitOrder:tick': {
-            const res = await tickLimitOrders(msg.chainId, msg.tokenAddress, msg.priceUsd);
+            const res = await tickLimitOrdersForToken({
+              chainId: msg.chainId,
+              tokenAddress: msg.tokenAddress,
+              priceUsd: msg.priceUsd,
+              executeLimitOrder: limitOrderExecutor.executeLimitOrder,
+            });
             if (res.triggered.length || res.executed.length || res.failed.length) {
               broadcastStateChange();
             }
@@ -1374,8 +418,8 @@ export default defineBackground(() => {
           }
 
           case 'autotrade:ws': {
-            await handleAutoTradeWebSocket(msg.payload);
-            await handleAutoSellCheck(msg.payload);
+            await AutoTrade.handleAutoTradeWebSocket(msg.payload);
+            await AutoTrade.handleAutoSellCheck(msg.payload);
             return { ok: true };
           }
         }

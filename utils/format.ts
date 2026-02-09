@@ -6,27 +6,51 @@ export const parseNumberLoose = (v: string) => {
   const n = Number(String(v).replace(/,/g, '').trim());
   return Number.isFinite(n) ? n : null;
 };
-export const formatAmount = (value: number, fixed = 2) => {
-  if (!Number.isFinite(value) || value <= 0) return '-';
+
+export const normalizePriceValue = (value: number, decimalsIfGte1 = 4, significantDigitsIfLt1 = 4) => {
+  if (!Number.isFinite(value) || value <= 0) return value;
   const abs = Math.abs(value);
-  if (abs === 0) return '0';
-  const truncByFactor = (v: number, factor: number) => {
-    if (v >= 0) return Math.floor(v * factor) / factor;
-    return Math.ceil(v * factor) / factor;
+  if (!(abs > 0)) return value;
+
+  const trunc = (v: number, factor: number) => {
+    if (!Number.isFinite(factor) || factor <= 0) return v;
+    return v >= 0 ? Math.floor(v * factor) / factor : Math.ceil(v * factor) / factor;
   };
 
   if (abs >= 1) {
-    const truncated = truncByFactor(value, 100);
-    return (truncated.toFixed(fixed));
+    const d = Math.max(0, Math.min(18, Math.floor(Number(decimalsIfGte1) || 0)));
+    const factor = 10 ** d;
+    return trunc(value, factor);
   }
 
-  if (abs < 1e-15) return value.toExponential(fixed);
+  const sig = Math.max(1, Math.min(18, Math.floor(Number(significantDigitsIfLt1) || 4)));
   const exponent = Math.floor(Math.log10(abs));
-  const decimals = Math.max(0, 1 - exponent);
-  const factor = 10 ** decimals;
-  if (!Number.isFinite(factor) || factor <= 0) return String(value);
-  const truncated = truncByFactor(value, factor);
-  return truncated.toFixed(decimals);
+  const decimals = Math.max(0, sig - 1 - exponent);
+  const factor = 10 ** Math.min(18, decimals);
+  return trunc(value, factor);
+};
+
+export const formatPriceValue = (value: number, decimalsIfGte1 = 4, significantDigitsIfLt1 = 4) => {
+  if (!Number.isFinite(value) || value <= 0) return '-';
+  const abs = Math.abs(value);
+  if (!(abs > 0)) return '-';
+
+  const d = Math.max(0, Math.min(18, Math.floor(Number(decimalsIfGte1) || 0)));
+  const sig = Math.max(1, Math.min(18, Math.floor(Number(significantDigitsIfLt1) || 4)));
+
+  const normalized = normalizePriceValue(value, d, sig);
+  if (!Number.isFinite(normalized) || normalized <= 0) return '-';
+
+  if (abs >= 1) {
+    const s = normalized.toFixed(d);
+    return s.replace(/\.?0+$/, '');
+  }
+
+  if (abs < 1e-18) return normalized.toExponential(Math.max(0, sig - 1));
+  const exponent = Math.floor(Math.log10(abs));
+  const decimals = Math.max(0, sig - 1 - exponent);
+  const s = normalized.toFixed(Math.min(18, decimals));
+  return s.replace(/\.?0+$/, '');
 };
 
 export const formatTime = (ms: number, locale: string = 'zh_CN') => {

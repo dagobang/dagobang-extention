@@ -27,7 +27,7 @@ declare module '#imports' {
   export { loadContractAbi, useContractAbi, ContractAddress } from '../hooks/useContractAbi';
   export { encryptJson, decryptJson } from '../utils/crypto';
   export { defaultSettings } from '../utils/defaults';
-  export { isHexPrivateKey, parseNumberLoose, formatAmount, formatTime } from '../utils/format';
+  export { isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime } from '../utils/format';
   export { t, normalizeLocale, Locale } from '../utils/i18n';
   export { call } from '../utils/messaging';
   export { parseCurrentUrl, SiteInfo } from '../utils/sites';

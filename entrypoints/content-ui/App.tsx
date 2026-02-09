@@ -14,7 +14,7 @@ import { call } from '@/utils/messaging';
 import { parseEther, zeroAddress } from 'viem';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import GmgnAPI from '@/hooks/GmgnAPI';
-import { buildAdvancedAutoSellSellLimitOrderInputs, buildAdvancedAutoSellTrailingStopSellLimitOrderInput } from '@/services/advancedAutoSell';
+import { buildAdvancedAutoSellSellLimitOrderInputs, buildAdvancedAutoSellTrailingStopSellLimitOrderInput } from '@/services/limitOrders/advancedAutoSell';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { Logo } from '@/components/Logo';

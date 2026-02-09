@@ -7,7 +7,7 @@ import { TokenAPI } from '@/hooks/TokenAPI';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
-import { formatAmount, parseNumberLoose, formatTime } from '@/utils/format';
+import { formatPriceValue, parseNumberLoose, formatTime } from '@/utils/format';
 
 type LimitTradePanelProps = {
   platform: string;
@@ -144,9 +144,10 @@ export function LimitTradePanel({
 
   const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : tt('contentUi.autotrade.walletNotConnected');
 
-  const formatAmountForInput = (value: number) => {
-    const s = formatAmount(value, 4);
-    return s === '-' ? '' : s;
+  const formatPrice4 = (value: number, emptyOnInvalid = false) => {
+    const s = formatPriceValue(value, 4, 4);
+    if (s !== '-') return s;
+    return emptyOnInvalid ? '' : '-';
   };
 
   const adjustPrice = (value: string, delta: number) => {
@@ -154,7 +155,7 @@ export function LimitTradePanel({
     if (v == null || v <= 0) return value;
     const next = v * (1 + delta);
     if (!Number.isFinite(next) || next <= 0) return value;
-    const formatted = formatAmountForInput(next);
+    const formatted = formatPrice4(next, true);
     return formatted || value;
   };
 
@@ -313,7 +314,7 @@ export function LimitTradePanel({
       const decimals = typeof (o.tokenInfo as any).decimals === 'number' ? (o.tokenInfo as any).decimals : 18;
       const tokens = Number(formatUnits(fixedAmountWei, decimals));
       const sym = o.tokenSymbol || tt('contentUi.common.token');
-      const amtText = Number.isFinite(tokens) && tokens > 0 ? `${formatAmount(tokens)} ${sym}` : '-';
+      const amtText = Number.isFinite(tokens) && tokens > 0 ? `${formatPriceValue(tokens, 4, 4)} ${sym}` : '-';
       return pct != null ? `${amtText} (${pct}%)` : amtText;
     }
     if (pct != null) return `${pct}%`;
@@ -429,7 +430,7 @@ export function LimitTradePanel({
     setPriceByTokenKey((prev) => ({ ...prev, [tokenKey]: { priceUsd: v, ts: Date.now() } }));
 
     if (buyPriceRef.current !== autoTriggerPriceRef.current.buy || sellPriceRef.current !== autoTriggerPriceRef.current.sell) return;
-    const formatted = formatAmountForInput(v);
+    const formatted = formatPrice4(v, true);
     if (!formatted) return;
     autoTriggerPriceRef.current.buy = formatted;
     autoTriggerPriceRef.current.sell = formatted;
@@ -454,7 +455,7 @@ export function LimitTradePanel({
     const ordersTimer = setInterval(() => {
       requestRefreshOrders().catch(() => { });
     }, ordersPollMs);
-    const scanStatusPollMs = Math.max(5000, limitOrderScanIntervalMs);
+    const scanStatusPollMs = Math.max(1000, limitOrderScanIntervalMs);
     const scanStatusTimer = setInterval(() => {
       requestRefreshScanStatus().catch(() => { });
     }, scanStatusPollMs);
@@ -949,8 +950,8 @@ export function LimitTradePanel({
                     ) : null}
                   </div>
                   <div className="min-w-0 text-zinc-200">
-                    <div className="truncate" title={String(o.triggerPriceUsd)}>
-                      {String(o.triggerPriceUsd)}
+                    <div className="truncate" title={formatPrice4(o.triggerPriceUsd)}>
+                      {formatPrice4(o.triggerPriceUsd)}
                     </div>
                     {(() => {
                       const key = toTokenKey(o.chainId, o.tokenAddress);

@@ -3,10 +3,10 @@ import { formatUnits } from 'viem';
 import type { TokenInfo } from '@/types/token';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
 
-import { RpcService } from './rpc';
-import { TradeService } from './trade';
-import { TokenFourmemeService } from './token.fourmeme';
-import { TokenFlapService } from './token.flap';
+import { RpcService } from '../rpc';
+import { TradeService } from '../trade';
+import { TokenFourmemeService } from './fourmeme';
+import { TokenFlapService } from './flap';
 
 export class TokenService {
   private static poolPairCache = new Map<string, { token0: `0x${string}`; token1: `0x${string}` }>();
@@ -270,5 +270,4 @@ export class TokenService {
     }
     return priceUsd;
   }
-
 }

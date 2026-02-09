@@ -2,10 +2,10 @@ import { parseAbi } from 'viem';
 import type { FlapTokenStateV7 } from '@/types/token';
 import { erc20Abi } from '@/constants/contracts/abi/swapAbi';
 
-import { RpcService } from './rpc';
-import { DeployAddress } from '../constants/contracts/address';
-import { ChainId } from '../constants/chains/chainId';
-import { ContractNames } from '../constants/contracts/names';
+import { RpcService } from '../rpc';
+import { DeployAddress } from '../../constants/contracts/address';
+import { ChainId } from '../../constants/chains/chainId';
+import { ContractNames } from '../../constants/contracts/names';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 

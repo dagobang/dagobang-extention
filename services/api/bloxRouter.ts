@@ -1,4 +1,4 @@
-import { SettingsService } from "./settings";
+import { SettingsService } from '../settings';
 
 export class BloxRouterAPI {
   private static readonly BASE_URL = "https://api.blxrbdn.com";
@@ -44,3 +44,4 @@ export class BloxRouterAPI {
 }
 
 export default BloxRouterAPI;
+
