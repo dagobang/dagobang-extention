@@ -22,10 +22,10 @@ export class RpcService {
     const chain = bsc;
     // Use fallback transport with ranking to optimize for latency
     const transports = settings.chains[settings.chainId].rpcUrls.map((url) => http(url));
-    
+
     const client = createPublicClient({
       chain,
-      transport: fallback(transports, { rank: true }),
+      transport: fallback(transports, { rank: { interval: 30_000 } }),
     });
 
     this.clientCache = {

@@ -147,6 +147,8 @@
       "subtitle": "Show current network RPC nodes and test latency",
       "close": "Close",
       "nodeCount": "Node count",
+      "groupProtected": "Protected RPC ({0})",
+      "groupPublic": "RPC ({0})",
       "measuring": "Measuring...",
       "measure": "Measure latency",
       "empty": "No RPC nodes configured for current network. Please add them in Settings.",

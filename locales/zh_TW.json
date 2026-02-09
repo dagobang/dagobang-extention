@@ -147,6 +147,8 @@
       "subtitle": "顯示當前網路的 RPC 節點，並測試延遲",
       "close": "關閉",
       "nodeCount": "節點數量",
+      "groupProtected": "保護 RPC（{0}）",
+      "groupPublic": "一般 RPC（{0}）",
       "measuring": "查詢中...",
       "measure": "查詢延遲",
       "empty": "當前網路未配置任何 RPC 節點，請在設定中新增。",

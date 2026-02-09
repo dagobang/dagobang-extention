@@ -149,6 +149,8 @@
       "subtitle": "显示当前网络的 RPC 节点，并测试延迟",
       "close": "关闭",
       "nodeCount": "节点数量",
+      "groupProtected": "保护 RPC（{0}）",
+      "groupPublic": "普通 RPC（{0}）",
       "measuring": "查询中...",
       "measure": "查询延迟",
       "empty": "当前网络未配置任何 RPC 节点，请在设置中添加。",

@@ -15,6 +15,7 @@ type RpcLatency = {
   url: string;
   latencyMs: number | null;
   ok: boolean;
+  group: 'protected' | 'public';
 };
 
 export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPanelProps) {
@@ -78,55 +79,90 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
 
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
 
-  const nodes = (() => {
+  const protectedNodes = (() => {
     if (!settings) return [];
     const chainId = settings.chainId;
     const chain = settings.chains[chainId];
     if (!chain) return [];
-    if (chain.protectedRpcUrls.length > 0) {
-      return chain.protectedRpcUrls;
-    }
+    return chain.protectedRpcUrls;
+  })();
+
+  const publicNodes = (() => {
+    if (!settings) return [];
+    const chainId = settings.chainId;
+    const chain = settings.chains[chainId];
+    if (!chain) return [];
     return chain.rpcUrls;
   })();
+
+  const nodeKey = `${protectedNodes.join(',')}|${publicNodes.join(',')}`;
 
   useEffect(() => {
     setLatencies((prev) => {
       const map = new Map(prev.map((x) => [x.url, x]));
       const next: RpcLatency[] = [];
-      for (const url of nodes) {
+      const seen = new Set<string>();
+      for (const url of protectedNodes) {
+        if (seen.has(url)) continue;
+        seen.add(url);
         const existing = map.get(url);
-        if (existing) {
-          next.push(existing);
-        } else {
-          next.push({ url, latencyMs: null, ok: false });
-        }
+        if (existing) next.push({ ...existing, group: 'protected' });
+        else next.push({ url, latencyMs: null, ok: false, group: 'protected' });
+      }
+      for (const url of publicNodes) {
+        if (seen.has(url)) continue;
+        seen.add(url);
+        const existing = map.get(url);
+        if (existing) next.push({ ...existing, group: 'public' });
+        else next.push({ url, latencyMs: null, ok: false, group: 'public' });
       }
       return next;
     });
-  }, [nodes.join(',')]);
+  }, [nodeKey]);
 
   const handleMeasure = async () => {
     if (!settings) {
       toast.error(tt('contentUi.rpcPanel.settingsNotLoaded'), { icon: '❌' });
       return;
     }
-    if (nodes.length === 0) {
+    if (protectedNodes.length + publicNodes.length === 0) {
       toast.error(tt('contentUi.rpcPanel.rpcNotConfigured'), { icon: '❌' });
       return;
     }
     setMeasuring(true);
     try {
+      const urls = (() => {
+        const seen = new Set<string>();
+        const next: string[] = [];
+        for (const url of protectedNodes) {
+          if (seen.has(url)) continue;
+          seen.add(url);
+          next.push(url);
+        }
+        for (const url of publicNodes) {
+          if (seen.has(url)) continue;
+          seen.add(url);
+          next.push(url);
+        }
+        return next;
+      })();
       const results: RpcLatency[] = await Promise.all(
-        nodes.map(async (url) => {
+        urls.map(async (url) => {
           try {
             const latencyMs = await RpcService.measureLatency(url);
-            return { url, latencyMs, ok: true };
+            return { url, latencyMs, ok: true, group: 'public' as const };
           } catch {
-            return { url, latencyMs: null, ok: false };
+            return { url, latencyMs: null, ok: false, group: 'public' as const };
           }
         }),
       );
-      setLatencies(results);
+      setLatencies((prev) => {
+        const groupByUrl = new Map(prev.map((x) => [x.url, x.group]));
+        return results.map((x) => ({
+          ...x,
+          group: groupByUrl.get(x.url) ?? x.group,
+        }));
+      });
       toast.success(tt('contentUi.rpcPanel.latencyUpdated'), { icon: '✅' });
     } finally {
       setMeasuring(false);
@@ -136,6 +172,12 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
   if (!visible) {
     return null;
   }
+
+  const latencyByUrl = new Map(latencies.map((x) => [x.url, x]));
+  const protectedUrls = protectedNodes;
+  const protectedUrlSet = new Set(protectedUrls);
+  const publicUrls = publicNodes.filter((x) => !protectedUrlSet.has(x));
+  const totalCount = protectedUrls.length + publicUrls.length;
 
   return (
     <div
@@ -170,40 +212,69 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
         <div className="p-3 space-y-3">
           <div className="flex items-center justify-between text-[11px] text-zinc-400">
             <div>{tt('contentUi.rpcPanel.nodeCount')}</div>
-            <div className="font-mono text-[11px] text-zinc-200">{nodes.length}</div>
+            <div className="font-mono text-[11px] text-zinc-200">{totalCount}</div>
           </div>
 
           <button
             type="button"
             className="w-full rounded-md bg-sky-500 text-[12px] font-semibold text-black py-2 hover:bg-sky-400 disabled:opacity-60"
             onClick={handleMeasure}
-            disabled={measuring || nodes.length === 0}
+            disabled={measuring || totalCount === 0}
           >
             {measuring ? tt('contentUi.rpcPanel.measuring') : tt('contentUi.rpcPanel.measure')}
           </button>
 
           <div className="max-h-[260px] overflow-auto border border-zinc-800 rounded-md divide-y divide-zinc-800">
-            {nodes.length === 0 ? (
+            {totalCount === 0 ? (
               <div className="px-3 py-2 text-[11px] text-zinc-500">
                 {tt('contentUi.rpcPanel.empty')}
               </div>
             ) : (
-              latencies.map((item) => {
-                const url = item.url;
-                const latencyText = item.latencyMs != null ? `${item.latencyMs.toFixed(0)} ms` : tt('contentUi.rpcPanel.measureFailed');
-                const statusColor = item.latencyMs == null ? 'text-red-400' : item.latencyMs < 200 ? 'text-emerald-400' : item.latencyMs < 500 ? 'text-yellow-300' : 'text-orange-400';
-                return (
-                  <div
-                    key={url}
-                    className="px-3 py-2 flex flex-col gap-1 text-[11px]"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex-1 break-all text-zinc-300">{url}</div>
-                      <div className={`ml-2 font-mono ${statusColor}`}>{latencyText}</div>
-                    </div>
+              <>
+                {protectedUrls.length > 0 && (
+                  <div className="px-3 py-1 text-[10px] font-semibold text-zinc-500 bg-black/20">
+                    {tt('contentUi.rpcPanel.groupProtected', [protectedUrls.length])}
                   </div>
-                );
-              })
+                )}
+                {protectedUrls.map((url) => {
+                  const item = latencyByUrl.get(url) ?? { url, latencyMs: null, ok: false, group: 'protected' as const };
+                  const latencyText = item.latencyMs != null ? `${item.latencyMs.toFixed(0)} ms` : tt('contentUi.rpcPanel.measureFailed');
+                  const statusColor = item.latencyMs == null ? 'text-red-400' : item.latencyMs < 200 ? 'text-emerald-400' : item.latencyMs < 500 ? 'text-yellow-300' : 'text-orange-400';
+                  return (
+                    <div
+                      key={url}
+                      className="px-3 py-2 flex flex-col gap-1 text-[11px]"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex-1 break-all text-zinc-300">{url}</div>
+                        <div className={`ml-2 font-mono ${statusColor}`}>{latencyText}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {publicUrls.length > 0 && (
+                  <div className="px-3 py-1 text-[10px] font-semibold text-zinc-500 bg-black/20">
+                    {tt('contentUi.rpcPanel.groupPublic', [publicUrls.length])}
+                  </div>
+                )}
+                {publicUrls.map((url) => {
+                  const item = latencyByUrl.get(url) ?? { url, latencyMs: null, ok: false, group: 'public' as const };
+                  const latencyText = item.latencyMs != null ? `${item.latencyMs.toFixed(0)} ms` : tt('contentUi.rpcPanel.measureFailed');
+                  const statusColor = item.latencyMs == null ? 'text-red-400' : item.latencyMs < 200 ? 'text-emerald-400' : item.latencyMs < 500 ? 'text-yellow-300' : 'text-orange-400';
+                  return (
+                    <div
+                      key={url}
+                      className="px-3 py-2 flex flex-col gap-1 text-[11px]"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex-1 break-all text-zinc-300">{url}</div>
+                        <div className={`ml-2 font-mono ${statusColor}`}>{latencyText}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
             )}
           </div>
         </div>

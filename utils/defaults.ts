@@ -8,7 +8,18 @@ const DEFAULT_GAS_GWEI: GasGweiConfig = {
 };
 
 const BSC_MAINNET: ChainSettings = {
-  rpcUrls: ['https://bsc-dataseed.bnbchain.org'],
+  rpcUrls: [
+    'https://bsc-dataseed.bnbchain.org',
+    'https://bsc-dataseed2.bnbchain.org',
+    'https://bsc-dataseed-public.bnbchain.org',
+    'https://bsc.rpc.blxrbdn.com',
+    'https://bsc-dataseed.defibit.io',
+    'https://bsc-dataseed1.defibit.io',
+    'https://bsc-rpc.publicnode.com',
+    'https://bsc-dataseed.nariox.org',
+    'https://bsc-dataseed.ninicoin.io',
+    'https://bsc.nodereal.io',
+  ],
   protectedRpcUrls: [],
   antiMev: true,
   gasPreset: 'standard',
