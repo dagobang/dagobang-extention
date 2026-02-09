@@ -305,12 +305,12 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; txHash: `0x${string}` }
   : T extends { type: 'tx:buy' }
   ? (
-      | { ok: true; txHash: `0x${string}`; tokenMinOutWei: string }
+      | { ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string }
       | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
     )
   : T extends { type: 'tx:sell' }
   ? (
-      | { ok: true; txHash: `0x${string}` }
+      | { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string }
       | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
     )
   : T extends { type: 'tx:waitForReceipt' }

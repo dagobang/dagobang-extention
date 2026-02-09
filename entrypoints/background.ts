@@ -341,10 +341,7 @@ export default defineBackground(() => {
 
           case 'tx:buy': {
             try {
-              const t1 = Date.now();
               const rsp = await TradeService.buy(msg.input);
-              const t2 = Date.now();
-              console.log(`Buy transaction ${rsp.txHash} took ${t2 - t1}ms`);
               broadcastStateChange();
               return { ok: true, ...rsp };
             } catch (e: any) {
@@ -358,9 +355,9 @@ export default defineBackground(() => {
 
           case 'tx:sell': {
             try {
-              const txHash = await TradeService.sell(msg.input);
+              const rsp = await TradeService.sell(msg.input);
               broadcastStateChange();
-              return { ok: true, txHash };
+              return { ok: true, ...rsp };
             } catch (e: any) {
               const reason = extractRevertReasonFromError(e);
               if (!reason || reason.toLowerCase().includes('zero_input')) {

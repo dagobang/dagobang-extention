@@ -136,9 +136,9 @@
     },
     "toast": {
       "trading": "[{0}] Trading...",
-      "buySuccessTime": "[{0}] Buy succeeded! {1}s",
+      "buySuccessTime": "[{0}] Buy succeeded! {1}s ({2})",
       "buyDone": "[{0}] Buy confirmed: {1} BNB {0}",
-      "sellSuccessTime": "[{0}] Sell succeeded! {1}s",
+      "sellSuccessTime": "[{0}] Sell succeeded! {1}s ({2})",
       "sellDone": "[{0}] Sell confirmed: {1}%",
       "approveSubmitted": "[{0}] Approve submitted"
     },

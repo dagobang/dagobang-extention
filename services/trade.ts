@@ -577,8 +577,8 @@ export class TradeService {
     });
 
     const txOpts = isTurbo ? { skipEstimateGas: true, gasLimit: 900000n } : undefined;
-    const txHash = await this.sendTransaction(client, account, routerAddress, data, amountIn, gasPriceWei, input.chainId, txOpts);
-    return { txHash, tokenMinOutWei: minOut.toString() };
+    const { txHash, broadcastVia, broadcastUrl } = await this.sendTransaction(client, account, routerAddress, data, amountIn, gasPriceWei, input.chainId, txOpts);
+    return { txHash, tokenMinOutWei: minOut.toString(), broadcastVia, broadcastUrl };
   }
 
   static async approveMaxForSellIfNeeded(chainId: number, tokenAddress: string, tokenInfo: TokenInfo) {
@@ -765,7 +765,8 @@ export class TradeService {
       });
 
     const txOpts = isTurbo ? { skipEstimateGas: true, gasLimit: 900000n } : undefined;
-    return this.sendTransaction(client, account, routerAddress, data, 0n, gasPriceWei, input.chainId, txOpts);
+    const { txHash, broadcastVia, broadcastUrl } = await this.sendTransaction(client, account, routerAddress, data, 0n, gasPriceWei, input.chainId, txOpts);
+    return { txHash, broadcastVia, broadcastUrl };
   }
 
   static async approve(chainId: number, tokenAddress: string, spender: string, amountWei: string) {
@@ -782,7 +783,8 @@ export class TradeService {
       args: [spender as `0x${string}`, BigInt(amountWei)]
     });
 
-    return this.sendTransaction(client, account, tokenAddress, data, 0n, gasPriceWei, chainId);
+    const { txHash } = await this.sendTransaction(client, account, tokenAddress, data, 0n, gasPriceWei, chainId);
+    return txHash;
   }
 
   static async sendTransaction(
@@ -831,7 +833,12 @@ export class TradeService {
         nonce,
       });
 
-      return await RpcService.broadcastTx(signed);
+      const res = await RpcService.broadcastTxDetailed(signed);
+      return {
+        txHash: res.txHash,
+        broadcastVia: res.via,
+        broadcastUrl: res.rpcUrl,
+      };
     } catch (e) {
       this.clearNonceState(chainId, account.address);
       throw e;

@@ -62,6 +62,25 @@ export default function App() {
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
 
+  const formatBroadcastProvider = (via?: string, url?: string) => {
+    if (via === 'bloxroute') return 'BloxRoute';
+    if (via !== 'rpc') return '-';
+    if (!url) return 'RPC';
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      if (host.includes('blxrbdn.com')) return 'BloxRoute RPC';
+      if (host.includes('publicnode.com')) return 'PublicNode';
+      if (host.includes('nodereal.io')) return 'NodeReal';
+      if (host.includes('bnbchain.org')) return 'BNB Chain';
+      if (host.includes('defibit.io')) return 'Defibit';
+      if (host.includes('nariox.org')) return 'Nariox';
+      if (host.includes('ninicoin.io')) return 'NiniCoin';
+      return host;
+    } catch {
+      return 'RPC';
+    }
+  };
+
   useEffect(() => {
     if (settings) {
       (window as any).__DAGOBANG_SETTINGS__ = settings;
@@ -415,7 +434,8 @@ export default function App() {
         const elapsed = (Date.now() - startTime) / 1000;
         setTxHash(res.txHash);
         setPendingBuyTokenMinOutWei(tokenMinOutWei);
-        toast.success(t('contentUi.toast.buySuccessTime', locale, [sym, elapsed.toFixed(2)]), { id: toastId, icon: '✅' });
+        const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl);
+        toast.success(t('contentUi.toast.buySuccessTime', locale, [sym, elapsed.toFixed(2), provider]), { id: toastId, icon: '✅' });
 
         if (tokenInfo) {
           void call({
@@ -556,7 +576,8 @@ export default function App() {
 
         const elapsed = (Date.now() - startTime) / 1000;
         setTxHash(res.txHash);
-        toast.success(t('contentUi.toast.sellSuccessTime', locale, [sym, elapsed.toFixed(2)]), { id: toastId, icon: '✅' });
+        const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl);
+        toast.success(t('contentUi.toast.sellSuccessTime', locale, [sym, elapsed.toFixed(2), provider]), { id: toastId, icon: '✅' });
 
         await Promise.all([refreshToken(true), refreshAll()]);
         startFastPolling();

@@ -3,6 +3,13 @@ import { bsc } from 'viem/chains';
 import { SettingsService } from './settings';
 import BloxRouterAPI from '@/services/api/bloxRouter';
 
+export type BroadcastTxVia = 'bloxroute' | 'rpc';
+export type BroadcastTxResult = {
+  txHash: `0x${string}`;
+  via: BroadcastTxVia;
+  rpcUrl?: string;
+};
+
 export class RpcService {
   private static clientCache: { chainId: number; urls: string[]; client: PublicClient } | null = null;
   private static readonly bloxroutePrivateTxEnabled = true;
@@ -50,6 +57,11 @@ export class RpcService {
   }
 
   static async broadcastTx(signedTx: `0x${string}`): Promise<`0x${string}`> {
+    const { txHash } = await this.broadcastTxDetailed(signedTx);
+    return txHash;
+  }
+
+  static async broadcastTxDetailed(signedTx: `0x${string}`): Promise<BroadcastTxResult> {
     const settings = await SettingsService.get();
     const chain = bsc;
     const chainConfig = settings.chains[settings.chainId];
@@ -63,7 +75,7 @@ export class RpcService {
       throw new Error('No RPC URLs configured (check Anti-MEV settings)');
     }
 
-    const promises: Promise<`0x${string}`>[] = [];
+    const promises: Array<Promise<BroadcastTxResult>> = [];
 
     if (this.bloxroutePrivateTxEnabled) {
       promises.push(
@@ -72,7 +84,7 @@ export class RpcService {
           if (!txHash) {
             throw new Error('BloxRoute did not return tx hash');
           }
-          return txHash;
+          return { txHash, via: 'bloxroute' };
         })(),
       );
     }
@@ -84,7 +96,8 @@ export class RpcService {
             chain,
             transport: http(url),
           });
-          return await client.sendRawTransaction({ serializedTransaction: signedTx });
+          const txHash = await client.sendRawTransaction({ serializedTransaction: signedTx });
+          return { txHash, via: 'rpc', rpcUrl: url };
         })(),
       );
     }

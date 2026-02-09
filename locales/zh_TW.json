@@ -136,9 +136,9 @@
     },
     "toast": {
       "trading": "[{0}] 交易執行中...",
-      "buySuccessTime": "[{0}] 成功買入！耗時 {1} 秒",
+      "buySuccessTime": "[{0}] 成功買入！耗時 {1} 秒（{2}）",
       "buyDone": "[{0}] 買入完成：{1} BNB {0}",
-      "sellSuccessTime": "[{0}] 成功賣出！耗時 {1} 秒",
+      "sellSuccessTime": "[{0}] 成功賣出！耗時 {1} 秒（{2}）",
       "sellDone": "[{0}] 賣出完成：{1}%",
       "approveSubmitted": "[{0}] 授權已提交"
     },

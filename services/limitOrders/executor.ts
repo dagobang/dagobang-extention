@@ -151,7 +151,7 @@ export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) 
     const amountIn = rawAmountIn > balance ? balance : rawAmountIn;
     if (amountIn <= 0n) throw new Error('No balance');
 
-    const txHash = await TradeService.sell({
+    const { txHash } = await TradeService.sell({
       chainId: order.chainId,
       tokenAddress: order.tokenAddress,
       tokenAmountWei: amountIn.toString(),
@@ -159,7 +159,7 @@ export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) 
       sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
     });
     await patchLimitOrder(order.id, { txHash });
-    await ensureTxSuccess(txHash as `0x${string}`);
+    await ensureTxSuccess(txHash);
 
     try {
       const type = normalizeLimitOrderType(order.orderType, order.side);
@@ -216,7 +216,7 @@ export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) 
       }, 2000);
     }
 
-    return txHash as `0x${string}`;
+    return txHash;
   };
 
   return { executeLimitOrder };
