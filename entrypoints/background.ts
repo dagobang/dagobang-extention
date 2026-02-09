@@ -542,6 +542,19 @@ export default defineBackground(() => {
         bnbAmountWei: order.buyBnbAmountWei,
         tokenInfo: order.tokenInfo,
       });
+      const txHash = res.txHash as `0x${string}`;
+      await patchLimitOrder(order.id, { txHash });
+      try {
+        const client = await RpcService.getClient();
+        const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+        if (receipt.status !== 'success') {
+          const reason = await tryGetReceiptRevertReason(client, txHash, receipt.blockNumber);
+          throw new Error(reason ?? 'Transaction failed');
+        }
+      } catch (e: any) {
+        const reason = extractRevertReasonFromError(e);
+        throw new Error(reason ?? (typeof e?.message === 'string' ? e.message : String(e)));
+      }
 
       // Approve max for sell if needed
       await TradeService.approveMaxForSellIfNeeded(order.chainId, order.tokenAddress, order.tokenInfo);
@@ -586,7 +599,7 @@ export default defineBackground(() => {
       } catch {
       }
 
-      return res.txHash as `0x${string}`;
+      return txHash;
     }
 
     // Sell
@@ -613,13 +626,25 @@ export default defineBackground(() => {
     const amountIn = rawAmountIn > balance ? balance : rawAmountIn;
     if (amountIn <= 0n) throw new Error('No balance');
 
-    const res = await TradeService.sell({
+    const txHash = await TradeService.sell({
       chainId: order.chainId,
       tokenAddress: order.tokenAddress,
       tokenAmountWei: amountIn.toString(),
       tokenInfo: order.tokenInfo,
       sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
     });
+    await patchLimitOrder(order.id, { txHash });
+    try {
+      const client = await RpcService.getClient();
+      const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== 'success') {
+        const reason = await tryGetReceiptRevertReason(client, txHash, receipt.blockNumber);
+        throw new Error(reason ?? 'Transaction failed');
+      }
+    } catch (e: any) {
+      const reason = extractRevertReasonFromError(e);
+      throw new Error(reason ?? (typeof e?.message === 'string' ? e.message : String(e)));
+    }
 
     try {
       const type = normalizeLimitOrderType(order.orderType, order.side);
@@ -679,7 +704,7 @@ export default defineBackground(() => {
       }, 2000);
     }
 
-    return res as `0x${string}`;
+    return txHash as `0x${string}`;
   };
 
   const tickLimitOrders = async (chainId: number, tokenAddress: `0x${string}`, priceUsd: number) => {

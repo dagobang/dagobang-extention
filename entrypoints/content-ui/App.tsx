@@ -14,7 +14,7 @@ import { call } from '@/utils/messaging';
 import { parseEther, zeroAddress } from 'viem';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import GmgnAPI from '@/hooks/GmgnAPI';
-import { buildAdvancedAutoSellSellLimitOrderInputs } from '@/services/advancedAutoSell';
+import { buildAdvancedAutoSellSellLimitOrderInputs, buildAdvancedAutoSellTrailingStopSellLimitOrderInput } from '@/services/advancedAutoSell';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { Logo } from '@/components/Logo';
@@ -449,9 +449,10 @@ export default function App() {
           if (!siteInfo) return;
           if (!tokenInfo) return;
           const chainId = settings.chainId ?? 56;
-          const basePriceUsd = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0
-            ? tokenPrice
-            : await TokenAPI.getTokenPriceUsd(siteInfo.platform, chainId, tokenAddressNormalized, tokenInfo);
+          const fetchedPriceUsd = await TokenAPI.getTokenPriceUsd(siteInfo.platform, chainId, tokenAddressNormalized, tokenInfo);
+          const basePriceUsd = fetchedPriceUsd != null && fetchedPriceUsd > 0
+            ? fetchedPriceUsd
+            : (tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null);
           if (basePriceUsd == null || !(basePriceUsd > 0)) return;
 
           const inputs = buildAdvancedAutoSellSellLimitOrderInputs({
@@ -462,6 +463,19 @@ export default function App() {
             tokenInfo,
             basePriceUsd,
           });
+
+          const mode = (config as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
+          if (mode === 'immediate' && (config as any)?.trailingStop?.enabled) {
+            const trailing = buildAdvancedAutoSellTrailingStopSellLimitOrderInput({
+              config,
+              chainId,
+              tokenAddress: tokenAddressNormalized,
+              tokenSymbol: tokenSymbol ?? null,
+              tokenInfo,
+              basePriceUsd,
+            });
+            if (trailing) inputs.push(trailing);
+          }
 
           if (!inputs.length) return;
           for (const input of inputs) {

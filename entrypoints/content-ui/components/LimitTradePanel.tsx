@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { parseEther, formatEther, formatUnits } from 'viem';
-import type { Settings, LimitOrder, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
+import type { Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
@@ -318,61 +318,6 @@ export function LimitTradePanel({
     }
     if (pct != null) return `${pct}%`;
     return '-';
-  };
-
-  const estimateReceive = (o: LimitOrder): { main: string; sub?: string } => {
-    const triggerPriceUsd = Number(o.triggerPriceUsd);
-    if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) return { main: '-' };
-
-    const wNative = getWNativeAddress(o.chainId);
-    const bnbKey = wNative ? toTokenKey(o.chainId, wNative) : null;
-    const bnbCache = bnbKey ? priceByTokenKey[bnbKey] : undefined;
-    const bnbLoading = bnbKey ? priceFetchRef.current.inFlight.has(bnbKey) : false;
-    const bnbUsd = bnbCache?.priceUsd;
-    if (bnbLoading) return { main: '...' };
-    if (bnbUsd == null || !(bnbUsd > 0)) return { main: '-' };
-
-    if (o.side === 'buy') {
-      const wei = o.buyBnbAmountWei ? BigInt(o.buyBnbAmountWei) : 0n;
-      const payBnb = Number(formatEther(wei));
-      if (!Number.isFinite(payBnb) || payBnb <= 0) return { main: '-' };
-      const payUsd = payBnb * bnbUsd;
-      const tokensOut = payUsd / triggerPriceUsd;
-      const sym = o.tokenSymbol || tt('contentUi.common.token');
-      return {
-        main: `≈ ${formatAmount(tokensOut)} ${sym}`,
-        sub: payUsd > 0 ? `≈ $${formatUsd(payUsd)}` : undefined,
-      };
-    }
-
-    if (!tokenAddress || o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return { main: '-' };
-
-    const fixedAmountWei = (() => {
-      try {
-        return o.sellTokenAmountWei ? BigInt(o.sellTokenAmountWei) : 0n;
-      } catch {
-        return 0n;
-      }
-    })();
-    let sellTokenAmount = 0;
-    if (fixedAmountWei > 0n && o.tokenInfo) {
-      const decimals = typeof (o.tokenInfo as any).decimals === 'number' ? (o.tokenInfo as any).decimals : 18;
-      const v = Number(formatUnits(fixedAmountWei, decimals));
-      sellTokenAmount = Number.isFinite(v) ? v : 0;
-    } else {
-      const bps = o.sellPercentBps ?? 0;
-      if (!Number.isFinite(bps) || bps <= 0 || bps > 10000) return { main: '-' };
-      const bal = parseNumberLoose(formattedTokenBalance);
-      if (bal == null || bal <= 0) return { main: '-' };
-      sellTokenAmount = bal * (bps / 10000);
-    }
-    if (!Number.isFinite(sellTokenAmount) || sellTokenAmount <= 0) return { main: '-' };
-    const receiveUsd = sellTokenAmount * triggerPriceUsd;
-    const receiveBnb = receiveUsd / bnbUsd;
-    return {
-      main: `≈ ${formatAmount(receiveBnb)} BNB`,
-      sub: receiveUsd > 0 ? `≈ $${formatUsd(receiveUsd)}` : undefined,
-    };
   };
 
   const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -921,12 +866,11 @@ export function LimitTradePanel({
             </div>
 
             <div className="max-h-[38vh] overflow-y-auto pr-1">
-              <div className="grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.75fr)_minmax(0,0.55fr)] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
+              <div className="grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
                 <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.token')}</div>
                 <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.type')}</div>
                 <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.triggerPrice')}</div>
                 <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.payAmount')}</div>
-                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.estimateReceive')}</div>
                 <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.createdAt')}</div>
                 <div className="font-medium text-right truncate">{tt('contentUi.limitTradePanel.table.action')}</div>
               </div>
@@ -935,7 +879,7 @@ export function LimitTradePanel({
                 <div
                   key={o.id}
                   className={[
-                    'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.75fr)_minmax(0,0.55fr)] gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
+                    'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
                     o.status === 'executed' ? 'bg-emerald-500/5' : '',
                     o.status === 'failed' ? 'bg-rose-500/5' : '',
                   ].join(' ')}
@@ -969,7 +913,7 @@ export function LimitTradePanel({
                         {formatStatus(o)}
                       </span>
                     </div>
-                    {o.status === 'executed' && o.txHash ? (
+                    {o.txHash && (o.status === 'executed' || o.status === 'triggered' || o.status === 'failed') ? (
                       <div className="flex items-center gap-2 text-[10px] text-zinc-600 min-w-0">
                         <a
                           href={explorerTxUrl(o.txHash)}
@@ -1022,27 +966,42 @@ export function LimitTradePanel({
                     })()}
                   </div>
                   <div className="min-w-0 text-zinc-200">{formatPay(o)}</div>
-                  <div className="min-w-0 text-zinc-200">
-                    {(() => {
-                      const est = estimateReceive(o);
-                      return (
-                        <>
-                          <div className="truncate" title={est.main}>
-                            {est.main}
-                          </div>
-                          {est.sub ? (
-                            <div className="text-[10px] text-zinc-500 truncate" title={est.sub}>
-                              {est.sub}
-                            </div>
-                          ) : null}
-                        </>
-                      );
-                    })()}
-                  </div>
                   <div className="min-w-0 text-zinc-400 text-[10px]" title={formatTime(o.createdAtMs, locale)}>
                     {formatTime(o.createdAtMs, locale)}
                   </div>
-                  <div className="text-right">
+                  <div className="text-right flex items-center justify-end gap-1">
+                    {o.status === 'failed' ? (
+                      <button
+                        type="button"
+                        className="px-1 py-0.5 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={async () => {
+                          try {
+                            if (!o.tokenInfo) return;
+                            const input: LimitOrderCreateInput = {
+                              chainId: o.chainId,
+                              tokenAddress: o.tokenAddress,
+                              tokenSymbol: o.tokenSymbol ?? null,
+                              side: o.side,
+                              orderType: normalizeOrderType(o),
+                              triggerPriceUsd: o.triggerPriceUsd,
+                              buyBnbAmountWei: o.buyBnbAmountWei,
+                              sellPercentBps: o.sellPercentBps,
+                              sellTokenAmountWei: o.sellTokenAmountWei,
+                              trailingStopBps: o.trailingStopBps,
+                              trailingPeakPriceUsd: o.trailingPeakPriceUsd,
+                              tokenInfo: o.tokenInfo,
+                            };
+                            await call({ type: 'limitOrder:create', input } as const);
+                            await call({ type: 'limitOrder:cancel', id: o.id } as const);
+                          } catch {
+                          } finally {
+                            await refreshOrders();
+                          }
+                        }}
+                      >
+                        {tt('common.retry')}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="px-1 py-0.5 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
