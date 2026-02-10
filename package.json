@@ -1,8 +1,9 @@
 {
   "name": "dagobang-extention",
   "description": "Dagobang - Low Fee Meme Trading Browser Extension",
-  "private": true,
-  "version": "0.1.1",
+  "author": "0xSeasonsRich",
+  "license": "GPL-3.0-only",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "wxt",
