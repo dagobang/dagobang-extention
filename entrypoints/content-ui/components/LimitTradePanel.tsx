@@ -98,6 +98,7 @@ export function LimitTradePanel({
   const [sellPrice, setSellPrice] = useState('');
   const [buyAmount, setBuyAmount] = useState('');
   const [sellPercent, setSellPercent] = useState('');
+  const [showActions, setShowActions] = useState(true);
   const [buyOrderType, setBuyOrderType] = useState<LimitOrderType>('low_buy');
   const [sellOrderType, setSellOrderType] = useState<LimitOrderType>('take_profit_sell');
   const [onlyCurrentToken, setOnlyCurrentToken] = useState(false);
@@ -580,15 +581,25 @@ export function LimitTradePanel({
             <div className="text-xs font-semibold text-emerald-300">{tt('contentUi.autotrade.title')}</div>
             <div className="text-[10px] text-zinc-500">{statusText} · {shortAddress}</div>
           </div>
-          <button
-            className="text-[11px] text-zinc-400 hover:text-zinc-200"
-            onClick={() => onVisibleChange(false)}
-          >
-            {tt('contentUi.autotrade.close')}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="text-[11px] text-zinc-400 hover:text-zinc-200"
+              onClick={() => setShowActions((v) => !v)}
+            >
+              {showActions ? tt('contentUi.limitTradePanel.collapseActions') : tt('contentUi.limitTradePanel.expandActions')}
+            </button>
+            <button
+              className="text-[11px] text-zinc-400 hover:text-zinc-200"
+              onClick={() => onVisibleChange(false)}
+            >
+              {tt('contentUi.autotrade.close')}
+            </button>
+          </div>
         </div>
         <div className="p-3 flex flex-col gap-3">
-          <div className="flex gap-3">
+          {showActions ? (
+            <div className="flex gap-3">
             <div className="flex-1 min-w-0 space-y-2 pr-3 border-r border-zinc-800">
               <div className="flex items-center justify-between">
                 <div className="text-[11px] font-semibold text-emerald-300">
@@ -784,7 +795,8 @@ export function LimitTradePanel({
                 </button>
               </div>
             </div>
-          </div>
+            </div>
+          ) : null}
           <div className="pt-1">
             <div className="flex items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-2 min-w-0">

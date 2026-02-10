@@ -202,6 +202,8 @@
       "createTakeProfitSell": "Create Take Profit Limit Order",
       "createStopLossSell": "Create Stop Loss Limit Order",
       "orderListTitle": "Limit Orders",
+      "collapseActions": "Collapse actions",
+      "expandActions": "Expand actions",
       "lastScanAt": "Last: {0}",
       "lastScanAtEmpty": "Last: -",
       "onlyCurrentToken": "Only current token",

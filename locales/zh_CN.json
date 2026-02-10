@@ -204,6 +204,8 @@
       "createTakeProfitSell": "创建止盈限价单",
       "createStopLossSell": "创建止损限价单",
       "orderListTitle": "限价单列表",
+      "collapseActions": "收起操作区",
+      "expandActions": "展开操作区",
       "lastScanAt": "上次: {0}",
       "lastScanAtEmpty": "上次: -",
       "onlyCurrentToken": "只看当前代币",

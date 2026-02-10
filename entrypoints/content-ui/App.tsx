@@ -597,7 +597,7 @@ export default function App() {
 
         // Cancel limit order if exists
         if (percentBps === 10000) {
-          await call({ type: 'limitOrder:cancelAll', chainId, tokenAddressNormalized } as const);
+          await call({ type: 'limitOrder:cancelAll', chainId, tokenAddress: tokenAddressNormalized } as const);
         }
       })();
 
