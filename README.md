@@ -77,6 +77,7 @@ npm run build
 ```bash
 npm run zip
 ```
+构建产物输出到 `.output/dagobang-extention-0.1.2-chrome.zip`，可解压后直接在 Chrome/Edge 以“加载已解压的扩展程序”方式加载。
 
 ## 配置说明
 - 插件的链、RPC 列表、保护 RPC、Anti-MEV、滑点、deadline、Gas 档位等均在 Popup 的 Settings 页面配置并存储在浏览器本地。

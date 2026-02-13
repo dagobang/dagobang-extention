@@ -144,8 +144,15 @@ export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) 
       }
     })();
     const percentBps = order.sellPercentBps ?? 0;
+    const platform = order.tokenInfo?.launchpad_platform?.toLowerCase() || '';
+    const isInnerFourMeme = !!order.tokenInfo?.launchpad && (platform === 'fourmeme' || platform === 'bn_fourmeme') && order.tokenInfo.launchpad_status !== 1;
     const amountByPercent = (Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000)
-      ? (balance * BigInt(percentBps)) / 10000n
+      ? (() => {
+        const raw = (balance * BigInt(percentBps)) / 10000n;
+        if (percentBps === 10000) return raw;
+        if (!isInnerFourMeme) return raw;
+        return (raw / 1000000000n) * 1000000000n;
+      })()
       : 0n;
     const rawAmountIn = fixedAmount > 0n ? fixedAmount : amountByPercent;
     const amountIn = rawAmountIn > balance ? balance : rawAmountIn;

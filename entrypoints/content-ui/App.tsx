@@ -549,7 +549,12 @@ export default function App() {
         const pending = BigInt(pendingBuyTokenMinOutWei || '0');
         if (bal <= 0n && pending <= 0n) throw new Error('No balance');
       }
-      const amountWei = bal > 0n ? (bal * BigInt(pct)) / 100n : 0n;
+      let amountWei = bal > 0n ? (bal * BigInt(pct)) / 100n : 0n;
+      const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
+      const isInnerFourMeme = !!tokenInfo?.launchpad && (platform === 'fourmeme' || platform === 'bn_fourmeme') && tokenInfo.launchpad_status !== 1;
+      if (!isTurbo && pct !== 100 && isInnerFourMeme && amountWei > 0n) {
+        amountWei = (amountWei / 1000000000n) * 1000000000n;
+      }
       if (!isTurbo && amountWei <= 0n) throw new Error('Invalid amount');
 
       const sym = tokenSymbol ?? '';

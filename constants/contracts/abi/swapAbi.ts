@@ -19,6 +19,10 @@ export const factoryV2Abi = parseAbi([
     'function getPair(address tokenA, address tokenB) view returns (address pair)',
 ]);
 
+export const factoryV3Abi = parseAbi([
+    'function getPool(address tokenA, address tokenB, uint24 fee) view returns (address pool)',
+]);
+
 export const pairV2Abi = parseAbi([
     'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
     'function token0() view returns (address)',
