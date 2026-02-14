@@ -83,6 +83,58 @@ npm run zip
 - 插件的链、RPC 列表、保护 RPC、Anti-MEV、滑点、deadline、Gas 档位等均在 Popup 的 Settings 页面配置并存储在浏览器本地。
 - 如需使用第三方广播服务的鉴权信息，请仅通过本地设置提供，不要把任何密钥提交到仓库。
 
+## 隐私节点（Protect RPC）配置指南
+
+本插件把 RPC 分成两类：
+- `RPC URLs`：主要用于读链/报价/查询等请求（可以放多条，容忍偶发限流/抖动）。
+- `Protected RPC URLs`：主要用于广播交易（建议只放少量高质量节点，用于“竞速广播”）。由于只承担交易提交这一小段流量，大多数情况下注册并使用服务商的免费计划就够用。
+
+当 `Anti-MEV` 开启且 `Protected RPC URLs` 为空时，交易广播会直接失败（插件会提示检查 Anti-MEV 设置）。因此如果你要开启 Anti-MEV，请务必配置至少 1 条保护 RPC（建议 3–4 条）。
+
+### 1) 在 Popup 里配置 Protect RPC
+1. 打开插件 Popup → `Settings`。
+2. 在 `Network` 区域配置：
+   - `RPC URLs`：每行一个 RPC URL。
+   - 打开 `Anti-MEV`。
+   - `Protected RPC URLs`：每行一个保护 RPC URL（建议 3–4 条，不同服务商混搭）。
+3. 点击 `保存修改`。
+
+### 2) 可选：配置 bloXroute 私有广播
+如果你有 bloXroute 账号，可以在 Popup → `Settings` → `API 密钥` 中填写：
+- `Bloxroute Auth Header`：用于 bloXroute 的 `Authorization` 头（仅保存在本地）。
+
+启用后，交易会尝试同时走 bloXroute 私有通道与保护 RPC 竞速广播，以更快返回 `txHash` 为准。
+
+### 3) 选型建议（针对香港/新加坡 VPN）
+- `Protected RPC URLs` 建议以新加坡（SG）为主（与你 VPN 出口一致），必要时补一条香港（HK）节点做容灾。
+- 组合思路：1 个稳定大厂节点 + 1 个交易向节点 + 1–2 个多地域付费节点。
+- 数量建议：3–4 条足够；太多更容易触发限流/风控，维护成本也更高。
+
+## 推荐 Protect RPC（示例模板）
+
+下面给的是“可直接照抄的模板”，请把其中的 `YOUR_KEY` / `YOUR_TOKEN` 替换成你自己的密钥；不要把真实 Key 写进仓库或截图公开。
+如果你只把 Protect RPC 用作“提交交易”，通常不需要购买高配套餐，免费计划一般就能满足需求（除非你有非常高频的自动化交易/批量挂单）。
+
+### 主力（建议至少 2 条）
+- NodeReal（SG/HK 任选其一，偏稳定托底）
+  - `https://bsc-mainnet.nodereal.io/v1/YOUR_KEY`
+- Chainstack（Singapore / Hong Kong（如可选），偏稳定，适合作为主力或强冗余）
+  - `https://bsc-mainnet.core.chainstack.com/YOUR_KEY`（示例格式，以控制台实际为准）
+
+### 补充（稳定性加 1–2 条）
+- Blockrazor（交易向节点，建议作为补充而不是唯一依赖）
+  - `https://bsc.blockrazor.xyz/YOUR_KEY`
+- GetBlock（Singapore，可选区域，适合补充）
+  - `https://go.getblock.io/YOUR_KEY`
+
+### 一套可用的 Protected RPC 样例（4 条）
+```
+https://bsc-mainnet.nodereal.io/v1/YOUR_KEY
+https://bsc-mainnet.core.chainstack.com/YOUR_KEY
+https://bsc.blockrazor.xyz/YOUR_KEY
+https://go.getblock.asia/YOUR_KEY
+```
+
 ## 安全性说明
 - **加密落盘**：钱包数据落盘前经由口令派生与对称加密处理。
 - **零后端托管**：交易直接与链上交互与广播，不托管资金。
