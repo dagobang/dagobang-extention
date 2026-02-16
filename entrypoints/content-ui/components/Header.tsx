@@ -5,7 +5,8 @@ import {
   Check,
   Zap, LineChart,
   SatelliteDish,
-  AlarmClockCheck
+  AlarmClockCheck,
+  Keyboard
 } from 'lucide-react';
 import type { PointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
@@ -21,6 +22,8 @@ type HeaderProps = {
   rpcActive: boolean;
   onToggleDailyAnalysis: () => void;
   dailyAnalysisActive: boolean;
+  keyboardShortcutsEnabled: boolean;
+  onToggleKeyboardShortcuts: () => void;
 };
 
 export function Header({
@@ -34,6 +37,8 @@ export function Header({
   rpcActive,
   onToggleDailyAnalysis,
   dailyAnalysisActive,
+  keyboardShortcutsEnabled,
+  onToggleKeyboardShortcuts,
 }: HeaderProps) {
   return (
     <div
@@ -41,9 +46,28 @@ export function Header({
       onPointerDown={onDragStart}
     >
       <div className="flex items-center gap-2 text-zinc-400">
+
         <div className="flex items-center">
           <Logo size={{ width: '24px', height: '24px' }} />
         </div>
+        <button
+          type="button"
+          className={
+            keyboardShortcutsEnabled
+              ? 'flex items-center justify-center rounded-full bg-amber-500/20 text-amber-300 p-1'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-amber-300 p-1 hover:border-amber-400'
+          }
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleKeyboardShortcuts();
+          }}
+          title="Keyboard shortcuts"
+        >
+          <Keyboard size={14} />
+        </button>
 
         <button
           type="button"

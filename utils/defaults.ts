@@ -77,6 +77,7 @@ export function defaultSettings(): Settings {
     bloxrouteAuthHeader: '',
     quickBuy1Bnb: '0',
     quickBuy2Bnb: '0',
+    keyboardShortcutsEnabled: false,
     limitOrderScanIntervalMs: 3000,
     autoTrade: DEFAULT_AUTOTRADE,
     advancedAutoSell: DEFAULT_ADVANCED_AUTO_SELL,

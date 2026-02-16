@@ -17,6 +17,8 @@ type BuySectionProps = {
   onUpdatePreset: (index: number, val: string) => void;
   draftPresets?: string[];
   locale: Locale;
+  showHotkeys?: boolean;
+  hotkeyLabels?: [string, string, string, string];
   gmgnVisible: boolean;
   gmgnEnabled: boolean;
   onToggleGmgn: () => void;
@@ -37,6 +39,8 @@ export function BuySection({
   onUpdatePreset,
   draftPresets,
   locale,
+  showHotkeys,
+  hotkeyLabels,
   gmgnVisible,
   gmgnEnabled,
   onToggleGmgn,
@@ -101,8 +105,13 @@ export function BuySection({
               key={idx}
               disabled={busy || !isUnlocked}
               onClick={() => onBuy(amt)}
-              className="rounded border border-emerald-500/30 bg-emerald-500/10 py-1.5 text-center text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="relative rounded border border-emerald-500/30 bg-emerald-500/10 py-1.5 text-center text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
+              {showHotkeys && hotkeyLabels?.[idx] && (
+                <span className="absolute right-1 top-0.5 text-[12px] font-semibold text-zinc-300">
+                  {hotkeyLabels[idx]}
+                </span>
+              )}
               {amt}
             </button>
           )

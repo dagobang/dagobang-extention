@@ -44,9 +44,17 @@ export default function App() {
   const [pendingQuickBuy, setPendingQuickBuy] = useState<{ tokenAddress: string; amount: string } | null>(null);
   const [gmgnBuyEnabled, setGmgnBuyEnabled] = useState(false);
   const [gmgnSellEnabled, setGmgnSellEnabled] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
 
   const siteInfoRef = useRef<SiteInfo | null>(siteInfo);
   const pendingQuickBuyRef = useRef<{ tokenAddress: string; amount: string } | null>(pendingQuickBuy);
+  const settingsRef = useRef<Settings | null>(null);
+  const minimizedRef = useRef(false);
+  const isEditingRef = useRef(false);
+  const keyboardEnabledRef = useRef(false);
+  const spaceHeldRef = useRef(false);
+  const handleBuyRef = useRef<(amountStr: string) => void>(() => {});
+  const handleSellRef = useRef<(pct: number) => void>(() => {});
 
   useEffect(() => {
     siteInfoRef.current = siteInfo;
@@ -73,12 +81,33 @@ export default function App() {
   const address = state?.wallet.address ?? null;
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
+  const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
   
   useEffect(() => {
     if (settings) {
       (window as any).__DAGOBANG_SETTINGS__ = settings;
     }
   }, [settings]);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  useEffect(() => {
+    minimizedRef.current = minimized;
+  }, [minimized]);
+
+  useEffect(() => {
+    isEditingRef.current = isEditing;
+  }, [isEditing]);
+
+  useEffect(() => {
+    keyboardEnabledRef.current = keyboardShortcutsEnabled;
+    if (!keyboardShortcutsEnabled && spaceHeldRef.current) {
+      spaceHeldRef.current = false;
+      setSpaceHeld(false);
+    }
+  }, [keyboardShortcutsEnabled]);
 
   useEffect(() => {
     posRef.current = pos;
@@ -98,6 +127,89 @@ export default function App() {
       setPos({ x: clampedX, y: clampedY });
     } catch {
     }
+  }, []);
+
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      const tag = (el.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if ((el as any).isContentEditable) return true;
+      return false;
+    };
+
+    const clearSpaceHeld = () => {
+      if (!spaceHeldRef.current) return;
+      spaceHeldRef.current = false;
+      setSpaceHeld(false);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!keyboardEnabledRef.current) return;
+      if (minimizedRef.current) return;
+      if (isEditingRef.current) return;
+      if (isEditableTarget(e.target)) return;
+
+      if (e.code === 'Space') {
+        if (!spaceHeldRef.current) {
+          spaceHeldRef.current = true;
+          setSpaceHeld(true);
+        }
+        e.preventDefault();
+        return;
+      }
+
+      if (!spaceHeldRef.current) return;
+
+      const key = String(e.key || '').toLowerCase();
+      const buyMap = 'qwer';
+      const sellMap = 'asdf';
+
+      if (buyMap.includes(key)) {
+        const s = settingsRef.current;
+        if (!s) return;
+        const idx = buyMap.indexOf(key);
+        const presets = s.chains[s.chainId]?.buyPresets ?? ['0.01', '0.2', '0.5', '1.0'];
+        const amt = presets[idx];
+        if (!amt) return;
+        e.preventDefault();
+        e.stopPropagation();
+        handleBuyRef.current(amt);
+        return;
+      }
+
+      if (sellMap.includes(key)) {
+        const s = settingsRef.current;
+        if (!s) return;
+        const idx = sellMap.indexOf(key);
+        const presets = s.chains[s.chainId]?.sellPresets ?? ['10', '25', '50', '100'];
+        const pctStr = presets[idx];
+        const pct = Number(pctStr);
+        if (!Number.isFinite(pct)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        handleSellRef.current(pct);
+        return;
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') clearSpaceHeld();
+    };
+
+    const onBlur = () => clearSpaceHeld();
+
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('blur', onBlur, true);
+    document.addEventListener('visibilitychange', onBlur, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', onBlur, true);
+      document.removeEventListener('visibilitychange', onBlur, true);
+    };
   }, []);
 
   useEffect(() => {
@@ -714,6 +826,14 @@ export default function App() {
     });
   };
 
+  useEffect(() => {
+    handleBuyRef.current = handleBuy;
+  }, [handleBuy]);
+
+  useEffect(() => {
+    handleSellRef.current = handleSell;
+  }, [handleSell]);
+
   const handleApprove = () => {
     withBusy(async () => {
       if (!settings) throw new Error('Settings not ready');
@@ -903,6 +1023,16 @@ export default function App() {
     setShowDailyAnalysisPanel((v) => !v);
   };
 
+  const handleToggleKeyboardShortcuts = () => {
+    if (!settings) return;
+    const next = !keyboardShortcutsEnabled;
+    if (!next && spaceHeldRef.current) {
+      spaceHeldRef.current = false;
+      setSpaceHeld(false);
+    }
+    call({ type: 'settings:set', settings: { ...settings, keyboardShortcutsEnabled: next } } as const).then(refreshAll);
+  };
+
   return (
     <>
       <CustomToaster position={toastPosition} />
@@ -952,6 +1082,8 @@ export default function App() {
                 rpcActive={showRpcPanel}
                 onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
                 dailyAnalysisActive={showDailyAnalysisPanel}
+                keyboardShortcutsEnabled={keyboardShortcutsEnabled}
+                onToggleKeyboardShortcuts={handleToggleKeyboardShortcuts}
               />
               <div className="relative flex flex-col">
                 <BuySection
@@ -967,6 +1099,8 @@ export default function App() {
                   onUpdatePreset={handleUpdateBuyPreset}
                   draftPresets={draftBuyPresets}
                   locale={locale}
+                  showHotkeys={keyboardShortcutsEnabled && spaceHeld && !isEditing}
+                  hotkeyLabels={['Q', 'W', 'E', 'R'] as [string, string, string, string]}
                   gmgnVisible={false} //isGmgnPlatform
                   gmgnEnabled={gmgnBuyEnabled}
                   onToggleGmgn={handleToggleGmgnBuy}
@@ -994,6 +1128,8 @@ export default function App() {
                   onUpdatePreset={handleUpdateSellPreset}
                   draftPresets={draftSellPresets}
                   locale={locale}
+                  showHotkeys={keyboardShortcutsEnabled && spaceHeld && !isEditing}
+                  hotkeyLabels={['A', 'S', 'D', 'F'] as [string, string, string, string]}
                   gmgnVisible={false} // isGmgnPlatform
                   gmgnEnabled={gmgnSellEnabled}
                   onToggleGmgn={handleToggleGmgnSell}

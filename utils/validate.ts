@@ -52,6 +52,9 @@ export function validateSettings(input: Settings): Settings | null {
   const quickBuy2Bnb = typeof (input as any).quickBuy2Bnb === 'string'
     ? (input as any).quickBuy2Bnb.trim() || defaults.quickBuy2Bnb || '0.1'
     : defaults.quickBuy2Bnb || '0.1';
+  const keyboardShortcutsEnabled = typeof (input as any).keyboardShortcutsEnabled === 'boolean'
+    ? (input as any).keyboardShortcutsEnabled
+    : ((defaults as any).keyboardShortcutsEnabled ?? false);
 
   const chains = { ...defaults.chains };
   
@@ -222,6 +225,7 @@ export function validateSettings(input: Settings): Settings | null {
     bloxrouteAuthHeader,
     quickBuy1Bnb,
     quickBuy2Bnb,
+    keyboardShortcutsEnabled,
     limitOrderScanIntervalMs,
     autoTrade,
     advancedAutoSell,
