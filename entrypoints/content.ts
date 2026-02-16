@@ -1,6 +1,7 @@
 import './shared/style.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { browser } from 'wxt/browser';
 import App from './content-ui/App';
 import { call } from '@/utils/messaging';
 
@@ -85,7 +86,25 @@ export default defineContentScript({
     "*://four.meme/*", "*://flap.sh/*", "*://debot.ai/*",
   ],
   cssInjectionMode: 'ui',
+  runAt: 'document_end',
   async main(ctx) {
+    const injectUrlChangeInterceptor = () => {
+      const script = document.createElement('script');
+      script.src = browser.runtime.getURL('/injected.js');
+      script.onload = () => {
+        script.remove();
+      };
+      script.onerror = () => {
+        script.remove();
+      };
+      const target = document.head || document.documentElement || document.body;
+      if (target) {
+        target.appendChild(script);
+      }
+    };
+
+    injectUrlChangeInterceptor();
+
     // const injectWebSocketInterceptor = () => {
     //   if (!window.location.hostname.includes('gmgn.ai')) return;
     //   const script = document.createElement('script');

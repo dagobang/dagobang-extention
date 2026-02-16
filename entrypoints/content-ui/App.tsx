@@ -9,7 +9,7 @@ import { LimitTradePanel } from './components/LimitTradePanel';
 import { RpcPanel } from './components/RpcPanel';
 import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
 import type { BgGetStateResponse, Settings } from '@/types/extention';
-import { parseCurrentUrl, type SiteInfo } from '@/utils/sites';
+import { parseCurrentUrl, parseCurrentUrlFull, type SiteInfo } from '@/utils/sites';
 import { call } from '@/utils/messaging';
 import { parseEther, zeroAddress } from 'viem';
 import { TokenAPI } from '@/hooks/TokenAPI';
@@ -20,7 +20,7 @@ import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { Logo } from '@/components/Logo';
 
 export default function App() {
-  const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(null);
+  const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(() => parseCurrentUrl(window.location.href));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<BgGetStateResponse | null>(null);
@@ -43,6 +43,17 @@ export default function App() {
   const [pendingQuickBuy, setPendingQuickBuy] = useState<{ tokenAddress: string; amount: string } | null>(null);
   const [gmgnBuyEnabled, setGmgnBuyEnabled] = useState(false);
   const [gmgnSellEnabled, setGmgnSellEnabled] = useState(false);
+
+  const siteInfoRef = useRef<SiteInfo | null>(siteInfo);
+  const pendingQuickBuyRef = useRef<{ tokenAddress: string; amount: string } | null>(pendingQuickBuy);
+
+  useEffect(() => {
+    siteInfoRef.current = siteInfo;
+  }, [siteInfo]);
+
+  useEffect(() => {
+    pendingQuickBuyRef.current = pendingQuickBuy;
+  }, [pendingQuickBuy]);
 
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
@@ -120,6 +131,7 @@ export default function App() {
         tokenAddress: addr,
         platform: 'gmgn',
       };
+      siteInfoRef.current = site;
       setSiteInfo(site);
       setIsEditing(false);
       setDraftBuyPresets(settings.chains[settings.chainId].buyPresets || ['0.01', '0.2', '0.5', '1.0']);
@@ -134,25 +146,116 @@ export default function App() {
 
   // Monitor URL changes
   useEffect(() => {
-    const check = async () => {
+    let disposed = false;
+    let seq = 0;
+    let scheduled = false;
+    const lastHrefRef = { current: window.location.href };
+
+    const apply = (next: SiteInfo | null) => {
+      if (JSON.stringify(next) === JSON.stringify(siteInfoRef.current)) return;
+      siteInfoRef.current = next;
+      setSiteInfo(next);
+    };
+
+    const check = async (hrefOverride?: string) => {
+      if (disposed) return;
       if (document.hidden) return;
-      if (pendingQuickBuy) return;
-      const info = await parseCurrentUrl(window.location.href);
-      if (info == null || (JSON.stringify(info) !== JSON.stringify(siteInfo))) {
-        setSiteInfo(info);
+      if (pendingQuickBuyRef.current) return;
+
+      const href = hrefOverride ?? window.location.href;
+      lastHrefRef.current = href;
+      apply(parseCurrentUrl(href));
+
+      const requestSeq = (seq += 1);
+      const info = await parseCurrentUrlFull(href);
+      if (disposed) return;
+      if (requestSeq !== seq) return;
+      apply(info);
+    };
+
+    const scheduleHrefDetect = () => {
+      if (scheduled) return;
+      scheduled = true;
+
+      let tries = 0;
+      const tick = () => {
+        scheduled = false;
+        if (disposed) return;
+        if (document.hidden) return;
+
+        const href = window.location.href;
+        if (href !== lastHrefRef.current) {
+          void check(href);
+          return;
+        }
+
+        tries += 1;
+        if (tries >= 12) return;
+        scheduled = true;
+        window.setTimeout(tick, 50);
+      };
+
+      window.setTimeout(tick, 0);
+    };
+
+    void check();
+
+    const onVis = () => {
+      if (!document.hidden) {
+        void check();
+        scheduleHrefDetect();
       }
     };
-    check();
-    const timer = setInterval(check, 2000);
-    const onVis = () => {
-      if (!document.hidden) check();
+
+    const onUrl = () => {
+      if (!document.hidden) {
+        void check();
+        scheduleHrefDetect();
+      }
     };
+
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== window) return;
+      const data = e.data as any;
+      if (!data || data.type !== 'DAGOBANG_URL_CHANGE') return;
+      if (typeof data.href !== 'string') return;
+      if (!document.hidden) void check(data.href);
+    };
+
+    const onClickCapture = () => {
+      if (!document.hidden) scheduleHrefDetect();
+    };
+
+    const onKeyDownCapture = (e: KeyboardEvent) => {
+      if (document.hidden) return;
+      if (e.key === 'Enter') scheduleHrefDetect();
+    };
+
+    const onSubmitCapture = () => {
+      if (!document.hidden) scheduleHrefDetect();
+    };
+
+    const timer = window.setInterval(() => {
+      void check();
+    }, 2000);
+
+    window.addEventListener('popstate', onUrl);
+    window.addEventListener('message', onMessage);
     document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('click', onClickCapture, true);
+    window.addEventListener('keydown', onKeyDownCapture, true);
+    window.addEventListener('submit', onSubmitCapture, true);
     return () => {
+      disposed = true;
       clearInterval(timer);
+      window.removeEventListener('popstate', onUrl);
+      window.removeEventListener('message', onMessage);
       document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('click', onClickCapture, true);
+      window.removeEventListener('keydown', onKeyDownCapture, true);
+      window.removeEventListener('submit', onSubmitCapture, true);
     };
-  }, [siteInfo, pendingQuickBuy]);
+  }, []);
 
   const tokenAddressNormalized = useMemo(() => {
     if (!siteInfo?.tokenAddress) return null;

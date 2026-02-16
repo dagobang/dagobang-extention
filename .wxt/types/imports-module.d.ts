@@ -30,6 +30,6 @@ declare module '#imports' {
   export { isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime } from '../utils/format';
   export { t, normalizeLocale, Locale } from '../utils/i18n';
   export { call } from '../utils/messaging';
-  export { parseCurrentUrl, SiteInfo } from '../utils/sites';
+  export { parseCurrentUrl, parseCurrentUrlFull, SiteInfo } from '../utils/sites';
   export { validateSettings } from '../utils/validate';
 }

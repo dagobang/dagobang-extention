@@ -1,5 +1,37 @@
 export default defineUnlistedScript(() => {
   (function () {
+    const dispatchUrlChange = () => {
+      window.postMessage(
+        {
+          type: 'DAGOBANG_URL_CHANGE',
+          href: window.location.href,
+          ts: Date.now(),
+        },
+        '*',
+      );
+    };
+
+    const rawPushState = history.pushState;
+    const rawReplaceState = history.replaceState;
+
+    history.pushState = function (this: History, ...args: Parameters<History['pushState']>) {
+      const ret = rawPushState.apply(this, args);
+      dispatchUrlChange();
+      return ret;
+    };
+
+    history.replaceState = function (this: History, ...args: Parameters<History['replaceState']>) {
+      const ret = rawReplaceState.apply(this, args);
+      dispatchUrlChange();
+      return ret;
+    };
+
+    window.addEventListener('popstate', dispatchUrlChange);
+    window.addEventListener('hashchange', dispatchUrlChange);
+    dispatchUrlChange();
+
+    if ((window as any).__DAGOBANG_INJECT_WS__ !== true) return;
+
     function isGMGNConnection(url: string): boolean {
       return Boolean(url && url.includes('gmgn.ai'));
     }
@@ -66,4 +98,3 @@ export default defineUnlistedScript(() => {
     (window as any).WebSocket.prototype = OriginalWebSocket.prototype;
   })();
 });
-
