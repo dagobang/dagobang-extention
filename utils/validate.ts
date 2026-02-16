@@ -46,12 +46,12 @@ export function validateSettings(input: Settings): Settings | null {
     }
   }
 
-  const gmgnQuickBuy1Bnb = typeof (input as any).gmgnQuickBuy1Bnb === 'string'
-    ? (input as any).gmgnQuickBuy1Bnb.trim() || defaults.gmgnQuickBuy1Bnb || '0.02'
-    : defaults.gmgnQuickBuy1Bnb || '0.02';
-  const gmgnQuickBuy2Bnb = typeof (input as any).gmgnQuickBuy2Bnb === 'string'
-    ? (input as any).gmgnQuickBuy2Bnb.trim() || defaults.gmgnQuickBuy2Bnb || '0.1'
-    : defaults.gmgnQuickBuy2Bnb || '0.1';
+  const quickBuy1Bnb = typeof (input as any).quickBuy1Bnb === 'string'
+    ? (input as any).quickBuy1Bnb.trim() || defaults.quickBuy1Bnb || '0.02'
+    : defaults.quickBuy1Bnb || '0.02';
+  const quickBuy2Bnb = typeof (input as any).quickBuy2Bnb === 'string'
+    ? (input as any).quickBuy2Bnb.trim() || defaults.quickBuy2Bnb || '0.1'
+    : defaults.quickBuy2Bnb || '0.1';
 
   const chains = { ...defaults.chains };
   
@@ -220,8 +220,8 @@ export function validateSettings(input: Settings): Settings | null {
     toastPosition,
     seedreamApiKey,
     bloxrouteAuthHeader,
-    gmgnQuickBuy1Bnb,
-    gmgnQuickBuy2Bnb,
+    quickBuy1Bnb,
+    quickBuy2Bnb,
     limitOrderScanIntervalMs,
     autoTrade,
     advancedAutoSell,

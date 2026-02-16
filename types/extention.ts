@@ -76,8 +76,8 @@ export type Settings = {
   toastPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
   seedreamApiKey?: string;
   bloxrouteAuthHeader?: string;
-  gmgnQuickBuy1Bnb?: string;
-  gmgnQuickBuy2Bnb?: string;
+  quickBuy1Bnb?: string;
+  quickBuy2Bnb?: string;
   limitOrderScanIntervalMs?: number;
   autoTrade: AutoTradeConfig;
   advancedAutoSell: AdvancedAutoSellConfig;

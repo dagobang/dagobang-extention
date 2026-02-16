@@ -86,6 +86,8 @@
       "gasPreset": "Gas preset",
       "buyGasGwei": "Buy gas (gwei)",
       "sellGasGwei": "Sell gas (gwei)",
+      "quickBuy1Bnb": "Quick buy 1 (BNB)",
+      "quickBuy2Bnb": "Quick buy 2 (BNB)",
       "autoLockSeconds": "Auto Lock (s)",
       "uiSection": "UI",
       "toastPosition": "Toast position",

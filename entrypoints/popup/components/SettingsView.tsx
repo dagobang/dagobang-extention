@@ -280,28 +280,28 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
           <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">GMGN</div>
           <div className="grid grid-cols-2 gap-3">
             <label className="block space-y-1">
-              <div className="text-[14px] text-zinc-400">{tt('popup.settings.gmgnQuickBuy1Bnb')}</div>
+              <div className="text-[14px] text-zinc-400">{tt('popup.settings.quickBuy1Bnb')}</div>
               <input
                 className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
-                value={settingsDraft.gmgnQuickBuy1Bnb ?? ''}
+                value={settingsDraft.quickBuy1Bnb ?? ''}
                 onChange={(e) =>
                   setSettingsDraft((s) => ({
                     ...s,
-                    gmgnQuickBuy1Bnb: e.target.value,
+                    quickBuy1Bnb: e.target.value,
                   }))
                 }
                 placeholder="0.02"
               />
             </label>
             <label className="block space-y-1">
-              <div className="text-[14px] text-zinc-400">{tt('popup.settings.gmgnQuickBuy2Bnb')}</div>
+              <div className="text-[14px] text-zinc-400">{tt('popup.settings.quickBuy2Bnb')}</div>
               <input
                 className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
-                value={settingsDraft.gmgnQuickBuy2Bnb ?? ''}
+                value={settingsDraft.quickBuy2Bnb ?? ''}
                 onChange={(e) =>
                   setSettingsDraft((s) => ({
                     ...s,
-                    gmgnQuickBuy2Bnb: e.target.value,
+                    quickBuy2Bnb: e.target.value,
                   }))
                 }
                 placeholder="0.1"

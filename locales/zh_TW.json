@@ -86,6 +86,8 @@
       "gasPreset": "Gas 檔位",
       "buyGasGwei": "買入 Gas（gwei）",
       "sellGasGwei": "賣出 Gas（gwei）",
+      "quickBuy1Bnb": "列表快捷買入 1（BNB）",
+      "quickBuy2Bnb": "列表快捷買入 2（BNB）",
       "autoLockSeconds": "自動鎖定（秒）",
       "uiSection": "界面",
       "toastPosition": "Toast 彈出位置",

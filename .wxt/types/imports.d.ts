@@ -26,6 +26,7 @@ declare global {
   const encryptJson: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/crypto').encryptJson
   const extractGmgnAuthData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI').extractGmgnAuthData
   const fakeBrowser: typeof import('wxt/testing').fakeBrowser
+  const formatBroadcastProvider: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatBroadcastProvider
   const formatPriceValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatPriceValue
   const formatTime: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatTime
   const injectScript: typeof import('wxt/utils/inject-script').injectScript

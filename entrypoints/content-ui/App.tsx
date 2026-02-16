@@ -18,6 +18,7 @@ import { buildAdvancedAutoSellSellLimitOrderInputs, buildAdvancedAutoSellTrailin
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { Logo } from '@/components/Logo';
+import { formatBroadcastProvider } from '@/utils/format';
 
 export default function App() {
   const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(() => parseCurrentUrl(window.location.href));
@@ -72,26 +73,7 @@ export default function App() {
   const address = state?.wallet.address ?? null;
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
-
-  const formatBroadcastProvider = (via?: string, url?: string) => {
-    if (via === 'bloxroute') return 'BloxRoute';
-    if (via !== 'rpc') return '-';
-    if (!url) return 'RPC';
-    try {
-      const host = new URL(url).hostname.toLowerCase();
-      if (host.includes('blxrbdn.com')) return 'BloxRoute RPC';
-      if (host.includes('publicnode.com')) return 'PublicNode';
-      if (host.includes('nodereal.io')) return 'NodeReal';
-      if (host.includes('bnbchain.org')) return 'BNB Chain';
-      if (host.includes('defibit.io')) return 'Defibit';
-      if (host.includes('nariox.org')) return 'Nariox';
-      if (host.includes('ninicoin.io')) return 'NiniCoin';
-      return host;
-    } catch {
-      return 'RPC';
-    }
-  };
-
+  
   useEffect(() => {
     if (settings) {
       (window as any).__DAGOBANG_SETTINGS__ = settings;
