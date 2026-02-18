@@ -27,3 +27,13 @@ export function getQuoteTokenSymbol(chainId: ChainId, address: string): string {
     return token ? allTokens[chainId]?.[token]?.symbol ?? 'UNKNOWN' : 'UNKNOWN';
 }
 
+export function getBridgeTokenDexPreference(chainId: ChainId, address: string): 'v2' | 'v3' | null {
+    if (chainId !== ChainId.BNB) return null;
+    const addr = address.toLowerCase();
+    if (addr === bscTokens.usdt.address.toLowerCase()) return 'v2';
+    if (addr === bscTokens.usdc.address.toLowerCase()) return 'v3';
+    if (addr === bscTokens.u.address.toLowerCase()) return 'v3';
+    if (addr === bscTokens.aster.address.toLowerCase()) return 'v3';
+    if (addr === bscTokens.usd1.address.toLowerCase()) return 'v3';
+    return null;
+}

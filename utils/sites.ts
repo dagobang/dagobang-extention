@@ -116,9 +116,10 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
     // https://debot.ai/token/<chain>/<address>
     if (u.hostname.includes('debot.ai')) {
       if (parts.length >= 3 && parts[0] === 'token') {
+        const token = parts[2].indexOf("_") > 0 ? parts[2].split("_")[1] : parts[2]
         return {
           chain: parts[1].toLowerCase(),
-          tokenAddress: parts[2],
+          tokenAddress: token,
           platform: 'debot',
         };
       }

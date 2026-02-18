@@ -141,6 +141,7 @@ function extractRevertReasonFromError(e: any) {
 const nonceLocked = new Set<string>();
 const nonceLockQueue = new Map<string, Array<() => void>>();
 const nonceState = new Map<string, { nextNonce: number; ts: number }>();
+const NONCE_CACHE_WINDOW_MS = 60_000;
 
 async function acquireNonceLock(key: string): Promise<() => void> {
   if (!nonceLocked.has(key)) {
@@ -176,7 +177,7 @@ async function reserveNonce(client: any, chainId: number, address: `0x${string}`
   try {
     const now = Date.now();
     const state = nonceState.get(key);
-    if (state && now - state.ts < 20000) {
+    if (state && now - state.ts < NONCE_CACHE_WINDOW_MS) {
       const nonce = state.nextNonce;
       state.nextNonce += 1;
       state.ts = now;
@@ -196,6 +197,21 @@ function clearNonceState(chainId: number, address: `0x${string}`) {
   nonceState.delete(key);
 }
 
+function isNonceRelatedError(e: any): boolean {
+  const msg = String(e?.shortMessage || e?.message || e || '').toLowerCase();
+  if (!msg) return false;
+  if (!msg.includes('nonce') && !msg.includes('replacement')) return false;
+  return (
+    msg.includes('nonce too low') ||
+    msg.includes('nonce is too low') ||
+    msg.includes('nonce has already been used') ||
+    msg.includes('already known') ||
+    msg.includes('known transaction') ||
+    msg.includes('replacement transaction underpriced') ||
+    msg.includes('transaction underpriced')
+  );
+}
+
 export async function sendTransaction(
   client: any,
   account: any,
@@ -204,15 +220,23 @@ export async function sendTransaction(
   value: bigint,
   gasPriceWei: bigint,
   chainId: number,
-  opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint }
+  opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void }
 ) {
+  const trace = opts?.trace;
+  const useAutoNonce = opts?.nonce === undefined;
   const noncePromise = opts?.nonce !== undefined
     ? Promise.resolve(opts.nonce)
-    : reserveNonce(client, chainId, account.address);
+    : (async () => {
+      const start = Date.now();
+      const nonce = await reserveNonce(client, chainId, account.address);
+      trace?.('reserveNonce', Date.now() - start);
+      return nonce;
+    })();
 
   let gasLimit = opts?.gasLimit ?? 900000n;
   if (!opts?.skipEstimateGas && opts?.gasLimit === undefined) {
     try {
+      const start = Date.now();
       gasLimit = await client.estimateGas({
         account,
         to: to as `0x${string}`,
@@ -220,6 +244,7 @@ export async function sendTransaction(
         value,
       });
       gasLimit = gasLimit * 120n / 100n;
+      trace?.('estimateGas', Date.now() - start);
     } catch (e: any) {
       const reason = extractRevertReasonFromError(e);
       if (reason && scoreRevertReason(reason) >= 60) {
@@ -231,7 +256,8 @@ export async function sendTransaction(
 
   const nonce = await noncePromise;
 
-  try {
+  const signAndBroadcast = async (useNonce: number, labelPrefix: string) => {
+    const signStart = Date.now();
     const signed = await account.signTransaction({
       to: to as `0x${string}`,
       data,
@@ -240,16 +266,36 @@ export async function sendTransaction(
       gasPrice: gasPriceWei,
       chain: bsc,
       chainId,
-      nonce,
+      nonce: useNonce,
     });
+    trace?.(`${labelPrefix}signTransaction`, Date.now() - signStart);
 
+    const broadcastStart = Date.now();
     const res = await RpcService.broadcastTxDetailed(signed);
+    trace?.(`${labelPrefix}broadcastTx`, Date.now() - broadcastStart);
     return {
       txHash: res.txHash,
       broadcastVia: res.via,
       broadcastUrl: res.rpcUrl,
     };
-  } catch (e) {
+  };
+
+  try {
+    return await signAndBroadcast(nonce, '');
+  } catch (e: any) {
+    if (useAutoNonce && isNonceRelatedError(e)) {
+      clearNonceState(chainId, account.address);
+      try {
+        const start = Date.now();
+        const retryNonce = await reserveNonce(client, chainId, account.address);
+        trace?.('reserveNonceRetry', Date.now() - start);
+        return await signAndBroadcast(retryNonce, 'retry:');
+      } catch (e2) {
+        clearNonceState(chainId, account.address);
+        throw e2;
+      }
+    }
+
     clearNonceState(chainId, account.address);
     throw e;
   }

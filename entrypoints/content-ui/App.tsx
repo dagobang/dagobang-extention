@@ -82,7 +82,7 @@ export default function App() {
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
   const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
-  
+
   useEffect(() => {
     if (settings) {
       (window as any).__DAGOBANG_SETTINGS__ = settings;
@@ -156,7 +156,6 @@ export default function App() {
           spaceHeldRef.current = true;
           setSpaceHeld(true);
         }
-        e.preventDefault();
         return;
       }
 
@@ -173,8 +172,6 @@ export default function App() {
         const presets = s.chains[s.chainId]?.buyPresets ?? ['0.01', '0.2', '0.5', '1.0'];
         const amt = presets[idx];
         if (!amt) return;
-        e.preventDefault();
-        e.stopPropagation();
         handleBuyRef.current(amt);
         return;
       }
@@ -187,8 +184,6 @@ export default function App() {
         const pctStr = presets[idx];
         const pct = Number(pctStr);
         if (!Number.isFinite(pct)) return;
-        e.preventDefault();
-        e.stopPropagation();
         handleSellRef.current(pct);
         return;
       }

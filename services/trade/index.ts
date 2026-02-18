@@ -7,10 +7,12 @@ import { TokenInfo } from '../../types/token';
 import { ContractNames } from '../../constants/contracts/names';
 import { DeployAddress } from '../../constants/contracts/address';
 import { ChainId } from '../../constants/chains/chainId';
+import { getBridgeTokenDexPreference } from '../../constants/tokens/allTokens';
 import { dagobangAbi } from '@/constants/contracts/abi';
 import { Address, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadline, getRouterSwapDesc, getSlippageBps, getV3FeeForDesc } from './tradeTypes';
 import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInDex, resolveDexExactIn } from './tradeDex';
 import { getGasPriceWei, sendTransaction } from './tradeTx';
+import { formatBroadcastProvider } from '@/utils/format';
 
 export class TradeService {
   static async quoteBestExactIn(
@@ -18,7 +20,7 @@ export class TradeService {
     tokenIn: `0x${string}`,
     tokenOut: `0x${string}`,
     amountIn: bigint,
-    opts?: { v3Fee?: number; v2HintPair?: string }
+    opts?: { v3Fee?: number; v2HintPair?: string; prefer?: 'v2' | 'v3' }
   ): Promise<{ amountOut: bigint; swapType: number; fee?: number; poolAddress: string }> {
     return await quoteBestExactInDex(chainId, tokenIn, tokenOut, amountIn, opts);
   }
@@ -63,6 +65,7 @@ export class TradeService {
     const routerAddress = DeployAddress[input.chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
     if (!input.tokenInfo) throw new Error('Token info required');
+    const tokenInfo = input.tokenInfo;
 
     const account = await WalletService.getSigner();
     const client = await RpcService.getClient();
@@ -75,18 +78,45 @@ export class TradeService {
     const gasPreset = input.gasPreset ?? chainSettings.buyGasPreset ?? chainSettings.gasPreset;
     const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'buy');
 
-    const isInner = this.isInnerDisk(input.tokenInfo);
-    const launchpadConfig = isInner ? this.getLaunchpadConfig(input.tokenInfo, input.chainId) : null;
+    const perfEnabled = isTurbo;
+    const perfStart = perfEnabled ? Date.now() : 0;
+    const perfSteps: Array<{ label: string; ms: number }> = [];
+    const timeStep = async <T>(label: string, fn: () => Promise<T>) => {
+      if (!perfEnabled) return await fn();
+      const start = Date.now();
+      const res = await fn();
+      perfSteps.push({ label, ms: Date.now() - start });
+      return res;
+    };
+    const trace = perfEnabled
+      ? (label: string, ms: number) => {
+        perfSteps.push({ label, ms });
+      }
+      : undefined;
 
-    const bridgeToken = getBridgeToken(input.chainId, input.tokenInfo.quote_token_address);
-    console.log('input.tokenInfo', input.tokenInfo, isInner, launchpadConfig)
+    const isInner = this.isInnerDisk(tokenInfo);
+    const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
+
+    const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
+    console.log('input.tokenInfo', tokenInfo, isInner, launchpadConfig)
     console.log('bridgeToken', bridgeToken);
     const descs: SwapDescLike[] = [];
     let currentRouterToken: Address = ZERO_ADDRESS;
     let currentAmount = amountIn;
 
     if (bridgeToken) {
-      const q1 = await resolveDexExactIn(input.chainId, ZERO_ADDRESS, bridgeToken, currentAmount, { v3Fee: 500 }, isTurbo, true);
+      const bridgePrefer = getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken);
+      const q1 = await timeStep('quote:bridge', () =>
+        resolveDexExactIn(
+          input.chainId,
+          ZERO_ADDRESS,
+          bridgeToken,
+          currentAmount,
+          bridgePrefer === 'v2' ? { prefer: 'v2' } : bridgePrefer === 'v3' ? { v3Fee: 500, prefer: 'v3' } : { v3Fee: 500 },
+          isTurbo,
+          true
+        )
+      );
       try {
         assertDexQuoteOk(q1);
       } catch {
@@ -120,18 +150,31 @@ export class TradeService {
         data: '0x',
       }));
     } else {
-      const q2 = await resolveDexExactIn(
-        input.chainId,
-        currentRouterToken,
-        tokenOut,
-        currentAmount,
-        { v3Fee: input.poolFee, v2HintPair: input.tokenInfo.pool_pair },
-        isTurbo
+      const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
+      const q2 = await timeStep('quote:token', () =>
+        resolveDexExactIn(
+          input.chainId,
+          currentRouterToken,
+          tokenOut,
+          currentAmount,
+          {
+            v3Fee: input.poolFee,
+            v2HintPair: tokenInfo.pool_pair,
+            prefer: bridgePrefer ?? (isTurbo && !input.poolFee ? 'v2' : undefined)
+          },
+          isTurbo
+        )
       );
-      try {
-        assertDexQuoteOk(q2);
-      } catch {
-        throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+      if (isTurbo) {
+        if (!q2.poolAddress || q2.poolAddress === ZERO_ADDRESS) {
+          throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        }
+      } else {
+        try {
+          assertDexQuoteOk(q2);
+        } catch {
+          throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        }
       }
       const usedFee = getV3FeeForDesc(q2, input.poolFee ?? baseFee);
       if (isTurbo) {
@@ -166,8 +209,17 @@ export class TradeService {
       ]
     });
 
-    const txOpts = isTurbo ? { skipEstimateGas: true, gasLimit: 900000n } : undefined;
-    const { txHash, broadcastVia, broadcastUrl } = await this.sendTransaction(client, account, routerAddress, data, amountIn, gasPriceWei, input.chainId, txOpts);
+    const txOpts = isTurbo ? { skipEstimateGas: true, gasLimit: 900000n, trace } : undefined;
+    const { txHash, broadcastVia, broadcastUrl } = await timeStep('sendTransaction', () =>
+      this.sendTransaction(client, account, routerAddress, data, amountIn, gasPriceWei, input.chainId, txOpts)
+    );
+    if (perfEnabled) {
+      const totalMs = Date.now() - perfStart;
+      console.log('[trade.buy.turbo] timing ms', {
+        total: totalMs, steps: perfSteps,
+        broadcastProvider: formatBroadcastProvider(broadcastVia, broadcastUrl)
+      });
+    }
     return { txHash, tokenMinOutWei: minOut.toString(), broadcastVia, broadcastUrl };
   }
 
@@ -207,6 +259,7 @@ export class TradeService {
     const routerAddress = DeployAddress[input.chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
     if (!input.tokenInfo) throw new Error('Token info required');
+    const tokenInfo = input.tokenInfo;
 
     const account = await WalletService.getSigner();
     const client = await RpcService.getClient();
@@ -221,9 +274,25 @@ export class TradeService {
     const gasPreset = input.gasPreset ?? chainSettings.sellGasPreset ?? chainSettings.gasPreset;
     const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
 
-    const isInner = this.isInnerDisk(input.tokenInfo);
-    const launchpadConfig = isInner ? this.getLaunchpadConfig(input.tokenInfo, input.chainId) : null;
-    const bridgeToken = getBridgeToken(input.chainId, input.tokenInfo.quote_token_address);
+    const perfEnabled = isTurbo;
+    const perfStart = perfEnabled ? Date.now() : 0;
+    const perfSteps: Array<{ label: string; ms: number }> = [];
+    const timeStep = async <T>(label: string, fn: () => Promise<T>) => {
+      if (!perfEnabled) return await fn();
+      const start = Date.now();
+      const res = await fn();
+      perfSteps.push({ label, ms: Date.now() - start });
+      return res;
+    };
+    const trace = perfEnabled
+      ? (label: string, ms: number) => {
+        perfSteps.push({ label, ms });
+      }
+      : undefined;
+
+    const isInner = this.isInnerDisk(tokenInfo);
+    const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
+    const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
 
     const descs: SwapDescLike[] = [];
     const sellToken: Address = input.tokenAddress;
@@ -241,46 +310,40 @@ export class TradeService {
     let amountInForQuote = amountIn;
     if (isTurbo) {
       if (percentBps <= 0 || percentBps > 10000) throw new Error('Invalid percent');
-      let baseBal = input.expectedTokenInWei ? BigInt(input.expectedTokenInWei) : 0n;
-      if (baseBal <= 0n) {
-        try {
-          baseBal = await client.readContract({
-            address: input.tokenAddress as `0x${string}`,
-            abi: erc20Abi,
-            functionName: 'balanceOf',
-            args: [account.address],
-            blockTag: 'pending' as any,
-          });
-        } catch {
-          baseBal = await client.readContract({
-            address: input.tokenAddress as `0x${string}`,
-            abi: erc20Abi,
-            functionName: 'balanceOf',
-            args: [account.address],
-          });
-        }
-      }
-      amountInForQuote = (baseBal * BigInt(percentBps)) / 10000n;
-      if (amountInForQuote <= 0n) throw new Error('No balance');
+      const baseBal = input.expectedTokenInWei ? BigInt(input.expectedTokenInWei) : 0n;
+      amountInForQuote = baseBal > 0n ? (baseBal * BigInt(percentBps)) / 10000n : 1n;
     }
 
     let estimatedOut = 0n;
     if (!isInner) {
       const hop1RouterOut = bridgeToken ? bridgeToken : ZERO_ADDRESS;
-      const hop1NeedAmountOut = !!bridgeToken;
-      const hop1 = await resolveDexExactIn(
-        input.chainId,
-        sellToken,
-        hop1RouterOut,
-        amountInForQuote,
-        { v3Fee: input.poolFee, v2HintPair: input.tokenInfo.pool_pair },
-        isTurbo,
-        hop1NeedAmountOut
+      const hop1NeedAmountOut = !!bridgeToken && !isTurbo;
+      const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
+      const hop1 = await timeStep('quote:token', () =>
+        resolveDexExactIn(
+          input.chainId,
+          sellToken,
+          hop1RouterOut,
+          amountInForQuote,
+          {
+            v3Fee: input.poolFee,
+            v2HintPair: tokenInfo.pool_pair,
+            prefer: bridgePrefer ?? (isTurbo && !input.poolFee ? 'v2' : undefined)
+          },
+          isTurbo,
+          hop1NeedAmountOut
+        )
       );
-      try {
-        assertDexQuoteOk(hop1);
-      } catch {
-        throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+      if (isTurbo && !hop1NeedAmountOut) {
+        if (!hop1.poolAddress || hop1.poolAddress === ZERO_ADDRESS) {
+          throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        }
+      } else {
+        try {
+          assertDexQuoteOk(hop1);
+        } catch {
+          throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        }
       }
       if (!isTurbo && hop1.amountOut <= 0n) {
         throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
@@ -296,21 +359,30 @@ export class TradeService {
       if (!bridgeToken) {
         estimatedOut = isTurbo ? 0n : hop1.amountOut;
       } else {
-        if (hop1.amountOut <= 0n) {
+        if (!isTurbo && hop1.amountOut <= 0n) {
           throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
         }
-        const hop2 = await resolveDexExactIn(
-          input.chainId,
-          bridgeToken,
-          ZERO_ADDRESS,
-          hop1.amountOut,
-          { v3Fee: 500 },
-          isTurbo
+        const hop2AmountIn = isTurbo ? 1n : hop1.amountOut;
+        const hop2 = await timeStep('quote:bridge', () =>
+          resolveDexExactIn(
+            input.chainId,
+            bridgeToken,
+            ZERO_ADDRESS,
+            hop2AmountIn,
+            bridgePrefer === 'v2' ? { prefer: 'v2' } : bridgePrefer === 'v3' ? { v3Fee: 500, prefer: 'v3' } : { v3Fee: 500 },
+            isTurbo
+          )
         );
-        try {
-          assertDexQuoteOk(hop2);
-        } catch {
-          throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        if (isTurbo) {
+          if (!hop2.poolAddress || hop2.poolAddress === ZERO_ADDRESS) {
+            throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+          }
+        } else {
+          try {
+            assertDexQuoteOk(hop2);
+          } catch {
+            throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+          }
         }
         if (!isTurbo && hop2.amountOut <= 0n) {
           throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
@@ -358,8 +430,17 @@ export class TradeService {
         ]
       });
 
-    const txOpts = isTurbo ? { skipEstimateGas: true, gasLimit: 900000n } : undefined;
-    const { txHash, broadcastVia, broadcastUrl } = await this.sendTransaction(client, account, routerAddress, data, 0n, gasPriceWei, input.chainId, txOpts);
+    const txOpts = isTurbo ? { skipEstimateGas: true, gasLimit: 900000n, trace } : undefined;
+    const { txHash, broadcastVia, broadcastUrl } = await timeStep('sendTransaction', () =>
+      this.sendTransaction(client, account, routerAddress, data, 0n, gasPriceWei, input.chainId, txOpts)
+    );
+    if (perfEnabled) {
+      const totalMs = Date.now() - perfStart;
+      console.log('[trade.sell.turbo] timing ms', {
+        total: totalMs, steps: perfSteps,
+        broadcastProvider: formatBroadcastProvider(broadcastVia, broadcastUrl)
+      });
+    }
     return { txHash, broadcastVia, broadcastUrl };
   }
 
@@ -389,7 +470,7 @@ export class TradeService {
     value: bigint,
     gasPriceWei: bigint,
     chainId: number,
-    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint }
+    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void }
   ) {
     return await sendTransaction(client, account, to, data, value, gasPriceWei, chainId, opts);
   }

@@ -38,7 +38,7 @@ export type DexExactInQuote = {
   poolAddress: Address;
 };
 
-export type DexExactInOpts = { v3Fee?: number; v2HintPair?: string };
+export type DexExactInOpts = { v3Fee?: number; v2HintPair?: string; prefer?: 'v2' | 'v3' };
 
 export function getWNative(chainId: number): Address {
   return WBNB_BSC as Address;
@@ -81,4 +81,3 @@ export function applySlippage(amountOut: bigint, slippageBps: bigint) {
 export function getV3FeeForDesc(q: DexExactInQuote, fallbackFee: number) {
   return q.swapType === SwapType.V3_EXACT_IN ? ((q.fee ?? fallbackFee) as number) : 0;
 }
-
