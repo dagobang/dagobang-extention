@@ -91,6 +91,7 @@
       "autoLockSeconds": "自動鎖定（秒）",
       "uiSection": "界面",
       "toastPosition": "Toast 彈出位置",
+      "tradeSuccessSound": "交易成功提示音",
       "security": "安全",
       "exportPassword": "用於匯出的密碼",
       "exportPk": "匯出私鑰",

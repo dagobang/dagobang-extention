@@ -8,6 +8,7 @@ import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
 import { formatPriceValue, parseNumberLoose, formatTime } from '@/utils/format';
+import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 
 type LimitTradePanelProps = {
   platform: string;
@@ -39,6 +40,7 @@ export function LimitTradePanel({
   tokenInfo,
 }: LimitTradePanelProps) {
   const panelWidth = 780;
+  const { ensureReady: ensureTradeSuccessAudioReady, playBuy: playTradeBuySound, playSell: playTradeSellSound } = useTradeSuccessSound(settings?.tradeSuccessSoundEnabled);
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
     const defaultX = Math.max(0, width - panelWidth);
@@ -103,6 +105,7 @@ export function LimitTradePanel({
   const [sellOrderType, setSellOrderType] = useState<LimitOrderType>('take_profit_sell');
   const [onlyCurrentToken, setOnlyCurrentToken] = useState(false);
   const [orders, setOrders] = useState<LimitOrder[]>([]);
+  const lastOrderStatusRef = useRef<Record<string, string>>({});
   const [scanStatus, setScanStatus] = useState<LimitOrderScanStatus | null>(null);
   const [latestTokenPriceUsd, setLatestTokenPriceUsd] = useState<number | null>(null);
   const [priceByTokenKey, setPriceByTokenKey] = useState<Record<string, { priceUsd: number | null; ts: number }>>({});
@@ -192,6 +195,22 @@ export function LimitTradePanel({
   useEffect(() => {
     priceByTokenKeyRef.current = priceByTokenKey;
   }, [priceByTokenKey]);
+
+  useEffect(() => {
+    if (!orders.length) return;
+    let played = false;
+    const next: Record<string, string> = { ...lastOrderStatusRef.current };
+    for (const o of orders) {
+      const prev = next[o.id];
+      next[o.id] = o.status;
+      if (!played && prev && prev !== 'executed' && o.status === 'executed') {
+        if (o.side === 'buy') playTradeBuySound();
+        else playTradeSellSound();
+        played = true;
+      }
+    }
+    lastOrderStatusRef.current = next;
+  }, [orders, playTradeBuySound, playTradeSellSound]);
 
   useEffect(() => {
     if (!visible) return;
@@ -671,6 +690,7 @@ export function LimitTradePanel({
                 className="w-full px-2 py-1 rounded border border-emerald-500/30 bg-emerald-500/10 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={async () => {
                   if (!tokenAddress || !tokenInfo) return;
+                  ensureTradeSuccessAudioReady();
                   const trigger = parsePositiveNumber(buyPrice);
                   if (trigger == null) return;
                   const amountWei = parseEther(buyAmount).toString();
@@ -771,6 +791,7 @@ export function LimitTradePanel({
                   className="flex-1 px-2 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={async () => {
                     if (!tokenAddress || !tokenInfo) return;
+                    ensureTradeSuccessAudioReady();
                     const trigger = parsePositiveNumber(sellPrice);
                     const bps = toPercentBps(sellPercent);
                     if (trigger == null || bps == null) return;

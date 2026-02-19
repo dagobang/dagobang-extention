@@ -386,6 +386,14 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
               />
             </label>
           </div>
+          <label className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
+            <div className="text-[14px] text-zinc-300">{tt('popup.settings.tradeSuccessSound')}</div>
+            <input
+              type="checkbox"
+              checked={!!settingsDraft.tradeSuccessSoundEnabled}
+              onChange={(e) => setSettingsDraft((s) => ({ ...s, tradeSuccessSoundEnabled: e.target.checked }))}
+            />
+          </label>
         </div>
           <button
             className="w-full rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold disabled:opacity-60 hover:bg-emerald-500"

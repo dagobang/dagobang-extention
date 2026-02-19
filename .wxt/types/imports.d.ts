@@ -48,6 +48,7 @@ declare global {
   const useReducer: typeof import('react').useReducer
   const useRef: typeof import('react').useRef
   const useState: typeof import('react').useState
+  const useTradeSuccessSound: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useTradeSuccessSound').useTradeSuccessSound
   const validateSettings: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/validate').validateSettings
 }
 // for type re-export

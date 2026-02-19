@@ -91,6 +91,7 @@
       "autoLockSeconds": "Auto Lock (s)",
       "uiSection": "UI",
       "toastPosition": "Toast position",
+      "tradeSuccessSound": "Trade success sound",
       "security": "Security",
       "exportPassword": "Password for export",
       "exportPk": "Export PK",

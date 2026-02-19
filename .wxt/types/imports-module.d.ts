@@ -25,6 +25,7 @@ declare module '#imports' {
   export { default as GmgnAPI, extractGmgnAuthData, GmgnAPI, MultiTokenInfoResponse, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams } from '../hooks/GmgnAPI';
   export { TokenAPI, TokenAPI } from '../hooks/TokenAPI';
   export { loadContractAbi, useContractAbi, ContractAddress } from '../hooks/useContractAbi';
+  export { useTradeSuccessSound } from '../hooks/useTradeSuccessSound';
   export { encryptJson, decryptJson } from '../utils/crypto';
   export { defaultSettings } from '../utils/defaults';
   export { isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime, formatBroadcastProvider } from '../utils/format';

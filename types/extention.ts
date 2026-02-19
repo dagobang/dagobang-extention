@@ -79,6 +79,7 @@ export type Settings = {
   quickBuy1Bnb?: string;
   quickBuy2Bnb?: string;
   keyboardShortcutsEnabled?: boolean;
+  tradeSuccessSoundEnabled?: boolean;
   limitOrderScanIntervalMs?: number;
   autoTrade: AutoTradeConfig;
   advancedAutoSell: AdvancedAutoSellConfig;

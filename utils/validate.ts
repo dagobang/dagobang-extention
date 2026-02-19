@@ -38,6 +38,7 @@ function isAllowedProtectedRpcUrl(raw: string): boolean {
   if (host.endsWith('48.club')) return true;
   if (host.endsWith('getblock')) return true;
   if (host.includes('blockrazor')) return true;
+  if (host.includes('pancakeswap.finance')) return true;
   return false;
 }
 
@@ -73,9 +74,12 @@ export function validateSettings(input: Settings): Settings | null {
   const keyboardShortcutsEnabled = typeof (input as any).keyboardShortcutsEnabled === 'boolean'
     ? (input as any).keyboardShortcutsEnabled
     : ((defaults as any).keyboardShortcutsEnabled ?? false);
+  const tradeSuccessSoundEnabled = typeof (input as any).tradeSuccessSoundEnabled === 'boolean'
+    ? (input as any).tradeSuccessSoundEnabled
+    : ((defaults as any).tradeSuccessSoundEnabled ?? false);
 
   const chains = { ...defaults.chains };
-  
+
   if (input.chains) {
     ([56] as const).forEach((cid) => {
       const cInput = input.chains[cid];
@@ -248,6 +252,7 @@ export function validateSettings(input: Settings): Settings | null {
     quickBuy1Bnb,
     quickBuy2Bnb,
     keyboardShortcutsEnabled,
+    tradeSuccessSoundEnabled,
     limitOrderScanIntervalMs,
     autoTrade,
     advancedAutoSell,

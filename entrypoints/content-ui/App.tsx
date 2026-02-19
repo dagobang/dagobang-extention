@@ -19,6 +19,7 @@ import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { Logo } from '@/components/Logo';
 import { formatBroadcastProvider } from '@/utils/format';
+import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 
 export default function App() {
   const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(() => parseCurrentUrl(window.location.href));
@@ -83,6 +84,7 @@ export default function App() {
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
   const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
+  const { ensureReady: ensureTradeSuccessAudioReady, playBuy: playTradeBuySound, playSell: playTradeSellSound } = useTradeSuccessSound(settings?.tradeSuccessSoundEnabled);
 
   useEffect(() => {
     if (settings) {
@@ -627,6 +629,7 @@ export default function App() {
       const amountIn = parseEther(amountStr);
       if (!amountIn) throw new Error('Invalid amount');
       if (BigInt(nativeBalanceWei || '0') < amountIn) throw new Error('Insufficient balance');
+      ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: '🔄' });
       const startTime = Date.now();
@@ -669,6 +672,7 @@ export default function App() {
           const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
           throw new Error(detail || 'Transaction failed');
         }
+        playTradeBuySound();
         toast.success(t('contentUi.toast.buyDone', locale, [sym, amountStr]), { icon: '✅' });
         setPendingBuyTokenMinOutWei(null);
 
@@ -769,6 +773,7 @@ export default function App() {
       }
       if (!isTurbo && amountWei <= 0n) throw new Error('Invalid amount');
 
+      ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: '🔄' });
       const startTime = Date.now();
@@ -808,6 +813,7 @@ export default function App() {
           const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
           throw new Error(detail || 'Transaction failed');
         }
+        playTradeSellSound();
         toast.success(t('contentUi.toast.sellDone', locale, [sym, pct]), { icon: '✅' });
         await Promise.all([refreshToken(true), refreshAll()]);
         setPendingBuyTokenMinOutWei(null);
