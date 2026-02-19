@@ -38,6 +38,11 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
   }
 
   const passwordsMatch = newPassword.length >= 6 && newPassword === confirmPassword;
+  const chainId = settingsDraft.chainId;
+  const protectedRpcUrlsDraft = settingsDraft.chains[chainId].protectedRpcUrls.map((x) => String(x ?? '').trim()).filter(Boolean);
+  const protectedRpcUrlsValidated = validateSettings(settingsDraft)?.chains[chainId].protectedRpcUrls ?? [];
+  const hasInvalidProtectedRpcUrls =
+    settingsDraft.chains[chainId].antiMev && protectedRpcUrlsValidated.length < protectedRpcUrlsDraft.length;
 
   return (
     <div className="w-[360px] bg-zinc-950 text-zinc-100 h-[500px] flex flex-col">
@@ -137,6 +142,10 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
                   }))
                 }
               />
+              <div className="text-[11px] text-zinc-500">仅支持 blockrazor / getblock / 48.club 的隐私节点 URL</div>
+              {hasInvalidProtectedRpcUrls && (
+                <div className="text-[11px] text-red-400">检测到不支持的隐私节点 URL，保存时会自动忽略并关闭 Anti-MEV</div>
+              )}
             </label>
           )}
         </div>

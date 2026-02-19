@@ -23,6 +23,24 @@ function clampFloat(value: any, min: number, max: number, fallback: number) {
   return Math.round(clamped * 100) / 100;
 }
 
+function isAllowedProtectedRpcUrl(raw: string): boolean {
+  const url = (raw ?? '').trim();
+  if (!url) return false;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+  const host = (u.hostname ?? '').toLowerCase();
+  if (!host) return false;
+  if (host.endsWith('48.club')) return true;
+  if (host.endsWith('getblock')) return true;
+  if (host.includes('blockrazor')) return true;
+  return false;
+}
+
 export function validateSettings(input: Settings): Settings | null {
   const defaults = defaultSettings();
   const chainId = 56;
@@ -84,10 +102,14 @@ export function validateSettings(input: Settings): Settings | null {
         const defaultSellGasPreset = (cDef as any).sellGasPreset ?? cDef.gasPreset;
         const buyGasPreset = allowedGasPresets.includes(inputBuyGasPreset) ? inputBuyGasPreset : defaultBuyGasPreset;
         const sellGasPreset = allowedGasPresets.includes(inputSellGasPreset) ? inputSellGasPreset : defaultSellGasPreset;
+        const protectedRpcUrls = (cInput.protectedRpcUrls || [])
+          .map((x) => x.trim())
+          .filter(Boolean)
+          .filter(isAllowedProtectedRpcUrl);
         chains[cid] = {
           rpcUrls: (cInput.rpcUrls || []).map((x) => x.trim()).filter(Boolean),
-          protectedRpcUrls: (cInput.protectedRpcUrls || []).map((x) => x.trim()).filter(Boolean),
-          antiMev: !!cInput.antiMev,
+          protectedRpcUrls,
+          antiMev: !!cInput.antiMev && protectedRpcUrls.length > 0,
           gasPreset: ['slow', 'standard', 'fast', 'turbo'].includes(cInput.gasPreset) ? cInput.gasPreset : cDef.gasPreset,
           buyGasPreset,
           sellGasPreset,
