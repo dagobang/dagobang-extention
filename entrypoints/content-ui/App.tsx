@@ -53,8 +53,9 @@ export default function App() {
   const isEditingRef = useRef(false);
   const keyboardEnabledRef = useRef(false);
   const spaceHeldRef = useRef(false);
-  const handleBuyRef = useRef<(amountStr: string) => void>(() => {});
-  const handleSellRef = useRef<(pct: number) => void>(() => {});
+  const handleBuyRef = useRef<(amountStr: string) => void>(() => { });
+  const handleSellRef = useRef<(pct: number) => void>(() => { });
+  const prewarmedTurboRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     siteInfoRef.current = siteInfo;
@@ -361,6 +362,24 @@ export default function App() {
     handleBuy(pendingQuickBuy.amount);
     setPendingQuickBuy(null);
   }, [pendingQuickBuy, tokenAddressNormalized, tokenInfo, settings]);
+
+  useEffect(() => {
+    if (!isUnlocked) return;
+    if (!address) return;
+    if (!settings) return;
+    if (!tokenAddressNormalized) return;
+    if (!tokenInfo) return;
+    const chainId = settings.chainId ?? 56;
+    const isTurbo = settings.chains[chainId]?.executionMode === 'turbo';
+    if (!isTurbo) return;
+    const key = `${chainId}:${address.toLowerCase()}:${tokenAddressNormalized.toLowerCase()}`;
+    if (prewarmedTurboRef.current.has(key)) return;
+    prewarmedTurboRef.current.add(key);
+    void call({
+      type: 'trade:prewarmTurbo',
+      input: { chainId, tokenAddress: tokenAddressNormalized, tokenInfo: tokenInfo ?? undefined },
+    } as const).catch(() => { });
+  }, [isUnlocked, address, settings, tokenAddressNormalized, tokenInfo]);
 
   const formattedNativeBalance = useMemo(() => {
     if (!nativeBalanceWei) return '0.00';
@@ -740,6 +759,7 @@ export default function App() {
       } else {
         const pending = BigInt(pendingBuyTokenMinOutWei || '0');
         if (bal <= 0n && pending <= 0n) throw new Error('No balance');
+        if (bal <= 0n && pending > 0n) throw new Error('Buy is pending, wait for confirmation before selling');
       }
       let amountWei = bal > 0n ? (bal * BigInt(pct)) / 100n : 0n;
       const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';

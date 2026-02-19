@@ -242,6 +242,7 @@ export type BgRequest =
   | { type: 'token:getTokenInfo:fourmemeHttp'; platform: string; chain: string; address: `0x${string}` }
   | { type: 'token:createFourmeme'; input: { name: string; shortName: string; desc: string; imgUrl: string; webUrl?: string; twitterUrl?: string; telegramUrl?: string; preSale: string; onlyMPC: boolean } }
   | { type: 'ai:generateLogo'; prompt: string; size?: string; apiKey: string }
+  | { type: 'trade:prewarmTurbo'; input: { chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo } }
   | { type: 'tx:buy'; input: TxBuyInput }
   | { type: 'tx:sell'; input: TxSellInput }
   | { type: 'tx:approve'; chainId: number; tokenAddress: `0x${string}`; spender: `0x${string}`; amountWei: string }
@@ -302,6 +303,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; data?: any }
   : T extends { type: 'ai:generateLogo' }
   ? { ok: true; imageUrl: string }
+  : T extends { type: 'trade:prewarmTurbo' }
+  ? { ok: true }
   : T extends { type: 'tx:approve' }
   ? { ok: true; txHash: `0x${string}` }
   : T extends { type: 'tx:buy' }

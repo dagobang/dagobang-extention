@@ -11,7 +11,7 @@ import { getBridgeTokenDexPreference } from '../../constants/tokens/allTokens';
 import { dagobangAbi } from '@/constants/contracts/abi';
 import { Address, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadline, getRouterSwapDesc, getSlippageBps, getV3FeeForDesc } from './tradeTypes';
 import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInDex, resolveDexExactIn } from './tradeDex';
-import { getGasPriceWei, sendTransaction } from './tradeTx';
+import { getGasPriceWei, prewarmNonce, sendTransaction } from './tradeTx';
 import { formatBroadcastProvider } from '@/utils/format';
 
 export class TradeService {
@@ -23,6 +23,70 @@ export class TradeService {
     opts?: { v3Fee?: number; v2HintPair?: string; prefer?: 'v2' | 'v3' }
   ): Promise<{ amountOut: bigint; swapType: number; fee?: number; poolAddress: string }> {
     return await quoteBestExactInDex(chainId, tokenIn, tokenOut, amountIn, opts);
+  }
+
+  static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo }) {
+    const settings = await SettingsService.get();
+    const chainSettings = settings.chains[input.chainId];
+    const executionMode = chainSettings?.executionMode ?? 'default';
+    if (executionMode !== 'turbo') return;
+    const tokenInfo = input.tokenInfo;
+    if (!tokenInfo) return;
+
+    const client = await RpcService.getClient();
+    const account = await WalletService.getSigner();
+    await prewarmNonce(client, input.chainId, account.address);
+
+    const token = input.tokenAddress;
+    const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
+    const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
+    const memePrefer = bridgePrefer ?? 'v2';
+
+    const bridgeOpts = bridgePrefer === 'v2'
+      ? { prefer: 'v2' as const }
+      : bridgePrefer === 'v3'
+        ? { v3Fee: 500, prefer: 'v3' as const }
+        : { v3Fee: 500 };
+
+    const amountIn = 1n;
+    const warmTasks: Array<Promise<unknown>> = [];
+
+    if (memePrefer === 'v3') {
+      warmTasks.push(
+        resolveDexExactIn(
+          input.chainId,
+          ZERO_ADDRESS,
+          token,
+          amountIn,
+          { v2HintPair: tokenInfo.pool_pair, prefer: memePrefer },
+          true,
+          false
+        )
+      );
+      warmTasks.push(
+        resolveDexExactIn(
+          input.chainId,
+          token,
+          ZERO_ADDRESS,
+          amountIn,
+          { v2HintPair: tokenInfo.pool_pair, prefer: memePrefer },
+          true,
+          false
+        )
+      );
+    }
+
+    if (bridgeToken && bridgePrefer !== 'v2') {
+      warmTasks.push(resolveDexExactIn(input.chainId, ZERO_ADDRESS, bridgeToken, amountIn, bridgeOpts, true, false));
+      warmTasks.push(resolveDexExactIn(input.chainId, bridgeToken, ZERO_ADDRESS, amountIn, bridgeOpts, true, false));
+    }
+
+    if (bridgeToken && memePrefer === 'v3') {
+      warmTasks.push(resolveDexExactIn(input.chainId, token, bridgeToken, amountIn, { v2HintPair: tokenInfo.pool_pair, prefer: memePrefer }, true, false));
+      warmTasks.push(resolveDexExactIn(input.chainId, bridgeToken, token, amountIn, { v2HintPair: tokenInfo.pool_pair, prefer: memePrefer }, true, false));
+    }
+
+    await Promise.allSettled(warmTasks);
   }
 
   private static isInnerDisk(tokenInfo: TokenInfo): boolean {

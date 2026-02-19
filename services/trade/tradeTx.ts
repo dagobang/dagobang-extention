@@ -192,6 +192,20 @@ async function reserveNonce(client: any, chainId: number, address: `0x${string}`
   }
 }
 
+export async function prewarmNonce(client: any, chainId: number, address: `0x${string}`): Promise<void> {
+  const key = `${chainId}:${address.toLowerCase()}`;
+  const release = await acquireNonceLock(key);
+  try {
+    const now = Date.now();
+    const state = nonceState.get(key);
+    if (state && now - state.ts < NONCE_CACHE_WINDOW_MS) return;
+    const nonce = await client.getTransactionCount({ address, blockTag: 'pending' });
+    nonceState.set(key, { nextNonce: nonce, ts: now });
+  } finally {
+    release();
+  }
+}
+
 function clearNonceState(chainId: number, address: `0x${string}`) {
   const key = `${chainId}:${address.toLowerCase()}`;
   nonceState.delete(key);

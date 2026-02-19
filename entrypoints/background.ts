@@ -339,6 +339,13 @@ export default defineBackground(() => {
             return { ok: true, ...res };
           }
 
+          case 'trade:prewarmTurbo': {
+            try {
+              await TradeService.prewarmTurbo(msg.input);
+            } catch { }
+            return { ok: true };
+          }
+
           case 'tx:buy': {
             try {
               const rsp = await TradeService.buy(msg.input);

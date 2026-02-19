@@ -293,26 +293,29 @@ async function getFirstV2Pair(chainId: number, tokenIn: Address, tokenOut: Addre
   return null;
 }
 
-async function isV2PairAddress(chainId: number, tokenIn: Address, tokenOut: Address, pair: Address): Promise<boolean> {
+async function isV2PairMatchTokens(pair: Address, tokenIn: Address, tokenOut: Address): Promise<boolean> {
   const client = await RpcService.getClient();
-  const factories = getV2Factories(chainId);
-  const pairResults = await Promise.allSettled(
-    factories.map((factory) =>
+  try {
+    const [token0, token1] = await Promise.all([
       client.readContract({
-        address: factory as Address,
-        abi: factoryV2Abi,
-        functionName: 'getPair',
-        args: [tokenIn, tokenOut],
-      }) as Promise<Address>
-    )
-  );
-  const target = pair.toLowerCase();
-  for (const r of pairResults) {
-    if (r.status !== 'fulfilled') continue;
-    if (r.value === ZERO_ADDRESS) continue;
-    if (r.value.toLowerCase() === target) return true;
+        address: pair,
+        abi: pairV2Abi,
+        functionName: 'token0',
+      }) as Promise<Address>,
+      client.readContract({
+        address: pair,
+        abi: pairV2Abi,
+        functionName: 'token1',
+      }) as Promise<Address>,
+    ]);
+    const a = tokenIn.toLowerCase();
+    const b = tokenOut.toLowerCase();
+    const t0 = token0.toLowerCase();
+    const t1 = token1.toLowerCase();
+    return (t0 === a && t1 === b) || (t0 === b && t1 === a);
+  } catch {
+    return false;
   }
-  return false;
 }
 
 async function resolveDexExactInTurbo(
@@ -327,14 +330,8 @@ async function resolveDexExactInTurbo(
   const prefer = opts?.prefer;
 
   if (prefer === 'v2') {
-    let pair: Address | null = null;
-    if (hintPair) {
-      const ok = await isV2PairAddress(chainId, tokenIn, tokenOut, hintPair);
-      if (ok) pair = hintPair;
-    }
-    if (!pair) {
-      pair = await getFirstV2Pair(chainId, tokenIn, tokenOut);
-    }
+    const hintOk = hintPair ? await isV2PairMatchTokens(hintPair, tokenIn, tokenOut) : false;
+    const pair = hintOk ? hintPair : await getFirstV2Pair(chainId, tokenIn, tokenOut);
     if (pair) {
       const amountOut = needAmountOut ? await quoteV2ExactInByPair(pair, tokenIn, tokenOut, amountIn, 25) : 0n;
       if (!needAmountOut || amountOut > 0n) {
@@ -344,7 +341,7 @@ async function resolveDexExactInTurbo(
   }
 
   if (!needAmountOut && prefer !== 'v3' && !isValidV3Fee(opts?.v3Fee) && hintPair) {
-    const ok = await isV2PairAddress(chainId, tokenIn, tokenOut, hintPair);
+    const ok = await isV2PairMatchTokens(hintPair, tokenIn, tokenOut);
     if (ok) {
       return { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: hintPair };
     }
@@ -427,13 +424,8 @@ async function resolveDexExactInTurbo(
   }
 
   let pair: Address | null = null;
-  if (hintPair) {
-    const ok = await isV2PairAddress(chainId, tokenIn, tokenOut, hintPair);
-    if (ok) pair = hintPair;
-  }
-  if (!pair) {
-    pair = await getFirstV2Pair(chainId, tokenIn, tokenOut);
-  }
+  const hintOk = hintPair ? await isV2PairMatchTokens(hintPair, tokenIn, tokenOut) : false;
+  pair = hintOk ? hintPair : await getFirstV2Pair(chainId, tokenIn, tokenOut);
   if (!pair) {
     return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: undefined as number | undefined, poolAddress: ZERO_ADDRESS as Address };
   }

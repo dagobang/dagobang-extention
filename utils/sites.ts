@@ -1,7 +1,7 @@
-import { TokenAPI } from "#imports";
 import { getChainIdByName } from "@/constants/chains";
 import { MEME_SUFFIXS } from "@/constants/meme";
 import { getBridgeTokenAddresses } from "@/constants/tokens";
+import { TokenAPI } from '@/hooks/TokenAPI';
 
 export interface SiteInfo {
   chain: string;
