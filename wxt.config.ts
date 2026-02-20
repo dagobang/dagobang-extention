@@ -27,6 +27,22 @@ export default defineConfig({
       'https://debot.ai/*',
       'https://api.blxrbdn.com/*',
     ],
+    web_accessible_resources: [
+      {
+        resources: ['sounds/*.mp3'],
+        matches: [
+          '*://axiom.trade/*',
+          '*://debot.ai/*',
+          '*://dexscreener.com/*',
+          '*://flap.sh/*',
+          '*://four.meme/*',
+          '*://gmgn.ai/*',
+          '*://web3.binance.com/*',
+          '*://web3.okx.com/*',
+          '*://www.xxyy.io/*',
+        ],
+      },
+    ],
     action: {
       default_title: 'Dagobang 打狗棒',
     },

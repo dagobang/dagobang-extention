@@ -66,6 +66,21 @@ export type AdvancedAutoSellConfig = {
   trailingStop?: AdvancedAutoSellTrailingStop;
 };
 
+export type TradeSuccessSoundPreset =
+  | 'Bell'
+  | 'Boom'
+  | 'Cheer'
+  | 'Coins'
+  | 'Pop'
+  | 'Handgun'
+  | 'Kaching'
+  | 'Nice'
+  | 'Shotgun'
+  | 'Sonumi'
+  | 'Yes'
+  | 'Alipay'
+  | 'Wechat';
+
 export type Settings = {
   chainId: 56;
   chains: Record<number, ChainSettings>;
@@ -80,6 +95,9 @@ export type Settings = {
   quickBuy2Bnb?: string;
   keyboardShortcutsEnabled?: boolean;
   tradeSuccessSoundEnabled?: boolean;
+  tradeSuccessSoundPresetBuy?: TradeSuccessSoundPreset;
+  tradeSuccessSoundPresetSell?: TradeSuccessSoundPreset;
+  tradeSuccessSoundVolume?: number;
   limitOrderScanIntervalMs?: number;
   autoTrade: AutoTradeConfig;
   advancedAutoSell: AdvancedAutoSellConfig;

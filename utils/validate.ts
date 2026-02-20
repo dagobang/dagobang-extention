@@ -77,6 +77,21 @@ export function validateSettings(input: Settings): Settings | null {
   const tradeSuccessSoundEnabled = typeof (input as any).tradeSuccessSoundEnabled === 'boolean'
     ? (input as any).tradeSuccessSoundEnabled
     : ((defaults as any).tradeSuccessSoundEnabled ?? false);
+  const tradeSuccessSoundPresets = ['Bell', 'Boom', 'Cheer', 'Coins', 'Pop', 'Handgun', 'Kaching', 'Nice', 'Shotgun', 'Sonumi', 'Yes', 'Alipay', 'Wechat'] as const;
+  const inputTradeSuccessSoundPresetBuy = (input as any).tradeSuccessSoundPresetBuy;
+  const inputTradeSuccessSoundPresetSell = (input as any).tradeSuccessSoundPresetSell;
+  const tradeSuccessSoundPresetBuy = tradeSuccessSoundPresets.includes(inputTradeSuccessSoundPresetBuy)
+    ? inputTradeSuccessSoundPresetBuy
+    : ((defaults as any).tradeSuccessSoundPresetBuy ?? 'Bell');
+  const tradeSuccessSoundPresetSell = tradeSuccessSoundPresets.includes(inputTradeSuccessSoundPresetSell)
+    ? inputTradeSuccessSoundPresetSell
+    : ((defaults as any).tradeSuccessSoundPresetSell ?? 'Coins');
+  const tradeSuccessSoundVolume = clampNumber(
+    (input as any).tradeSuccessSoundVolume,
+    0,
+    100,
+    typeof (defaults as any).tradeSuccessSoundVolume === 'number' ? (defaults as any).tradeSuccessSoundVolume : 60,
+  );
 
   const chains = { ...defaults.chains };
 
@@ -253,6 +268,9 @@ export function validateSettings(input: Settings): Settings | null {
     quickBuy2Bnb,
     keyboardShortcutsEnabled,
     tradeSuccessSoundEnabled,
+    tradeSuccessSoundPresetBuy,
+    tradeSuccessSoundPresetSell,
+    tradeSuccessSoundVolume,
     limitOrderScanIntervalMs,
     autoTrade,
     advancedAutoSell,

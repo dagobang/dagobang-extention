@@ -15,6 +15,19 @@ declare module "wxt/browser" {
     | "/injected.js"
     | "/logo.svg"
     | "/popup.html"
+    | "/sounds/Alipay.mp3"
+    | "/sounds/Bell.mp3"
+    | "/sounds/Boom.mp3"
+    | "/sounds/Cheer.mp3"
+    | "/sounds/Coins.mp3"
+    | "/sounds/Handgun.mp3"
+    | "/sounds/Kaching.mp3"
+    | "/sounds/Nice.mp3"
+    | "/sounds/Pop.mp3"
+    | "/sounds/Shotgun.mp3"
+    | "/sounds/Sonumi.mp3"
+    | "/sounds/Wechat.mp3"
+    | "/sounds/Yes.mp3"
   type HtmlPublicPath = Extract<PublicPath, `${string}.html`>
   export interface WxtRuntime {
     getURL(path: PublicPath): string;

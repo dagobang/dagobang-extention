@@ -40,7 +40,12 @@ export function LimitTradePanel({
   tokenInfo,
 }: LimitTradePanelProps) {
   const panelWidth = 780;
-  const { ensureReady: ensureTradeSuccessAudioReady, playBuy: playTradeBuySound, playSell: playTradeSellSound } = useTradeSuccessSound(settings?.tradeSuccessSoundEnabled);
+  const { ensureReady: ensureTradeSuccessAudioReady, playBuy: playTradeBuySound, playSell: playTradeSellSound } = useTradeSuccessSound({
+    enabled: settings?.tradeSuccessSoundEnabled,
+    volume: settings?.tradeSuccessSoundVolume,
+    buyPreset: settings?.tradeSuccessSoundPresetBuy,
+    sellPreset: settings?.tradeSuccessSoundPresetSell,
+  });
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
     const defaultX = Math.max(0, width - panelWidth);

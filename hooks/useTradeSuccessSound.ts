@@ -1,102 +1,127 @@
 import { useCallback, useRef } from 'react';
+import type { TradeSuccessSoundPreset } from '@/types/extention';
 
-export function useTradeSuccessSound(enabled?: boolean) {
+type UseTradeSuccessSoundOptions = {
+  enabled?: boolean;
+  volume?: number;
+  buyPreset?: TradeSuccessSoundPreset;
+  sellPreset?: TradeSuccessSoundPreset;
+};
+
+export function useTradeSuccessSound(options?: UseTradeSuccessSoundOptions) {
+  const enabled = !!options?.enabled;
+  const buyPreset = options?.buyPreset ?? 'Bell';
+  const sellPreset = options?.sellPreset ?? 'Coins';
+  const volume = typeof options?.volume === 'number' ? options!.volume : 60;
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const bufferCacheRef = useRef<Map<TradeSuccessSoundPreset, AudioBuffer>>(new Map());
+  const loadingRef = useRef<Map<TradeSuccessSoundPreset, Promise<AudioBuffer>>>(new Map());
+
+  const getUrl = (preset: TradeSuccessSoundPreset) => {
+    try {
+      const runtime = (globalThis as any)?.chrome?.runtime;
+      if (runtime?.getURL) return runtime.getURL(`sounds/${preset}.mp3`);
+    } catch {
+    }
+    try {
+      return new URL(`/sounds/${preset}.mp3`, window.location.origin).toString();
+    } catch {
+      return `sounds/${preset}.mp3`;
+    }
+  };
+
+  const ensureCtx = useCallback(() => {
+    const AudioCtx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext | undefined;
+    if (!AudioCtx) return null;
+    if (!audioCtxRef.current) audioCtxRef.current = new AudioCtx();
+    return audioCtxRef.current;
+  }, []);
+
+  const loadPreset = useCallback(async (preset: TradeSuccessSoundPreset) => {
+    const existing = bufferCacheRef.current.get(preset);
+    if (existing) return existing;
+
+    const pending = loadingRef.current.get(preset);
+    if (pending) return pending;
+
+    const p = (async () => {
+      const ctx = ensureCtx();
+      if (!ctx) throw new Error('AudioContext not available');
+      const url = getUrl(preset);
+      const res = await fetch(url);
+      const buf = await res.arrayBuffer();
+      const decoded = await ctx.decodeAudioData(buf.slice(0));
+      bufferCacheRef.current.set(preset, decoded);
+      loadingRef.current.delete(preset);
+      return decoded;
+    })();
+
+    loadingRef.current.set(preset, p);
+    try {
+      return await p;
+    } finally {
+      loadingRef.current.delete(preset);
+    }
+  }, [ensureCtx]);
 
   const ensureReady = useCallback(() => {
     if (!enabled) return;
-    const AudioCtx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext | undefined;
-    if (!AudioCtx) return;
-    if (!audioCtxRef.current) audioCtxRef.current = new AudioCtx();
-    if (audioCtxRef.current.state === 'suspended') {
-      void audioCtxRef.current.resume().catch(() => { });
+    const ctx = ensureCtx();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      void ctx.resume().catch(() => { });
     }
-  }, [enabled]);
 
-  const playBuy = useCallback(() => {
+    void loadPreset(buyPreset).catch(() => { });
+    void loadPreset(sellPreset).catch(() => { });
+  }, [enabled, buyPreset, sellPreset]);
+
+  const playPreset = useCallback((preset: TradeSuccessSoundPreset) => {
     if (!enabled) return;
     ensureReady();
-    const ctx = audioCtxRef.current;
+    const ctx = ensureCtx();
     if (!ctx) return;
-    try {
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
+
+    const v = Math.max(0, Math.min(1, Number.isFinite(volume) ? volume / 100 : 0.6));
+    const playBuffer = (buf: AudioBuffer) => {
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
       const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, now);
-      osc.frequency.exponentialRampToValueAtTime(1320, now + 0.08);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.18, now + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
-      osc.connect(gain);
+      gain.gain.setValueAtTime(v, ctx.currentTime);
+      src.connect(gain);
       gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.14);
-      osc.onended = () => {
+      src.start();
+      src.onended = () => {
         try {
-          osc.disconnect();
+          src.disconnect();
           gain.disconnect();
         } catch {
         }
       };
-    } catch {
-    }
-  }, [enabled, ensureReady]);
+    };
+
+    void (async () => {
+      try {
+        if (ctx.state === 'suspended') await ctx.resume();
+        const existing = bufferCacheRef.current.get(preset);
+        if (existing) {
+          playBuffer(existing);
+          return;
+        }
+        const buf = await loadPreset(preset);
+        playBuffer(buf);
+      } catch {
+      }
+    })();
+  }, [enabled, ensureReady, volume, ensureCtx, loadPreset]);
+
+  const playBuy = useCallback(() => {
+    playPreset(buyPreset);
+  }, [buyPreset, playPreset]);
 
   const playSell = useCallback(() => {
-    if (!enabled) return;
-    ensureReady();
-    const ctx = audioCtxRef.current;
-    if (!ctx) return;
-    try {
-      const now = ctx.currentTime;
+    playPreset(sellPreset);
+  }, [playPreset, sellPreset]);
 
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      osc1.type = 'square';
-      osc1.frequency.setValueAtTime(660, now);
-      osc1.frequency.exponentialRampToValueAtTime(220, now + 0.11);
-      gain1.gain.setValueAtTime(0.0001, now);
-      gain1.gain.exponentialRampToValueAtTime(0.14, now + 0.008);
-      gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
-      osc1.connect(gain1);
-      gain1.connect(ctx.destination);
-      osc1.start(now);
-      osc1.stop(now + 0.13);
-
-      const gap = 0.03;
-      const now2 = now + 0.13 + gap;
-
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.type = 'square';
-      osc2.frequency.setValueAtTime(440, now2);
-      osc2.frequency.exponentialRampToValueAtTime(165, now2 + 0.11);
-      gain2.gain.setValueAtTime(0.0001, now2);
-      gain2.gain.exponentialRampToValueAtTime(0.12, now2 + 0.008);
-      gain2.gain.exponentialRampToValueAtTime(0.0001, now2 + 0.12);
-      osc2.connect(gain2);
-      gain2.connect(ctx.destination);
-      osc2.start(now2);
-      osc2.stop(now2 + 0.13);
-
-      const cleanup = () => {
-        try {
-          osc1.disconnect();
-          gain1.disconnect();
-        } catch {
-        }
-        try {
-          osc2.disconnect();
-          gain2.disconnect();
-        } catch {
-        }
-      };
-
-      osc2.onended = cleanup;
-    } catch {
-    }
-  }, [enabled, ensureReady]);
-
-  return { ensureReady, playBuy, playSell };
+  return { ensureReady, playPreset, playBuy, playSell };
 }

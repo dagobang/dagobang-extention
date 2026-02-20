@@ -84,7 +84,12 @@ export default function App() {
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
   const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
-  const { ensureReady: ensureTradeSuccessAudioReady, playBuy: playTradeBuySound, playSell: playTradeSellSound } = useTradeSuccessSound(settings?.tradeSuccessSoundEnabled);
+  const { ensureReady: ensureTradeSuccessAudioReady, playBuy: playTradeBuySound, playSell: playTradeSellSound } = useTradeSuccessSound({
+    enabled: settings?.tradeSuccessSoundEnabled,
+    volume: settings?.tradeSuccessSoundVolume,
+    buyPreset: settings?.tradeSuccessSoundPresetBuy,
+    sellPreset: settings?.tradeSuccessSoundPresetSell,
+  });
 
   useEffect(() => {
     if (settings) {
