@@ -1,7 +1,7 @@
 import { getAddress } from 'viem';
 import { RpcService } from '../rpc';
 import { ChainId } from '../../constants/chains/chainId';
-import { getBridgeTokenAddresses } from '../../constants/tokens/allTokens';
+import { getBnbToBridgeTokenPoolConfig, getBridgeTokenAddresses } from '../../constants/tokens/allTokens';
 import { DeployAddress } from '../../constants/contracts/address';
 import { ContractNames } from '../../constants/contracts/names';
 import { factoryV2Abi, factoryV3Abi, pairV2Abi, poolV3Abi, quoterV2Abi } from '@/constants/contracts/abi';
@@ -9,6 +9,8 @@ import { Address, DexExactInOpts, DexExactInQuote, QUOTER_V2_BSC, SwapType, toQu
 
 const V3_POOL_CACHE_MS = 5 * 60_000;
 const v3PoolCache = new Map<string, { ts: number; pool: Address }>();
+const V2_PAIR_CACHE_MS = 5 * 60_000;
+const v2PairCache = new Map<string, { ts: number; pair: Address }>();
 
 export function getBridgeToken(chainId: number, quoteTokenAddress?: string): Address | null {
   if (!quoteTokenAddress) return null;
@@ -293,6 +295,18 @@ async function getFirstV2Pair(chainId: number, tokenIn: Address, tokenOut: Addre
   return null;
 }
 
+async function getFirstV2PairCached(chainId: number, tokenIn: Address, tokenOut: Address): Promise<Address | null> {
+  const key = `${chainId}:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}`;
+  const now = Date.now();
+  const cached = v2PairCache.get(key);
+  if (cached && now - cached.ts < V2_PAIR_CACHE_MS) return cached.pair;
+  const pair = await getFirstV2Pair(chainId, tokenIn, tokenOut);
+  if (pair && pair !== ZERO_ADDRESS) {
+    v2PairCache.set(key, { ts: now, pair });
+  }
+  return pair;
+}
+
 async function isV2PairMatchTokens(pair: Address, tokenIn: Address, tokenOut: Address): Promise<boolean> {
   const client = await RpcService.getClient();
   try {
@@ -329,9 +343,22 @@ async function resolveDexExactInTurbo(
   const hintPair = opts?.v2HintPair && opts.v2HintPair !== ZERO_ADDRESS ? (opts.v2HintPair as Address) : null;
   const prefer = opts?.prefer;
 
+  if (!needAmountOut) {
+    const wNative = toQuoteToken(chainId, ZERO_ADDRESS);
+    if (tokenIn.toLowerCase() === wNative.toLowerCase()) {
+      const cfg = getBnbToBridgeTokenPoolConfig(chainId as ChainId, tokenOut);
+      if (cfg?.kind === 'v2') {
+        return { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: cfg.poolAddress };
+      }
+      if (cfg?.kind === 'v3') {
+        return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: cfg.fee, poolAddress: cfg.poolAddress };
+      }
+    }
+  }
+
   if (prefer === 'v2') {
     const hintOk = hintPair ? await isV2PairMatchTokens(hintPair, tokenIn, tokenOut) : false;
-    const pair = hintOk ? hintPair : await getFirstV2Pair(chainId, tokenIn, tokenOut);
+    const pair = hintOk ? hintPair : await getFirstV2PairCached(chainId, tokenIn, tokenOut);
     if (pair) {
       const amountOut = needAmountOut ? await quoteV2ExactInByPair(pair, tokenIn, tokenOut, amountIn, 25) : 0n;
       if (!needAmountOut || amountOut > 0n) {
@@ -425,12 +452,78 @@ async function resolveDexExactInTurbo(
 
   let pair: Address | null = null;
   const hintOk = hintPair ? await isV2PairMatchTokens(hintPair, tokenIn, tokenOut) : false;
-  pair = hintOk ? hintPair : await getFirstV2Pair(chainId, tokenIn, tokenOut);
+  pair = hintOk ? hintPair : await getFirstV2PairCached(chainId, tokenIn, tokenOut);
   if (!pair) {
     return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: undefined as number | undefined, poolAddress: ZERO_ADDRESS as Address };
   }
   const amountOut = needAmountOut ? await quoteV2ExactInByPair(pair, tokenIn, tokenOut, amountIn, 25) : 0n;
   return { amountOut, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: pair };
+}
+
+export async function resolveBridgeHopExactIn(
+  chainId: number,
+  routerTokenIn: Address,
+  routerTokenOut: Address,
+  amountIn: bigint,
+  prefer: 'v2' | 'v3' | null,
+  isTurbo: boolean,
+  needAmountOut: boolean
+): Promise<DexExactInQuote> {
+  const tokenIn = toQuoteToken(chainId, routerTokenIn);
+  const tokenOut = toQuoteToken(chainId, routerTokenOut);
+
+  const wNative = toQuoteToken(chainId, ZERO_ADDRESS);
+  const hardcoded = tokenIn.toLowerCase() === wNative.toLowerCase()
+    ? getBnbToBridgeTokenPoolConfig(chainId as ChainId, tokenOut)
+    : null;
+
+  if (hardcoded) {
+    if (hardcoded.kind === 'v2') {
+      const amountOut = needAmountOut ? await quoteV2ExactInByPair(hardcoded.poolAddress, tokenIn, tokenOut, amountIn, 25) : 0n;
+      if (!needAmountOut || amountOut > 0n) {
+        return { amountOut, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: hardcoded.poolAddress };
+      }
+    } else {
+      const amountOut = needAmountOut ? await getQuote(chainId, tokenIn, tokenOut, amountIn, hardcoded.fee) : 0n;
+      if (!needAmountOut || amountOut > 0n) {
+        return { amountOut, swapType: SwapType.V3_EXACT_IN, fee: hardcoded.fee, poolAddress: hardcoded.poolAddress };
+      }
+    }
+  }
+
+  if (isTurbo) {
+    const opts: DexExactInOpts =
+      prefer === 'v2'
+        ? { prefer: 'v2' }
+        : prefer === 'v3'
+          ? { prefer: 'v3', v3Fee: 500 }
+          : { v3Fee: 500 };
+    return await resolveDexExactInTurbo(chainId, tokenIn, tokenOut, amountIn, opts, needAmountOut);
+  }
+
+  if (prefer === 'v2') {
+    const pair = await getFirstV2PairCached(chainId, tokenIn, tokenOut);
+    if (!pair) {
+      return { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: ZERO_ADDRESS as Address };
+    }
+    const amountOut = await quoteV2ExactInByPair(pair, tokenIn, tokenOut, amountIn, 25);
+    return { amountOut, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: pair };
+  }
+
+  const fees = prefer === 'v3' ? [500, 2500] : [2500, 500];
+  for (const fee of fees) {
+    const pool = await getFirstV3PoolCached(chainId, tokenIn, tokenOut, fee);
+    if (!pool || pool === ZERO_ADDRESS) continue;
+    const usable = await isV3PoolUsable(pool);
+    if (!usable) continue;
+    const amountOut = needAmountOut ? await getQuote(chainId, tokenIn, tokenOut, amountIn, fee) : 0n;
+    if (!needAmountOut || amountOut > 0n) {
+      return { amountOut, swapType: SwapType.V3_EXACT_IN, fee, poolAddress: pool };
+    }
+  }
+
+  const q = await getBestDexExactIn(chainId, tokenIn, tokenOut, amountIn, { v3Fee: 500 });
+  return { amountOut: q.amountOut, swapType: q.swapType, fee: q.fee, poolAddress: q.poolAddress };
 }
 
 export async function resolveDexExactIn(

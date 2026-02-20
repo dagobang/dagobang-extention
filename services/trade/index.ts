@@ -10,7 +10,7 @@ import { ChainId } from '../../constants/chains/chainId';
 import { getBridgeTokenDexPreference } from '../../constants/tokens/allTokens';
 import { dagobangAbi } from '@/constants/contracts/abi';
 import { Address, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadline, getRouterSwapDesc, getSlippageBps, getV3FeeForDesc } from './tradeTypes';
-import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInDex, resolveDexExactIn } from './tradeDex';
+import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInDex, resolveBridgeHopExactIn, resolveDexExactIn } from './tradeDex';
 import { getGasPriceWei, prewarmNonce, sendTransaction } from './tradeTx';
 import { formatBroadcastProvider } from '@/utils/format';
 
@@ -170,24 +170,31 @@ export class TradeService {
 
     if (bridgeToken) {
       const bridgePrefer = getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken);
+      const needAmountOut = !isTurbo;
       const q1 = await timeStep('quote:bridge', () =>
-        resolveDexExactIn(
+        resolveBridgeHopExactIn(
           input.chainId,
           ZERO_ADDRESS,
           bridgeToken,
           currentAmount,
-          bridgePrefer === 'v2' ? { prefer: 'v2' } : bridgePrefer === 'v3' ? { v3Fee: 500, prefer: 'v3' } : { v3Fee: 500 },
+          bridgePrefer,
           isTurbo,
-          true
+          needAmountOut
         )
       );
-      try {
-        assertDexQuoteOk(q1);
-      } catch {
-        throw new Error('找不到 BNB/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-      }
-      if (q1.amountOut <= 0n) {
-        throw new Error('找不到 BNB/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+      if (isTurbo) {
+        if (!q1.poolAddress || q1.poolAddress === ZERO_ADDRESS) {
+          throw new Error('找不到 BNB/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        }
+      } else {
+        try {
+          assertDexQuoteOk(q1);
+        } catch {
+          throw new Error('找不到 BNB/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        }
+        if (q1.amountOut <= 0n) {
+          throw new Error('找不到 BNB/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        }
       }
       descs.push(getRouterSwapDesc({
         swapType: q1.swapType,
@@ -197,7 +204,7 @@ export class TradeService {
         fee: getV3FeeForDesc(q1, 500),
       }));
       currentRouterToken = bridgeToken;
-      currentAmount = q1.amountOut;
+      currentAmount = isTurbo ? 1n : q1.amountOut;
     }
 
     // Hop 2: [BNB/USD1] -> Meme

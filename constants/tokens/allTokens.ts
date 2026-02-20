@@ -3,6 +3,7 @@ import { ERC20Token } from './_base'
 
 import { bscTokens } from './chains/bsc'
 import { bscBridgeTokenAddresses } from './chains/bsc'
+import { bscBnbBridgePoolConfigByTokenAddress, type BscBnbBridgePoolConfig } from './chains/bsc'
 
 export const allTokens: Partial<Record<ChainId, Record<string, ERC20Token>>> = {
     [ChainId.BNB]: bscTokens
@@ -36,4 +37,12 @@ export function getBridgeTokenDexPreference(chainId: ChainId, address: string): 
     if (addr === bscTokens.aster.address.toLowerCase()) return 'v3';
     if (addr === bscTokens.usd1.address.toLowerCase()) return 'v3';
     return null;
+}
+
+export type BridgeHopPoolConfig = BscBnbBridgePoolConfig
+
+export function getBnbToBridgeTokenPoolConfig(chainId: ChainId, tokenOutAddress: string): BridgeHopPoolConfig | null {
+    if (chainId !== ChainId.BNB) return null
+    const k = tokenOutAddress.toLowerCase()
+    return bscBnbBridgePoolConfigByTokenAddress[k] ?? null
 }

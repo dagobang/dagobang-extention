@@ -2,6 +2,7 @@ import { ChainId } from '../../chains'
 
 import { CAKE_MAINNET, USDT_BSC } from './common'
 import { ERC20Token, WBNB } from './constants'
+import type { Address } from 'viem'
 
 
 export const bscTokens = {
@@ -67,3 +68,34 @@ export const bscBridgeTokenAddresses = [
   bscTokens.aster.address,
   bscTokens.usd1.address,
 ] as const;
+
+export type BscBnbBridgePoolConfig =
+  | { kind: 'v2'; poolAddress: Address }
+  | { kind: 'v3'; poolAddress: Address; fee: number }
+
+export const bscBnbBridgePoolConfigByTokenAddress: Record<string, BscBnbBridgePoolConfig> = {
+  [bscTokens.usdt.address.toLowerCase()]: {
+    kind: 'v2',
+    poolAddress: '0x16b9a82891338f9bA80E2D6970FddA79D1eb0daE',
+  },
+  [bscTokens.usdc.address.toLowerCase()]: {
+    kind: 'v3',
+    fee: 500,
+    poolAddress: '0x81A9b5F18179cE2bf8f001b8a634Db80771F1824',
+  },
+  [bscTokens.u.address.toLowerCase()]: {
+    kind: 'v3',
+    fee: 500,
+    poolAddress: '0x882e23dbA77BFe0e514cF5BcDad7a58acEB01522',
+  },
+  [bscTokens.aster.address.toLowerCase()]: {
+    kind: 'v3',
+    fee: 500,
+    poolAddress: '0xfC185e4BC9d0e12b7835f0e31b7d032C6579f894',
+  },
+  [bscTokens.usd1.address.toLowerCase()]: {
+    kind: 'v3',
+    fee: 500,
+    poolAddress: '0x4a3218606AF9B4728a9F187E1c1a8c07fBC172a9',
+  },
+};
