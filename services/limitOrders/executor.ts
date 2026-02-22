@@ -158,6 +158,11 @@ export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) 
     const amountIn = rawAmountIn > balance ? balance : rawAmountIn;
     if (amountIn <= 0n) throw new Error('No balance');
 
+    const approveTx = await TradeService.approveMaxForSellIfNeeded(order.chainId, order.tokenAddress, order.tokenInfo);
+    if (approveTx) {
+      await ensureTxSuccess(approveTx);
+    }
+
     const { txHash } = await TradeService.sell({
       chainId: order.chainId,
       tokenAddress: order.tokenAddress,

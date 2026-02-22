@@ -2,8 +2,8 @@
  * GMGN API Class
  * Handles API calls to GMGN with proper authentication and headers
  */
+import { PancakeFactoryV2, PancakeFactoryV3 } from "@/constants/contracts/address";
 import { TokenStat, TokenInfo } from "@/types/token";
-import { zeroAddress } from "viem";
 
 
 export interface MultiTokenInfoResponse {
@@ -22,6 +22,13 @@ export interface MultiTokenInfoResponse {
     launchpad_status: number;
     launchpad_platform: string;
     migration_market_cap_quote: string;
+    tpool: {
+      base_address: string; // tokenAddress
+      exchange: string; // dex (pancake factory v2/v3), Curve
+      launch_type: string; //  migrated, launching
+      pool_address: string;
+      quote_address: string;
+    }
     [key: string]: any;
   }>;
 }
@@ -663,9 +670,10 @@ export class GmgnAPI {
           launchpad_platform: tokenData.launchpad_platform,
           launchpad_status: tokenData.launchpad_status,
           quote_token: tokenData.migration_market_cap_quote,
-          // quote_token_address is not returned by the API
-          quote_token_address: zeroAddress,
+          quote_token_address: tokenData.tpool?.quote_address,
           pool_pair: tokenData.biggest_pool_address,
+          dex_type: tokenData.tpool?.launch_type === 'migrated' ?
+            this.getDexType(tokenData.tpool?.exchange) : undefined,
         };
 
         return info;
@@ -675,6 +683,16 @@ export class GmgnAPI {
       console.error('Failed to fetch token info:', error);
       throw error;
     }
+  }
+
+  public static getDexType(exchange: string): string | undefined {
+    if (exchange.toLowerCase() === PancakeFactoryV3.toLowerCase()) {
+      return 'PANCAKE_SWAP_V3';
+    }
+    if (exchange.toLowerCase() === PancakeFactoryV2.toLowerCase()) {
+      return 'PANCAKE_SWAP';
+    }
+    return undefined;
   }
 
   /**

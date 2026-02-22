@@ -13,6 +13,7 @@ import { Address, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadli
 import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInDex, resolveBridgeHopExactIn, resolveDexExactIn } from './tradeDex';
 import { getGasPriceWei, prewarmNonce, sendTransaction } from './tradeTx';
 import { formatBroadcastProvider } from '@/utils/format';
+import { getDexPoolPrefer } from '@/utils/dexUtils';
 
 export class TradeService {
   static async quoteBestExactIn(
@@ -20,7 +21,7 @@ export class TradeService {
     tokenIn: `0x${string}`,
     tokenOut: `0x${string}`,
     amountIn: bigint,
-    opts?: { v3Fee?: number; v2HintPair?: string; prefer?: 'v2' | 'v3' }
+    opts?: { v3Fee?: number; poolPair?: string; prefer?: 'v2' | 'v3' }
   ): Promise<{ amountOut: bigint; swapType: number; fee?: number; poolAddress: string }> {
     return await quoteBestExactInDex(chainId, tokenIn, tokenOut, amountIn, opts);
   }
@@ -40,7 +41,8 @@ export class TradeService {
     const token = input.tokenAddress;
     const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
     const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
-    const memePrefer = bridgePrefer ?? 'v2';
+    const dexPrefer = getDexPoolPrefer(tokenInfo.dex_type);
+    const tokenPrefer = dexPrefer === 'v2' || dexPrefer === 'v3' ? dexPrefer : (bridgePrefer ?? 'v2');
 
     const bridgeOpts = bridgePrefer === 'v2'
       ? { prefer: 'v2' as const }
@@ -48,17 +50,22 @@ export class TradeService {
         ? { v3Fee: 500, prefer: 'v3' as const }
         : { v3Fee: 500 };
 
-    const amountIn = 1n;
+    const amountIn = 0n;
     const warmTasks: Array<Promise<unknown>> = [];
 
-    if (memePrefer === 'v3') {
+    if (tokenInfo.pool_pair && tokenPrefer === 'v2') {
+      warmTasks.push(resolveDexExactIn(input.chainId, ZERO_ADDRESS, token, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v2' }, true, false));
+      warmTasks.push(resolveDexExactIn(input.chainId, token, ZERO_ADDRESS, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v2' }, true, false));
+    }
+
+    if (tokenInfo.pool_pair && tokenPrefer === 'v3') {
       warmTasks.push(
         resolveDexExactIn(
           input.chainId,
           ZERO_ADDRESS,
           token,
           amountIn,
-          { v2HintPair: tokenInfo.pool_pair, prefer: memePrefer },
+          { poolPair: tokenInfo.pool_pair, prefer: 'v3' },
           true,
           false
         )
@@ -69,7 +76,7 @@ export class TradeService {
           token,
           ZERO_ADDRESS,
           amountIn,
-          { v2HintPair: tokenInfo.pool_pair, prefer: memePrefer },
+          { poolPair: tokenInfo.pool_pair, prefer: 'v3' },
           true,
           false
         )
@@ -81,9 +88,9 @@ export class TradeService {
       warmTasks.push(resolveDexExactIn(input.chainId, bridgeToken, ZERO_ADDRESS, amountIn, bridgeOpts, true, false));
     }
 
-    if (bridgeToken && memePrefer === 'v3') {
-      warmTasks.push(resolveDexExactIn(input.chainId, token, bridgeToken, amountIn, { v2HintPair: tokenInfo.pool_pair, prefer: memePrefer }, true, false));
-      warmTasks.push(resolveDexExactIn(input.chainId, bridgeToken, token, amountIn, { v2HintPair: tokenInfo.pool_pair, prefer: memePrefer }, true, false));
+    if (bridgeToken && tokenInfo.pool_pair && tokenPrefer === 'v3') {
+      warmTasks.push(resolveDexExactIn(input.chainId, token, bridgeToken, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v3' }, true, false));
+      warmTasks.push(resolveDexExactIn(input.chainId, bridgeToken, token, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v3' }, true, false));
     }
 
     await Promise.allSettled(warmTasks);
@@ -169,9 +176,10 @@ export class TradeService {
     let currentAmount = amountIn;
 
     if (bridgeToken) {
+      // Hop 1: [BNB] -> [Quote]
       const bridgePrefer = getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken);
       const needAmountOut = !isTurbo;
-      const q1 = await timeStep('quote:bridge', () =>
+      const q1 = await timeStep('quote:bridge', () =>  
         resolveBridgeHopExactIn(
           input.chainId,
           ZERO_ADDRESS,
@@ -221,8 +229,9 @@ export class TradeService {
         data: '0x',
       }));
     } else {
+      const poolVersion = getDexPoolPrefer(tokenInfo.dex_type);
       const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
-      const q2 = await timeStep('quote:token', () =>
+      const q2 = await timeStep('quote:token:hop2', () =>
         resolveDexExactIn(
           input.chainId,
           currentRouterToken,
@@ -230,8 +239,8 @@ export class TradeService {
           currentAmount,
           {
             v3Fee: input.poolFee,
-            v2HintPair: tokenInfo.pool_pair,
-            prefer: bridgePrefer ?? (isTurbo && !input.poolFee ? 'v2' : undefined)
+            poolPair: tokenInfo.pool_pair,
+            prefer: poolVersion ?? (bridgePrefer ?? (isTurbo && !input.poolFee ? 'v2' : undefined)),
           },
           isTurbo
         )
@@ -322,6 +331,21 @@ export class TradeService {
       lastTxHash = await this.approve(chainId, tokenAddress, spender, maxUint256.toString());
     }
 
+    const isInner = this.isInnerDisk(tokenInfo);
+    const isInnerFourMeme = isInner && (platform === 'fourmeme' || platform === 'bn_fourmeme');
+    const bridgeToken = isInnerFourMeme ? getBridgeToken(chainId, tokenInfo.quote_token_address) : null;
+    if (bridgeToken && bridgeToken !== ZERO_ADDRESS) {
+      const allowance = await client.readContract({
+        address: bridgeToken as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [account.address, routerAddress as `0x${string}`]
+      });
+      if (allowance < maxUint256 / 2n) {
+        lastTxHash = await this.approve(chainId, bridgeToken, routerAddress, maxUint256.toString());
+      }
+    }
+
     return lastTxHash;
   }
 
@@ -364,18 +388,44 @@ export class TradeService {
     const isInner = this.isInnerDisk(tokenInfo);
     const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
     const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
+    const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
 
     const descs: SwapDescLike[] = [];
     const sellToken: Address = input.tokenAddress;
 
     if (isInner && launchpadConfig) {
+      const innerTokenOut = bridgeToken ?? ZERO_ADDRESS;
       descs.push(getRouterSwapDesc({
         swapType: launchpadConfig.sellType,
         tokenIn: sellToken,
-        tokenOut: ZERO_ADDRESS,
+        tokenOut: innerTokenOut,
         poolAddress: launchpadConfig.manager,
         fee: 0,
       }));
+
+      if (innerTokenOut !== ZERO_ADDRESS && bridgeToken) {
+        const hop2 = await timeStep('quote:bridge:hop2', () =>
+          resolveBridgeHopExactIn(
+            input.chainId,
+            bridgeToken,
+            ZERO_ADDRESS,
+            1n,
+            bridgePrefer,
+            true,
+            false
+          )
+        );
+        if (!hop2.poolAddress || hop2.poolAddress === ZERO_ADDRESS) {
+          throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        }
+        descs.push(getRouterSwapDesc({
+          swapType: hop2.swapType,
+          tokenIn: bridgeToken,
+          tokenOut: ZERO_ADDRESS,
+          poolAddress: hop2.poolAddress,
+          fee: getV3FeeForDesc(hop2, 500),
+        }));
+      }
     }
 
     let amountInForQuote = amountIn;
@@ -387,8 +437,10 @@ export class TradeService {
 
     let estimatedOut = 0n;
     if (!isInner) {
+      // hop1
       const hop1RouterOut = bridgeToken ? bridgeToken : ZERO_ADDRESS;
       const hop1NeedAmountOut = !!bridgeToken && !isTurbo;
+      const poolVersion = getDexPoolPrefer(tokenInfo.dex_type);
       const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
       const hop1 = await timeStep('quote:token', () =>
         resolveDexExactIn(
@@ -398,8 +450,8 @@ export class TradeService {
           amountInForQuote,
           {
             v3Fee: input.poolFee,
-            v2HintPair: tokenInfo.pool_pair,
-            prefer: bridgePrefer ?? (isTurbo && !input.poolFee ? 'v2' : undefined)
+            poolPair: tokenInfo.pool_pair,
+            prefer: poolVersion ?? (bridgePrefer ?? (isTurbo && !input.poolFee ? 'v2' : undefined)),
           },
           isTurbo,
           hop1NeedAmountOut
@@ -427,6 +479,8 @@ export class TradeService {
         fee: getV3FeeForDesc(hop1, input.poolFee ?? baseFee),
       }));
 
+      // hop2
+      console.log('>>>>>>>>>> hop2 >', bridgeToken)
       if (!bridgeToken) {
         estimatedOut = isTurbo ? 0n : hop1.amountOut;
       } else {
@@ -434,14 +488,15 @@ export class TradeService {
           throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
         }
         const hop2AmountIn = isTurbo ? 1n : hop1.amountOut;
-        const hop2 = await timeStep('quote:bridge', () =>
-          resolveDexExactIn(
+        const hop2 = await timeStep('quote:bridge:hop2', () =>
+          resolveBridgeHopExactIn(
             input.chainId,
             bridgeToken,
             ZERO_ADDRESS,
             hop2AmountIn,
-            bridgePrefer === 'v2' ? { prefer: 'v2' } : bridgePrefer === 'v3' ? { v3Fee: 500, prefer: 'v3' } : { v3Fee: 500 },
-            isTurbo
+            bridgePrefer,
+            isTurbo,
+            !isTurbo
           )
         );
         if (isTurbo) {

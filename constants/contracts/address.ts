@@ -86,3 +86,6 @@ export const getDeploysByAddress = (chainId: ChainId, address: string) => {
 
   return undefined;
 };
+
+export const PancakeFactoryV2 = '0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73'
+export const PancakeFactoryV3 = '0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865'

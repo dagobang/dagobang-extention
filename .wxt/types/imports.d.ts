@@ -29,6 +29,7 @@ declare global {
   const formatBroadcastProvider: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatBroadcastProvider
   const formatPriceValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatPriceValue
   const formatTime: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatTime
+  const getDexPoolPrefer: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/dexUtils').getDexPoolPrefer
   const injectScript: typeof import('wxt/utils/inject-script').injectScript
   const isHexPrivateKey: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').isHexPrivateKey
   const loadContractAbi: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi').loadContractAbi

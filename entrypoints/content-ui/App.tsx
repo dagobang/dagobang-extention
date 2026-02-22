@@ -778,6 +778,26 @@ export default function App() {
       }
       if (!isTurbo && amountWei <= 0n) throw new Error('Invalid amount');
 
+      if (tokenInfo) {
+        const approveRes = await call({
+          type: 'tx:approveMaxForSellIfNeeded',
+          chainId: settings.chainId,
+          tokenAddress: tokenAddressNormalized,
+          tokenInfo,
+        } as const);
+        if (approveRes.txHash) {
+          const receipt = await call({
+            type: 'tx:waitForReceipt',
+            hash: approveRes.txHash,
+            chainId: settings.chainId
+          } as const);
+          if (!receipt.ok) {
+            const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
+            throw new Error(detail || 'Transaction failed');
+          }
+        }
+      }
+
       ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: '🔄' });
@@ -880,25 +900,6 @@ export default function App() {
       await Promise.all([refreshToken(true), refreshAll()]);
       startFastPolling();
     });
-  };
-
-  const handleToggleAntiMev = () => {
-    if (!settings) return;
-    const chainId = settings.chainId;
-    const currentChainSettings = settings.chains[chainId];
-    call({
-      type: 'settings:set',
-      settings: {
-        ...settings,
-        chains: {
-          ...settings.chains,
-          [chainId]: {
-            ...currentChainSettings,
-            antiMev: !currentChainSettings.antiMev,
-          },
-        },
-      },
-    }).then(refreshAll);
   };
 
   const handleToggleBuyGas = () => {

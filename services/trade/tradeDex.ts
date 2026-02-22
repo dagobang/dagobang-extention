@@ -11,11 +11,29 @@ const V3_POOL_CACHE_MS = 5 * 60_000;
 const v3PoolCache = new Map<string, { ts: number; pool: Address }>();
 const V2_PAIR_CACHE_MS = 5 * 60_000;
 const v2PairCache = new Map<string, { ts: number; pair: Address }>();
+const V3_POOL_FEE_CACHE_MS = 30 * 60_000;
+const v3PoolFeeCache = new Map<string, { ts: number; fee: number }>();
+
+function seedV2PairCache(chainId: number, tokenIn: Address, tokenOut: Address, pair: Address) {
+  const now = Date.now();
+  const a = tokenIn.toLowerCase();
+  const b = tokenOut.toLowerCase();
+  v2PairCache.set(`${chainId}:${a}:${b}`, { ts: now, pair });
+  v2PairCache.set(`${chainId}:${b}:${a}`, { ts: now, pair });
+}
+
+function seedV3PoolCache(chainId: number, tokenIn: Address, tokenOut: Address, fee: number, pool: Address) {
+  const now = Date.now();
+  const a = tokenIn.toLowerCase();
+  const b = tokenOut.toLowerCase();
+  v3PoolCache.set(`${chainId}:${a}:${b}:${fee}`, { ts: now, pool });
+  v3PoolCache.set(`${chainId}:${b}:${a}:${fee}`, { ts: now, pool });
+}
 
 export function getBridgeToken(chainId: number, quoteTokenAddress?: string): Address | null {
   if (!quoteTokenAddress) return null;
   const trimmed = quoteTokenAddress.trim();
-  if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return null;
+  if (!/^(0x|0X)[a-fA-F0-9]{40}$/.test(trimmed)) return null;
   let addr: Address;
   try {
     addr = getAddress(trimmed as Address);
@@ -23,6 +41,7 @@ export function getBridgeToken(chainId: number, quoteTokenAddress?: string): Add
     return null;
   }
 
+  if (addr.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return null;
   const wNative = toQuoteToken(chainId, ZERO_ADDRESS);
   if (addr.toLowerCase() === wNative.toLowerCase()) return null;
 
@@ -157,16 +176,25 @@ async function isV3PoolUsable(pool: Address): Promise<boolean> {
   }
 }
 
-async function tryResolveV3WithoutQuote(
-  chainId: number,
-  tokenIn: Address,
-  tokenOut: Address,
-  fee: number
-): Promise<{ ok: true; pool: Address } | { ok: false }> {
-  const pool = await getFirstV3Pool(chainId, tokenIn, tokenOut, fee);
-  if (!pool || pool === ZERO_ADDRESS) return { ok: false };
-  const usable = await isV3PoolUsable(pool);
-  return usable ? { ok: true, pool } : { ok: false };
+async function getV3PoolFeeCached(pool: Address): Promise<number | null> {
+  const key = pool.toLowerCase();
+  const now = Date.now();
+  const cached = v3PoolFeeCache.get(key);
+  if (cached && now - cached.ts < V3_POOL_FEE_CACHE_MS) return cached.fee;
+
+  const client = await RpcService.getClient();
+  try {
+    const fee = await (client.readContract({
+      address: pool,
+      abi: poolV3Abi,
+      functionName: 'fee',
+    }) as Promise<number>);
+    if (!isValidV3Fee(fee)) return null;
+    v3PoolFeeCache.set(key, { ts: now, fee });
+    return fee;
+  } catch {
+    return null;
+  }
 }
 
 async function quoteV2ExactInByPair(pair: Address, tokenIn: Address, tokenOut: Address, amountIn: bigint, feeBps: number) {
@@ -252,7 +280,7 @@ async function getBestV2Quote(chainId: number, tokenIn: Address, tokenOut: Addre
 }
 
 async function getBestDexExactIn(chainId: number, tokenIn: Address, tokenOut: Address, amountIn: bigint, opts?: DexExactInOpts) {
-  const v2Promise = getBestV2Quote(chainId, tokenIn, tokenOut, amountIn, opts?.v2HintPair);
+  const v2Promise = getBestV2Quote(chainId, tokenIn, tokenOut, amountIn, opts?.poolPair);
   const v3Promise = getBestV3Quote(chainId, tokenIn, tokenOut, amountIn, opts?.v3Fee);
 
   const [{ amountOut: v3Out, fee }, v2] = await Promise.all([v3Promise, v2Promise]);
@@ -307,31 +335,6 @@ async function getFirstV2PairCached(chainId: number, tokenIn: Address, tokenOut:
   return pair;
 }
 
-async function isV2PairMatchTokens(pair: Address, tokenIn: Address, tokenOut: Address): Promise<boolean> {
-  const client = await RpcService.getClient();
-  try {
-    const [token0, token1] = await Promise.all([
-      client.readContract({
-        address: pair,
-        abi: pairV2Abi,
-        functionName: 'token0',
-      }) as Promise<Address>,
-      client.readContract({
-        address: pair,
-        abi: pairV2Abi,
-        functionName: 'token1',
-      }) as Promise<Address>,
-    ]);
-    const a = tokenIn.toLowerCase();
-    const b = tokenOut.toLowerCase();
-    const t0 = token0.toLowerCase();
-    const t1 = token1.toLowerCase();
-    return (t0 === a && t1 === b) || (t0 === b && t1 === a);
-  } catch {
-    return false;
-  }
-}
-
 async function resolveDexExactInTurbo(
   chainId: number,
   tokenIn: Address,
@@ -340,124 +343,113 @@ async function resolveDexExactInTurbo(
   opts?: DexExactInOpts,
   needAmountOut?: boolean
 ) {
-  const hintPair = opts?.v2HintPair && opts.v2HintPair !== ZERO_ADDRESS ? (opts.v2HintPair as Address) : null;
-  const prefer = opts?.prefer;
+  void amountIn;
+  void needAmountOut;
 
-  if (!needAmountOut) {
-    const wNative = toQuoteToken(chainId, ZERO_ADDRESS);
-    if (tokenIn.toLowerCase() === wNative.toLowerCase()) {
-      const cfg = getBnbToBridgeTokenPoolConfig(chainId as ChainId, tokenOut);
-      if (cfg?.kind === 'v2') {
-        return { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: cfg.poolAddress };
-      }
-      if (cfg?.kind === 'v3') {
-        return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: cfg.fee, poolAddress: cfg.poolAddress };
-      }
+  const prefer = opts?.prefer === 'v2' ? 'v2' : opts?.prefer === 'v3' ? 'v3' : null;
+
+  const hintPool = (() => {
+    const v = opts?.poolPair
+    if (!v || v === ZERO_ADDRESS) return null;
+    try {
+      return getAddress(v as Address) as Address;
+    } catch {
+      return null;
+    }
+  })();
+
+  if (prefer === 'v2' && hintPool) {
+    seedV2PairCache(chainId, tokenIn, tokenOut, hintPool);
+    return { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: hintPool };
+  }
+
+  if (prefer === 'v3' && hintPool) {
+    const explicitFee = isValidV3Fee(opts?.v3Fee) ? (opts!.v3Fee as number) : null;
+    const fee = explicitFee ?? await getV3PoolFeeCached(hintPool);
+    if (fee !== null) {
+      seedV3PoolCache(chainId, tokenIn, tokenOut, fee, hintPool);
+      return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee, poolAddress: hintPool };
     }
   }
+
+  const wNative = toQuoteToken(chainId, ZERO_ADDRESS);
+  if (tokenIn.toLowerCase() === wNative.toLowerCase()) {
+    const cfg = getBnbToBridgeTokenPoolConfig(chainId as ChainId, tokenOut);
+    if (cfg?.kind === 'v2') {
+      seedV2PairCache(chainId, tokenIn, tokenOut, cfg.poolAddress);
+      return { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: cfg.poolAddress };
+    }
+    if (cfg?.kind === 'v3') {
+      seedV3PoolCache(chainId, tokenIn, tokenOut, cfg.fee, cfg.poolAddress);
+      return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: cfg.fee, poolAddress: cfg.poolAddress };
+    }
+  }
+
+  const tryV2 = async (): Promise<DexExactInQuote | null> => {
+    const pair = await getFirstV2PairCached(chainId, tokenIn, tokenOut);
+    if (pair) seedV2PairCache(chainId, tokenIn, tokenOut, pair);
+    return pair ? { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: pair } : null;
+  };
+
+  const allowlist = getBridgeTokenAddresses(chainId as ChainId);
+  const isBridgeHop =
+    tokenIn.toLowerCase() === wNative.toLowerCase() ||
+    tokenOut.toLowerCase() === wNative.toLowerCase() ||
+    allowlist.some((x) => x.toLowerCase() === tokenIn.toLowerCase()) ||
+    allowlist.some((x) => x.toLowerCase() === tokenOut.toLowerCase());
+
+  const buildV3Fees = (): number[] => {
+    const explicit = isValidV3Fee(opts?.v3Fee) ? (opts!.v3Fee as number) : null;
+    const base = (prefer === 'v3' || isBridgeHop) ? [500, 2500, 100, 10000] : [2500, 500, 100, 10000];
+    const out: number[] = [];
+    const seen = new Set<number>();
+    if (explicit !== null && !seen.has(explicit)) {
+      seen.add(explicit);
+      out.push(explicit);
+    }
+    for (const f of base) {
+      if (!seen.has(f)) {
+        seen.add(f);
+        out.push(f);
+      }
+    }
+    return out;
+  };
+
+  const tryV3 = async (): Promise<DexExactInQuote | null> => {
+    const fees = buildV3Fees();
+    for (const fee of fees) {
+      const pool = await getFirstV3PoolCached(chainId, tokenIn, tokenOut, fee);
+      if (pool && pool !== ZERO_ADDRESS) {
+        seedV3PoolCache(chainId, tokenIn, tokenOut, fee, pool);
+        return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee, poolAddress: pool };
+      }
+    }
+    return null;
+  };
 
   if (prefer === 'v2') {
-    const hintOk = hintPair ? await isV2PairMatchTokens(hintPair, tokenIn, tokenOut) : false;
-    const pair = hintOk ? hintPair : await getFirstV2PairCached(chainId, tokenIn, tokenOut);
-    if (pair) {
-      const amountOut = needAmountOut ? await quoteV2ExactInByPair(pair, tokenIn, tokenOut, amountIn, 25) : 0n;
-      if (!needAmountOut || amountOut > 0n) {
-        return { amountOut, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: pair };
-      }
-    }
+    const v2 = await tryV2();
+    if (v2) return v2;
+    const v3 = await tryV3();
+    if (v3) return v3;
+    return { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: ZERO_ADDRESS as Address };
   }
 
-  if (!needAmountOut && prefer !== 'v3' && !isValidV3Fee(opts?.v3Fee) && hintPair) {
-    const ok = await isV2PairMatchTokens(hintPair, tokenIn, tokenOut);
-    if (ok) {
-      return { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: hintPair };
-    }
+  if (prefer === 'v3') {
+    const v3 = await tryV3();
+    if (v3) return v3;
+    const v2 = await tryV2();
+    if (v2) return v2;
+    const fallbackFee = isValidV3Fee(opts?.v3Fee) ? (opts!.v3Fee as number) : 500;
+    return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: fallbackFee, poolAddress: ZERO_ADDRESS as Address };
   }
 
-  const candidates: number[] = [];
-  if (isValidV3Fee(opts?.v3Fee)) {
-    candidates.push(opts!.v3Fee as number);
-  } else {
-    candidates.push(2500, 500, 100, 10000);
-  }
-
-  if (!needAmountOut) {
-    const wNative = toQuoteToken(chainId, ZERO_ADDRESS);
-    const allowlist = getBridgeTokenAddresses(chainId as ChainId);
-    const isBridgeHop =
-      tokenIn.toLowerCase() === wNative.toLowerCase() ||
-      tokenOut.toLowerCase() === wNative.toLowerCase() ||
-      allowlist.some((x) => x.toLowerCase() === tokenIn.toLowerCase()) ||
-      allowlist.some((x) => x.toLowerCase() === tokenOut.toLowerCase());
-
-    const feeOrder = (() => {
-      const uniq = Array.from(new Set(candidates));
-      if (prefer === 'v3' || isBridgeHop) {
-        const head = uniq.filter((x) => x === 500 || x === 2500);
-        const tail = uniq.filter((x) => x !== 500 && x !== 2500);
-        return [...head, ...tail];
-      }
-      return uniq;
-    })();
-
-    const tryFees = async (fees: number[]) => {
-      if (fees.length <= 0) return null;
-      const r = await Promise.any(
-        fees.map(async (fee) => {
-          const pool = await getFirstV3PoolCached(chainId, tokenIn, tokenOut, fee);
-          if (!pool || pool === ZERO_ADDRESS) throw new Error('no pool');
-          const usable = await isV3PoolUsable(pool);
-          if (!usable) throw new Error('unusable');
-          return { fee, pool };
-        })
-      ).catch(() => null);
-      return r;
-    };
-
-    const primary = (prefer === 'v3' || isBridgeHop) ? feeOrder.filter((x) => x === 500 || x === 2500) : [];
-    const secondary = (prefer === 'v3' || isBridgeHop) ? feeOrder.filter((x) => x !== 500 && x !== 2500) : feeOrder;
-
-    const first = await tryFees(primary.length > 0 ? primary : secondary.slice(0, 2));
-    if (first) return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: first.fee, poolAddress: first.pool };
-
-    const rest = primary.length > 0 ? secondary : secondary.slice(2);
-    const second = await tryFees(rest);
-    if (second) return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: second.fee, poolAddress: second.pool };
-  }
-
-  if (candidates.length === 1) {
-    const fee = candidates[0];
-    const [amountOut, pool] = await Promise.all([
-      getQuote(chainId, tokenIn, tokenOut, amountIn, fee),
-      getFirstV3Pool(chainId, tokenIn, tokenOut, fee),
-    ]);
-    if (amountOut > 0n && pool && pool !== ZERO_ADDRESS) {
-      return { amountOut, swapType: SwapType.V3_EXACT_IN, fee, poolAddress: pool };
-    }
-  }
-
-  const v3Results = await Promise.allSettled(
-    candidates.map(async (fee) => ({ fee, amountOut: await getQuote(chainId, tokenIn, tokenOut, amountIn, fee) }))
-  );
-  let bestV3: { fee?: number; amountOut: bigint } = { fee: undefined as number | undefined, amountOut: 0n };
-  for (const r of v3Results) {
-    if (r.status !== 'fulfilled') continue;
-    if (r.value.amountOut > bestV3.amountOut) bestV3 = r.value;
-  }
-  if (bestV3.amountOut > 0n) {
-    const usedFee = bestV3.fee;
-    const pool = usedFee !== undefined ? await getFirstV3Pool(chainId, tokenIn, tokenOut, usedFee) : null;
-    return { amountOut: bestV3.amountOut, swapType: SwapType.V3_EXACT_IN, fee: usedFee, poolAddress: (pool ?? (ZERO_ADDRESS as Address)) };
-  }
-
-  let pair: Address | null = null;
-  const hintOk = hintPair ? await isV2PairMatchTokens(hintPair, tokenIn, tokenOut) : false;
-  pair = hintOk ? hintPair : await getFirstV2PairCached(chainId, tokenIn, tokenOut);
-  if (!pair) {
-    return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: undefined as number | undefined, poolAddress: ZERO_ADDRESS as Address };
-  }
-  const amountOut = needAmountOut ? await quoteV2ExactInByPair(pair, tokenIn, tokenOut, amountIn, 25) : 0n;
-  return { amountOut, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: pair };
+  const v2 = await tryV2();
+  if (v2) return v2;
+  const v3 = await tryV3();
+  if (v3) return v3;
+  return { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: ZERO_ADDRESS as Address };
 }
 
 export async function resolveBridgeHopExactIn(
@@ -473,9 +465,14 @@ export async function resolveBridgeHopExactIn(
   const tokenOut = toQuoteToken(chainId, routerTokenOut);
 
   const wNative = toQuoteToken(chainId, ZERO_ADDRESS);
-  const hardcoded = tokenIn.toLowerCase() === wNative.toLowerCase()
-    ? getBnbToBridgeTokenPoolConfig(chainId as ChainId, tokenOut)
-    : null;
+  const hardcoded = (() => {
+    const inLower = tokenIn.toLowerCase();
+    const outLower = tokenOut.toLowerCase();
+    const wLower = wNative.toLowerCase();
+    if (inLower === wLower) return getBnbToBridgeTokenPoolConfig(chainId as ChainId, tokenOut);
+    if (outLower === wLower) return getBnbToBridgeTokenPoolConfig(chainId as ChainId, tokenIn);
+    return null;
+  })();
 
   if (hardcoded) {
     if (hardcoded.kind === 'v2') {

@@ -233,7 +233,7 @@ export class TokenService {
         tokenAddress,
         stable.address,
         oneToken,
-        { v2HintPair: tokenInfo?.pool_pair }
+        { poolPair: tokenInfo?.pool_pair }
       );
       if (q.amountOut > 0n) {
         priceUsd = toNumberFromUnits(q.amountOut, stable.decimals);
@@ -246,7 +246,7 @@ export class TokenService {
         tokenAddress,
         bscTokens.wbnb.address as `0x${string}`,
         oneToken,
-        { v2HintPair: tokenInfo?.pool_pair }
+        { poolPair: tokenInfo?.pool_pair }
       );
       if (q.amountOut > 0n) {
         const outBnb = toNumberFromUnits(q.amountOut, bscTokens.wbnb.decimals);
