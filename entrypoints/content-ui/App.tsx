@@ -556,7 +556,7 @@ export default function App() {
 
   useEffect(() => {
     refreshToken();
-    const timer = setInterval(() => refreshToken(), 15000);
+    const timer = setInterval(() => refreshToken(), 2000);
     return () => clearInterval(timer);
   }, [tokenAddressNormalized, address]);
 
