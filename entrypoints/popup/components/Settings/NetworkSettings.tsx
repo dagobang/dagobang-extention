@@ -84,13 +84,13 @@ export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: Network
               }))
             }
           />
-          <div className="text-[11px] text-zinc-500">隐私节点 RPC（必填），每行一个</div>
-          <div className="text-[11px] text-zinc-500">仅支持 blockrazor / getblock / 48.club 的隐私节点 URL</div>
+          <div className="text-[11px] text-zinc-500">{tt('popup.settings.protectedRpcUrlsHint1')}</div>
+          <div className="text-[11px] text-zinc-500">{tt('popup.settings.protectedRpcUrlsHint2')}</div>
           {hasInvalidProtectedRpcUrls && (
-            <div className="text-[11px] text-red-400">检测到不支持的隐私节点 URL，保存时会自动忽略</div>
+            <div className="text-[11px] text-red-400">{tt('popup.settings.protectedRpcUrlsInvalidWarning')}</div>
           )}
           {protectedRpcUrlsValidated.length === 0 && (
-            <div className="text-[11px] text-red-400">请至少填写 1 条支持的隐私节点 RPC 地址，否则无法保存</div>
+            <div className="text-[11px] text-red-400">{tt('popup.settings.protectedRpcUrlsEmptyError')}</div>
           )}
         </label>
 

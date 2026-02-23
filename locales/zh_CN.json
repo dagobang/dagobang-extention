@@ -79,6 +79,10 @@
       "rpcUrls": "RPC 地址（每行一个）",
       "antiMev": "反 MEV 模式",
       "protectedRpcUrls": "保护 RPC 地址（每行一个）",
+      "protectedRpcUrlsHint1": "隐私节点 RPC（必填），每行一个",
+      "protectedRpcUrlsHint2": "仅支持 blockrazor / getblock / 48.club 的隐私节点 URL",
+      "protectedRpcUrlsInvalidWarning": "检测到不支持的隐私节点 URL，保存时会自动忽略",
+      "protectedRpcUrlsEmptyError": "请至少填写 1 条支持的隐私节点 RPC 地址，否则无法保存",
       "trade": "交易",
       "routerAddress": "路由合约地址",
       "slippageBps": "滑点（bps）",
@@ -89,7 +93,7 @@
       "quickBuy1Bnb": "列表快捷买入 1（BNB）",
       "quickBuy2Bnb": "列表快捷买入 2（BNB）",
       "autoLockSeconds": "自动锁定（秒）",
-      "uiSection": "界面",
+      "notification": "通知",
       "language": "语言",
       "toastPosition": "Toast 弹出位置",
       "tradeSuccessSound": "交易成功提示音",
@@ -281,7 +285,7 @@
       "buy": "买入",
       "sell": "卖出"
     },
-    "gmgnOrder": "GMGN 下单",
+    "ListOrder": "List 下单",
     "mode": {
       "default": "默认",
       "turbo": "极速"

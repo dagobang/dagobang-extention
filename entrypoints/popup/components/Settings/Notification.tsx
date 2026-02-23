@@ -4,7 +4,7 @@ import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import type { TradeSuccessSoundPreset } from '@/types/extention';
 import type { SettingsDraftProps } from './types';
 
-type UiSettingsProps = SettingsDraftProps & {
+type NotificationProps = SettingsDraftProps & {
   onLocaleChange: (locale: Locale) => void;
 };
 
@@ -28,7 +28,7 @@ function isPreset(v: any): v is TradeSuccessSoundPreset {
   return PRESETS.includes(v);
 }
 
-export function UiSettings({ settingsDraft, setSettingsDraft, tt, onLocaleChange }: UiSettingsProps) {
+export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChange }: NotificationProps) {
   const tradeSuccessSoundEnabled = !!settingsDraft.tradeSuccessSoundEnabled;
   const tradeSuccessSoundPresetBuy = isPreset(settingsDraft.tradeSuccessSoundPresetBuy) ? settingsDraft.tradeSuccessSoundPresetBuy : 'Bell';
   const tradeSuccessSoundPresetSell = isPreset(settingsDraft.tradeSuccessSoundPresetSell) ? settingsDraft.tradeSuccessSoundPresetSell : 'Coins';
@@ -51,24 +51,7 @@ export function UiSettings({ settingsDraft, setSettingsDraft, tt, onLocaleChange
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">{tt('popup.settings.uiSection')}</div>
-
-        <label className="block space-y-1">
-          <div className="text-[14px] text-zinc-400">{tt('popup.settings.language')}</div>
-          <select
-            className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
-            value={normalizeLocale(settingsDraft.locale)}
-            onChange={(e) => {
-              const next = normalizeLocale(e.target.value);
-              setSettingsDraft((s) => ({ ...s, locale: next }));
-              onLocaleChange(next);
-            }}
-          >
-            <option value="zh_CN">{tt('common.language.zh_CN')}</option>
-            <option value="zh_TW">{tt('common.language.zh_TW')}</option>
-            <option value="en">{tt('common.language.en')}</option>
-          </select>
-        </label>
+        <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">{tt('popup.settings.notification')}</div>
 
         <div className="grid grid-cols-2 gap-3">
           <label className="block space-y-1">

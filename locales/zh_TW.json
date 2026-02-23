@@ -79,6 +79,10 @@
       "rpcUrls": "RPC 位址（每行一個）",
       "antiMev": "反 MEV 模式",
       "protectedRpcUrls": "保護 RPC 位址（每行一個）",
+      "protectedRpcUrlsHint1": "隱私節點 RPC（必填），每行一個",
+      "protectedRpcUrlsHint2": "僅支援 blockrazor / getblock / 48.club 的隱私節點 URL",
+      "protectedRpcUrlsInvalidWarning": "檢測到不支援的隱私節點 URL，儲存時會自動忽略",
+      "protectedRpcUrlsEmptyError": "請至少填寫 1 條支援的隱私節點 RPC 位址，否則無法儲存",
       "trade": "交易",
       "routerAddress": "路由合約位址",
       "slippageBps": "滑點（bps）",
@@ -89,7 +93,7 @@
       "quickBuy1Bnb": "列表快捷買入 1（BNB）",
       "quickBuy2Bnb": "列表快捷買入 2（BNB）",
       "autoLockSeconds": "自動鎖定（秒）",
-      "uiSection": "界面",
+      "notification": "通知",
       "language": "語言",
       "toastPosition": "Toast 彈出位置",
       "tradeSuccessSound": "交易成功提示音",
@@ -281,7 +285,7 @@
       "buy": "買入",
       "sell": "賣出"
     },
-    "gmgnOrder": "GMGN 下單",
+    "ListOrder": "List 下單",
     "mode": {
       "default": "預設",
       "turbo": "極速"

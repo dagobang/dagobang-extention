@@ -10,4 +10,4 @@ export type SettingsDraftProps = {
   busy: boolean;
 };
 
-export type SettingsSectionId = 'root' | 'network' | 'trade' | 'gas' | 'ui' | 'security';
+export type SettingsSectionId = 'root' | 'network' | 'trade' | 'gas' | 'notification' | 'security';

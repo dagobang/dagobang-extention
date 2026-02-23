@@ -9,7 +9,7 @@ import { SettingsHome } from './Settings/SettingsHome';
 import { NetworkSettings } from './Settings/NetworkSettings';
 import { TradeSettings } from './Settings/TradeSettings';
 import { GasSettings } from './Settings/GasSettings';
-import { UiSettings } from './Settings/UiSettings';
+import { Notification } from './Settings/Notification';
 import { SecuritySettings } from './Settings/SecuritySettings';
 import type { SettingsSectionId } from './Settings/types';
 
@@ -59,7 +59,7 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
     network: tt('popup.settings.network'),
     trade: tt('popup.settings.trade'),
     gas: tt('popup.settings.gasPreset'),
-    ui: tt('popup.settings.uiSection'),
+    notification: tt('popup.settings.notification'),
     security: tt('popup.settings.security'),
   };
 
@@ -85,8 +85,8 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
         {section === 'network' && <NetworkSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'trade' && <TradeSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'gas' && <GasSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
-        {section === 'ui' && (
-          <UiSettings
+        {section === 'notification' && (
+          <Notification
             settingsDraft={settingsDraft}
             setSettingsDraft={setSettingsDraft}
             tt={tt}

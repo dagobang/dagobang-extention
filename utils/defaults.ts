@@ -17,7 +17,11 @@ const BSC_MAINNET: ChainSettings = {
     'https://bsc-dataseed-public.bnbchain.org',
     'https://bscrpc.pancakeswap.finance',
   ],
-  protectedRpcUrls: [],
+  protectedRpcUrls: [
+    'https://bscrpc.pancakeswap.finance',
+    'https://pancake.rpc.48.club',
+    'https://four.rpc.48.club',
+  ],
   antiMev: true,
   gasPreset: 'standard',
   buyGasPreset: 'standard',

@@ -480,7 +480,6 @@ export class TradeService {
       }));
 
       // hop2
-      console.log('>>>>>>>>>> hop2 >', bridgeToken)
       if (!bridgeToken) {
         estimatedOut = isTurbo ? 0n : hop1.amountOut;
       } else {

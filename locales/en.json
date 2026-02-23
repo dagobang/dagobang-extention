@@ -79,6 +79,10 @@
       "rpcUrls": "RPC URLs (one per line)",
       "antiMev": "Anti-MEV Mode",
       "protectedRpcUrls": "Protected RPC URLs (one per line)",
+      "protectedRpcUrlsHint1": "Private RPC endpoints (required), one per line",
+      "protectedRpcUrlsHint2": "Only blockrazor / getblock / 48.club private RPC URLs are supported",
+      "protectedRpcUrlsInvalidWarning": "Unsupported private RPC URLs detected; they will be ignored on save",
+      "protectedRpcUrlsEmptyError": "Please provide at least one supported private RPC URL, otherwise settings cannot be saved",
       "trade": "Trade",
       "routerAddress": "Router Address",
       "slippageBps": "Slippage (bps)",
@@ -89,7 +93,7 @@
       "quickBuy1Bnb": "Quick buy 1 (BNB)",
       "quickBuy2Bnb": "Quick buy 2 (BNB)",
       "autoLockSeconds": "Auto Lock (s)",
-      "uiSection": "UI",
+      "notification": "Notification",
       "language": "Language",
       "toastPosition": "Toast position",
       "tradeSuccessSound": "Trade success sound",
@@ -281,7 +285,7 @@
       "buy": "Buy",
       "sell": "Sell"
     },
-    "gmgnOrder": "GMGN Order",
+    "ListOrder": "List Order",
     "mode": {
       "default": "Default",
       "turbo": "Turbo"
