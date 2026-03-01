@@ -100,6 +100,7 @@
       "tradeSuccessSoundBuyPreset": "Buy sound preset",
       "tradeSuccessSoundSellPreset": "Sell sound preset",
       "tradeSuccessSoundVolume": "Sound volume",
+      "tradeSuccessSoundOff": "Off",
       "previewSound": "Preview sound",
       "helpDocs": "Help Docs",
       "version": "Version {0}",

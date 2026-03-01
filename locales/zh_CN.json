@@ -100,6 +100,7 @@
       "tradeSuccessSoundBuyPreset": "买入提示音",
       "tradeSuccessSoundSellPreset": "卖出提示音",
       "tradeSuccessSoundVolume": "提示音音量",
+      "tradeSuccessSoundOff": "关闭",
       "previewSound": "预览提示音",
       "helpDocs": "帮助文档",
       "version": "版本 {0}",

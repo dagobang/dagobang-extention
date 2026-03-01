@@ -128,7 +128,7 @@ export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChan
                   if (tradeSuccessSoundEnabled) play(next);
                 }}
               >
-                <option value={OFF_VALUE}>关闭</option>
+                <option value={OFF_VALUE}>{tt('popup.settings.tradeSuccessSoundOff')}</option>
                 {PRESETS.map((p) => (
                   <option key={p} value={p}>
                     {p}
@@ -162,7 +162,7 @@ export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChan
                   if (tradeSuccessSoundEnabled) play(next);
                 }}
               >
-                <option value={OFF_VALUE}>关闭</option>
+                <option value={OFF_VALUE}>{tt('popup.settings.tradeSuccessSoundOff')}</option>
                 {PRESETS.map((p) => (
                   <option key={p} value={p}>
                     {p}
