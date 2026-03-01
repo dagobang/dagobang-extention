@@ -39,7 +39,7 @@ export function LimitTradePanel({
   tokenAddress,
   tokenInfo,
 }: LimitTradePanelProps) {
-  const panelWidth = 780;
+  const panelWidth = 680;
   const { ensureReady: ensureTradeSuccessAudioReady, playBuy: playTradeBuySound, playSell: playTradeSellSound } = useTradeSuccessSound({
     enabled: settings?.tradeSuccessSoundEnabled,
     volume: settings?.tradeSuccessSoundVolume,
@@ -998,7 +998,7 @@ export function LimitTradePanel({
                       const v = cached?.priceUsd;
                       const text = loading ? '...' : v != null && v > 0 ? formatUsd(v) : '-';
                       return (
-                        <div className="text-[10px] text-zinc-500 truncate" title={text}>
+                        <div className="text-[12px] text-zinc-500 truncate" title={text}>
                           {tt('contentUi.limitTradePanel.currentPrice', [text])}
                         </div>
                       );

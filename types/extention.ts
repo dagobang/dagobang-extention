@@ -79,7 +79,14 @@ export type TradeSuccessSoundPreset =
   | 'Sonumi'
   | 'Yes'
   | 'Alipay'
-  | 'Wechat';
+  | 'Wechat'
+  | 'Mario-Collect'
+  | 'Mario-Gameover'
+  | 'Mario-Life'
+  | 'Mario-Mushroom'
+  | 'Mario-Start'
+  | 'Animal-Frog'
+  | 'Animal-Wolf'
 
 export type Settings = {
   chainId: 56;
@@ -328,23 +335,23 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; txHash: `0x${string}` }
   : T extends { type: 'tx:buy' }
   ? (
-      | { ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string }
-      | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
-    )
+    | { ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string }
+    | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
+  )
   : T extends { type: 'tx:sell' }
   ? (
-      | { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string }
-      | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
-    )
+    | { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string }
+    | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
+  )
   : T extends { type: 'tx:waitForReceipt' }
   ? {
-      ok: boolean;
-      txHash: `0x${string}`;
-      blockNumber?: number;
-      status?: 'success' | 'reverted';
-      revertReason?: string;
-      error?: TxWaitForReceiptError;
-    }
+    ok: boolean;
+    txHash: `0x${string}`;
+    blockNumber?: number;
+    status?: 'success' | 'reverted';
+    revertReason?: string;
+    error?: TxWaitForReceiptError;
+  }
   : T extends { type: 'tx:approveMaxForSellIfNeeded' }
   ? { ok: true; txHash?: `0x${string}` }
   : T extends { type: 'tx:bloxroutePrivate' }

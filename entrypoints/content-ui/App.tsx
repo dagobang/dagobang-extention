@@ -138,6 +138,24 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    try {
+      const key = 'dagobang_limit_trade_panel_visible';
+      const stored = window.localStorage.getItem(key);
+      if (!stored) return;
+      setShowLimitTradePanel(stored === '1');
+    } catch {
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const key = 'dagobang_limit_trade_panel_visible';
+      window.localStorage.setItem(key, showLimitTradePanel ? '1' : '0');
+    } catch {
+    }
+  }, [showLimitTradePanel]);
+
+  useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
       const el = target as HTMLElement | null;
       if (!el) return false;

@@ -8,6 +8,8 @@ type NotificationProps = SettingsDraftProps & {
   onLocaleChange: (locale: Locale) => void;
 };
 
+const OFF_VALUE = '__off__';
+
 const PRESETS: TradeSuccessSoundPreset[] = [
   'Bell',
   'Boom',
@@ -21,7 +23,14 @@ const PRESETS: TradeSuccessSoundPreset[] = [
   'Sonumi',
   'Yes',
   'Alipay',
-  'Wechat'
+  'Wechat',
+  'Mario-Collect',
+  'Mario-Gameover',
+  'Mario-Life',
+  'Mario-Mushroom',
+  'Mario-Start',
+  'Animal-Frog',
+  'Animal-Wolf',
 ];
 
 function isPreset(v: any): v is TradeSuccessSoundPreset {
@@ -35,6 +44,9 @@ export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChan
   const tradeSuccessSoundVolume = typeof settingsDraft.tradeSuccessSoundVolume === 'number'
     ? Math.max(0, Math.min(100, Math.floor(settingsDraft.tradeSuccessSoundVolume)))
     : 60;
+
+  const buySelectValue = tradeSuccessSoundEnabled ? tradeSuccessSoundPresetBuy : OFF_VALUE;
+  const sellSelectValue = tradeSuccessSoundEnabled ? tradeSuccessSoundPresetSell : OFF_VALUE;
 
   const previewSound = useTradeSuccessSound({
     enabled: true,
@@ -104,13 +116,19 @@ export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChan
             <div className="flex items-center gap-2">
               <select
                 className="flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
-                value={tradeSuccessSoundPresetBuy}
+                value={buySelectValue}
                 onChange={(e) => {
-                  const next = e.target.value as TradeSuccessSoundPreset;
-                  setSettingsDraft((s) => ({ ...s, tradeSuccessSoundPresetBuy: next }));
+                  const v = e.target.value;
+                  if (v === OFF_VALUE) {
+                    setSettingsDraft((s) => ({ ...s, tradeSuccessSoundEnabled: false }));
+                    return;
+                  }
+                  const next = v as TradeSuccessSoundPreset;
+                  setSettingsDraft((s) => ({ ...s, tradeSuccessSoundEnabled: true, tradeSuccessSoundPresetBuy: next }));
                   if (tradeSuccessSoundEnabled) play(next);
                 }}
               >
+                <option value={OFF_VALUE}>关闭</option>
                 {PRESETS.map((p) => (
                   <option key={p} value={p}>
                     {p}
@@ -132,13 +150,19 @@ export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChan
             <div className="flex items-center gap-2">
               <select
                 className="flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
-                value={tradeSuccessSoundPresetSell}
+                value={sellSelectValue}
                 onChange={(e) => {
-                  const next = e.target.value as TradeSuccessSoundPreset;
-                  setSettingsDraft((s) => ({ ...s, tradeSuccessSoundPresetSell: next }));
+                  const v = e.target.value;
+                  if (v === OFF_VALUE) {
+                    setSettingsDraft((s) => ({ ...s, tradeSuccessSoundEnabled: false }));
+                    return;
+                  }
+                  const next = v as TradeSuccessSoundPreset;
+                  setSettingsDraft((s) => ({ ...s, tradeSuccessSoundEnabled: true, tradeSuccessSoundPresetSell: next }));
                   if (tradeSuccessSoundEnabled) play(next);
                 }}
               >
+                <option value={OFF_VALUE}>关闭</option>
                 {PRESETS.map((p) => (
                   <option key={p} value={p}>
                     {p}

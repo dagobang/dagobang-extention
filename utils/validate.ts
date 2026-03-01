@@ -77,7 +77,7 @@ export function validateSettings(input: Settings): Settings | null {
   const tradeSuccessSoundEnabled = typeof (input as any).tradeSuccessSoundEnabled === 'boolean'
     ? (input as any).tradeSuccessSoundEnabled
     : ((defaults as any).tradeSuccessSoundEnabled ?? false);
-  const tradeSuccessSoundPresets = ['Bell', 'Boom', 'Cheer', 'Coins', 'Pop', 'Handgun', 'Kaching', 'Nice', 'Shotgun', 'Sonumi', 'Yes', 'Alipay', 'Wechat'] as const;
+  const tradeSuccessSoundPresets = ['Bell', 'Boom', 'Cheer', 'Coins', 'Pop', 'Handgun', 'Kaching', 'Nice', 'Shotgun', 'Sonumi', 'Yes', 'Alipay', 'Wechat', 'Mario-Collect', 'Mario-Gameover', 'Mario-Life', 'Mario-Mushroom', 'Mario-Start', 'Animal-Frog', 'Animal-Wolf'] as const;
   const inputTradeSuccessSoundPresetBuy = (input as any).tradeSuccessSoundPresetBuy;
   const inputTradeSuccessSoundPresetSell = (input as any).tradeSuccessSoundPresetSell;
   const tradeSuccessSoundPresetBuy = tradeSuccessSoundPresets.includes(inputTradeSuccessSoundPresetBuy)
