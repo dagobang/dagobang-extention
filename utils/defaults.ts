@@ -36,18 +36,30 @@ const BSC_MAINNET: ChainSettings = {
 };
 
 const DEFAULT_AUTOTRADE: AutoTradeConfig = {
-  enabled: false,
-  buyAmountBnb: '0.05',
-  maxMarketCapUsd: '',
-  minLiquidityUsd: '',
-  minHolders: '',
-  maxTokenAgeMinutes: '',
-  maxDevHoldPercent: '',
-  blockIfDevSell: true,
-  autoSellEnabled: false,
   takeProfitMultiple: '2',
   stopLossMultiple: '0.5',
   maxHoldMinutes: '',
+  triggerSound: {
+    enabled: true,
+    preset: 'Boom',
+  },
+  twitterSnipe: {
+    autoSellEnabled: true,
+    buyAmountBnb: '0.05',
+    buyNewCaCount: '1',
+    buyOgCount: '1',
+    minMarketCapUsd: '',
+    maxMarketCapUsd: '',
+    minHolders: '',
+    maxHolders: '',
+    minTokenAgeMinutes: '',
+    maxTokenAgeMinutes: '',
+    minDevHoldPercent: '',
+    maxDevHoldPercent: '',
+    blockIfDevSell: true,
+    targetUsers: [],
+    interactionTypes: ['tweet', 'reply', 'quote', 'retweet', 'follow'],
+  },
 };
 
 const DEFAULT_ADVANCED_AUTO_SELL: AdvancedAutoSellConfig = {

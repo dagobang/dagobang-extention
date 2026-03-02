@@ -6,7 +6,8 @@ import {
   Zap, LineChart,
   SatelliteDish,
   AlarmClockCheck,
-  Keyboard
+  Keyboard,
+  Crosshair
 } from 'lucide-react';
 import type { PointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
@@ -18,6 +19,8 @@ type HeaderProps = {
   onEditToggle: () => void;
   onToggleLimitTrade: () => void;
   autotradeActive: boolean;
+  onToggleAutoTradeStrategy: () => void;
+  autoTradeStrategyActive: boolean;
   onToggleRpc: () => void;
   rpcActive: boolean;
   onToggleDailyAnalysis: () => void;
@@ -33,6 +36,8 @@ export function Header({
   onEditToggle,
   onToggleLimitTrade,
   autotradeActive,
+  onToggleAutoTradeStrategy,
+  autoTradeStrategyActive,
   onToggleRpc,
   rpcActive,
   onToggleDailyAnalysis,
@@ -86,6 +91,24 @@ export function Header({
           title='Limit Order'
         >
           <AlarmClockCheck size={14} />
+        </button>
+        <button
+          type="button"
+          className={
+            autoTradeStrategyActive
+              ? 'flex items-center justify-center rounded-full bg-teal-500/20 text-teal-300 p-1'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-teal-300 p-1 hover:border-teal-400'
+          }
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleAutoTradeStrategy();
+          }}
+          title='Auto Trade Strategy'
+        >
+          <Crosshair size={14} />
         </button>
         <button
           type="button"

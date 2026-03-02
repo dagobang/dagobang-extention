@@ -1,7 +1,7 @@
 import { Play } from 'lucide-react';
 import { normalizeLocale, type Locale } from '@/utils/i18n';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
-import type { TradeSuccessSoundPreset } from '@/types/extention';
+import { TRADE_SUCCESS_SOUND_PRESETS, type TradeSuccessSoundPreset } from '@/types/extention';
 import type { SettingsDraftProps } from './types';
 
 type NotificationProps = SettingsDraftProps & {
@@ -10,31 +10,8 @@ type NotificationProps = SettingsDraftProps & {
 
 const OFF_VALUE = '__off__';
 
-const PRESETS: TradeSuccessSoundPreset[] = [
-  'Bell',
-  'Boom',
-  'Cheer',
-  'Coins',
-  'Pop',
-  'Handgun',
-  'Kaching',
-  'Nice',
-  'Shotgun',
-  'Sonumi',
-  'Yes',
-  'Alipay',
-  'Wechat',
-  'Mario-Collect',
-  'Mario-Gameover',
-  'Mario-Life',
-  'Mario-Mushroom',
-  'Mario-Start',
-  'Animal-Frog',
-  'Animal-Wolf',
-];
-
 function isPreset(v: any): v is TradeSuccessSoundPreset {
-  return PRESETS.includes(v);
+  return TRADE_SUCCESS_SOUND_PRESETS.includes(v);
 }
 
 export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChange }: NotificationProps) {
@@ -129,7 +106,7 @@ export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChan
                 }}
               >
                 <option value={OFF_VALUE}>{tt('popup.settings.tradeSuccessSoundOff')}</option>
-                {PRESETS.map((p) => (
+                {TRADE_SUCCESS_SOUND_PRESETS.map((p) => (
                   <option key={p} value={p}>
                     {p}
                   </option>
@@ -163,7 +140,7 @@ export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChan
                 }}
               >
                 <option value={OFF_VALUE}>{tt('popup.settings.tradeSuccessSoundOff')}</option>
-                {PRESETS.map((p) => (
+                {TRADE_SUCCESS_SOUND_PRESETS.map((p) => (
                   <option key={p} value={p}>
                     {p}
                   </option>

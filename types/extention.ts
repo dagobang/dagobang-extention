@@ -30,19 +30,40 @@ export type ChainSettings = {
   sellGasPreset: GasPreset;
 };
 
-export type AutoTradeConfig = {
+export type AutoTradeInteractionType = 'tweet' | 'reply' | 'quote' | 'retweet' | 'follow';
+
+export type AutoTradeTriggerSound = {
   enabled: boolean;
+  preset: TradeSuccessSoundPreset;
+};
+
+export type AutoTradeStrategyBase = {
+  autoSellEnabled: boolean;
   buyAmountBnb: string;
+  buyNewCaCount: string;
+  buyOgCount: string;
+  minMarketCapUsd: string;
   maxMarketCapUsd: string;
-  minLiquidityUsd: string;
   minHolders: string;
+  maxHolders: string;
+  minTokenAgeMinutes: string;
   maxTokenAgeMinutes: string;
+  minDevHoldPercent: string;
   maxDevHoldPercent: string;
   blockIfDevSell: boolean;
-  autoSellEnabled: boolean;
+};
+
+export type AutoTradeTwitterSnipeStrategy = AutoTradeStrategyBase & {
+  targetUsers: string[];
+  interactionTypes: AutoTradeInteractionType[];
+};
+
+export type AutoTradeConfig = {
   takeProfitMultiple: string;
   stopLossMultiple: string;
   maxHoldMinutes: string;
+  triggerSound: AutoTradeTriggerSound;
+  twitterSnipe: AutoTradeTwitterSnipeStrategy;
 };
 
 export type AdvancedAutoSellRuleType = 'take_profit' | 'stop_loss';
@@ -66,27 +87,30 @@ export type AdvancedAutoSellConfig = {
   trailingStop?: AdvancedAutoSellTrailingStop;
 };
 
-export type TradeSuccessSoundPreset =
-  | 'Bell'
-  | 'Boom'
-  | 'Cheer'
-  | 'Coins'
-  | 'Pop'
-  | 'Handgun'
-  | 'Kaching'
-  | 'Nice'
-  | 'Shotgun'
-  | 'Sonumi'
-  | 'Yes'
-  | 'Alipay'
-  | 'Wechat'
-  | 'Mario-Collect'
-  | 'Mario-Gameover'
-  | 'Mario-Life'
-  | 'Mario-Mushroom'
-  | 'Mario-Start'
-  | 'Animal-Frog'
-  | 'Animal-Wolf'
+export const TRADE_SUCCESS_SOUND_PRESETS = [
+  'Bell',
+  'Boom',
+  'Cheer',
+  'Coins',
+  'Pop',
+  'Handgun',
+  'Kaching',
+  'Nice',
+  'Shotgun',
+  'Sonumi',
+  'Yes',
+  'Alipay',
+  'Wechat',
+  'Mario-Collect',
+  'Mario-Gameover',
+  'Mario-Life',
+  'Mario-Mushroom',
+  'Mario-Start',
+  'Animal-Frog',
+  'Animal-Wolf',
+] as const;
+
+export type TradeSuccessSoundPreset = (typeof TRADE_SUCCESS_SOUND_PRESETS)[number];
 
 export type Settings = {
   chainId: 56;

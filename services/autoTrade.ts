@@ -2,6 +2,7 @@ import { parseEther } from 'viem';
 import { WalletService } from '@/services/wallet';
 import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
+import { defaultSettings } from '@/utils/defaults';
 
 type TokenMetrics = {
   tokenAddress?: `0x${string}`;
@@ -70,18 +71,27 @@ const extractTokenMetrics = (data: any): TokenMetrics | null => {
 
 const shouldBuyByConfig = (metrics: TokenMetrics, config: any) => {
   if (!metrics || !config) return false;
+  const minMcap = parseNumber(config.minMarketCapUsd);
   const maxMcap = parseNumber(config.maxMarketCapUsd);
+  if (minMcap != null && metrics.marketCapUsd != null && metrics.marketCapUsd < minMcap) return false;
   if (maxMcap != null && metrics.marketCapUsd != null && metrics.marketCapUsd > maxMcap) return false;
-  const minLiq = parseNumber(config.minLiquidityUsd);
-  if (minLiq != null && metrics.liquidityUsd != null && metrics.liquidityUsd < minLiq) return false;
   const minHolders = parseNumber(config.minHolders);
+  const maxHolders = parseNumber(config.maxHolders);
   if (minHolders != null && metrics.holders != null && metrics.holders < minHolders) return false;
+  if (maxHolders != null && metrics.holders != null && metrics.holders > maxHolders) return false;
+  const minAgeMin = parseNumber(config.minTokenAgeMinutes);
   const maxAgeMin = parseNumber(config.maxTokenAgeMinutes);
+  if (minAgeMin != null && metrics.createdAtMs != null) {
+    const ageMin = (Date.now() - metrics.createdAtMs) / 60000;
+    if (ageMin < minAgeMin) return false;
+  }
   if (maxAgeMin != null && metrics.createdAtMs != null) {
     const ageMin = (Date.now() - metrics.createdAtMs) / 60000;
     if (ageMin > maxAgeMin) return false;
   }
+  const minDevPct = parseNumber(config.minDevHoldPercent);
   const maxDevPct = parseNumber(config.maxDevHoldPercent);
+  if (minDevPct != null && metrics.devHoldPercent != null && metrics.devHoldPercent < minDevPct) return false;
   if (maxDevPct != null && metrics.devHoldPercent != null && metrics.devHoldPercent > maxDevPct) return false;
   if (config.blockIfDevSell && metrics.devHasSold === true) return false;
   return true;
@@ -96,6 +106,22 @@ export const createAutoTrade = (deps: { onStateChanged: () => void }) => {
     entryTime: number;
     lastPriceUsd: number | null;
   }>();
+  const normalizeAutoTrade = (input: any) => {
+    const defaults = defaultSettings().autoTrade;
+    if (!input) return defaults;
+    return {
+      ...defaults,
+      ...input,
+      triggerSound: {
+        ...defaults.triggerSound,
+        ...(input as any).triggerSound,
+      },
+      twitterSnipe: {
+        ...defaults.twitterSnipe,
+        ...(input as any).twitterSnipe,
+      },
+    };
+  };
 
   const getKey = (chainId: number, tokenAddress: `0x${string}`) => `${chainId}:${tokenAddress.toLowerCase()}`;
 
@@ -103,17 +129,18 @@ export const createAutoTrade = (deps: { onStateChanged: () => void }) => {
     try {
       if (!payload || payload.direction !== 'receive') return;
       const settings = await SettingsService.get();
-      const config = (settings as any).autoTrade;
-      if (!config || !config.enabled) return;
+      const config = normalizeAutoTrade((settings as any).autoTrade);
+      if (!config) return;
       const metrics = extractTokenMetrics(payload.data);
       if (!metrics || !metrics.tokenAddress) return;
-      if (!shouldBuyByConfig(metrics, config)) return;
+      const strategy = config.twitterSnipe;
+      if (!strategy || !strategy.autoSellEnabled || !shouldBuyByConfig(metrics, strategy)) return;
       const chainId = settings.chainId;
       const key = getKey(chainId, metrics.tokenAddress);
       const now = Date.now();
       const last = recentAutoBuys.get(key);
       if (last && now - last < 5 * 60 * 1000) return;
-      const amountNumber = parseNumber(config.buyAmountBnb) ?? 0;
+      const amountNumber = parseNumber(strategy.buyAmountBnb) ?? 0;
       if (amountNumber <= 0) return;
       const amountWei = parseEther(String(amountNumber));
       const status = await WalletService.getStatus();
@@ -141,8 +168,8 @@ export const createAutoTrade = (deps: { onStateChanged: () => void }) => {
   const handleAutoSellCheck = async (payload: any) => {
     try {
       const settings = await SettingsService.get();
-      const config = (settings as any).autoTrade;
-      if (!config || !config.autoSellEnabled) return;
+      const config = normalizeAutoTrade((settings as any).autoTrade);
+      if (!config || !config.twitterSnipe?.autoSellEnabled) return;
       const metrics = extractTokenMetrics(payload.data);
       if (!metrics || !metrics.tokenAddress) return;
       const chainId = settings.chainId;
@@ -182,4 +209,3 @@ export const createAutoTrade = (deps: { onStateChanged: () => void }) => {
 
   return { handleAutoTradeWebSocket, handleAutoSellCheck };
 };
-

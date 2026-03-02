@@ -6,6 +6,7 @@ import { BuySection } from './components/BuySection';
 import { SellSection } from './components/SellSection';
 import { Overlays } from './components/Overlays';
 import { LimitTradePanel } from './components/LimitTradePanel';
+import { AutoTradeStrategyPanel } from './components/AutoTradeStrategyPanel';
 import { RpcPanel } from './components/RpcPanel';
 import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
 import type { BgGetStateResponse, Settings } from '@/types/extention';
@@ -74,6 +75,7 @@ export default function App() {
   });
   const posRef = useRef(pos);
   const [showLimitTradePanel, setShowLimitTradePanel] = useState(false);
+  const [showAutoTradeStrategyPanel, setShowAutoTradeStrategyPanel] = useState(false);
   const [showRpcPanel, setShowRpcPanel] = useState(false);
   const [showDailyAnalysisPanel, setShowDailyAnalysisPanel] = useState(false);
   const dragging = useRef<null | { target: 'main'; startX: number; startY: number; baseX: number; baseY: number }>(null);
@@ -154,6 +156,24 @@ export default function App() {
     } catch {
     }
   }, [showLimitTradePanel]);
+
+  useEffect(() => {
+    try {
+      const key = 'dagobang_auto_trade_strategy_panel_visible';
+      const stored = window.localStorage.getItem(key);
+      if (!stored) return;
+      setShowAutoTradeStrategyPanel(stored === '1');
+    } catch {
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const key = 'dagobang_auto_trade_strategy_panel_visible';
+      window.localStorage.setItem(key, showAutoTradeStrategyPanel ? '1' : '0');
+    } catch {
+    }
+  }, [showAutoTradeStrategyPanel]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -1060,6 +1080,10 @@ export default function App() {
     setShowLimitTradePanel((v) => !v);
   };
 
+  const handleToggleAutoTradeStrategyPanel = () => {
+    setShowAutoTradeStrategyPanel((v) => !v);
+  };
+
   const handleToggleRpcPanel = () => {
     setShowRpcPanel((v) => !v);
   };
@@ -1123,6 +1147,8 @@ export default function App() {
                 onEditToggle={handleEditToggle}
                 onToggleLimitTrade={handleToggleLimitTradePanel}
                 autotradeActive={showLimitTradePanel}
+                onToggleAutoTradeStrategy={handleToggleAutoTradeStrategyPanel}
+                autoTradeStrategyActive={showAutoTradeStrategyPanel}
                 onToggleRpc={handleToggleRpcPanel}
                 rpcActive={showRpcPanel}
                 onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
@@ -1203,6 +1229,13 @@ export default function App() {
             tokenPrice={tokenPrice}
             tokenAddress={tokenAddressNormalized}
             tokenInfo={tokenInfo}
+          />
+
+          <AutoTradeStrategyPanel
+            visible={showAutoTradeStrategyPanel}
+            onVisibleChange={setShowAutoTradeStrategyPanel}
+            settings={settings}
+            isUnlocked={isUnlocked}
           />
 
           <RpcPanel

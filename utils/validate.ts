@@ -1,4 +1,5 @@
 import type { Settings, AutoTradeConfig, AdvancedAutoSellConfig } from '../types/extention';
+import { TRADE_SUCCESS_SOUND_PRESETS } from '../types/extention';
 import { defaultSettings } from './defaults';
 
 // Simple normalization helper (could be moved to a formatter util if needed)
@@ -21,6 +22,26 @@ function clampFloat(value: any, min: number, max: number, fallback: number) {
   if (!Number.isFinite(v)) return fallback;
   const clamped = Math.max(min, Math.min(max, v));
   return Math.round(clamped * 100) / 100;
+}
+
+function parseListInput(value: any, fallback: string[]) {
+  if (Array.isArray(value)) {
+    return value.map((x) => String(x).trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/[\n,]/)
+      .flatMap((x) => x.split(/\s+/))
+      .map((x) => x.trim())
+      .filter(Boolean);
+  }
+  return fallback;
+}
+
+function clampStringNumber(value: any, fallback: string) {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed;
 }
 
 function isAllowedProtectedRpcUrl(raw: string): boolean {
@@ -77,13 +98,12 @@ export function validateSettings(input: Settings): Settings | null {
   const tradeSuccessSoundEnabled = typeof (input as any).tradeSuccessSoundEnabled === 'boolean'
     ? (input as any).tradeSuccessSoundEnabled
     : ((defaults as any).tradeSuccessSoundEnabled ?? false);
-  const tradeSuccessSoundPresets = ['Bell', 'Boom', 'Cheer', 'Coins', 'Pop', 'Handgun', 'Kaching', 'Nice', 'Shotgun', 'Sonumi', 'Yes', 'Alipay', 'Wechat', 'Mario-Collect', 'Mario-Gameover', 'Mario-Life', 'Mario-Mushroom', 'Mario-Start', 'Animal-Frog', 'Animal-Wolf'] as const;
   const inputTradeSuccessSoundPresetBuy = (input as any).tradeSuccessSoundPresetBuy;
   const inputTradeSuccessSoundPresetSell = (input as any).tradeSuccessSoundPresetSell;
-  const tradeSuccessSoundPresetBuy = tradeSuccessSoundPresets.includes(inputTradeSuccessSoundPresetBuy)
+  const tradeSuccessSoundPresetBuy = TRADE_SUCCESS_SOUND_PRESETS.includes(inputTradeSuccessSoundPresetBuy)
     ? inputTradeSuccessSoundPresetBuy
     : ((defaults as any).tradeSuccessSoundPresetBuy ?? 'Bell');
-  const tradeSuccessSoundPresetSell = tradeSuccessSoundPresets.includes(inputTradeSuccessSoundPresetSell)
+  const tradeSuccessSoundPresetSell = TRADE_SUCCESS_SOUND_PRESETS.includes(inputTradeSuccessSoundPresetSell)
     ? inputTradeSuccessSoundPresetSell
     : ((defaults as any).tradeSuccessSoundPresetSell ?? 'Coins');
   const tradeSuccessSoundVolume = clampNumber(
@@ -171,32 +191,42 @@ export function validateSettings(input: Settings): Settings | null {
 
   const inputAutoTrade = (input as any).autoTrade as Partial<AutoTradeConfig> | undefined;
   const defaultAutoTrade = defaults.autoTrade;
+  const inputTriggerSound = (inputAutoTrade as any)?.triggerSound as any;
+  const defaultTriggerSound = (defaultAutoTrade as any).triggerSound as any;
+  const triggerSoundPreset = TRADE_SUCCESS_SOUND_PRESETS.includes(inputTriggerSound?.preset)
+    ? inputTriggerSound.preset
+    : (defaultTriggerSound?.preset ?? 'Boom');
+  const triggerSoundEnabled = typeof inputTriggerSound?.enabled === 'boolean'
+    ? inputTriggerSound.enabled
+    : !!defaultTriggerSound?.enabled;
+  const inputTwitterSnipe = (inputAutoTrade as any)?.twitterSnipe ?? {};
+  const defaultTwitterSnipe = (defaultAutoTrade as any).twitterSnipe;
+  const allowedInteractionTypes = ['tweet', 'reply', 'quote', 'retweet', 'follow'] as const;
+  const interactionTypesRaw = parseListInput(inputTwitterSnipe.interactionTypes, defaultTwitterSnipe.interactionTypes);
+  const interactionTypes = interactionTypesRaw.filter((x) => allowedInteractionTypes.includes(x as any));
+  const twitterSnipe = {
+    autoSellEnabled: typeof inputTwitterSnipe.autoSellEnabled === 'boolean'
+      ? inputTwitterSnipe.autoSellEnabled
+      : defaultTwitterSnipe.autoSellEnabled,
+    buyAmountBnb: clampStringNumber(inputTwitterSnipe.buyAmountBnb, defaultTwitterSnipe.buyAmountBnb),
+    buyNewCaCount: clampStringNumber(inputTwitterSnipe.buyNewCaCount, defaultTwitterSnipe.buyNewCaCount),
+    buyOgCount: clampStringNumber(inputTwitterSnipe.buyOgCount, defaultTwitterSnipe.buyOgCount),
+    minMarketCapUsd: clampStringNumber(inputTwitterSnipe.minMarketCapUsd, defaultTwitterSnipe.minMarketCapUsd),
+    maxMarketCapUsd: clampStringNumber(inputTwitterSnipe.maxMarketCapUsd, defaultTwitterSnipe.maxMarketCapUsd),
+    minHolders: clampStringNumber(inputTwitterSnipe.minHolders, defaultTwitterSnipe.minHolders),
+    maxHolders: clampStringNumber(inputTwitterSnipe.maxHolders, defaultTwitterSnipe.maxHolders),
+    minTokenAgeMinutes: clampStringNumber(inputTwitterSnipe.minTokenAgeMinutes, defaultTwitterSnipe.minTokenAgeMinutes),
+    maxTokenAgeMinutes: clampStringNumber(inputTwitterSnipe.maxTokenAgeMinutes, defaultTwitterSnipe.maxTokenAgeMinutes),
+    minDevHoldPercent: clampStringNumber(inputTwitterSnipe.minDevHoldPercent, defaultTwitterSnipe.minDevHoldPercent),
+    maxDevHoldPercent: clampStringNumber(inputTwitterSnipe.maxDevHoldPercent, defaultTwitterSnipe.maxDevHoldPercent),
+    blockIfDevSell: typeof inputTwitterSnipe.blockIfDevSell === 'boolean'
+      ? inputTwitterSnipe.blockIfDevSell
+      : defaultTwitterSnipe.blockIfDevSell,
+    targetUsers: parseListInput(inputTwitterSnipe.targetUsers, defaultTwitterSnipe.targetUsers),
+    interactionTypes: interactionTypes.length ? (interactionTypes as any) : defaultTwitterSnipe.interactionTypes,
+  };
+
   const autoTrade: AutoTradeConfig = {
-    enabled: !!inputAutoTrade?.enabled,
-    buyAmountBnb: typeof inputAutoTrade?.buyAmountBnb === 'string' && inputAutoTrade.buyAmountBnb.trim()
-      ? inputAutoTrade.buyAmountBnb.trim()
-      : defaultAutoTrade.buyAmountBnb,
-    maxMarketCapUsd: typeof inputAutoTrade?.maxMarketCapUsd === 'string'
-      ? inputAutoTrade.maxMarketCapUsd.trim()
-      : defaultAutoTrade.maxMarketCapUsd,
-    minLiquidityUsd: typeof inputAutoTrade?.minLiquidityUsd === 'string'
-      ? inputAutoTrade.minLiquidityUsd.trim()
-      : defaultAutoTrade.minLiquidityUsd,
-    minHolders: typeof inputAutoTrade?.minHolders === 'string'
-      ? inputAutoTrade.minHolders.trim()
-      : defaultAutoTrade.minHolders,
-    maxTokenAgeMinutes: typeof inputAutoTrade?.maxTokenAgeMinutes === 'string'
-      ? inputAutoTrade.maxTokenAgeMinutes.trim()
-      : defaultAutoTrade.maxTokenAgeMinutes,
-    maxDevHoldPercent: typeof inputAutoTrade?.maxDevHoldPercent === 'string'
-      ? inputAutoTrade.maxDevHoldPercent.trim()
-      : defaultAutoTrade.maxDevHoldPercent,
-    blockIfDevSell: typeof inputAutoTrade?.blockIfDevSell === 'boolean'
-      ? inputAutoTrade.blockIfDevSell
-      : defaultAutoTrade.blockIfDevSell,
-    autoSellEnabled: typeof inputAutoTrade?.autoSellEnabled === 'boolean'
-      ? inputAutoTrade.autoSellEnabled
-      : defaultAutoTrade.autoSellEnabled,
     takeProfitMultiple: typeof inputAutoTrade?.takeProfitMultiple === 'string'
       ? inputAutoTrade.takeProfitMultiple.trim()
       : defaultAutoTrade.takeProfitMultiple,
@@ -206,6 +236,11 @@ export function validateSettings(input: Settings): Settings | null {
     maxHoldMinutes: typeof inputAutoTrade?.maxHoldMinutes === 'string'
       ? inputAutoTrade.maxHoldMinutes.trim()
       : defaultAutoTrade.maxHoldMinutes,
+    triggerSound: {
+      enabled: triggerSoundEnabled,
+      preset: triggerSoundPreset,
+    },
+    twitterSnipe,
   };
 
   const inputAdvancedAutoSell = (input as any).advancedAutoSell as Partial<AdvancedAutoSellConfig> | undefined;
