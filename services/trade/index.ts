@@ -1,4 +1,4 @@
-import { encodeFunctionData, erc20Abi } from 'viem';
+import { encodeAbiParameters, encodeFunctionData, erc20Abi, parseAbi, parseAbiParameters } from 'viem';
 import { RpcService } from '../rpc';
 import { WalletService } from '../wallet';
 import { SettingsService } from '../settings';
@@ -14,6 +14,17 @@ import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInD
 import { getGasPriceWei, prewarmNonce, sendTransaction } from './tradeTx';
 import { formatBroadcastProvider } from '@/utils/format';
 import { getDexPoolPrefer } from '@/utils/dexUtils';
+
+const tokenManagerHelper3Abi = parseAbi([
+  'function tryBuy(address token, uint256 amount, uint256 funds) view returns (address tokenManager, address quote, uint256 estimatedAmount, uint256 estimatedCost, uint256 estimatedFee, uint256 amountMsgValue, uint256 amountApproval, uint256 amountFunds)',
+  'function trySell(address token, uint256 amount) view returns (address tokenManager, address quote, uint256 funds, uint256 fee)',
+]);
+
+const abiParamsUint256 = parseAbiParameters('uint256');
+const abiParamsFourMemeBuyTokenParams = parseAbiParameters(
+  'uint256 origin, address token, address to, uint256 amount, uint256 maxFunds, uint256 funds, uint256 minAmount'
+);
+const abiParamsFourMemeBuyTokenWrapper = parseAbiParameters('bytes args, uint256 time, bytes signature');
 
 export class TradeService {
   static async quoteBestExactIn(
@@ -100,7 +111,7 @@ export class TradeService {
     if (tokenInfo.launchpad) {
       // Assuming 'status' 1 means Trading (Outer), anything else (0/2?) is Inner/Launchpad
       // Or checking if platform is known launchpad
-      if (['fourmeme', 'bn_fourmeme', 'flap'].includes(tokenInfo.launchpad_platform?.toLowerCase() || '')) {
+      if (['fourmeme', 'bn_fourmeme', 'fourmeme_agent', 'flap'].includes(tokenInfo.launchpad_platform?.toLowerCase() || '')) {
         // If status is NOT 1 (assuming 1 is "Trading on DEX"), treat as Inner
         // This logic might need adjustment based on exact status codes
         return tokenInfo.launchpad_status !== 1;
@@ -113,7 +124,7 @@ export class TradeService {
     const platform = tokenInfo.launchpad_platform?.toLowerCase();
     const contracts = DeployAddress[chainId as ChainId] || {};
 
-    if (platform === 'fourmeme' || platform === 'bn_fourmeme') {
+    if (platform.includes('fourmeme')) {
       return {
         buyType: SwapType.FOUR_MEME_BUY_AMAP,
         sellType: SwapType.FOUR_MEME_SELL,
@@ -129,6 +140,59 @@ export class TradeService {
       };
     }
     return null;
+  }
+
+  private static getTokenManagerHelper3Address(chainId: number): Address {
+    const contracts = DeployAddress[chainId as ChainId] || {};
+    return (contracts[ContractNames.TokenManagerHelper3]?.address || ZERO_ADDRESS) as Address;
+  }
+
+  private static async tryFourMemeBuyEstimatedAmount(client: any, chainId: number, token: Address, funds: bigint) {
+    const helperAddress = this.getTokenManagerHelper3Address(chainId);
+    if (helperAddress === ZERO_ADDRESS) return null;
+    const res = await client.readContract({
+      address: helperAddress,
+      abi: tokenManagerHelper3Abi,
+      functionName: 'tryBuy',
+      args: [token, 0n, funds],
+    });
+    const estimatedAmount = res[2] as bigint;
+    return { estimatedAmount };
+  }
+
+  private static async tryFourMemeSellEstimatedFunds(client: any, chainId: number, token: Address, amount: bigint) {
+    const helperAddress = this.getTokenManagerHelper3Address(chainId);
+    if (helperAddress === ZERO_ADDRESS) return null;
+    const res = await client.readContract({
+      address: helperAddress,
+      abi: tokenManagerHelper3Abi,
+      functionName: 'trySell',
+      args: [token, amount],
+    });
+    const funds = res[2] as bigint;
+    return { funds };
+  }
+
+  private static encodeFourMemeUint256(value: bigint) {
+    return encodeAbiParameters(abiParamsUint256, [value]) as `0x${string}`;
+  }
+
+  private static encodeFourMemeBuyTokenData(input: {
+    token: Address;
+    to: Address;
+    funds: bigint;
+    minAmount: bigint;
+  }) {
+    const args = encodeAbiParameters(abiParamsFourMemeBuyTokenParams, [
+      0n,
+      input.token,
+      input.to,
+      0n,
+      0n,
+      input.funds,
+      input.minAmount,
+    ]);
+    return encodeAbiParameters(abiParamsFourMemeBuyTokenWrapper, [args, 0n, '0x']) as `0x${string}`;
   }
 
   static async buy(input: TxBuyInput) {
@@ -220,13 +284,48 @@ export class TradeService {
     let minOut = 0n;
 
     if (isInner && launchpadConfig) {
+      const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
+      let dataForDesc: `0x${string}` = '0x';
+
+      if (platform.includes('fourmeme')) {
+        const to = account.address as Address;
+        const fundsForEstimate = currentRouterToken === ZERO_ADDRESS ? amountIn : currentAmount;
+        let minAmount = 0n;
+        if (!isTurbo) {
+          try {
+            const est = await timeStep('fourmeme:tryBuy', () =>
+              this.tryFourMemeBuyEstimatedAmount(client, input.chainId, tokenOut as Address, fundsForEstimate)
+            );
+            if (est && est.estimatedAmount > 0n) {
+              const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+              minAmount = applySlippage(est.estimatedAmount, slippageBps);
+            }
+          } catch {
+          }
+        }
+
+        minOut = minAmount;
+
+        const wantEncodedBuy = tokenInfo.aiCreator === true && currentRouterToken === ZERO_ADDRESS;
+        if (wantEncodedBuy) {
+          dataForDesc = this.encodeFourMemeBuyTokenData({
+            token: tokenOut as Address,
+            to,
+            funds: amountIn,
+            minAmount,
+          });
+        } else {
+          dataForDesc = this.encodeFourMemeUint256(minAmount);
+        }
+      }
+
       descs.push(getRouterSwapDesc({
         swapType: launchpadConfig.buyType,
         tokenIn: currentRouterToken,
         tokenOut,
         poolAddress: launchpadConfig.manager,
         fee: 0,
-        data: '0x',
+        data: dataForDesc,
       }));
     } else {
       const poolVersion = getDexPoolPrefer(tokenInfo.dex_type);
@@ -332,7 +431,7 @@ export class TradeService {
     }
 
     const isInner = this.isInnerDisk(tokenInfo);
-    const isInnerFourMeme = isInner && (platform === 'fourmeme' || platform === 'bn_fourmeme');
+    const isInnerFourMeme = isInner && platform.includes('fourmeme');
     const bridgeToken = isInnerFourMeme ? getBridgeToken(chainId, tokenInfo.quote_token_address) : null;
     if (bridgeToken && bridgeToken !== ZERO_ADDRESS) {
       const allowance = await client.readContract({
@@ -392,8 +491,30 @@ export class TradeService {
 
     const descs: SwapDescLike[] = [];
     const sellToken: Address = input.tokenAddress;
+    let estimatedOut = 0n;
 
     if (isInner && launchpadConfig) {
+      const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
+      const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+      let minFunds = 0n;
+      let dataForSell: `0x${string}` = '0x';
+
+      if (!isTurbo && platform.includes('fourmeme')) {
+        try {
+          const est = await timeStep('fourmeme:trySell', () =>
+            this.tryFourMemeSellEstimatedFunds(client, input.chainId, sellToken, amountIn)
+          );
+          if (est && est.funds > 0n) {
+            minFunds = applySlippage(est.funds, slippageBps);
+            dataForSell = this.encodeFourMemeUint256(minFunds);
+            if (!bridgeToken) {
+              estimatedOut = est.funds;
+            }
+          }
+        } catch {
+        }
+      }
+
       const innerTokenOut = bridgeToken ?? ZERO_ADDRESS;
       descs.push(getRouterSwapDesc({
         swapType: launchpadConfig.sellType,
@@ -401,18 +522,20 @@ export class TradeService {
         tokenOut: innerTokenOut,
         poolAddress: launchpadConfig.manager,
         fee: 0,
+        data: dataForSell,
       }));
 
       if (innerTokenOut !== ZERO_ADDRESS && bridgeToken) {
+        const hop2AmountIn = isTurbo ? 1n : (minFunds > 0n ? minFunds : 1n);
         const hop2 = await timeStep('quote:bridge:hop2', () =>
           resolveBridgeHopExactIn(
             input.chainId,
             bridgeToken,
             ZERO_ADDRESS,
-            1n,
+            hop2AmountIn,
             bridgePrefer,
-            true,
-            false
+            isTurbo,
+            !isTurbo
           )
         );
         if (!hop2.poolAddress || hop2.poolAddress === ZERO_ADDRESS) {
@@ -425,6 +548,9 @@ export class TradeService {
           poolAddress: hop2.poolAddress,
           fee: getV3FeeForDesc(hop2, 500),
         }));
+        if (!isTurbo && hop2.amountOut > 0n) {
+          estimatedOut = hop2.amountOut;
+        }
       }
     }
 
@@ -435,7 +561,6 @@ export class TradeService {
       amountInForQuote = baseBal > 0n ? (baseBal * BigInt(percentBps)) / 10000n : 1n;
     }
 
-    let estimatedOut = 0n;
     if (!isInner) {
       // hop1
       const hop1RouterOut = bridgeToken ? bridgeToken : ZERO_ADDRESS;

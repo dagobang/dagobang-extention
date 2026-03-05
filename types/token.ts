@@ -26,6 +26,7 @@ export interface TokenInfo {
     marketCap: string;
     timestamp: number;
   };
+  aiCreator?: boolean;
 }
 
 export interface FourmemeTokenInfo {
@@ -41,6 +42,7 @@ export interface FourmemeTokenInfo {
   funds: number;
   maxFunds: number;
   liquidityAdded: boolean;
+  aiCreator?: boolean;
 }
 
 export interface FlapTokenStateV7 {

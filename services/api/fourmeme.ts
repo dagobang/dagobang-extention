@@ -62,6 +62,7 @@ export interface FourmemeTokenData {
     pancakeVersion: number;
   };
   lastId?: number;
+  aiCreator?: boolean;
 }
 
 export interface FourmemeTokenInfoResponse {
@@ -256,6 +257,7 @@ export class FourmemeAPI {
             marketCap: data.tokenPrice?.marketCap || "0",
             timestamp: Number(data.tokenPrice?.modifyDate || 0),
           },
+          aiCreator: data.aiCreator, // is ai agent
         };
       }
 

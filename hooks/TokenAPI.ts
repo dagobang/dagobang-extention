@@ -130,6 +130,9 @@ export class TokenAPI {
         ]);
         if (contractInfo && httpInfo) {
             httpInfo.quote_token_address = contractInfo.quote;
+            if (contractInfo.aiCreator !== undefined) {
+                httpInfo.aiCreator = contractInfo.aiCreator;
+            }
             return httpInfo;
         }
         return null;

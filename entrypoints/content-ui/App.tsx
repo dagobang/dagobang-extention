@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { CustomToaster } from './components/CustomToaster';
 import { Header } from './components/Header';
@@ -58,14 +58,8 @@ export default function App() {
   const handleBuyRef = useRef<(amountStr: string) => void>(() => { });
   const handleSellRef = useRef<(pct: number) => void>(() => { });
   const prewarmedTurboRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    siteInfoRef.current = siteInfo;
-  }, [siteInfo]);
-
-  useEffect(() => {
-    pendingQuickBuyRef.current = pendingQuickBuy;
-  }, [pendingQuickBuy]);
+  const fastPollingRef = useRef<any>(null);
+  const tokenRefreshSeqRef = useRef(0);
 
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
@@ -94,22 +88,19 @@ export default function App() {
   });
 
   useEffect(() => {
+    siteInfoRef.current = siteInfo;
+    pendingQuickBuyRef.current = pendingQuickBuy;
+    settingsRef.current = settings;
+    minimizedRef.current = minimized;
+    isEditingRef.current = isEditing;
+    posRef.current = pos;
+  }, [siteInfo, pendingQuickBuy, settings, minimized, isEditing, pos]);
+
+  useEffect(() => {
     if (settings) {
       (window as any).__DAGOBANG_SETTINGS__ = settings;
     }
   }, [settings]);
-
-  useEffect(() => {
-    settingsRef.current = settings;
-  }, [settings]);
-
-  useEffect(() => {
-    minimizedRef.current = minimized;
-  }, [minimized]);
-
-  useEffect(() => {
-    isEditingRef.current = isEditing;
-  }, [isEditing]);
 
   useEffect(() => {
     keyboardEnabledRef.current = keyboardShortcutsEnabled;
@@ -120,60 +111,47 @@ export default function App() {
   }, [keyboardShortcutsEnabled]);
 
   useEffect(() => {
-    posRef.current = pos;
-  }, [pos]);
-
-  useEffect(() => {
     try {
-      const key = 'dagobang_content_ui_pos';
-      const stored = window.localStorage.getItem(key);
-      if (!stored) return;
-      const parsed = JSON.parse(stored);
-      if (!parsed || typeof parsed.x !== 'number' || typeof parsed.y !== 'number') return;
-      const width = window.innerWidth || 0;
-      const height = window.innerHeight || 0;
-      const clampedX = Math.min(Math.max(0, parsed.x), Math.max(0, width - 340));
-      const clampedY = Math.min(Math.max(0, parsed.y), Math.max(0, height - 80));
-      setPos({ x: clampedX, y: clampedY });
+      const posKey = 'dagobang_content_ui_pos';
+      const posStored = window.localStorage.getItem(posKey);
+      if (posStored) {
+        const parsed = JSON.parse(posStored);
+        if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+          const width = window.innerWidth || 0;
+          const height = window.innerHeight || 0;
+          const clampedX = Math.min(Math.max(0, parsed.x), Math.max(0, width - 340));
+          const clampedY = Math.min(Math.max(0, parsed.y), Math.max(0, height - 80));
+          setPos({ x: clampedX, y: clampedY });
+        }
+      }
     } catch {
     }
-  }, []);
 
-  useEffect(() => {
     try {
       const key = 'dagobang_limit_trade_panel_visible';
       const stored = window.localStorage.getItem(key);
-      if (!stored) return;
-      setShowLimitTradePanel(stored === '1');
+      if (stored) setShowLimitTradePanel(stored === '1');
     } catch {
     }
-  }, []);
 
-  useEffect(() => {
-    try {
-      const key = 'dagobang_limit_trade_panel_visible';
-      window.localStorage.setItem(key, showLimitTradePanel ? '1' : '0');
-    } catch {
-    }
-  }, [showLimitTradePanel]);
-
-  useEffect(() => {
     try {
       const key = 'dagobang_auto_trade_strategy_panel_visible';
       const stored = window.localStorage.getItem(key);
-      if (!stored) return;
-      setShowAutoTradeStrategyPanel(stored === '1');
+      if (stored) setShowAutoTradeStrategyPanel(stored === '1');
     } catch {
     }
   }, []);
 
   useEffect(() => {
     try {
-      const key = 'dagobang_auto_trade_strategy_panel_visible';
-      window.localStorage.setItem(key, showAutoTradeStrategyPanel ? '1' : '0');
+      window.localStorage.setItem('dagobang_limit_trade_panel_visible', showLimitTradePanel ? '1' : '0');
     } catch {
     }
-  }, [showAutoTradeStrategyPanel]);
+    try {
+      window.localStorage.setItem('dagobang_auto_trade_strategy_panel_visible', showAutoTradeStrategyPanel ? '1' : '0');
+    } catch {
+    }
+  }, [showLimitTradePanel, showAutoTradeStrategyPanel]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -398,6 +376,28 @@ export default function App() {
     return /^0x[a-fA-F0-9]{40}$/.test(t) ? (t as `0x${string}`) : null;
   }, [siteInfo]);
 
+  const tokenContextKey = `${siteInfo?.platform ?? ''}:${siteInfo?.chain ?? ''}:${tokenAddressNormalized ?? ''}`;
+  const tokenContextKeyRef = useRef(tokenContextKey);
+  useLayoutEffect(() => {
+    if (tokenContextKeyRef.current === tokenContextKey) return;
+    tokenContextKeyRef.current = tokenContextKey;
+    tokenRefreshSeqRef.current += 1;
+    if (fastPollingRef.current) {
+      clearInterval(fastPollingRef.current);
+      fastPollingRef.current = null;
+    }
+    setTokenInfo(null);
+    setTokenSymbol(null);
+    setTokenDecimals(null);
+    setTokenBalanceWei('0');
+    setTokenStat(null);
+    setTokenPriceUsd(null);
+    setMarketCapDisplay(null);
+    setLiquidityDisplay(null);
+    setTxHash(null);
+    setPendingBuyTokenMinOutWei(null);
+  }, [tokenContextKey]);
+
   useEffect(() => {
     if (!pendingQuickBuy) return;
     if (!settings) return;
@@ -466,6 +466,7 @@ export default function App() {
       setTokenPriceUsd(null);
       return;
     }
+    const reqCtxKey = `${siteInfo.platform ?? ''}:${siteInfo.chain ?? ''}:${tokenAddressNormalized ?? ''}`;
     const now = Date.now();
     if (!force && now - lastTokenPriceRefresh.current < 5000) return;
     lastTokenPriceRefresh.current = now;
@@ -480,9 +481,11 @@ export default function App() {
     try {
       const v = await TokenAPI.getTokenPriceUsd(siteInfo.platform, chainId, tokenAddr, safeTokenInfo);
       if (seq !== tokenPriceReqSeq.current) return;
+      if (reqCtxKey !== tokenContextKeyRef.current) return;
       setTokenPriceUsd(v && Number.isFinite(v) && v > 0 ? v : null);
     } catch {
       if (seq !== tokenPriceReqSeq.current) return;
+      if (reqCtxKey !== tokenContextKeyRef.current) return;
       setTokenPriceUsd(null);
     }
   }
@@ -512,6 +515,7 @@ export default function App() {
 
   const lastTokenRefresh = useRef(0);
   async function refreshToken(force = false) {
+    const seq = tokenRefreshSeqRef.current;
     if (document.hidden && !force) return;
     if (!tokenAddressNormalized || !siteInfo) {
       setTokenInfo(null);
@@ -530,8 +534,10 @@ export default function App() {
     if (!force && now - lastTokenRefresh.current < 2000) return;
     lastTokenRefresh.current = now;
 
+    const reqCtxKey = `${siteInfo.platform ?? ''}:${siteInfo.chain ?? ''}:${tokenAddressNormalized ?? ''}`;
     try {
       const meta = await TokenAPI.getTokenInfo(siteInfo.platform, siteInfo.chain, tokenAddressNormalized);
+      if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
       if (meta) {
         setTokenInfo(meta);
         setTokenSymbol(meta.symbol);
@@ -549,6 +555,7 @@ export default function App() {
 
       if (isUnlocked && address) {
         const holding = await TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, address, tokenAddressNormalized, { cacheTtlMs: 2000 });
+        if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
         setTokenBalanceWei(holding ?? '0');
       } else {
         setTokenBalanceWei('0');
@@ -556,6 +563,7 @@ export default function App() {
 
       await refreshTokenPrice(force, meta ?? null);
     } catch (e: any) {
+      if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
       setTokenSymbol(null);
       setTokenDecimals(null);
       setTokenBalanceWei('0');
@@ -588,15 +596,10 @@ export default function App() {
   }, [siteInfo, tokenAddressNormalized, address]);
 
   useEffect(() => {
-    if (!tokenAddressNormalized || !siteInfo || !address) return;
     refreshToken(true);
-  }, [tokenAddressNormalized, siteInfo, address]);
-
-  useEffect(() => {
-    refreshToken();
     const timer = setInterval(() => refreshToken(), 2000);
     return () => clearInterval(timer);
-  }, [tokenAddressNormalized, address]);
+  }, [tokenAddressNormalized, address, siteInfo]);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -646,8 +649,6 @@ export default function App() {
       toast.error(message, { icon: '❌' });
     }
   }
-
-  const fastPollingRef = useRef<any>(null);
 
   const startFastPolling = () => {
     if (fastPollingRef.current) clearInterval(fastPollingRef.current);
@@ -810,7 +811,7 @@ export default function App() {
       }
       let amountWei = bal > 0n ? (bal * BigInt(pct)) / 100n : 0n;
       const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
-      const isInnerFourMeme = !!tokenInfo?.launchpad && (platform === 'fourmeme' || platform === 'bn_fourmeme') && tokenInfo.launchpad_status !== 1;
+      const isInnerFourMeme = !!tokenInfo?.launchpad && (platform.includes('fourmeme')) && tokenInfo.launchpad_status !== 1;
       if (!isTurbo && pct !== 100 && isInnerFourMeme && amountWei > 0n) {
         amountWei = (amountWei / 1000000000n) * 1000000000n;
       }

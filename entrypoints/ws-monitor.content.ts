@@ -1,5 +1,5 @@
 import { call } from '@/utils/messaging';
-import { initWsMonitorForSite } from './content/ws';
+import { initWsMonitorForSite } from './content/ws-processor';
 
 export default defineContentScript({
   matches: ['*://gmgn.ai/*', '*://*.gmgn.ai/*', '*://axiom.trade/*', '*://*.axiom.trade/*', '*://web3.binance.com/*',

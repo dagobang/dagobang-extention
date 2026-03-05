@@ -35,7 +35,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
           platform: 'gmgn',
         };
       }
-      // home page
+      // home/list page
       if (parts.length === 0 && u.searchParams.has('chain')) {
         return {
           chain: u.searchParams.get('chain')?.toLowerCase() || '',

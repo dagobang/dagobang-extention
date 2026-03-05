@@ -48,10 +48,16 @@ const tokenManagerHelper3Abi = parseAbi([
     'function getTokenInfo(address token) view returns (uint256 version, address tokenManager, address quote, uint256 lastPrice, uint256 tradingFeeRate, uint256 minTradingFee, uint256 launchTime, uint256 offers, uint256 maxOffers, uint256 funds, uint256 maxFunds, bool liquidityAdded)'
 ]);
 
+const tokenManager2Abi = parseAbi([
+    'function _tokenInfos(address token) view returns (address base, address quote, uint256 template, uint256 totalSupply, uint256 maxOffers, uint256 maxRaising, uint256 launchTime, uint256 offers, uint256 funds, uint256 lastPrice, uint256 k, uint256 t, uint256 status)'
+]);
+
 const fourMemeTokenManagerAbi = parseAbi([
     'function createToken(bytes createArg, bytes sign) returns (address token)',
     'event TokenCreate(address creator, address token, uint256 requestId, string name, string symbol, uint256 totalSupply, uint256 launchTime)'
 ]);
+
+const tokenManagerCacheByChain = new Map<number, `0x${string}`>();
 
 export class TokenFourmemeService {
     private static getTokenManagerHelper3Address(chainId: number): string {
@@ -67,12 +73,24 @@ export class TokenFourmemeService {
             throw new Error('TokenManagerHelper3 address not found for chain ' + chainId);
         }
 
-        const result = await client.readContract({
+        const cachedTokenManager = tokenManagerCacheByChain.get(chainId);
+        const helperPromise = client.readContract({
             address: helperAddress as `0x${string}`,
             abi: tokenManagerHelper3Abi,
             functionName: 'getTokenInfo',
             args: [tokenAddress as `0x${string}`],
         });
+
+        const templatePromise = cachedTokenManager
+            ? client.readContract({
+                address: cachedTokenManager,
+                abi: tokenManager2Abi,
+                functionName: '_tokenInfos',
+                args: [tokenAddress as `0x${string}`],
+            }).catch(() => null)
+            : Promise.resolve(null);
+
+        const [result, tokenInfoMaybe] = await Promise.all([helperPromise, templatePromise]);
 
         const [
             version,
@@ -89,6 +107,20 @@ export class TokenFourmemeService {
             liquidityAdded
         ] = result;
 
+        tokenManagerCacheByChain.set(chainId, tokenManager as `0x${string}`);
+
+        let tokenInfo = tokenInfoMaybe;
+        if (!tokenInfo || (cachedTokenManager && cachedTokenManager.toLowerCase() !== (tokenManager as string).toLowerCase())) {
+            tokenInfo = await client.readContract({
+                address: tokenManager as `0x${string}`,
+                abi: tokenManager2Abi,
+                functionName: '_tokenInfos',
+                args: [tokenAddress as `0x${string}`],
+            }).catch(() => null);
+        }
+
+        const aiCreator = tokenInfo ? (((tokenInfo[2] as bigint) & (1n << 85n)) !== 0n) : undefined;
+
         return {
             version: Number(version),
             tokenManager,
@@ -101,7 +133,8 @@ export class TokenFourmemeService {
             maxOffers: Number(maxOffers),
             funds: Number(funds),
             maxFunds: Number(maxFunds),
-            liquidityAdded
+            liquidityAdded,
+            aiCreator
         };
     }
 
