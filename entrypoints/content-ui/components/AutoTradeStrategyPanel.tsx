@@ -77,6 +77,19 @@ export function AutoTradeStrategyPanel({
   );
   const [draft, setDraft] = useState<AutoTradeConfig | null>(() => cloneAutoTrade(normalizedAutoTrade));
   const [saving, setSaving] = useState(false);
+  const [wsStatus, setWsStatus] = useState(() => {
+    const initial = (window as any).__DAGOBANG_WS_STATUS__;
+    return initial ?? {
+      connected: false,
+      lastPacketAt: 0,
+      lastSignalAt: 0,
+      latencyMs: null,
+      packetCount: 0,
+      signalCount: 0,
+      logs: [],
+    };
+  });
+  const [showLogs, setShowLogs] = useState(false);
 
   useEffect(() => {
     posRef.current = pos;
@@ -102,6 +115,18 @@ export function AutoTradeStrategyPanel({
     if (!visible) return;
     setDraft(cloneAutoTrade(normalizedAutoTrade));
   }, [visible, normalizedAutoTrade]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<any>).detail;
+      if (!detail) return;
+      setWsStatus(detail);
+    };
+    window.addEventListener('dagobang-ws-status' as any, handler as any);
+    return () => {
+      window.removeEventListener('dagobang-ws-status' as any, handler as any);
+    };
+  }, []);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -143,6 +168,15 @@ export function AutoTradeStrategyPanel({
   );
   const previewSound = useTradeSuccessSound({ enabled: true, volume: 60 });
   const twitterSnipe = draft?.twitterSnipe;
+  const formatAge = (ts?: number) => {
+    if (!ts) return '--';
+    const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}m ${r}s`;
+  };
+  const formatLatency = (ms?: number) => (ms == null ? '--' : `${Math.round(ms)}ms`);
   const updateTwitterSnipe = (patch: Partial<AutoTradeConfig['twitterSnipe']>) => {
     setDraft((prev) =>
       prev
@@ -449,6 +483,49 @@ export function AutoTradeStrategyPanel({
             />
             {tt('contentUi.autoTradeStrategy.strategyAutoSell')}
           </label>
+        </div>
+        <div className="space-y-2 pt-2 border-t border-zinc-800/60">
+          <div className="flex items-center justify-between gap-3 text-[12px] text-zinc-300">
+            <div className="flex items-center gap-3">
+              <div className="text-zinc-500">{tt('contentUi.autoTradeStrategy.wsStatusShort')}</div>
+              <div className="flex items-center gap-1">
+                <div className="text-zinc-500">{tt('contentUi.autoTradeStrategy.wsConnection')}</div>
+                <div className={wsStatus.connected ? 'text-emerald-300' : 'text-zinc-400'}>
+                  {wsStatus.connected ? tt('contentUi.autoTradeStrategy.wsConnected') : tt('contentUi.autoTradeStrategy.wsDisconnected')}
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="text-zinc-500">{tt('contentUi.autoTradeStrategy.wsSignalAndLast')}</div>
+                <div>{wsStatus.signalCount ?? 0}</div>
+                <div className="text-zinc-500">/</div>
+                <div>{formatAge(wsStatus.lastSignalAt)}</div>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="text-zinc-500">{tt('contentUi.autoTradeStrategy.wsPacketAndLast')}</div>
+                <div>{wsStatus.packetCount ?? 0}</div>
+                <div className="text-zinc-500">/</div>
+                <div>{formatAge(wsStatus.lastPacketAt)}</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="text-[11px] text-zinc-400 hover:text-zinc-200"
+              onClick={() => setShowLogs((prev) => !prev)}
+            >
+              {showLogs ? tt('contentUi.autoTradeStrategy.wsHideLogs') : tt('contentUi.autoTradeStrategy.wsShowLogs')}
+            </button>
+          </div>
+          {showLogs ? (
+            <div className="max-h-28 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300">
+              {(wsStatus.logs || []).slice().reverse().map((log: any, idx: number) => (
+                <div key={`${log.ts}-${idx}`} className="flex items-center gap-2 py-0.5">
+                  <div className="text-zinc-500">{formatAge(log.ts)}</div>
+                  <div className="text-zinc-400">{log.type}</div>
+                  <div className="truncate">{log.message}</div>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
 

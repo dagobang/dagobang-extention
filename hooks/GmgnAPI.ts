@@ -737,7 +737,6 @@ export class GmgnAPI {
         return result.data.holdings[0].balance;
       }
 
-      console.error('Failed to fetch token holding data:', result);
       return undefined;
     } catch (error) {
       console.error('Failed to fetch token holding:', error);

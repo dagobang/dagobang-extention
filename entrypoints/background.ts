@@ -426,6 +426,23 @@ export default defineBackground(() => {
             await AutoTrade.handleAutoSellCheck(msg.payload);
             return { ok: true };
           }
+          case 'gmgn:twitterSignal': {
+            const signal = msg.payload as any;
+            if (signal && signal.tokenAddress) {
+              const payload = {
+                direction: 'receive',
+                data: {
+                  tokenAddress: signal.tokenAddress,
+                  marketCapUsd: signal.marketCapUsd ?? null,
+                  priceUsd: signal.priceUsd ?? null,
+                  createdAtMs: signal.createdAtMs ?? null,
+                },
+              };
+              await AutoTrade.handleAutoTradeWebSocket(payload);
+              await AutoTrade.handleAutoSellCheck(payload);
+            }
+            return { ok: true };
+          }
         }
       } catch (e: any) {
         console.error('Handler error:', e);

@@ -265,6 +265,21 @@ export type TxWaitForReceiptError = {
   data?: unknown;
 };
 
+export type GmgnTwitterSignal = {
+  site: 'gmgn';
+  eventId?: string;
+  tweetId?: string;
+  user?: string;
+  text?: string;
+  keywords?: string[];
+  tokenAddress?: string;
+  chain?: string;
+  marketCapUsd?: number;
+  priceUsd?: number;
+  createdAtMs?: number;
+  ts: number;
+};
+
 export type BgRequest =
   | { type: 'bg:ping' }
   | { type: 'bg:openPopup' }
@@ -300,6 +315,7 @@ export type BgRequest =
   | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
   | { type: 'autotrade:ws'; payload: any }
+  | { type: 'gmgn:twitterSignal'; payload: GmgnTwitterSignal }
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
   | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
   | { type: 'limitOrder:cancel'; id: string }
@@ -381,6 +397,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'tx:bloxroutePrivate' }
   ? { ok: true; txHash?: `0x${string}` }
   : T extends { type: 'autotrade:ws' }
+  ? { ok: true }
+  : T extends { type: 'gmgn:twitterSignal' }
   ? { ok: true }
   : T extends { type: 'limitOrder:list' }
   ? { ok: true; orders: LimitOrder[] }

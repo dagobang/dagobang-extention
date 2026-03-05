@@ -18,6 +18,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
     // gmgn.ai
     // https://gmgn.ai/<chain>/token/<tokenAddress>
     if (u.hostname.includes('gmgn.ai')) {
+      // token page
       if (parts.length >= 3 && parts[1] === 'token') {
         return {
           chain: parts[0].toLowerCase(),
@@ -25,11 +26,20 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
           platform: 'gmgn',
         };
       }
+      // wallet address page
       if (parts.length >= 3 && parts[1] === 'address') {
         return {
           chain: parts[0].toLowerCase(),
           tokenAddress: '',
           walletAddress: parts[2],
+          platform: 'gmgn',
+        };
+      }
+      // home page
+      if (parts.length === 0 && u.searchParams.has('chain')) {
+        return {
+          chain: u.searchParams.get('chain')?.toLowerCase() || '',
+          tokenAddress: '',
           platform: 'gmgn',
         };
       }

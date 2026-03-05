@@ -1,61 +1,18 @@
 import './shared/style.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { browser } from 'wxt/browser';
 import App from './content-ui/App';
 import { call } from '@/utils/messaging';
 import { setupQuickBuyButtonsForCurrentSite } from './content/quickbuy/index';
 
 export default defineContentScript({
-  matches: ['*://gmgn.ai/*', '*://axiom.trade/*', '*://web3.binance.com/*',
-    "*://web3.okx.com/*", "*://www.xxyy.io/*", "*://dexscreener.com/*",
-    "*://four.meme/*", "*://flap.sh/*", "*://debot.ai/*",
+  matches: ['*://gmgn.ai/*', '*://*.gmgn.ai/*', '*://axiom.trade/*', '*://*.axiom.trade/*', '*://web3.binance.com/*',
+    "*://web3.okx.com/*", "*://xxyy.io/*", "*://*.xxyy.io/*", "*://dexscreener.com/*", "*://*.dexscreener.com/*",
+    "*://four.meme/*", "*://*.four.meme/*", "*://flap.sh/*", "*://*.flap.sh/*", "*://debot.ai/*", "*://*.debot.ai/*",
   ],
   cssInjectionMode: 'ui',
   runAt: 'document_end',
   async main(ctx) {
-    const injectUrlChangeInterceptor = () => {
-      const script = document.createElement('script');
-      script.src = browser.runtime.getURL('/injected.js');
-      script.onload = () => {
-        script.remove();
-      };
-      script.onerror = () => {
-        script.remove();
-      };
-      const target = document.head || document.documentElement || document.body;
-      if (target) {
-        target.appendChild(script);
-      }
-    };
-
-    injectUrlChangeInterceptor();
-
-    // const injectWebSocketInterceptor = () => {
-    //   if (!window.location.hostname.includes('gmgn.ai')) return;
-    //   const script = document.createElement('script');
-    //   script.src = browser.runtime.getURL('/injected.js');
-    //   script.onload = () => {
-    //     script.remove();
-    //   };
-    //   script.onerror = () => {
-    //     script.remove();
-    //   };
-    //   const target = document.head || document.documentElement || document.body;
-    //   if (target) {
-    //     target.appendChild(script);
-    //   }
-    // };
-
-    // injectWebSocketInterceptor();
-
-    // window.addEventListener('message', (event) => {
-    //   if (event.source !== window) return;
-    //   const data = event.data as any;
-    //   if (!data || data.type !== 'GMGN_WEBSOCKET_DATA') return;
-    //   void call({ type: 'autotrade:ws', payload: data });
-    // });
-
     const ui = await createShadowRootUi(ctx, {
       name: 'dagobang-widget',
       position: 'inline',
@@ -71,7 +28,6 @@ export default defineContentScript({
         root?.unmount();
       },
     });
-
     ui.mount();
 
     try {
