@@ -27,6 +27,7 @@ declare global {
   const encryptJson: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/crypto').encryptJson
   const extractFirstFromObject: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractFirstFromObject
   const extractGmgnAuthData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI').extractGmgnAuthData
+  const extractGmgnWsConnectionInfo: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractGmgnWsConnectionInfo
   const extractNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractNumber
   const extractText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractText
   const extractTimestampMs: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractTimestampMs
@@ -46,6 +47,7 @@ declare global {
   const normalizePriceValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').normalizePriceValue
   const parseCurrentUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrl
   const parseCurrentUrlFull: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrlFull
+  const parseGmgnEnvelope: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').parseGmgnEnvelope
   const parseNumberLoose: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').parseNumberLoose
   const storage: typeof import('wxt/utils/storage').storage
   const t: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n').t

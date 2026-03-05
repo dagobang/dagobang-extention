@@ -275,6 +275,7 @@ export function initGmgnWsMonitor(options: {
 
   const normalizeChannel = (channel: unknown): string => (typeof channel === 'string' ? channel.trim() : '');
 
+  // Processor: consumes normalized DAGOBANG_WS_PACKET (site=gmgn, direction=receive).
   const handleTwitterChannel = (data: any, channel: string, payload: any, now: number) => {
     const packetTs = typeof data.timestamp === 'number' ? data.timestamp : now;
     const latencyMs = computeLatencyMs(payload, packetTs, now);
@@ -398,6 +399,18 @@ export function initGmgnWsMonitor(options: {
     // updatePacketStatus(channel, now, null);
   };
 
+  const CHANNEL_PROCESSORS: Record<string, (data: any, channel: string, payload: any, now: number) => void> = {
+    public_broadcast: handlePublicBroadcastChannel,
+    new_pool_info: handleNewPoolInfoChannel,
+    trenches_update: handleTrenchesUpdateChannel,
+    twitter_user_monitor_basic: (data, channel, payload, now) => {
+      // handleTwitterChannel(data, channel, payload, now);
+    },
+    twitter_monitor_translation: (data, channel, payload, now) => {
+      // handleTwitterChannel(data, channel, payload, now);
+    },
+  };
+
   const onMessage = (event: MessageEvent) => {
     if (event.source !== window) return;
     const data = (event as any).data as any;
@@ -406,24 +419,8 @@ export function initGmgnWsMonitor(options: {
     const channel = normalizeChannel(data.channel);
     const payload = data.payload ?? data.raw ?? data;
     const now = Date.now();
-    switch (channel) {
-      case 'public_broadcast':
-        handlePublicBroadcastChannel(data, channel, payload, now);
-        break;
-      case 'new_pool_info':
-        handleNewPoolInfoChannel(data, channel, payload, now);
-        break;
-      case 'trenches_update':
-        handleTrenchesUpdateChannel(data, channel, payload, now);
-        break;
-      case 'twitter_user_monitor_basic':
-      case 'twitter_monitor_translation':
-        // handleTwitterChannel(data, channel, payload, now);
-        break;
-      default:
-        handleOtherChannel(data, channel, payload, now);
-        break;
-    }
+    const processor = CHANNEL_PROCESSORS[channel] ?? handleOtherChannel;
+    processor(data, channel, payload, now);
   };
 
   window.addEventListener('message', onMessage);

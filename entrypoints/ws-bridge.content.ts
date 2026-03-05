@@ -1,5 +1,3 @@
-import { extractGmgnWsConnectionInfo, parseGmgnEnvelope } from '@/utils/gmgnWs';
-
 export default defineContentScript({
   matches: ['*://gmgn.ai/*', '*://*.gmgn.ai/*', '*://axiom.trade/*', '*://*.axiom.trade/*', '*://web3.binance.com/*',
     "*://web3.okx.com/*", "*://xxyy.io/*", "*://*.xxyy.io/*", "*://dexscreener.com/*", "*://*.dexscreener.com/*",
@@ -9,19 +7,84 @@ export default defineContentScript({
   runAt: 'document_start',
   world: 'MAIN',
   main() {
+    type WsSite = 'gmgn' | 'axiom';
+    type WsAdapter = {
+      site: WsSite;
+      matchWsUrl: (url: string) => boolean;
+      parseEnvelope: (parsed: any) => { channel?: string; payload?: any };
+      getConnectionInfo: (wsUrl: string) => any;
+      supportsWorker: boolean;
+      shouldWrapWorkerScriptUrl: (workerScriptUrl: string) => boolean;
+    };
+
+    const parseGmgnEnvelope = (data: any): { channel?: string; payload?: any } => {
+      if (Array.isArray(data) && typeof data[0] === 'string') {
+        return { channel: data[0], payload: data[1] };
+      }
+      if (data && typeof data === 'object') {
+        const channel =
+          typeof (data as any).channel === 'string'
+            ? (data as any).channel
+            : typeof (data as any).event === 'string'
+              ? (data as any).event
+              : typeof (data as any).type === 'string'
+                ? (data as any).type
+                : undefined;
+        if (channel) {
+          const payload = (data as any).data ?? (data as any).payload ?? (data as any).body ?? (data as any).msg;
+          return { channel, payload: payload ?? data };
+        }
+      }
+      return { payload: data };
+    };
+
+    const extractGmgnWsConnectionInfo = (url: string): { device_id?: string | null; client_id?: string | null; uuid?: string | null } => {
+      try {
+        const urlObj = new URL(url);
+        const params = new URLSearchParams(urlObj.search);
+        return {
+          device_id: params.get('device_id'),
+          client_id: params.get('client_id'),
+          uuid: params.get('uuid'),
+        };
+      } catch {
+        return {};
+      }
+    };
+
+    const ADAPTERS: WsAdapter[] = [
+      {
+        site: 'gmgn',
+        matchWsUrl: (url) => url.includes('gmgn.ai'),
+        parseEnvelope: parseGmgnEnvelope,
+        getConnectionInfo: extractGmgnWsConnectionInfo,
+        supportsWorker: true,
+        shouldWrapWorkerScriptUrl: (workerScriptUrl) => workerScriptUrl.includes('gmgn.ai'),
+      },
+      {
+        site: 'axiom',
+        matchWsUrl: (url) => url.includes('axiom.trade'),
+        parseEnvelope: (parsed) => ({ payload: parsed }),
+        getConnectionInfo: () => ({}),
+        supportsWorker: false,
+        shouldWrapWorkerScriptUrl: () => false,
+      },
+    ];
+
     (function mainWorldEntry() {
       const g = globalThis as any;
       if (g.__DAGOBANG_MAIN_WORLD_READY__) return;
       g.__DAGOBANG_MAIN_WORLD_READY__ = true;
 
-      // Runs in MAIN world so we can patch page-owned constructors (WebSocket/Worker/SharedWorker).
       installUrlChangeEmitter();
 
       const host = window.location.hostname;
       if (!shouldMonitorWsOnHost(host)) return;
 
       installWebSocketHook();
-      installWorkerHook();
+      if (ADAPTERS.some((adapter) => adapter.supportsWorker)) {
+        installWorkerHook();
+      }
     })();
 
     function installUrlChangeEmitter() {
@@ -58,24 +121,22 @@ export default defineContentScript({
       return hostname.includes('gmgn.ai') || hostname.includes('axiom.trade');
     }
 
-    type WsSite = 'gmgn' | 'axiom';
-
-    function getSiteByWsUrl(url: string): WsSite | null {
-      if (url.includes('gmgn.ai')) return 'gmgn';
-      if (url.includes('axiom.trade')) return 'axiom';
+    function getAdapterByWsUrl(url: string): WsAdapter | null {
+      for (const adapter of ADAPTERS) {
+        if (adapter.matchWsUrl(url)) return adapter;
+      }
       return null;
     }
 
-    // Normalized packet shape for content scripts to consume via window message.
-    function postWsPacket(site: WsSite, direction: 'send' | 'receive', parsed: any, raw: any, connectionInfo: any): void {
-      const gmgnParsed = site === 'gmgn' ? parseGmgnEnvelope(parsed) : { payload: parsed };
+    function postWsPacket(adapter: WsAdapter, direction: 'send' | 'receive', parsed: any, raw: any, connectionInfo: any): void {
+      const normalized = adapter.parseEnvelope(parsed);
       window.postMessage(
         {
           type: 'DAGOBANG_WS_PACKET',
-          site,
+          site: adapter.site,
           direction,
-          channel: gmgnParsed.channel ?? null,
-          payload: gmgnParsed.payload ?? null,
+          channel: normalized.channel ?? null,
+          payload: normalized.payload ?? null,
           raw,
           timestamp: Date.now(),
           connectionInfo,
@@ -88,18 +149,18 @@ export default defineContentScript({
       const WrappedWebSocket = function (this: unknown, url: string | URL, protocols?: string | string[]) {
         const urlStr = String(url);
         const ws = new BaseWebSocket(url, protocols);
-        const site = getSiteByWsUrl(urlStr);
-        if (!site) return ws;
+        const adapter = getAdapterByWsUrl(urlStr);
+        if (!adapter) return ws;
 
-        const connectionInfo = site === 'gmgn' ? extractGmgnWsConnectionInfo(urlStr) : {};
+        const connectionInfo = adapter.getConnectionInfo(urlStr);
         const originalSend = ws.send;
 
         ws.send = function (data: any) {
           try {
             const parsed = JSON.parse(data);
-            postWsPacket(site, 'send', parsed, data, connectionInfo);
+            postWsPacket(adapter, 'send', parsed, data, connectionInfo);
           } catch {
-            postWsPacket(site, 'send', null, data, connectionInfo);
+            postWsPacket(adapter, 'send', null, data, connectionInfo);
           }
           return originalSend.call(this, data);
         };
@@ -107,9 +168,9 @@ export default defineContentScript({
         ws.addEventListener('message', function (event: MessageEvent) {
           try {
             const parsed = JSON.parse(event.data);
-            postWsPacket(site, 'receive', parsed, event.data, connectionInfo);
+            postWsPacket(adapter, 'receive', parsed, event.data, connectionInfo);
           } catch {
-            postWsPacket(site, 'receive', null, event.data, connectionInfo);
+            postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
           }
         });
 
@@ -124,7 +185,6 @@ export default defineContentScript({
     function installWebSocketHook() {
       const g = globalThis as any;
 
-      // Use a getter/setter wrapper so later assignments to window.WebSocket are also re-wrapped.
       let BaseWebSocket = g.WebSocket as typeof WebSocket;
       let WrappedWebSocket = createWrappedWebSocket(BaseWebSocket);
       Object.defineProperty(g, 'WebSocket', {
@@ -158,22 +218,18 @@ export default defineContentScript({
       const url = scriptUrl.toLowerCase();
       if (url.startsWith('blob:') || url.startsWith('data:')) return true;
 
-      // If worker script is same-origin, we can safely proxy to add the patch.
       const host = window.location.hostname.toLowerCase();
       if (host && url.includes(host)) return true;
 
-      // Allow-list target platforms.
-      return url.includes('gmgn.ai');
+      return ADAPTERS.some((adapter) => adapter.supportsWorker && adapter.shouldWrapWorkerScriptUrl(url));
     }
 
     function buildWorkerPatch() {
-      // This function is stringified into the worker via Blob URL, so it must be self-contained.
       return function (originUrl: string) {
         const g = globalThis as any;
         if (g.__DAGOBANG_WORKER_WS_HOOKED__) return;
         g.__DAGOBANG_WORKER_WS_HOOKED__ = true;
 
-        // When we load the original worker via a Blob proxy, relative importScripts() paths break.
         const rawImportScripts = (self as any).importScripts as undefined | ((...urls: string[]) => void);
         if (typeof rawImportScripts === 'function') {
           (self as any).importScripts = (...urls: string[]) => {
@@ -188,8 +244,6 @@ export default defineContentScript({
           };
         }
 
-        // SharedWorker does not have self.postMessage; it communicates via MessagePort(s).
-        // We listen via both "connect" event and onconnect because the page script may override onconnect.
         const ports: MessagePort[] = [];
         const attachPort = (port: MessagePort) => {
           ports.push(port);
