@@ -97,7 +97,7 @@ export function Header({
           className={
             autoTradeStrategyActive
               ? 'flex items-center justify-center rounded-full bg-teal-500/20 text-teal-300 p-1'
-              : 'flex items-center justify-center rounded-full border border-zinc-700 text-teal-300 p-1 hover:border-teal-400'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-teal-300 p-1 hover:border-teal-400 hidden'
           }
           onPointerDown={(e) => {
             e.stopPropagation();
