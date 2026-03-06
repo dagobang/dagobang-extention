@@ -31,20 +31,33 @@ type WsStatus = {
 };
 
 const buildSignal = (payload: any): GmgnTwitterSignal | null => {
-  const text = extractText(payload);
+  const text = typeof payload?.c === 'string' ? payload.c : extractText(payload);
   const tokenAddress = extractTokenAddress(payload, text);
   if (!tokenAddress) return null;
-  const tweetId = extractTweetId(payload, text);
-  const user = extractUser(payload);
+  const tweetId = typeof payload?.ti === 'string' ? payload.ti : extractTweetId(payload, text);
+  const user =
+    (isObject(payload?.u) && (typeof payload.u.s === 'string' ? payload.u.s : typeof payload.u.n === 'string' ? payload.u.n : null)) ??
+    extractUser(payload);
   const marketCapUsd = extractNumber(payload, ['market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']);
   const priceUsd = extractNumber(payload, ['price', 'priceUsd', 'price_usd']);
   const createdAtMs = extractNumber(payload, ['created_at', 'createdAt', 'created_at_ms', 'createdAtMs']);
-  const words = text
-    ? Array.from(new Set(text.split(/\s+/).map((w) => w.replace(/[^\w$]/g, '').toLowerCase()).filter(Boolean)))
+  const words: string[] = text
+    ? Array.from(
+        new Set(
+          text
+            .split(/\s+/)
+            .map((w: string) => w.replace(/[^\w$]/g, '').toLowerCase())
+            .filter((w: string) => w.length > 0),
+        ),
+      )
     : [];
   return {
     site: 'gmgn',
-    eventId: extractFirstFromObject(payload, ['eventId', 'event_id']) ?? undefined,
+    eventId:
+      (typeof payload?.i === 'string' ? payload.i : null) ??
+      (typeof payload?.ei === 'string' ? payload.ei : null) ??
+      extractFirstFromObject(payload, ['eventId', 'event_id']) ??
+      undefined,
     tweetId: tweetId ?? undefined,
     user: user ?? undefined,
     text: text ?? undefined,
@@ -155,67 +168,32 @@ const extractPublicBroadcastCreates = (payload: any) => {
   return results;
 };
 
-const createQuickBuyContainer = (tokenAddress: string, settings: QuickBuySettings) => {
-  const container = document.createElement('div');
-  container.className = 'dagobang-tweet-quickbuy';
-  container.style.display = 'inline-flex';
-  container.style.alignItems = 'center';
-  container.style.gap = '6px';
-  container.style.marginLeft = '8px';
-  const makeBtn = (amount: string) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.textContent = `${amount} BNB`;
-    btn.style.padding = '2px 6px';
-    btn.style.borderRadius = '6px';
-    btn.style.border = '1px solid rgba(125,125,125,0.5)';
-    btn.style.background = 'rgba(20,20,20,0.9)';
-    btn.style.color = 'white';
-    btn.style.fontSize = '12px';
-    btn.style.cursor = 'pointer';
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      window.dispatchEvent(
-        new CustomEvent('dagobang-quickbuy', {
-          detail: {
-            tokenAddress,
-            amountBnb: amount,
-          },
-        }),
-      );
-    });
-    return btn;
-  };
-  const quick1 = settings.quickBuy1Bnb;
-  const quick2 = settings.quickBuy2Bnb;
-  if (quick1 && Number(quick1) > 0) container.appendChild(makeBtn(quick1));
-  if (quick2 && Number(quick2) > 0) container.appendChild(makeBtn(quick2));
-  return container;
+const emitTwitterEvent = (channel: string, item: any, receivedAtMs: number) => {
+  window.dispatchEvent(
+    new CustomEvent('dagobang-gmgn-twitter', {
+      detail: {
+        channel,
+        item,
+        receivedAtMs,
+      },
+    }),
+  );
 };
 
-const injectQuickBuyForTweet = (tweetId: string, tokenAddress: string, settings: QuickBuySettings) => {
-  const selectors = [
-    `[data-tweet-id="${tweetId}"]`,
-    `[data-id="${tweetId}"]`,
-    `a[href*="status/${tweetId}"]`,
-  ];
-  for (const selector of selectors) {
-    const el = document.querySelector(selector) as HTMLElement | null;
-    if (!el) continue;
-    const host = el.closest('div') || el.parentElement;
-    if (!host || host.querySelector('.dagobang-tweet-quickbuy')) return;
-    const container = createQuickBuyContainer(tokenAddress, settings);
-    host && host.appendChild(container);
-    return;
-  }
+const emitTrenchesTokenEvent = (tokenData: any, receivedAtMs: number) => {
+  window.dispatchEvent(
+    new CustomEvent('dagobang-gmgn-trenches-token', {
+      detail: {
+        tokenData,
+        receivedAtMs,
+      },
+    }),
+  );
 };
 
 export function initGmgnWsMonitor(options: {
   call: <T extends BgRequest>(req: T) => Promise<BgResponse<T>>;
 }): WsSiteMonitor {
-  const tweetSignals = new Map<string, { tokenAddress: string; updatedAt: number }>();
-  let quickBuySettings: QuickBuySettings = {};
   let wsStatus: WsStatus = {
     connected: false,
     lastPacketAt: 0,
@@ -259,20 +237,6 @@ export function initGmgnWsMonitor(options: {
     // emitStatus();
   };
 
-  const flushQuickBuy = () => {
-    for (const [tweetId, info] of tweetSignals.entries()) {
-      injectQuickBuyForTweet(tweetId, info.tokenAddress, quickBuySettings);
-    }
-  };
-
-  const observer = new MutationObserver(() => {
-    flushQuickBuy();
-  });
-
-  if (document.body) {
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
-
   const normalizeChannel = (channel: unknown): string => (typeof channel === 'string' ? channel.trim() : '');
 
   // Processor: consumes normalized DAGOBANG_WS_PACKET (site=gmgn, direction=receive).
@@ -280,28 +244,27 @@ export function initGmgnWsMonitor(options: {
     const packetTs = typeof data.timestamp === 'number' ? data.timestamp : now;
     const latencyMs = computeLatencyMs(payload, packetTs, now);
     updatePacketStatus(channel, now, latencyMs);
-    let signal: GmgnTwitterSignal | null = null;
-    try {
-      signal = buildSignal(payload);
-    } catch {
-      pushLog('error', 'signal_parse_failed');
-    }
-    if (!signal || !signal.tokenAddress) {
+    const items = toArrayPayload(payload);
+    const list = items.length ? items : [payload];
+    for (const item of list) {
+      emitTwitterEvent(channel, item, now);
+      let signal: GmgnTwitterSignal | null = null;
+      try {
+        signal = buildSignal(item);
+      } catch {
+        pushLog('error', 'signal_parse_failed');
+      }
+      if (!signal || !signal.tokenAddress) continue;
+      wsStatus = {
+        ...wsStatus,
+        lastSignalAt: now,
+        signalCount: wsStatus.signalCount + 1,
+      };
+      pushLog('signal', `${signal.tokenAddress}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
       emitStatus();
-      return;
+      void options.call({ type: 'gmgn:twitterSignal', payload: signal });
     }
-    wsStatus = {
-      ...wsStatus,
-      lastSignalAt: now,
-      signalCount: wsStatus.signalCount + 1,
-    };
-    pushLog('signal', `${signal.tokenAddress}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
     emitStatus();
-    void options.call({ type: 'gmgn:twitterSignal', payload: signal });
-    if (signal.tweetId) {
-      tweetSignals.set(signal.tweetId, { tokenAddress: signal.tokenAddress, updatedAt: Date.now() });
-      injectQuickBuyForTweet(signal.tweetId, signal.tokenAddress, quickBuySettings);
-    }
   };
 
   const handlePublicBroadcastChannel = (data: any, channel: string, payload: any, now: number) => {
@@ -378,6 +341,7 @@ export function initGmgnWsMonitor(options: {
     for (const item of items) {
       const tokenData = normalizeTrenchesTokenData(item);
       if (!tokenData.tokenAddress) continue;
+      emitTrenchesTokenEvent(tokenData, now);
       wsStatus = {
         ...wsStatus,
         lastSignalAt: now,
@@ -404,10 +368,10 @@ export function initGmgnWsMonitor(options: {
     new_pool_info: handleNewPoolInfoChannel,
     trenches_update: handleTrenchesUpdateChannel,
     twitter_user_monitor_basic: (data, channel, payload, now) => {
-      // handleTwitterChannel(data, channel, payload, now);
+      handleTwitterChannel(data, channel, payload, now);
     },
     twitter_monitor_translation: (data, channel, payload, now) => {
-      // handleTwitterChannel(data, channel, payload, now);
+      handleTwitterChannel(data, channel, payload, now);
     },
   };
 
@@ -426,13 +390,11 @@ export function initGmgnWsMonitor(options: {
   window.addEventListener('message', onMessage);
 
   return {
-    setQuickBuySettings: (settings) => {
-      quickBuySettings = settings;
+    setQuickBuySettings: (_settings) => {
     },
     emitStatus,
     dispose: () => {
       window.clearInterval(statusTimer);
-      observer.disconnect();
       window.removeEventListener('message', onMessage);
     },
   };

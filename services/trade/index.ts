@@ -169,8 +169,10 @@ export class TradeService {
       functionName: 'trySell',
       args: [token, amount],
     });
+    const tokenManager = res[0] as Address;
     const funds = res[2] as bigint;
-    return { funds };
+    const fee = res[3] as bigint;
+    return { tokenManager, funds, fee };
   }
 
   private static encodeFourMemeUint256(value: bigint) {
@@ -230,6 +232,8 @@ export class TradeService {
       : undefined;
 
     const isInner = this.isInnerDisk(tokenInfo);
+    const platformLower = tokenInfo.launchpad_platform?.toLowerCase() || '';
+    const isInnerFourMeme = isInner && platformLower.includes('fourmeme');
     const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
 
     const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
@@ -388,7 +392,7 @@ export class TradeService {
       ]
     });
 
-    const txOpts = isTurbo ? { skipEstimateGas: true, gasLimit: 900000n, trace } : undefined;
+    const txOpts = { skipEstimateGas: true, gasLimit: 900000n, trace };
     const { txHash, broadcastVia, broadcastUrl } = await timeStep('sendTransaction', () =>
       this.sendTransaction(client, account, routerAddress, data, amountIn, gasPriceWei, input.chainId, txOpts)
     );
@@ -458,7 +462,7 @@ export class TradeService {
     const account = await WalletService.getSigner();
     const client = await RpcService.getClient();
 
-    const amountIn = BigInt(input.tokenAmountWei);
+    let amountIn = BigInt(input.tokenAmountWei);
     const baseFee = input.poolFee ?? 2500;
     const executionMode = settings.chains[input.chainId]?.executionMode ?? 'default';
     const isTurbo = executionMode === 'turbo';
@@ -485,33 +489,49 @@ export class TradeService {
       : undefined;
 
     const isInner = this.isInnerDisk(tokenInfo);
+    const platformLower = tokenInfo.launchpad_platform?.toLowerCase() || '';
+    const isInnerFourMeme = isInner && platformLower.includes('fourmeme');
     const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
     const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
     const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
-
+    console.log('sell input.tokenInfo', tokenInfo, isInner, launchpadConfig)
+    console.log('sell bridgeToken', bridgeToken, bridgePrefer);
     const descs: SwapDescLike[] = [];
     const sellToken: Address = input.tokenAddress;
     let estimatedOut = 0n;
+    let minFundsForSell = 0n;
+    let sellTokenManager: Address | null = null;
 
     if (isInner && launchpadConfig) {
-      const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
       const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
       let minFunds = 0n;
       let dataForSell: `0x${string}` = '0x';
 
-      if (!isTurbo && platform.includes('fourmeme')) {
+      if (!isTurbo && isInnerFourMeme) {
+        if (amountIn > 0n) {
+          const aligned = (amountIn / 1000000000n) * 1000000000n;
+          if (aligned > 0n) amountIn = aligned;
+        }
         try {
           const est = await timeStep('fourmeme:trySell', () =>
             this.tryFourMemeSellEstimatedFunds(client, input.chainId, sellToken, amountIn)
           );
           if (est && est.funds > 0n) {
-            minFunds = applySlippage(est.funds, slippageBps);
-            dataForSell = this.encodeFourMemeUint256(minFunds);
-            if (!bridgeToken) {
-              estimatedOut = est.funds;
+            sellTokenManager = est.tokenManager ?? null;
+            const netFunds = est.funds > est.fee ? (est.funds - est.fee) : 0n;
+            if (netFunds > 0n) {
+              minFunds = applySlippage(netFunds, slippageBps);
+              if (minFunds > 0n) {
+                dataForSell = this.encodeFourMemeUint256(minFunds);
+                minFundsForSell = minFunds;
+              }
+              if (!bridgeToken) {
+                estimatedOut = netFunds;
+              }
             }
           }
-        } catch {
+        } catch (ex) {
+          console.log('fourmeme sell error', ex);
         }
       }
 
@@ -648,14 +668,21 @@ export class TradeService {
       }
     }
 
+    const lastTokenOut = descs.length > 0 ? descs[descs.length - 1]!.tokenOut : ZERO_ADDRESS;
     let minOut = 0n;
     if (estimatedOut > 0n) {
       const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
       minOut = applySlippage(estimatedOut, slippageBps);
     }
+    if (isInnerFourMeme && !bridgeToken && minFundsForSell > 0n) {
+      const v2Manager = (DeployAddress[input.chainId as ChainId]?.[ContractNames.FourMemeTokenManagerV2]?.address || ZERO_ADDRESS) as Address;
+      const isV2 = sellTokenManager && v2Manager !== ZERO_ADDRESS && sellTokenManager.toLowerCase() === v2Manager.toLowerCase();
+      if (isV2) {
+        minOut = 0n;
+      }
+    }
 
     const deadline = getDeadline(settings, input.chainId, input.deadlineSeconds);
-
     const data = isTurbo
       ? encodeFunctionData({
         abi: dagobangAbi,
@@ -680,7 +707,7 @@ export class TradeService {
         ]
       });
 
-    const txOpts = isTurbo ? { skipEstimateGas: true, gasLimit: 900000n, trace } : undefined;
+    const txOpts = { skipEstimateGas: true, gasLimit: 900000n, trace };
     const { txHash, broadcastVia, broadcastUrl } = await timeStep('sendTransaction', () =>
       this.sendTransaction(client, account, routerAddress, data, 0n, gasPriceWei, input.chainId, txOpts)
     );

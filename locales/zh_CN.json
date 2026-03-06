@@ -373,6 +373,7 @@
       "default": "默认",
       "medium": "中",
       "high": "高",
+      "none": "无滑点保护",
       "toggleMode": "切换执行模式",
       "toggleGas": "切换燃气价格",
       "toggleSlippage": "切换滑点"

@@ -17,6 +17,8 @@ type HeaderProps = {
   onMinimize: () => void;
   isEditing: boolean;
   onEditToggle: () => void;
+  onToggleTwitterMonitor: () => void;
+  twitterMonitorActive: boolean;
   onToggleLimitTrade: () => void;
   autotradeActive: boolean;
   onToggleAutoTradeStrategy: () => void;
@@ -34,6 +36,8 @@ export function Header({
   onMinimize,
   isEditing,
   onEditToggle,
+  onToggleTwitterMonitor,
+  twitterMonitorActive,
   onToggleLimitTrade,
   autotradeActive,
   onToggleAutoTradeStrategy,
@@ -110,6 +114,27 @@ export function Header({
         >
           <Crosshair size={14} />
         </button>
+
+
+        <button
+          type="button"
+          className={
+            twitterMonitorActive
+              ? 'flex items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300 p-1'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-emerald-300 p-1 hover:border-emerald-400 hidden'
+          }
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleTwitterMonitor();
+          }}
+          title="Twitter Monitor"
+        >
+          <Zap size={14} />
+        </button>
+
         <button
           type="button"
           className={

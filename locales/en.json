@@ -373,6 +373,7 @@
       "default": "Default",
       "medium": "Medium",
       "high": "High",
+      "none": "No slippage",
       "toggleMode": "Toggle execution mode",
       "toggleGas": "Toggle gas price",
       "toggleSlippage": "Toggle slippage"

@@ -1,5 +1,11 @@
 import type { BgRequest, BgResponse } from '@/types/extention';
-import { initGmgnWsMonitor, type WsSiteMonitor } from './gmgn';
+type QuickBuySettings = { quickBuy1Bnb?: string; quickBuy2Bnb?: string };
+
+export type WsSiteMonitor = {
+  setQuickBuySettings: (settings: QuickBuySettings) => void;
+  emitStatus: () => void;
+  dispose: () => void;
+};
 
 const createNoopMonitor = (): WsSiteMonitor => ({
   setQuickBuySettings: () => {
@@ -14,8 +20,5 @@ export function initWsMonitorForSite(options: {
   hostname: string;
   call: <T extends BgRequest>(req: T) => Promise<BgResponse<T>>;
 }): WsSiteMonitor {
-  if (options.hostname.includes('gmgn.ai')) {
-    return initGmgnWsMonitor({ call: options.call });
-  }
   return createNoopMonitor();
 }

@@ -9,6 +9,7 @@ import { LimitTradePanel } from './components/LimitTradePanel';
 import { AutoTradeStrategyPanel } from './components/AutoTradeStrategyPanel';
 import { RpcPanel } from './components/RpcPanel';
 import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
+import { TwitterMonitorPanel } from './components/TwitterMonitorPanel';
 import type { BgGetStateResponse, Settings } from '@/types/extention';
 import { parseCurrentUrl, parseCurrentUrlFull, type SiteInfo } from '@/utils/sites';
 import { call } from '@/utils/messaging';
@@ -72,6 +73,7 @@ export default function App() {
   const [showAutoTradeStrategyPanel, setShowAutoTradeStrategyPanel] = useState(false);
   const [showRpcPanel, setShowRpcPanel] = useState(false);
   const [showDailyAnalysisPanel, setShowDailyAnalysisPanel] = useState(false);
+  const [showTwitterMonitorPanel, setShowTwitterMonitorPanel] = useState(false);
   const dragging = useRef<null | { target: 'main'; startX: number; startY: number; baseX: number; baseY: number }>(null);
 
   const isUnlocked = !!state?.wallet.isUnlocked;
@@ -140,6 +142,18 @@ export default function App() {
       if (stored) setShowAutoTradeStrategyPanel(stored === '1');
     } catch {
     }
+
+    try {
+      const key = 'dagobang_twitter_monitor_panel_visible';
+      const stored = window.localStorage.getItem(key);
+      if (stored) {
+        setShowTwitterMonitorPanel(stored === '1');
+      } else {
+        const host = String(window.location.hostname || '').toLowerCase();
+        if (host.includes('gmgn')) setShowTwitterMonitorPanel(true);
+      }
+    } catch {
+    }
   }, []);
 
   useEffect(() => {
@@ -151,7 +165,11 @@ export default function App() {
       window.localStorage.setItem('dagobang_auto_trade_strategy_panel_visible', showAutoTradeStrategyPanel ? '1' : '0');
     } catch {
     }
-  }, [showLimitTradePanel, showAutoTradeStrategyPanel]);
+    try {
+      window.localStorage.setItem('dagobang_twitter_monitor_panel_visible', showTwitterMonitorPanel ? '1' : '0');
+    } catch {
+    }
+  }, [showLimitTradePanel, showAutoTradeStrategyPanel, showTwitterMonitorPanel]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -812,7 +830,7 @@ export default function App() {
       let amountWei = bal > 0n ? (bal * BigInt(pct)) / 100n : 0n;
       const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
       const isInnerFourMeme = !!tokenInfo?.launchpad && (platform.includes('fourmeme')) && tokenInfo.launchpad_status !== 1;
-      if (!isTurbo && pct !== 100 && isInnerFourMeme && amountWei > 0n) {
+      if (!isTurbo && isInnerFourMeme && amountWei > 0n) {
         amountWei = (amountWei / 1000000000n) * 1000000000n;
       }
       if (!isTurbo && amountWei <= 0n) throw new Error('Invalid amount');
@@ -1093,6 +1111,10 @@ export default function App() {
     setShowDailyAnalysisPanel((v) => !v);
   };
 
+  const handleToggleTwitterMonitorPanel = () => {
+    setShowTwitterMonitorPanel((v) => !v);
+  };
+
   const handleToggleKeyboardShortcuts = () => {
     if (!settings) return;
     const next = !keyboardShortcutsEnabled;
@@ -1146,6 +1168,8 @@ export default function App() {
                 onMinimize={() => setMinimized(true)}
                 isEditing={isEditing}
                 onEditToggle={handleEditToggle}
+                onToggleTwitterMonitor={handleToggleTwitterMonitorPanel}
+                twitterMonitorActive={showTwitterMonitorPanel}
                 onToggleLimitTrade={handleToggleLimitTradePanel}
                 autotradeActive={showLimitTradePanel}
                 onToggleAutoTradeStrategy={handleToggleAutoTradeStrategyPanel}
@@ -1251,6 +1275,12 @@ export default function App() {
             onVisibleChange={setShowDailyAnalysisPanel}
             settings={settings}
             address={siteInfo?.walletAddress ?? address}
+          />
+
+          <TwitterMonitorPanel
+            visible={showTwitterMonitorPanel}
+            onVisibleChange={setShowTwitterMonitorPanel}
+            settings={settings}
           />
         </>
       )}

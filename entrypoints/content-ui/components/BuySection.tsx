@@ -59,6 +59,7 @@ export function BuySection({
           : t('contentUi.slippage.high', locale);
   const slippagePct = (slippageBps / 100).toFixed(0);
   const executionMode = settings?.chains[settings.chainId].executionMode === 'turbo' ? 'turbo' : 'default';
+  const slippageText = executionMode === 'turbo' ? t('contentUi.slippage.none', locale) : `${slippageLabel}${slippagePct}%`;
   const chainSettings = settings?.chains[settings.chainId];
   const gasPreset = chainSettings?.buyGasPreset ?? chainSettings?.gasPreset ?? 'standard';
   const defaultGasGwei = { slow: '0.06', standard: '0.12', fast: '1', turbo: '5' } as const;
@@ -144,7 +145,7 @@ export function BuySection({
             onClick={onToggleSlippage}
           >
             <Sliders size={10} />
-            <span>{slippageLabel}{slippagePct}%</span>
+            <span>{slippageText}</span>
           </div>
         </div>
         <div className="flex items-center gap-2">

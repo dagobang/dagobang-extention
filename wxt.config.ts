@@ -6,7 +6,7 @@ export default defineConfig({
   manifest: {
     name: 'Dagobang 打狗棒',
     description: 'Dagobang non-custodial Meme Trading Tool',
-    version: '0.1.12',
+    version: '0.1.13',
     permissions: ['storage', 'alarms', 'webRequest', 'webRequestBlocking'],
     host_permissions: [
       'https://*.gmgn.ai/*',
