@@ -67,7 +67,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       // home/list page
       if (parts.length === 0 && u.searchParams.has('chain')) {
         return {
-          chain: u.searchParams.get('chain')?.toLowerCase() || '',
+          chain: u.searchParams.get('chain')?.toLowerCase() || 'bsc',
           tokenAddress: '',
           platform: 'gmgn',
           showBar: true
@@ -90,9 +90,9 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
         }
       }
       // https://axiom.trade/pulse?chain=bnb
-      if (parts.length === 0 && u.searchParams.has('chain')) {
+      if (parts.length === 1 && parts[0] === 'pulse') {
         return {
-          chain: u.searchParams.get('chain')?.toLowerCase() || '',
+          chain: u.searchParams.get('chain')?.toLowerCase() || 'bsc',
           tokenAddress: '',
           platform: 'axiom',
           showBar: true
@@ -135,6 +135,15 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
           platform: 'binance',
         };
       }
+      // https://web3.binance.com/zh-CN/trenches?chain=bsc
+      if (parts.length === 2 && parts[1] === 'trenches') {
+        return {
+          chain: u.searchParams.get('chain')?.toLowerCase() || 'bsc',
+          tokenAddress: '',
+          platform: 'binance',
+          showBar: true
+        };
+      }
     }
 
     // web3.okx.com
@@ -160,6 +169,15 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
           platform: 'xxyy',
         };
       }
+      // https://www.xxyy.io/meme?chainId=bsc
+      if (parts.length === 1 && parts[0] === 'meme') {
+        return {
+          chain: u.searchParams.get('chainId')?.toLowerCase() || 'bsc',
+          tokenAddress: '',
+          platform: 'xxyy',
+          showBar: true
+        };
+      }
     }
 
     // https://debot.ai/token/<chain>/<address>
@@ -172,6 +190,15 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
           platform: 'debot',
         };
       }
+      // https://debot.ai/meme?chain=bsc
+      if (parts.length === 1 && parts[0] === 'meme') {
+        return {
+          chain: u.searchParams.get('chain')?.toLowerCase() || 'bsc',
+          tokenAddress: '',
+          platform: 'debot',
+          showBar: true
+        };
+      }
     }
 
     // https://dexscreener.com/<chain>/<address>
@@ -181,6 +208,15 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
           chain: parts[0].toLowerCase(),
           tokenAddress: parts[1],
           platform: 'dexscreener',
+        };
+      }
+      // https://dexscreener.com/bsc
+      if (parts.length === 1 && parts[0] === 'bsc') {
+        return {
+          chain: u.searchParams.get('chain')?.toLowerCase() || 'bsc',
+          tokenAddress: '',
+          platform: 'dexscreener',
+          showBar: true
         };
       }
     }
