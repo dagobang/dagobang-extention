@@ -49,6 +49,7 @@ declare global {
   const parseCurrentUrlFull: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrlFull
   const parseGmgnEnvelope: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').parseGmgnEnvelope
   const parseNumberLoose: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').parseNumberLoose
+  const parsePlatformTokenLink: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parsePlatformTokenLink
   const storage: typeof import('wxt/utils/storage').storage
   const t: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n').t
   const toArrayPayload: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').toArrayPayload

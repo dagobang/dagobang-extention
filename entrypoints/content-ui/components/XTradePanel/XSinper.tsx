@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Play, X } from 'lucide-react';
 import { TRADE_SUCCESS_SOUND_PRESETS, type AutoTradeConfig, type AutoTradeInteractionType, type Settings, type TradeSuccessSoundPreset } from '@/types/extention';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
@@ -6,9 +6,15 @@ import { defaultSettings } from '@/utils/defaults';
 import { call } from '@/utils/messaging';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 
-type AutoTradeStrategyPanelProps = {
+type XSniperPanelProps = {
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
+  settings: Settings | null;
+  isUnlocked: boolean;
+};
+
+type XSniperContentProps = {
+  active: boolean;
   settings: Settings | null;
   isUnlocked: boolean;
 };
@@ -52,24 +58,13 @@ const parseList = (value: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
-export function AutoTradeStrategyPanel({
-  visible,
-  onVisibleChange,
+export function XSniperContent({
+  active,
   settings,
   isUnlocked,
-}: AutoTradeStrategyPanelProps) {
-  const panelWidth = 560;
+}: XSniperContentProps) {
   const locale: Locale = normalizeLocale(settings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
-
-  const [pos, setPos] = useState(() => {
-    const width = window.innerWidth || 0;
-    const defaultX = Math.max(0, width - panelWidth);
-    const defaultY = 120;
-    return { x: defaultX, y: defaultY };
-  });
-  const posRef = useRef(pos);
-  const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
 
   const normalizedAutoTrade = useMemo(
     () => normalizeAutoTrade(settings?.autoTrade ?? null),
@@ -92,29 +87,9 @@ export function AutoTradeStrategyPanel({
   const [showLogs, setShowLogs] = useState(false);
 
   useEffect(() => {
-    posRef.current = pos;
-  }, [pos]);
-
-  useEffect(() => {
-    try {
-      const key = 'dagobang_auto_trade_strategy_panel_pos';
-      const stored = window.localStorage.getItem(key);
-      if (!stored) return;
-      const parsed = JSON.parse(stored);
-      if (!parsed || typeof parsed.x !== 'number' || typeof parsed.y !== 'number') return;
-      const width = window.innerWidth || 0;
-      const height = window.innerHeight || 0;
-      const clampedX = Math.min(Math.max(0, parsed.x), Math.max(0, width - panelWidth));
-      const clampedY = Math.min(Math.max(0, parsed.y), Math.max(0, height - 80));
-      setPos({ x: clampedX, y: clampedY });
-    } catch {
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!visible) return;
+    if (!active) return;
     setDraft(cloneAutoTrade(normalizedAutoTrade));
-  }, [visible, normalizedAutoTrade]);
+  }, [active, normalizedAutoTrade]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -127,38 +102,6 @@ export function AutoTradeStrategyPanel({
       window.removeEventListener('dagobang-ws-status' as any, handler as any);
     };
   }, []);
-
-  useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      if (!dragging.current) return;
-      const dx = e.clientX - dragging.current.startX;
-      const dy = e.clientY - dragging.current.startY;
-      const nextX = dragging.current.baseX + dx;
-      const nextY = dragging.current.baseY + dy;
-      setPos({ x: nextX, y: nextY });
-    };
-    const onUp = () => {
-      if (!dragging.current) return;
-      dragging.current = null;
-      try {
-        const key = 'dagobang_auto_trade_strategy_panel_pos';
-        window.localStorage.setItem(key, JSON.stringify(posRef.current));
-      } catch {
-      }
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-  }, []);
-
-  const statusText = (() => {
-    if (!settings) return tt('contentUi.autoTradeStrategy.statusSettingsNotLoaded');
-    if (!isUnlocked) return tt('contentUi.autoTradeStrategy.statusLocked');
-    return tt('contentUi.autoTradeStrategy.statusUnlocked');
-  })();
 
   const canEdit = !!settings && isUnlocked;
 
@@ -193,47 +136,10 @@ export function AutoTradeStrategyPanel({
   const soundSelectValue =
     draft?.triggerSound.enabled === false ? SOUND_OFF : (draft?.triggerSound.preset ?? 'Boom');
 
-  if (!visible || !draft) return null;
+  if (!active || !draft) return null;
 
   return (
-    <div
-      className="fixed z-[2147483647] w-[560px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/30 font-sans"
-      style={{ left: pos.x, top: pos.y }}
-    >
-      <div
-        className="flex items-start justify-between gap-3 px-4 py-3 border-b border-zinc-800/60 cursor-grab"
-        onPointerDown={(e) => {
-          dragging.current = {
-            startX: e.clientX,
-            startY: e.clientY,
-            baseX: posRef.current.x,
-            baseY: posRef.current.y,
-          };
-        }}
-      >
-        <div className="flex flex-col gap-2">
-          <div className="flex flex-row gap-3 items-center">
-             <div className="text-xs font-semibold text-emerald-300">{tt('contentUi.autoTradeStrategy.title')}</div>
-            <div className="text-xs text-zinc-500">{statusText}</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="px-3 py-1 rounded-full text-[12px] bg-emerald-500/20 text-emerald-200 border border-emerald-400/40"
-            >
-              {tt('contentUi.autoTradeStrategy.twitterSnipe')}
-            </button>
-          </div>
-        </div>
-        <button
-          type="button"
-          className="text-zinc-400 hover:text-zinc-200"
-          onClick={() => onVisibleChange(false)}
-        >
-          <X size={16} />
-        </button>
-      </div>
-
+    <>
       <div className="p-3 space-y-3 max-h-[64vh] overflow-y-auto">
         <div className="space-y-2 pb-3 border-b border-zinc-800/60">
           <div>
@@ -557,6 +463,56 @@ export function AutoTradeStrategyPanel({
           </button>
         </div>
       </div>
+    </>
+  );
+}
+
+export function XSniperPanel({
+  visible,
+  onVisibleChange,
+  settings,
+  isUnlocked,
+}: XSniperPanelProps) {
+  const locale: Locale = normalizeLocale(settings?.locale ?? 'zh_CN');
+  const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
+  const statusText = (() => {
+    if (!settings) return tt('contentUi.autoTradeStrategy.statusSettingsNotLoaded');
+    if (!isUnlocked) return tt('contentUi.autoTradeStrategy.statusLocked');
+    return tt('contentUi.autoTradeStrategy.statusUnlocked');
+  })();
+
+  if (!visible) return null;
+
+  return (
+    <div
+      className="fixed right-4 top-32 z-[2147483647] w-[360px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/30 font-sans"
+    >
+      <div
+        className="flex items-start justify-between gap-3 px-4 py-3 border-b border-zinc-800/60"
+      >
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-row gap-3 items-center">
+            <div className="text-xs font-semibold text-emerald-300">{tt('contentUi.autoTradeStrategy.title')}</div>
+            <div className="text-xs text-zinc-500">{statusText}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="px-3 py-1 rounded-full text-[12px] bg-emerald-500/20 text-emerald-200 border border-emerald-400/40"
+            >
+              {tt('contentUi.autoTradeStrategy.twitterSnipe')}
+            </button>
+          </div>
+        </div>
+        <button type="button" className="text-zinc-400 hover:text-zinc-200" onClick={() => onVisibleChange(false)}>
+          <X size={16} />
+        </button>
+      </div>
+      <XSniperContent
+        active={visible}
+        settings={settings}
+        isUnlocked={isUnlocked}
+      />
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { SiteInfo } from "#imports";
 import { getChainIdByName } from "@/constants/chains";
 import { MEME_SUFFIXS } from "@/constants/meme";
 import { getBridgeTokenAddresses } from "@/constants/tokens";
@@ -8,6 +9,33 @@ export interface SiteInfo {
   tokenAddress: string;
   platform: 'gmgn' | 'axiom' | 'flap' | 'fourmeme' | 'binance' | 'okx' | 'xxyy' | 'debot' | 'dexscreener';
   walletAddress?: string;
+  showBar?: boolean;
+}
+
+
+export function parsePlatformTokenLink(siteInfo: SiteInfo, tokenAddress: string) {
+  switch (siteInfo.platform) {
+    case 'gmgn':
+      return `https://gmgn.ai/${siteInfo.chain}/token/${tokenAddress}`;
+    case 'axiom':
+      return `https://axiom.trade/meme/${tokenAddress}?chain=${siteInfo.chain == 'bsc' ? 'bnb' : siteInfo.chain}`;
+    case 'binance':
+      return `https://web3.binance.com/zh-TW/token/${siteInfo.chain == 'bsc' ? 'bnb' : siteInfo.chain}/${tokenAddress}`;
+    case 'okx':
+      return `https://web3.okx.com/zh-TW/token/${siteInfo.chain == 'bsc' ? 'bnb' : siteInfo.chain}/${tokenAddress}`;
+    case 'flap':
+      return `https://flap.sh/${siteInfo.chain == 'bsc' ? 'bnb' : siteInfo.chain}/${tokenAddress}`;
+    case 'fourmeme':
+      return `https://four.meme/zh-TW/token/${tokenAddress}`;
+    case 'xxyy':
+      return `https://www.xxyy.io/${siteInfo.chain}/${tokenAddress}`;
+    case 'dexscreener':
+      return `https://dexscreener.com/${siteInfo.chain}/${tokenAddress}`;
+    case 'debot':
+      return `https://debot.ai/token/${siteInfo.chain}/${tokenAddress}`;
+    default:
+      return "";
+  }
 }
 
 export function parseCurrentUrl(href: string): SiteInfo | null {
@@ -33,6 +61,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
           tokenAddress: '',
           walletAddress: parts[2],
           platform: 'gmgn',
+          showBar: true
         };
       }
       // home/list page
@@ -41,6 +70,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
           chain: u.searchParams.get('chain')?.toLowerCase() || '',
           tokenAddress: '',
           platform: 'gmgn',
+          showBar: true
         };
       }
     }
@@ -58,6 +88,15 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
             platform: 'axiom',
           };
         }
+      }
+      // https://axiom.trade/pulse?chain=bnb
+      if (parts.length === 0 && u.searchParams.has('chain')) {
+        return {
+          chain: u.searchParams.get('chain')?.toLowerCase() || '',
+          tokenAddress: '',
+          platform: 'axiom',
+          showBar: true
+        };
       }
     }
 

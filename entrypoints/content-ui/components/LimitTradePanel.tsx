@@ -9,9 +9,10 @@ import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
 import { formatPriceValue, parseNumberLoose, formatTime } from '@/utils/format';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
+import { parsePlatformTokenLink } from '@/utils/sites';
 
 type LimitTradePanelProps = {
-  platform: string;
+  siteInfo: SiteInfo;
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
   settings: Settings | null;
@@ -26,7 +27,7 @@ type LimitTradePanelProps = {
 };
 
 export function LimitTradePanel({
-  platform,
+  siteInfo,
   visible,
   onVisibleChange,
   settings,
@@ -348,6 +349,11 @@ export function LimitTradePanel({
 
   const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const switchTokenInCurrentUrl = (nextTokenAddress: `0x${string}`) => {
+    const tokenLink = parsePlatformTokenLink(siteInfo, nextTokenAddress);
+    if (tokenLink) {
+      window.location.href = tokenLink;
+      return;
+    }
     try {
       const href = window.location.href;
       const match = href.match(/0x[a-fA-F0-9]{40}/);
@@ -549,7 +555,7 @@ export function LimitTradePanel({
         if (priceFetchRef.current.inFlight.has(key)) return;
         priceFetchRef.current.inFlight.add(key);
         try {
-          const v = await TokenAPI.getTokenPriceUsd(platform, t.chainId, t.tokenAddress, t.tokenInfo);
+          const v = await TokenAPI.getTokenPriceUsd(siteInfo.platform, t.chainId, t.tokenAddress, t.tokenInfo);
           if (cancelled) return;
           setPriceByTokenKey((prev) => ({ ...prev, [key]: { priceUsd: v, ts: Date.now() } }));
         } finally {
@@ -572,7 +578,7 @@ export function LimitTradePanel({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [visible, filteredOrders, platform, scanStatus?.openOrders]);
+  }, [visible, filteredOrders, siteInfo.platform, scanStatus?.openOrders]);
 
   if (!visible) {
     return null;
@@ -624,203 +630,203 @@ export function LimitTradePanel({
         <div className="p-3 flex flex-col gap-3">
           {showActions ? (
             <div className="flex gap-3">
-            <div className="flex-1 min-w-0 space-y-2 pr-3 border-r border-zinc-800">
-              <div className="flex items-center justify-between">
-                <div className="text-[11px] font-semibold text-emerald-300">
-                  {tt('contentUi.autotrade.buySection')}
+              <div className="flex-1 min-w-0 space-y-2 pr-3 border-r border-zinc-800">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-semibold text-emerald-300">
+                    {tt('contentUi.autotrade.buySection')}
+                  </div>
+                  <div className="flex items-center gap-1 text-[11px] text-emerald-400">
+                    <span>{formattedNativeBalance}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1 text-[11px] text-emerald-400">
-                  <span>{formattedNativeBalance}</span>
+
+                <div className="flex items-center gap-2">
+                  <select
+                    className="w-[110px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                    value={buyOrderType}
+                    onChange={(e) => setBuyOrderType(e.target.value as LimitOrderType)}
+                  >
+                    <option value="low_buy">{tt('contentUi.limitOrder.type.lowBuy')}</option>
+                    <option value="high_buy">{tt('contentUi.limitOrder.type.highBuy')}</option>
+                  </select>
+                  <input
+                    className="flex-1 w-[90px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                    value={buyPrice}
+                    onChange={(e) => setBuyPrice(e.target.value)}
+                  />
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
+                      onClick={() => setBuyPrice((v) => adjustPrice(v, buyOrderType === 'high_buy' ? 0.1 : -0.1))}
+                    >
+                      {buyOrderType === 'high_buy' ? '+10%' : '-10%'}
+                    </button>
+                    <button
+                      type="button"
+                      className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
+                      onClick={() => setBuyPrice((v) => adjustPrice(v, buyOrderType === 'high_buy' ? 0.2 : -0.2))}
+                    >
+                      {buyOrderType === 'high_buy' ? '+20%' : '-20%'}
+                    </button>
+                    <button
+                      type="button"
+                      className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
+                      onClick={() => setBuyPrice((v) => adjustPrice(v, buyOrderType === 'high_buy' ? 0.5 : -0.5))}
+                    >
+                      {buyOrderType === 'high_buy' ? '+50%' : '-50%'}
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-2">
-                <select
-                  className="w-[110px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                  value={buyOrderType}
-                  onChange={(e) => setBuyOrderType(e.target.value as LimitOrderType)}
-                >
-                  <option value="low_buy">{tt('contentUi.limitOrder.type.lowBuy')}</option>
-                  <option value="high_buy">{tt('contentUi.limitOrder.type.highBuy')}</option>
-                </select>
-                <input
-                  className="flex-1 w-[90px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                  value={buyPrice}
-                  onChange={(e) => setBuyPrice(e.target.value)}
-                />
-                <div className="flex gap-1">
-                  <button
-                    type="button"
-                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
-                    onClick={() => setBuyPrice((v) => adjustPrice(v, buyOrderType === 'high_buy' ? 0.1 : -0.1))}
-                  >
-                    {buyOrderType === 'high_buy' ? '+10%' : '-10%'}
-                  </button>
-                  <button
-                    type="button"
-                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
-                    onClick={() => setBuyPrice((v) => adjustPrice(v, buyOrderType === 'high_buy' ? 0.2 : -0.2))}
-                  >
-                    {buyOrderType === 'high_buy' ? '+20%' : '-20%'}
-                  </button>
-                  <button
-                    type="button"
-                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-emerald-400"
-                    onClick={() => setBuyPrice((v) => adjustPrice(v, buyOrderType === 'high_buy' ? 0.5 : -0.5))}
-                  >
-                    {buyOrderType === 'high_buy' ? '+50%' : '-50%'}
-                  </button>
+                <div className="grid grid-cols-4 gap-2">
+                  {buyPresets.map((val, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      className={
+                        buyAmount === val
+                          ? 'rounded border border-emerald-400 bg-emerald-500/20 py-1 text-center text-xs font-medium text-emerald-200 active:scale-95 transition-all'
+                          : 'rounded border border-emerald-500/30 bg-emerald-500/10 py-1 text-center text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all'
+                      }
+                      onClick={() => setBuyAmount(val)}
+                    >
+                      {val}
+                    </button>
+                  ))}
                 </div>
-              </div>
-
-              <div className="grid grid-cols-4 gap-2">
-                {buyPresets.map((val, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    className={
-                      buyAmount === val
-                        ? 'rounded border border-emerald-400 bg-emerald-500/20 py-1 text-center text-xs font-medium text-emerald-200 active:scale-95 transition-all'
-                        : 'rounded border border-emerald-500/30 bg-emerald-500/10 py-1 text-center text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all'
-                    }
-                    onClick={() => setBuyAmount(val)}
-                  >
-                    {val}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                disabled={buyCreateDisabled}
-                className="w-full px-2 py-1 rounded border border-emerald-500/30 bg-emerald-500/10 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={async () => {
-                  if (!tokenAddress || !tokenInfo) return;
-                  ensureTradeSuccessAudioReady();
-                  const trigger = parsePositiveNumber(buyPrice);
-                  if (trigger == null) return;
-                  const amountWei = parseEther(buyAmount).toString();
-                  await call({
-                    type: 'limitOrder:create',
-                    input: {
-                      chainId,
-                      tokenAddress,
-                      tokenSymbol,
-                      side: 'buy',
-                      orderType: buyOrderType,
-                      triggerPriceUsd: trigger,
-                      buyBnbAmountWei: amountWei,
-                      tokenInfo,
-                    },
-                  });
-                  setBuyAmount('');
-                  await refreshOrders();
-                }}
-              >
-                {buyOrderType === 'high_buy' ? tt('contentUi.limitTradePanel.createHighBuy') : tt('contentUi.limitTradePanel.createLowBuy')}
-              </button>
-            </div>
-
-            <div className="flex-1 min-w-0 space-y-2 pl-3">
-              <div className="flex items-center justify-between">
-                <div className="text-[11px] font-semibold text-red-300">
-                  {tt('contentUi.autotrade.sellSection')}
-                </div>
-                <div className="flex items-center gap-1 text-[11px] text-zinc-300">
-                  <span>{Number(formattedTokenBalance).toLocaleString()}</span>
-                  <span className="text-amber-500 text-[11px]">
-                    {tokenSymbol || tt('contentUi.common.token')}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <select
-                  className="w-[110px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                  value={sellOrderType}
-                  onChange={(e) => setSellOrderType(e.target.value as LimitOrderType)}
-                >
-                  <option value="take_profit_sell">{tt('contentUi.limitOrder.type.takeProfitSell')}</option>
-                  <option value="stop_loss_sell">{tt('contentUi.limitOrder.type.stopLossSell')}</option>
-                </select>
-                <input
-                  className="flex-1  w-[90px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                  value={sellPrice}
-                  onChange={(e) => setSellPrice(e.target.value)}
-                />
-                <div className="flex gap-1">
-                  <button
-                    type="button"
-                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
-                    onClick={() => setSellPrice((v) => adjustPrice(v, sellOrderType === 'stop_loss_sell' ? -0.2 : 0.2))}
-                  >
-                    {sellOrderType === 'stop_loss_sell' ? '-20%' : '+20%'}
-                  </button>
-                  <button
-                    type="button"
-                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
-                    onClick={() => setSellPrice((v) => adjustPrice(v, sellOrderType === 'stop_loss_sell' ? -0.5 : 0.5))}
-                  >
-                    {sellOrderType === 'stop_loss_sell' ? '-50%' : '+50%'}
-                  </button>
-                  <button
-                    type="button"
-                    className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
-                    onClick={() => setSellPrice((v) => adjustPrice(v, sellOrderType === 'stop_loss_sell' ? -1 : 1))}
-                  >
-                    {sellOrderType === 'stop_loss_sell' ? '-100%' : '+100%'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-4 gap-2">
-                {sellPresets.map((val, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    className={
-                      sellPercent === val
-                        ? 'rounded border border-rose-300 bg-rose-500/20 py-1 text-center text-xs font-medium text-rose-200 active:scale-95 transition-all'
-                        : 'rounded border border-rose-500/30 bg-rose-500/10 py-1 text-center text-xs font-medium text-rose-400 hover:bg-rose-500/20 active:scale-95 transition-all'
-                    }
-                    onClick={() => setSellPercent(val)}
-                  >
-                    {val}%
-                  </button>
-                ))}
-              </div>
-
-              <div className="w-full flex items-center justify-between gap-2">
                 <button
                   type="button"
-                  disabled={sellCreateDisabled}
-                  className="flex-1 px-2 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={buyCreateDisabled}
+                  className="w-full px-2 py-1 rounded border border-emerald-500/30 bg-emerald-500/10 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={async () => {
                     if (!tokenAddress || !tokenInfo) return;
                     ensureTradeSuccessAudioReady();
-                    const trigger = parsePositiveNumber(sellPrice);
-                    const bps = toPercentBps(sellPercent);
-                    if (trigger == null || bps == null) return;
+                    const trigger = parsePositiveNumber(buyPrice);
+                    if (trigger == null) return;
+                    const amountWei = parseEther(buyAmount).toString();
                     await call({
                       type: 'limitOrder:create',
                       input: {
                         chainId,
                         tokenAddress,
                         tokenSymbol,
-                        side: 'sell',
-                        orderType: sellOrderType,
+                        side: 'buy',
+                        orderType: buyOrderType,
                         triggerPriceUsd: trigger,
-                        sellPercentBps: bps,
+                        buyBnbAmountWei: amountWei,
                         tokenInfo,
                       },
                     });
-                    setSellPercent('');
+                    setBuyAmount('');
                     await refreshOrders();
                   }}
                 >
-                  {sellOrderType === 'stop_loss_sell' ? tt('contentUi.limitTradePanel.createStopLossSell') : tt('contentUi.limitTradePanel.createTakeProfitSell')}
+                  {buyOrderType === 'high_buy' ? tt('contentUi.limitTradePanel.createHighBuy') : tt('contentUi.limitTradePanel.createLowBuy')}
                 </button>
               </div>
-            </div>
+
+              <div className="flex-1 min-w-0 space-y-2 pl-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-semibold text-red-300">
+                    {tt('contentUi.autotrade.sellSection')}
+                  </div>
+                  <div className="flex items-center gap-1 text-[11px] text-zinc-300">
+                    <span>{Number(formattedTokenBalance).toLocaleString()}</span>
+                    <span className="text-amber-500 text-[11px]">
+                      {tokenSymbol || tt('contentUi.common.token')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <select
+                    className="w-[110px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                    value={sellOrderType}
+                    onChange={(e) => setSellOrderType(e.target.value as LimitOrderType)}
+                  >
+                    <option value="take_profit_sell">{tt('contentUi.limitOrder.type.takeProfitSell')}</option>
+                    <option value="stop_loss_sell">{tt('contentUi.limitOrder.type.stopLossSell')}</option>
+                  </select>
+                  <input
+                    className="flex-1  w-[90px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                    value={sellPrice}
+                    onChange={(e) => setSellPrice(e.target.value)}
+                  />
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
+                      onClick={() => setSellPrice((v) => adjustPrice(v, sellOrderType === 'stop_loss_sell' ? -0.2 : 0.2))}
+                    >
+                      {sellOrderType === 'stop_loss_sell' ? '-20%' : '+20%'}
+                    </button>
+                    <button
+                      type="button"
+                      className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
+                      onClick={() => setSellPrice((v) => adjustPrice(v, sellOrderType === 'stop_loss_sell' ? -0.5 : 0.5))}
+                    >
+                      {sellOrderType === 'stop_loss_sell' ? '-50%' : '+50%'}
+                    </button>
+                    <button
+                      type="button"
+                      className="px-1 py-0.5 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-red-400"
+                      onClick={() => setSellPrice((v) => adjustPrice(v, sellOrderType === 'stop_loss_sell' ? -1 : 1))}
+                    >
+                      {sellOrderType === 'stop_loss_sell' ? '-100%' : '+100%'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2">
+                  {sellPresets.map((val, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      className={
+                        sellPercent === val
+                          ? 'rounded border border-rose-300 bg-rose-500/20 py-1 text-center text-xs font-medium text-rose-200 active:scale-95 transition-all'
+                          : 'rounded border border-rose-500/30 bg-rose-500/10 py-1 text-center text-xs font-medium text-rose-400 hover:bg-rose-500/20 active:scale-95 transition-all'
+                      }
+                      onClick={() => setSellPercent(val)}
+                    >
+                      {val}%
+                    </button>
+                  ))}
+                </div>
+
+                <div className="w-full flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    disabled={sellCreateDisabled}
+                    className="flex-1 px-2 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={async () => {
+                      if (!tokenAddress || !tokenInfo) return;
+                      ensureTradeSuccessAudioReady();
+                      const trigger = parsePositiveNumber(sellPrice);
+                      const bps = toPercentBps(sellPercent);
+                      if (trigger == null || bps == null) return;
+                      await call({
+                        type: 'limitOrder:create',
+                        input: {
+                          chainId,
+                          tokenAddress,
+                          tokenSymbol,
+                          side: 'sell',
+                          orderType: sellOrderType,
+                          triggerPriceUsd: trigger,
+                          sellPercentBps: bps,
+                          tokenInfo,
+                        },
+                      });
+                      setSellPercent('');
+                      await refreshOrders();
+                    }}
+                  >
+                    {sellOrderType === 'stop_loss_sell' ? tt('contentUi.limitTradePanel.createStopLossSell') : tt('contentUi.limitTradePanel.createTakeProfitSell')}
+                  </button>
+                </div>
+              </div>
             </div>
           ) : null}
           <div className="pt-1">

@@ -3,9 +3,14 @@ import { X } from 'lucide-react';
 import type { Settings } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 
-type TwitterMonitorPanelProps = {
+type XMonitorPanelProps = {
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
+  settings: Settings | null;
+};
+
+type XMonitorContentProps = {
+  active: boolean;
   settings: Settings | null;
 };
 
@@ -19,6 +24,7 @@ type TweetEntry = {
   userScreen?: string;
   userName?: string;
   userAvatar?: string;
+  userFollowers?: number;
   text?: string;
   translatedText?: string;
   sourceUrl?: string;
@@ -32,14 +38,6 @@ const parseNum = (value: unknown): number | null => {
   return null;
 };
 
-const clampPos = (pos: { x: number; y: number }, panelWidth: number) => {
-  const width = window.innerWidth || 0;
-  const height = window.innerHeight || 0;
-  const clampedX = Math.min(Math.max(0, pos.x), Math.max(0, width - panelWidth));
-  const clampedY = Math.min(Math.max(0, pos.y), Math.max(0, height - 80));
-  return { x: clampedX, y: clampedY };
-};
-
 const formatAgeShort = (ts?: number) => {
   if (!ts) return '--';
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -51,10 +49,80 @@ const formatAgeShort = (ts?: number) => {
   return `${h}h`;
 };
 
+const formatCountShort = (value?: number) => {
+  if (!value || !Number.isFinite(value)) return null;
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(value % 1_000_000_000 === 0 ? 0 : 1)}B`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value % 1_000 === 0 ? 0 : 1)}K`;
+  return `${value}`;
+};
+
+const extractTweetIdFromUrl = (url?: string): string | undefined => {
+  if (!url) return undefined;
+  const match = url.match(/(?:status|statuses|i\/web\/status|i\/article)\/(\d+)/);
+  if (match?.[1]) return match[1];
+  const match2 = url.match(/\/(\d{10,})/);
+  return match2?.[1];
+};
+
+const extractTweetText = (item: any): string | undefined => {
+  if (typeof item?.c === 'string') return item.c;
+  if (item?.c && typeof item.c === 'object') {
+    if (typeof item.c.t === 'string') return item.c.t;
+    if (typeof item.c.text === 'string') return item.c.text;
+  }
+  if (typeof item?.text === 'string') return item.text;
+  if (typeof item?.full_text === 'string') return item.full_text;
+  return undefined;
+};
+
+const buildTranslatedText = (item: any): string | undefined => {
+  const main =
+    typeof item?.c === 'string'
+      ? item.c
+      : typeof item?.sat === 'string'
+        ? item.sat
+        : undefined;
+  const title = typeof item?.satl === 'string' ? item.satl : undefined;
+  if (!main && title) return title;
+  if (main && title && !main.startsWith(title)) return `${title}\n${main}`;
+  return main ?? undefined;
+};
+
+const getTypeMeta = (type?: string) => {
+  const key = type?.toLowerCase();
+  switch (key) {
+    case 'tweet':
+      return { label: '发推', className: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200' };
+    case 'repost':
+    case 'retweet':
+      return { label: '转发', className: 'border-sky-500/40 bg-sky-500/15 text-sky-200' };
+    case 'quote':
+      return { label: '引用', className: 'border-amber-500/40 bg-amber-500/15 text-amber-200' };
+    case 'reply':
+      return { label: '回复', className: 'border-purple-500/40 bg-purple-500/15 text-purple-200' };
+    case 'follow':
+      return { label: '关注', className: 'border-rose-500/40 bg-rose-500/15 text-rose-200' };
+    case 'unfollow':
+      return { label: '取消关注', className: 'border-zinc-600 bg-zinc-800/70 text-zinc-300' };
+    case 'like':
+    case 'favorite':
+      return { label: '点赞', className: 'border-pink-500/40 bg-pink-500/15 text-pink-200' };
+    default:
+      return key ? { label: key, className: 'border-zinc-700 bg-zinc-900 text-zinc-400' } : null;
+  }
+};
+
 const normalizeTwitterItem = (channel: string, item: any): { key: string; patch: Partial<TweetEntry>; deleted: boolean } | null => {
   if (!item || typeof item !== 'object') return null;
   const eventId = typeof item.i === 'string' ? item.i : typeof item.ei === 'string' ? item.ei : undefined;
-  const tweetId = typeof item.ti === 'string' ? item.ti : undefined;
+  const sourceUrl =
+    typeof (item as any).sc === 'string'
+      ? (item as any).sc
+      : (item as any).sc && typeof (item as any).sc.t === 'string'
+        ? (item as any).sc.t
+        : undefined;
+  const tweetId = typeof item.ti === 'string' ? item.ti : extractTweetIdFromUrl(sourceUrl);
   const key = eventId || tweetId;
   if (!key) return null;
   const twType = typeof item.tw === 'string' ? item.tw : undefined;
@@ -68,6 +136,7 @@ const normalizeTwitterItem = (channel: string, item: any): { key: string; patch:
   const userScreen = userObj && typeof (userObj as any).s === 'string' ? (userObj as any).s : undefined;
   const userName = userObj && typeof (userObj as any).n === 'string' ? (userObj as any).n : undefined;
   const userAvatar = userObj && typeof (userObj as any).a === 'string' ? (userObj as any).a : undefined;
+  const userFollowers = userObj && typeof (userObj as any).f === 'number' ? (userObj as any).f : undefined;
   const matchKey = (() => {
     const sc = (item as any).sc;
     if (sc && typeof sc === 'object' && typeof (sc as any).t === 'string') return (sc as any).t;
@@ -75,13 +144,7 @@ const normalizeTwitterItem = (channel: string, item: any): { key: string; patch:
     return typeof sc2 === 'string' ? sc2 : undefined;
   })();
   if (channel === 'twitter_monitor_translation') {
-    const sourceUrl = typeof (item as any).sc === 'string' ? (item as any).sc : undefined;
-    const translatedText =
-      typeof (item as any).c === 'string'
-        ? (item as any).c
-        : typeof (item as any).sat === 'string'
-          ? (item as any).sat
-          : undefined;
+    const translatedText = buildTranslatedText(item);
     return {
       key,
       deleted,
@@ -96,7 +159,7 @@ const normalizeTwitterItem = (channel: string, item: any): { key: string; patch:
       },
     };
   }
-  const text = typeof (item as any).c === 'string' ? (item as any).c : undefined;
+  const text = extractTweetText(item);
   return {
     key,
     deleted,
@@ -109,7 +172,9 @@ const normalizeTwitterItem = (channel: string, item: any): { key: string; patch:
       userScreen,
       userName,
       userAvatar,
+      userFollowers,
       text,
+      sourceUrl,
       matchKey,
       updatedAtMs: Date.now(),
     },
@@ -178,71 +243,23 @@ const tokenPassesFilters = (token: any, settings: Settings | null): boolean => {
   return true;
 };
 
-export function TwitterMonitorPanel({ visible, onVisibleChange, settings }: TwitterMonitorPanelProps) {
-  const panelWidth = 420;
+export function XMonitorContent({
+  active,
+  settings,
+}: XMonitorContentProps) {
   const locale: Locale = normalizeLocale(settings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
-
-  const [pos, setPos] = useState(() => {
-    const width = window.innerWidth || 0;
-    const defaultX = Math.max(0, width - panelWidth - 20);
-    const defaultY = 140;
-    return { x: defaultX, y: defaultY };
-  });
-  const posRef = useRef(pos);
-  const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
 
   const tweetsRef = useRef<Map<string, TweetEntry>>(new Map());
   const [tweetKeys, setTweetKeys] = useState<string[]>([]);
   const [tokensVersion, setTokensVersion] = useState(0);
+  const [lastTokenAt, setLastTokenAt] = useState(0);
   const tokensByMatchKeyRef = useRef<Map<string, Map<string, any>>>(new Map());
 
-  const [onlyWithTokens, setOnlyWithTokens] = useState(true);
+  const [onlyWithTokens, setOnlyWithTokens] = useState(false);
   const [sortKey, setSortKey] = useState<'marketCap' | 'newest'>('marketCap');
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
   const [expandedTweets, setExpandedTweets] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    posRef.current = pos;
-  }, [pos]);
-
-  useEffect(() => {
-    try {
-      const key = 'dagobang_twitter_monitor_panel_pos';
-      const stored = window.localStorage.getItem(key);
-      if (!stored) return;
-      const parsed = JSON.parse(stored);
-      if (!parsed || typeof parsed.x !== 'number' || typeof parsed.y !== 'number') return;
-      setPos(clampPos(parsed, panelWidth));
-    } catch {
-    }
-  }, []);
-
-  useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      if (!dragging.current) return;
-      const dx = e.clientX - dragging.current.startX;
-      const dy = e.clientY - dragging.current.startY;
-      const nextX = dragging.current.baseX + dx;
-      const nextY = dragging.current.baseY + dy;
-      setPos({ x: nextX, y: nextY });
-    };
-    const onUp = () => {
-      if (!dragging.current) return;
-      dragging.current = null;
-      try {
-        const key = 'dagobang_twitter_monitor_panel_pos';
-        window.localStorage.setItem(key, JSON.stringify(posRef.current));
-      } catch {
-      }
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-  }, []);
 
   useEffect(() => {
     const onTwitter = (e: Event) => {
@@ -292,6 +309,7 @@ export function TwitterMonitorPanel({ visible, onVisibleChange, settings }: Twit
       bucket.set(addr.toLowerCase(), token);
       map.set(matchKey, bucket);
       setTokensVersion((v) => v + 1);
+      setLastTokenAt(Date.now());
     };
     window.addEventListener('dagobang-gmgn-trenches-token' as any, onToken as any);
     return () => {
@@ -335,35 +353,10 @@ export function TwitterMonitorPanel({ visible, onVisibleChange, settings }: Twit
     return list.filter((t) => getAssociatedTokens(t).length > 0);
   }, [tweetList, onlyWithTokens, settings, sortKey, sortDir, tokensVersion]);
 
-  if (!visible) return null;
+  if (!active) return null;
 
   return (
-    <div
-      className="fixed z-[2147483647] w-[420px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/20 font-sans"
-      style={{ left: pos.x, top: pos.y }}
-    >
-      <div
-        className="flex items-center justify-between gap-3 px-4 py-3 border-b border-zinc-800/60 cursor-grab"
-        onPointerDown={(e) => {
-          dragging.current = {
-            startX: e.clientX,
-            startY: e.clientY,
-            baseX: posRef.current.x,
-            baseY: posRef.current.y,
-          };
-        }}
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="text-xs font-semibold text-emerald-300">推特监控</div>
-          <div className="text-[11px] text-zinc-500 truncate">
-            {visibleTweets.length} / {tweetList.length}
-          </div>
-        </div>
-        <button className="text-zinc-400 hover:text-zinc-200" onClick={() => onVisibleChange(false)}>
-          <X size={16} />
-        </button>
-      </div>
-
+    <>
       <div className="px-4 py-2 border-b border-zinc-800/60 space-y-2">
         <div className="flex items-center justify-between gap-2">
           <label className="flex items-center gap-2 text-[12px] text-zinc-300">
@@ -418,6 +411,9 @@ export function TwitterMonitorPanel({ visible, onVisibleChange, settings }: Twit
         {!settings ? (
           <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.statusSettingsNotLoaded')}</div>
         ) : null}
+        <div className="text-[11px] text-zinc-500">
+          Token事件 {tokensVersion} / 最近 {formatAgeShort(lastTokenAt)}
+        </div>
       </div>
 
       <div className="max-h-[62vh] overflow-y-auto p-3 space-y-2">
@@ -429,7 +425,11 @@ export function TwitterMonitorPanel({ visible, onVisibleChange, settings }: Twit
             const expanded = !!expandedTweets[tweet.key];
             const shownTokens = expanded ? tokens : tokens.slice(0, 3);
             const timeText = formatAgeShort(tweet.tsMs ?? tweet.updatedAtMs);
-            const title = tweet.userScreen ? `@${tweet.userScreen}` : tweet.userName || 'Unknown';
+            const displayName = tweet.userName || tweet.userScreen || 'Unknown';
+            const handle = tweet.userScreen ? `@${tweet.userScreen}` : null;
+            const followerText = formatCountShort(tweet.userFollowers);
+            const typeMeta = getTypeMeta(tweet.type);
+            const avatarFallback = displayName ? displayName.trim().charAt(0).toUpperCase() : '?';
             const link = tweet.sourceUrl
               ? tweet.sourceUrl
               : tweet.tweetId && tweet.userScreen
@@ -440,34 +440,51 @@ export function TwitterMonitorPanel({ visible, onVisibleChange, settings }: Twit
             return (
               <div key={tweet.key} className="rounded-lg border border-zinc-800 bg-zinc-950/30 p-3">
                 <div className="flex items-start gap-3">
-                  <div className="h-8 w-8 overflow-hidden rounded-full bg-zinc-800 flex-shrink-0">
-                    {tweet.userAvatar ? <img src={tweet.userAvatar} alt="" className="h-8 w-8 object-cover" /> : null}
+                  <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-800 text-[12px] font-semibold text-zinc-300">
+                    {tweet.userAvatar ? (
+                      <img src={tweet.userAvatar} alt="" className="h-9 w-9 object-cover" loading="lazy" referrerPolicy="no-referrer" />
+                    ) : (
+                      <span>{avatarFallback}</span>
+                    )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0 flex items-center gap-2">
-                        <div className="truncate text-[12px] font-semibold text-zinc-200">{title}</div>
-                        {tweet.type ? (
-                          <div className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] text-zinc-400">{tweet.type}</div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-[13px] font-semibold text-zinc-100">{displayName}</div>
+                          {handle ? <div className="truncate text-[11px] text-zinc-500">{handle}</div> : null}
+                          {followerText ? <div className="text-[11px] text-zinc-500">{followerText}</div> : null}
+                        </div>
+                        {typeMeta ? (
+                          <div className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${typeMeta.className}`}>
+                            {typeMeta.label}
+                          </div>
                         ) : null}
                       </div>
                       <div className="flex items-center gap-2 text-[11px] text-zinc-500">
                         <div>{timeText}</div>
-                        {link ? (
-                          <button
-                            type="button"
-                            className="text-[11px] text-emerald-300 hover:text-emerald-200"
-                            onClick={() => window.open(link, '_blank')}
-                          >
-                            打开
-                          </button>
-                        ) : null}
                       </div>
                     </div>
-                    {tweet.text ? <div className="mt-2 whitespace-pre-wrap break-words text-[12px] text-zinc-200">{tweet.text}</div> : null}
+                    {tweet.text ? (
+                      <div className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-zinc-100">
+                        {tweet.text}
+                      </div>
+                    ) : null}
+                    {link ? (
+                      <button
+                        type="button"
+                        className="mt-1 text-[11px] text-sky-400 hover:text-sky-300"
+                        onClick={() => window.open(link, '_blank')}
+                      >
+                        原文
+                      </button>
+                    ) : null}
                     {tweet.translatedText ? (
-                      <div className="mt-2 whitespace-pre-wrap break-words rounded-md border border-zinc-800 bg-black/20 px-2 py-1 text-[12px] text-zinc-300">
-                        {tweet.translatedText}
+                      <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-900/50 px-2 py-1">
+                        <div className="text-[10px] text-zinc-500">翻译</div>
+                        <div className="mt-1 whitespace-pre-wrap break-words text-[12px] text-zinc-200">
+                          {tweet.translatedText}
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -518,6 +535,33 @@ export function TwitterMonitorPanel({ visible, onVisibleChange, settings }: Twit
           })
         )}
       </div>
+    </>
+  );
+}
+
+export function XMonitorPanel({
+  visible,
+  onVisibleChange,
+  settings,
+}: XMonitorPanelProps) {
+  if (!visible) return null;
+
+  return (
+    <div
+      className="fixed right-4 top-32 z-[2147483647] w-[360px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/20 font-sans"
+    >
+      <div
+        className="flex items-center justify-between gap-3 px-4 py-3 border-b border-zinc-800/60"
+      >
+        <div className="text-xs font-semibold text-emerald-300">推特监控</div>
+        <button className="text-zinc-400 hover:text-zinc-200" onClick={() => onVisibleChange(false)}>
+          <X size={16} />
+        </button>
+      </div>
+      <XMonitorContent
+        active={visible}
+        settings={settings}
+      />
     </div>
   );
 }

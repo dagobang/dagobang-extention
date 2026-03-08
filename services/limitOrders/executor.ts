@@ -4,7 +4,7 @@ import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
 import { RpcService } from '@/services/rpc';
 import { getLimitOrders } from '@/services/storage';
-import { buildAdvancedAutoSellSellLimitOrderInputs, buildAdvancedAutoSellTrailingStopSellLimitOrderInput } from './advancedAutoSell';
+import { buildStrategySellOrderInputs, buildStrategyTrailingSellOrderInputs } from './advancedAutoSell';
 import { applyTrailingStopUpdate, cancelAllSellLimitOrdersForToken, createLimitOrder, hitLimitOrder, normalizeLimitOrderType, patchLimitOrder } from './store';
 import { extractRevertReasonFromError, tryGetReceiptRevertReason } from '@/services/tx/errors';
 import type { LimitOrder } from '@/types/extention';
@@ -94,7 +94,7 @@ export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) 
         const config = (settings as any).advancedAutoSell;
         const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
         let created = 0;
-        const orders = buildAdvancedAutoSellSellLimitOrderInputs({
+        const orders = buildStrategySellOrderInputs({
           config,
           chainId: order.chainId,
           tokenAddress: order.tokenAddress,
@@ -108,7 +108,7 @@ export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) 
         }
         const mode = (config as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
         if (mode === 'immediate' && (config as any)?.trailingStop?.enabled) {
-          const trailing = buildAdvancedAutoSellTrailingStopSellLimitOrderInput({
+          const trailing = buildStrategyTrailingSellOrderInputs({
             config,
             chainId: order.chainId,
             tokenAddress: order.tokenAddress,
@@ -202,7 +202,7 @@ export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) 
               });
             if (shouldCreate) {
               const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
-              const input = buildAdvancedAutoSellTrailingStopSellLimitOrderInput({
+              const input = buildStrategyTrailingSellOrderInputs({
                 config,
                 chainId: order.chainId,
                 tokenAddress: order.tokenAddress,

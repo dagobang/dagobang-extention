@@ -1,27 +1,23 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { CustomToaster } from './components/CustomToaster';
-import { Header } from './components/Header';
-import { BuySection } from './components/BuySection';
-import { SellSection } from './components/SellSection';
-import { Overlays } from './components/Overlays';
-import { LimitTradePanel } from './components/LimitTradePanel';
-import { AutoTradeStrategyPanel } from './components/AutoTradeStrategyPanel';
-import { RpcPanel } from './components/RpcPanel';
-import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
-import { TwitterMonitorPanel } from './components/TwitterMonitorPanel';
-import type { BgGetStateResponse, Settings } from '@/types/extention';
-import { parseCurrentUrl, parseCurrentUrlFull, type SiteInfo } from '@/utils/sites';
-import { call } from '@/utils/messaging';
 import { parseEther, zeroAddress } from 'viem';
-import { TokenAPI } from '@/hooks/TokenAPI';
-import GmgnAPI from '@/hooks/GmgnAPI';
-import { buildAdvancedAutoSellSellLimitOrderInputs, buildAdvancedAutoSellTrailingStopSellLimitOrderInput } from '@/services/limitOrders/advancedAutoSell';
+import type { BgGetStateResponse, Settings } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
-import { Logo } from '@/components/Logo';
 import { formatBroadcastProvider } from '@/utils/format';
+import { parseCurrentUrl, parseCurrentUrlFull, type SiteInfo } from '@/utils/sites';
+import { call } from '@/utils/messaging';
+import { TokenAPI } from '@/hooks/TokenAPI';
+import GmgnAPI from '@/hooks/GmgnAPI';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
+import { buildStrategySellOrderInputs, buildStrategyTrailingSellOrderInputs } from '@/services/limitOrders/advancedAutoSell';
+
+import { CustomToaster } from './components/CustomToaster';
+import { LimitTradePanel } from './components/LimitTradePanel';
+import { XTradePanel } from './components/XTradePanel';
+import { RpcPanel } from './components/RpcPanel';
+import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
+import { QuickTradePanel } from './components/QuickTradePanel';
 
 export default function App() {
   const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(() => parseCurrentUrl(window.location.href));
@@ -70,10 +66,9 @@ export default function App() {
   });
   const posRef = useRef(pos);
   const [showLimitTradePanel, setShowLimitTradePanel] = useState(false);
-  const [showAutoTradeStrategyPanel, setShowAutoTradeStrategyPanel] = useState(false);
+  const [showXTradePanel, setShowXTradePanel] = useState(false);
   const [showRpcPanel, setShowRpcPanel] = useState(false);
   const [showDailyAnalysisPanel, setShowDailyAnalysisPanel] = useState(false);
-  const [showTwitterMonitorPanel, setShowTwitterMonitorPanel] = useState(false);
   const dragging = useRef<null | { target: 'main'; startX: number; startY: number; baseX: number; baseY: number }>(null);
 
   const isUnlocked = !!state?.wallet.isUnlocked;
@@ -137,20 +132,10 @@ export default function App() {
     }
 
     try {
-      const key = 'dagobang_auto_trade_strategy_panel_visible';
-      const stored = window.localStorage.getItem(key);
-      if (stored) setShowAutoTradeStrategyPanel(stored === '1');
-    } catch {
-    }
-
-    try {
-      const key = 'dagobang_twitter_monitor_panel_visible';
-      const stored = window.localStorage.getItem(key);
-      if (stored) {
-        setShowTwitterMonitorPanel(stored === '1');
-      } else {
-        const host = String(window.location.hostname || '').toLowerCase();
-        if (host.includes('gmgn')) setShowTwitterMonitorPanel(true);
+      const xTradePanelStored = window.localStorage.getItem('dagobang_xtrade_panel_visible');
+      const host = String(window.location.hostname || '').toLowerCase();
+      if (host.includes('gmgn')) {
+        setShowXTradePanel(xTradePanelStored === '1');
       }
     } catch {
     }
@@ -162,14 +147,13 @@ export default function App() {
     } catch {
     }
     try {
-      window.localStorage.setItem('dagobang_auto_trade_strategy_panel_visible', showAutoTradeStrategyPanel ? '1' : '0');
+      window.localStorage.setItem(
+        'dagobang_xtrade_panel_visible',
+        showXTradePanel ? '1' : '0'
+      );
     } catch {
     }
-    try {
-      window.localStorage.setItem('dagobang_twitter_monitor_panel_visible', showTwitterMonitorPanel ? '1' : '0');
-    } catch {
-    }
-  }, [showLimitTradePanel, showAutoTradeStrategyPanel, showTwitterMonitorPanel]);
+  }, [showLimitTradePanel, showXTradePanel]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -752,7 +736,7 @@ export default function App() {
             : (tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null);
           if (basePriceUsd == null || !(basePriceUsd > 0)) return;
 
-          const inputs = buildAdvancedAutoSellSellLimitOrderInputs({
+          const inputs = buildStrategySellOrderInputs({
             config,
             chainId,
             tokenAddress: tokenAddressNormalized,
@@ -763,7 +747,7 @@ export default function App() {
 
           const mode = (config as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
           if (mode === 'immediate' && (config as any)?.trailingStop?.enabled) {
-            const trailing = buildAdvancedAutoSellTrailingStopSellLimitOrderInput({
+            const trailing = buildStrategyTrailingSellOrderInputs({
               config,
               chainId,
               tokenAddress: tokenAddressNormalized,
@@ -783,7 +767,7 @@ export default function App() {
           }
           toast.success(`已创建自动卖出挂单 ${inputs.length} 个`, { icon: '✅' });
         } catch (e) {
-          console.error('auto sell strategy create orders failed', e);
+          console.error('auto sell xsniper create orders failed', e);
         }
       })();
 
@@ -1091,16 +1075,17 @@ export default function App() {
     setDraftSellPresets(newPresets);
   };
 
+  const handleUpdateAdvancedAutoSell = (next: Settings['advancedAutoSell']) => {
+    if (!settings) return;
+    void call({ type: 'settings:set', settings: { ...settings, advancedAutoSell: next } } as const).then(() => refreshAll());
+  };
+
   const handleUnlock = () => {
     call({ type: 'bg:openPopup' });
   };
 
   const handleToggleLimitTradePanel = () => {
     setShowLimitTradePanel((v) => !v);
-  };
-
-  const handleToggleAutoTradeStrategyPanel = () => {
-    setShowAutoTradeStrategyPanel((v) => !v);
   };
 
   const handleToggleRpcPanel = () => {
@@ -1111,8 +1096,12 @@ export default function App() {
     setShowDailyAnalysisPanel((v) => !v);
   };
 
-  const handleToggleTwitterMonitorPanel = () => {
-    setShowTwitterMonitorPanel((v) => !v);
+  const handleToggleXTradePanel = () => {
+    if (!showXTradePanel) {
+      setShowXTradePanel(true);
+      return;
+    }
+    setShowXTradePanel(false);
   };
 
   const handleToggleKeyboardShortcuts = () => {
@@ -1131,118 +1120,75 @@ export default function App() {
 
       {siteInfo && (
         <>
-          {minimized ? (
-            <div
-              className="fixed z-[2147483647] flex cursor-pointer items-center justify-center rounded-full bg-zinc-900 p-3 shadow-xl border border-zinc-700 hover:border-zinc-500 transition-colors"
-              style={{ left: pos.x, top: pos.y }}
-              onPointerDown={(e) => {
-                dragging.current = {
-                  target: 'main',
-                  startX: e.clientX,
-                  startY: e.clientY,
-                  baseX: posRef.current.x,
-                  baseY: posRef.current.y,
-                };
-              }}
-              onClick={() => {
-                if (!dragging.current) setMinimized(false);
-              }}
-            >
-              <Logo />
-            </div>
-          ) : (
-            <div
-              className="fixed z-[2147483647] w-[320px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col"
-              style={{ left: pos.x, top: pos.y }}
-            >
-              <Header
-                onDragStart={(e) => {
-                  dragging.current = {
-                    target: 'main',
-                    startX: e.clientX,
-                    startY: e.clientY,
-                    baseX: posRef.current.x,
-                    baseY: posRef.current.y,
-                  };
-                }}
-                onMinimize={() => setMinimized(true)}
-                isEditing={isEditing}
-                onEditToggle={handleEditToggle}
-                onToggleTwitterMonitor={handleToggleTwitterMonitorPanel}
-                twitterMonitorActive={showTwitterMonitorPanel}
-                onToggleLimitTrade={handleToggleLimitTradePanel}
-                autotradeActive={showLimitTradePanel}
-                onToggleAutoTradeStrategy={handleToggleAutoTradeStrategyPanel}
-                autoTradeStrategyActive={showAutoTradeStrategyPanel}
-                onToggleRpc={handleToggleRpcPanel}
-                rpcActive={showRpcPanel}
-                onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
-                dailyAnalysisActive={showDailyAnalysisPanel}
-                keyboardShortcutsEnabled={keyboardShortcutsEnabled}
-                onToggleKeyboardShortcuts={handleToggleKeyboardShortcuts}
-              />
-              <div className="relative flex flex-col">
-                <BuySection
-                  formattedNativeBalance={formattedNativeBalance}
-                  busy={busy}
-                  isUnlocked={isUnlocked}
-                  onBuy={handleBuy}
-                  settings={settings}
-                  onToggleMode={handleToggleMode}
-                  onToggleGas={handleToggleBuyGas}
-                  onToggleSlippage={handleToggleSlippage}
-                  isEditing={isEditing}
-                  onUpdatePreset={handleUpdateBuyPreset}
-                  draftPresets={draftBuyPresets}
-                  locale={locale}
-                  showHotkeys={keyboardShortcutsEnabled && spaceHeld && !isEditing}
-                  hotkeyLabels={['Q', 'W', 'E', 'R'] as [string, string, string, string]}
-                  gmgnVisible={false} //isGmgnPlatform
-                  gmgnEnabled={gmgnBuyEnabled}
-                  onToggleGmgn={handleToggleGmgnBuy}
-                  advancedAutoSell={settings?.advancedAutoSell ?? null}
-                  onUpdateAdvancedAutoSell={(next) => {
-                    if (!settings) return;
-                    void call({ type: 'settings:set', settings: { ...settings, advancedAutoSell: next } } as const).then(() => refreshAll());
-                  }}
-                />
-
-                <div className="h-px bg-zinc-800 mx-3"></div>
-
-                <SellSection
-                  formattedTokenBalance={formattedTokenBalance}
-                  tokenSymbol={tokenSymbol}
-                  busy={busy}
-                  isUnlocked={isUnlocked}
-                  onSell={handleSell}
-                  settings={settings}
-                  onToggleMode={handleToggleMode}
-                  onToggleGas={handleToggleSellGas}
-                  onToggleSlippage={handleToggleSlippage}
-                  onApprove={handleApprove}
-                  isEditing={isEditing}
-                  onUpdatePreset={handleUpdateSellPreset}
-                  draftPresets={draftSellPresets}
-                  locale={locale}
-                  showHotkeys={keyboardShortcutsEnabled && spaceHeld && !isEditing}
-                  hotkeyLabels={['A', 'S', 'D', 'F'] as [string, string, string, string]}
-                  gmgnVisible={false} // isGmgnPlatform
-                  gmgnEnabled={gmgnSellEnabled}
-                  onToggleGmgn={handleToggleGmgnSell}
-                />
-
-                <Overlays
-                  siteInfo={siteInfo}
-                  isUnlocked={isUnlocked}
-                  onUnlock={handleUnlock}
-                  locale={locale}
-                />
-              </div>
-            </div>
-          )}
+          <QuickTradePanel
+            minimized={minimized}
+            pos={pos}
+            onMinimizedDragStart={(e) => {
+              dragging.current = {
+                target: 'main',
+                startX: e.clientX,
+                startY: e.clientY,
+                baseX: posRef.current.x,
+                baseY: posRef.current.y,
+              };
+            }}
+            onMinimizedClick={() => {
+              if (!dragging.current) setMinimized(false);
+            }}
+            onDragStart={(e) => {
+              dragging.current = {
+                target: 'main',
+                startX: e.clientX,
+                startY: e.clientY,
+                baseX: posRef.current.x,
+                baseY: posRef.current.y,
+              };
+            }}
+            onMinimize={() => setMinimized(true)}
+            isEditing={isEditing}
+            onEditToggle={handleEditToggle}
+            onToggleXTrade={handleToggleXTradePanel}
+            xTradeActive={showXTradePanel}
+            onToggleLimitTrade={handleToggleLimitTradePanel}
+            autotradeActive={showLimitTradePanel}
+            onToggleRpc={handleToggleRpcPanel}
+            rpcActive={showRpcPanel}
+            onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
+            dailyAnalysisActive={showDailyAnalysisPanel}
+            keyboardShortcutsEnabled={keyboardShortcutsEnabled}
+            onToggleKeyboardShortcuts={handleToggleKeyboardShortcuts}
+            formattedNativeBalance={formattedNativeBalance}
+            busy={busy}
+            isUnlocked={isUnlocked}
+            onBuy={handleBuy}
+            settings={settings}
+            onToggleMode={handleToggleMode}
+            onToggleBuyGas={handleToggleBuyGas}
+            onToggleSellGas={handleToggleSellGas}
+            onToggleSlippage={handleToggleSlippage}
+            onUpdateBuyPreset={handleUpdateBuyPreset}
+            draftBuyPresets={draftBuyPresets}
+            onUpdateSellPreset={handleUpdateSellPreset}
+            draftSellPresets={draftSellPresets}
+            locale={locale}
+            showBuyHotkeys={keyboardShortcutsEnabled && spaceHeld && !isEditing}
+            showSellHotkeys={keyboardShortcutsEnabled && spaceHeld && !isEditing}
+            gmgnBuyEnabled={gmgnBuyEnabled}
+            gmgnSellEnabled={gmgnSellEnabled}
+            onToggleGmgnBuy={handleToggleGmgnBuy}
+            onToggleGmgnSell={handleToggleGmgnSell}
+            advancedAutoSell={settings?.advancedAutoSell ?? null}
+            onUpdateAdvancedAutoSell={handleUpdateAdvancedAutoSell}
+            formattedTokenBalance={formattedTokenBalance}
+            tokenSymbol={tokenSymbol}
+            onSell={handleSell}
+            onApprove={handleApprove}
+            siteInfo={siteInfo}
+            onUnlock={handleUnlock}
+          />
 
           <LimitTradePanel
-            platform={siteInfo?.platform}
+            siteInfo={siteInfo}
             visible={showLimitTradePanel}
             onVisibleChange={setShowLimitTradePanel}
             settings={settings}
@@ -1254,13 +1200,6 @@ export default function App() {
             tokenPrice={tokenPrice}
             tokenAddress={tokenAddressNormalized}
             tokenInfo={tokenInfo}
-          />
-
-          <AutoTradeStrategyPanel
-            visible={showAutoTradeStrategyPanel}
-            onVisibleChange={setShowAutoTradeStrategyPanel}
-            settings={settings}
-            isUnlocked={isUnlocked}
           />
 
           <RpcPanel
@@ -1277,10 +1216,12 @@ export default function App() {
             address={siteInfo?.walletAddress ?? address}
           />
 
-          <TwitterMonitorPanel
-            visible={showTwitterMonitorPanel}
-            onVisibleChange={setShowTwitterMonitorPanel}
+          <XTradePanel
+            visible={showXTradePanel}
+            activeTab={'xmonitor'}
+            onVisibleChange={setShowXTradePanel}
             settings={settings}
+            isUnlocked={isUnlocked}
           />
         </>
       )}

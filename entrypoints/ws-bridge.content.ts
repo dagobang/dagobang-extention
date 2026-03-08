@@ -81,10 +81,10 @@ export default defineContentScript({
       const host = window.location.hostname;
       if (!shouldMonitorWsOnHost(host)) return;
 
-      // installWebSocketHook();
-      // if (ADAPTERS.some((adapter) => adapter.supportsWorker)) {
-      //   installWorkerHook();
-      // }
+      installWebSocketHook();
+      if (ADAPTERS.some((adapter) => adapter.supportsWorker)) {
+        installWorkerHook();
+      }
     })();
 
     function installUrlChangeEmitter() {

@@ -1,7 +1,7 @@
 import type { AdvancedAutoSellConfig, LimitOrderCreateInput, LimitOrderType } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 
-export function buildAdvancedAutoSellSellLimitOrderInputs(input: {
+export function buildStrategySellOrderInputs(input: {
   config: AdvancedAutoSellConfig | null | undefined;
   chainId: number;
   tokenAddress: `0x${string}`;
@@ -49,7 +49,7 @@ export function buildAdvancedAutoSellSellLimitOrderInputs(input: {
   return orders;
 }
 
-export function buildAdvancedAutoSellTrailingStopSellLimitOrderInput(input: {
+export function buildStrategyTrailingSellOrderInputs(input: {
   config: AdvancedAutoSellConfig | null | undefined;
   chainId: number;
   tokenAddress: `0x${string}`;

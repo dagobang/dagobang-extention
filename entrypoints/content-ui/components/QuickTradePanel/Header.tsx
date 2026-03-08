@@ -13,16 +13,15 @@ import type { PointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
 
 type HeaderProps = {
+  siteInfo: SiteInfo;
   onDragStart: (e: PointerEvent) => void;
   onMinimize: () => void;
   isEditing: boolean;
   onEditToggle: () => void;
-  onToggleTwitterMonitor: () => void;
-  twitterMonitorActive: boolean;
+  onToggleXTrade: () => void;
+  xTradeActive: boolean;
   onToggleLimitTrade: () => void;
   autotradeActive: boolean;
-  onToggleAutoTradeStrategy: () => void;
-  autoTradeStrategyActive: boolean;
   onToggleRpc: () => void;
   rpcActive: boolean;
   onToggleDailyAnalysis: () => void;
@@ -32,16 +31,15 @@ type HeaderProps = {
 };
 
 export function Header({
+  siteInfo,
   onDragStart,
   onMinimize,
   isEditing,
   onEditToggle,
-  onToggleTwitterMonitor,
-  twitterMonitorActive,
+  onToggleXTrade,
+  xTradeActive,
   onToggleLimitTrade,
   autotradeActive,
-  onToggleAutoTradeStrategy,
-  autoTradeStrategyActive,
   onToggleRpc,
   rpcActive,
   onToggleDailyAnalysis,
@@ -59,7 +57,7 @@ export function Header({
         <div className="flex items-center">
           <Logo size={{ width: '24px', height: '24px' }} />
         </div>
-        <button
+        {!siteInfo.showBar && <button
           type="button"
           className={
             keyboardShortcutsEnabled
@@ -77,6 +75,7 @@ export function Header({
         >
           <Keyboard size={14} />
         </button>
+        }
 
         <button
           type="button"
@@ -96,43 +95,24 @@ export function Header({
         >
           <AlarmClockCheck size={14} />
         </button>
+
         <button
           type="button"
           className={
-            autoTradeStrategyActive
-              ? 'flex items-center justify-center rounded-full bg-teal-500/20 text-teal-300 p-1'
-              : 'flex items-center justify-center rounded-full border border-zinc-700 text-teal-300 p-1 hover:border-teal-400 hidden'
+            xTradeActive
+              ? 'flex items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300 p-1'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-emerald-300 p-1 hover:border-emerald-400'
           }
           onPointerDown={(e) => {
             e.stopPropagation();
           }}
           onClick={(e) => {
             e.stopPropagation();
-            onToggleAutoTradeStrategy();
+            onToggleXTrade();
           }}
-          title='Auto Trade Strategy'
+          title="Twitter Sinper"
         >
           <Crosshair size={14} />
-        </button>
-
-
-        <button
-          type="button"
-          className={
-            twitterMonitorActive
-              ? 'flex items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300 p-1'
-              : 'flex items-center justify-center rounded-full border border-zinc-700 text-emerald-300 p-1 hover:border-emerald-400 hidden'
-          }
-          onPointerDown={(e) => {
-            e.stopPropagation();
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleTwitterMonitor();
-          }}
-          title="Twitter Monitor"
-        >
-          <Zap size={14} />
         </button>
 
         <button
@@ -173,25 +153,26 @@ export function Header({
           <LineChart size={14} />
         </button>
 
-        {isEditing ? (
-          <Check
-            size={14}
-            className="cursor-pointer text-emerald-500 hover:text-emerald-400"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEditToggle();
-            }}
-          />
-        ) : (
-          <Pencil
-            size={14}
-            className="cursor-pointer hover:text-zinc-200"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEditToggle();
-            }}
-          />
-        )}
+        {!siteInfo.showBar && (
+          isEditing ? (
+            <Check
+              size={14}
+              className="cursor-pointer text-emerald-500 hover:text-emerald-400"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditToggle();
+              }}
+            />
+          ) : (
+            <Pencil
+              size={14}
+              className="cursor-pointer hover:text-zinc-200"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditToggle();
+              }}
+            />
+          ))}
       </div>
 
       {/* Drag Handle */}
