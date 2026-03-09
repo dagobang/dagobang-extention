@@ -271,6 +271,11 @@ export type GmgnTwitterSignal = {
   tweetId?: string;
   user?: string;
   text?: string;
+  translatedText?: string;
+  translationLang?: string;
+  translatedTitle?: string;
+  translatedArticle?: string;
+  translatedSourceUrl?: string;
   keywords?: string[];
   tokenAddress?: string;
   chain?: string;

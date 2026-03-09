@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import type { Settings } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
+import { extractGmgnTweetText, extractGmgnUserFields } from '@/utils/gmgnWs';
 
 type XMonitorPanelProps = {
   visible: boolean;
@@ -25,6 +26,16 @@ type TweetEntry = {
   userName?: string;
   userAvatar?: string;
   userFollowers?: number;
+  followTargetScreen?: string;
+  followTargetName?: string;
+  followTargetAvatar?: string;
+  followTargetBio?: string;
+  followTargetFollowers?: number;
+  quoteUserScreen?: string;
+  quoteUserName?: string;
+  quoteUserAvatar?: string;
+  quoteTweetId?: string;
+  quoteLink?: string;
   text?: string;
   translatedText?: string;
   sourceUrl?: string;
@@ -65,17 +76,6 @@ const extractTweetIdFromUrl = (url?: string): string | undefined => {
   return match2?.[1];
 };
 
-const extractTweetText = (item: any): string | undefined => {
-  if (typeof item?.c === 'string') return item.c;
-  if (item?.c && typeof item.c === 'object') {
-    if (typeof item.c.t === 'string') return item.c.t;
-    if (typeof item.c.text === 'string') return item.c.text;
-  }
-  if (typeof item?.text === 'string') return item.text;
-  if (typeof item?.full_text === 'string') return item.full_text;
-  return undefined;
-};
-
 const buildTranslatedText = (item: any): string | undefined => {
   const main =
     typeof item?.c === 'string'
@@ -87,6 +87,40 @@ const buildTranslatedText = (item: any): string | undefined => {
   if (!main && title) return title;
   if (main && title && !main.startsWith(title)) return `${title}\n${main}`;
   return main ?? undefined;
+};
+
+const extractReplyHandle = (text?: string) => {
+  if (!text) return null;
+  const match = text.match(/@([A-Za-z0-9_]{1,30})/);
+  return match?.[1] ?? null;
+};
+
+const extractQuoteFields = (item: any) => {
+  const sourceUser = item?.su;
+  const quoteUserScreen = sourceUser && typeof sourceUser.s === 'string' ? sourceUser.s : undefined;
+  const quoteUserName = sourceUser && typeof sourceUser.n === 'string' ? sourceUser.n : undefined;
+  const quoteUserAvatar = sourceUser && typeof sourceUser.a === 'string' ? sourceUser.a : undefined;
+  const quoteTweetId = typeof item?.si === 'string' ? item.si : undefined;
+  const quoteLink =
+    typeof item?.sc === 'string'
+      ? item.sc
+      : item?.sc && typeof item.sc.t === 'string'
+        ? item.sc.t
+        : quoteTweetId && quoteUserScreen
+          ? `https://x.com/${quoteUserScreen}/status/${quoteTweetId}`
+          : undefined;
+  return { quoteUserScreen, quoteUserName, quoteUserAvatar, quoteTweetId, quoteLink };
+};
+
+const extractFollowTargetFields = (item: any) => {
+  const target = item?.f?.f;
+  if (!target || typeof target !== 'object') return {};
+  const followTargetScreen = typeof target.s === 'string' ? target.s : undefined;
+  const followTargetName = typeof target.n === 'string' ? target.n : undefined;
+  const followTargetAvatar = typeof target.a === 'string' ? target.a : undefined;
+  const followTargetBio = typeof target.d === 'string' ? target.d : undefined;
+  const followTargetFollowers = typeof target.f === 'number' ? target.f : undefined;
+  return { followTargetScreen, followTargetName, followTargetAvatar, followTargetBio, followTargetFollowers };
 };
 
 const getTypeMeta = (type?: string) => {
@@ -132,11 +166,10 @@ const normalizeTwitterItem = (channel: string, item: any): { key: string; patch:
     if (raw == null) return undefined;
     return raw < 1e12 ? raw * 1000 : raw;
   })();
-  const userObj = item.u && typeof item.u === 'object' ? item.u : null;
-  const userScreen = userObj && typeof (userObj as any).s === 'string' ? (userObj as any).s : undefined;
-  const userName = userObj && typeof (userObj as any).n === 'string' ? (userObj as any).n : undefined;
-  const userAvatar = userObj && typeof (userObj as any).a === 'string' ? (userObj as any).a : undefined;
-  const userFollowers = userObj && typeof (userObj as any).f === 'number' ? (userObj as any).f : undefined;
+  const { userScreen, userName, userAvatar, userFollowers } = extractGmgnUserFields(item);
+  const { followTargetScreen, followTargetName, followTargetAvatar, followTargetBio, followTargetFollowers } =
+    extractFollowTargetFields(item);
+  const { quoteUserScreen, quoteUserName, quoteUserAvatar, quoteTweetId, quoteLink } = extractQuoteFields(item);
   const matchKey = (() => {
     const sc = (item as any).sc;
     if (sc && typeof sc === 'object' && typeof (sc as any).t === 'string') return (sc as any).t;
@@ -159,7 +192,7 @@ const normalizeTwitterItem = (channel: string, item: any): { key: string; patch:
       },
     };
   }
-  const text = extractTweetText(item);
+  const text = extractGmgnTweetText(item) ?? undefined;
   return {
     key,
     deleted,
@@ -173,6 +206,16 @@ const normalizeTwitterItem = (channel: string, item: any): { key: string; patch:
       userName,
       userAvatar,
       userFollowers,
+      followTargetScreen,
+      followTargetName,
+      followTargetAvatar,
+      followTargetBio,
+      followTargetFollowers,
+      quoteUserScreen,
+      quoteUserName,
+      quoteUserAvatar,
+      quoteTweetId,
+      quoteLink,
       text,
       sourceUrl,
       matchKey,
@@ -257,16 +300,73 @@ export function XMonitorContent({
   const tokensByMatchKeyRef = useRef<Map<string, Map<string, any>>>(new Map());
 
   const [onlyWithTokens, setOnlyWithTokens] = useState(false);
-  const [sortKey, setSortKey] = useState<'marketCap' | 'newest'>('marketCap');
-  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
   const [expandedTweets, setExpandedTweets] = useState<Record<string, boolean>>({});
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(520);
+  const rowHeightsRef = useRef<Map<string, number>>(new Map());
+  const [rowVersion, setRowVersion] = useState(0);
+
+  useEffect(() => {
+    const loadFromStorage = () => {
+      try {
+        const raw = window.localStorage.getItem('dagobang_twitter_cache_v1');
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.list)) return parsed;
+      } catch {
+      }
+      return null;
+    };
+    const cached = (window as any).__DAGOBANG_TWITTER_CACHE__ ?? loadFromStorage();
+    if (cached && !(window as any).__DAGOBANG_TWITTER_CACHE__) {
+      (window as any).__DAGOBANG_TWITTER_CACHE__ = cached;
+    }
+    const list = Array.isArray(cached?.list) ? cached.list : [];
+    if (!list.length) return;
+    const map = tweetsRef.current;
+    for (const entry of list) {
+      const channel = typeof entry?.channel === 'string' ? entry.channel : '';
+      if (
+        channel !== 'twitter_user_monitor_basic' &&
+        channel !== 'twitter_monitor_basic' &&
+        channel !== 'twitter_monitor_translation'
+      )
+        continue;
+      const normalized = normalizeTwitterItem(channel, entry.item);
+      if (!normalized) continue;
+      if (normalized.deleted) {
+        map.delete(normalized.key);
+      } else {
+        const prev = map.get(normalized.key);
+        const next: TweetEntry = {
+          key: normalized.key,
+          channel,
+          updatedAtMs: Date.now(),
+          ...(prev ?? ({} as any)),
+          ...(normalized.patch as any),
+        };
+        map.set(normalized.key, next);
+      }
+    }
+    const nextKeys = Array.from(map.values())
+      .sort((a, b) => (b.tsMs ?? b.updatedAtMs) - (a.tsMs ?? a.updatedAtMs))
+      .slice(0, 50)
+      .map((x) => x.key);
+    setTweetKeys(nextKeys);
+  }, []);
 
   useEffect(() => {
     const onTwitter = (e: Event) => {
       const detail = (e as CustomEvent<any>).detail;
       if (!detail) return;
       const channel = typeof detail.channel === 'string' ? detail.channel : '';
-      if (channel !== 'twitter_user_monitor_basic' && channel !== 'twitter_monitor_translation') return;
+      if (
+        channel !== 'twitter_user_monitor_basic' &&
+        channel !== 'twitter_monitor_basic' &&
+        channel !== 'twitter_monitor_translation'
+      )
+        return;
       const normalized = normalizeTwitterItem(channel, detail.item);
       if (!normalized) return;
       const map = tweetsRef.current;
@@ -285,7 +385,7 @@ export function XMonitorContent({
       }
       const nextKeys = Array.from(map.values())
         .sort((a, b) => (b.tsMs ?? b.updatedAtMs) - (a.tsMs ?? a.updatedAtMs))
-        .slice(0, 200)
+        .slice(0, 50)
         .map((x) => x.key);
       setTweetKeys(nextKeys);
     };
@@ -335,23 +435,77 @@ export function XMonitorContent({
     }
     const filtered = tokens.filter((t) => tokenPassesFilters(t, settings));
     const sorted = filtered.slice().sort((a, b) => {
-      if (sortKey === 'newest') {
-        const at = typeof a?.createdAtMs === 'number' ? a.createdAtMs : 0;
-        const bt = typeof b?.createdAtMs === 'number' ? b.createdAtMs : 0;
-        return sortDir === 'asc' ? at - bt : bt - at;
-      }
       const amc = typeof a?.marketCapUsd === 'number' ? a.marketCapUsd : -1;
       const bmc = typeof b?.marketCapUsd === 'number' ? b.marketCapUsd : -1;
-      return sortDir === 'asc' ? amc - bmc : bmc - amc;
+      return bmc - amc;
     });
     return sorted;
   };
 
   const visibleTweets = useMemo(() => {
-    const list = tweetList.slice();
+    let list = tweetList.slice();
+    const targets = (settings?.autoTrade?.twitterSnipe?.targetUsers ?? [])
+      .map((x) => x.trim().replace(/^@/, '').toLowerCase())
+      .filter(Boolean);
+    if (targets.length) {
+      list = list.filter((t) => {
+        const screen = t.userScreen?.trim().replace(/^@/, '').toLowerCase();
+        if (!screen) return false;
+        return targets.includes(screen);
+      });
+    }
     if (!onlyWithTokens) return list;
     return list.filter((t) => getAssociatedTokens(t).length > 0);
-  }, [tweetList, onlyWithTokens, settings, sortKey, sortDir, tokensVersion]);
+  }, [tweetList, onlyWithTokens, settings, tokensVersion]);
+
+  useEffect(() => {
+    if (!listRef.current) return;
+    const node = listRef.current;
+    const onScroll = () => setScrollTop(node.scrollTop);
+    onScroll();
+    node.addEventListener('scroll', onScroll, { passive: true });
+    return () => node.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!listRef.current) return;
+    const node = listRef.current;
+    const ro = new ResizeObserver(() => {
+      setViewportHeight(node.clientHeight);
+    });
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, []);
+
+  const avgRowHeight = useMemo(() => {
+    const values = Array.from(rowHeightsRef.current.values());
+    if (!values.length) return 140;
+    const sum = values.reduce((acc, v) => acc + v, 0);
+    return Math.max(90, Math.round(sum / values.length));
+  }, [rowVersion]);
+
+  const virtualRange = useMemo(() => {
+    const total = visibleTweets.length;
+    if (!total) return { start: 0, end: 0, top: 0, bottom: 0 };
+    const overscan = 6;
+    const start = Math.max(0, Math.floor(scrollTop / avgRowHeight) - overscan);
+    const end = Math.min(total, Math.ceil((scrollTop + viewportHeight) / avgRowHeight) + overscan);
+    const top = start * avgRowHeight;
+    const bottom = Math.max(0, total * avgRowHeight - end * avgRowHeight);
+    return { start, end, top, bottom };
+  }, [visibleTweets.length, scrollTop, viewportHeight, avgRowHeight]);
+
+  const setRowRef = useCallback((key: string) => {
+    return (node: HTMLDivElement | null) => {
+      if (!node) return;
+      const h = node.getBoundingClientRect().height;
+      const prev = rowHeightsRef.current.get(key);
+      if (prev !== h) {
+        rowHeightsRef.current.set(key, h);
+        setRowVersion((v) => v + 1);
+      }
+    };
+  }, []);
 
   if (!active) return null;
 
@@ -368,44 +522,6 @@ export function XMonitorContent({
             />
             只看有代币
           </label>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className={
-                sortKey === 'marketCap'
-                  ? 'rounded-md border border-emerald-700 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-300'
-                  : 'rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800'
-              }
-              onClick={() => {
-                if (sortKey !== 'marketCap') {
-                  setSortKey('marketCap');
-                  setSortDir('desc');
-                  return;
-                }
-                setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-              }}
-            >
-              市值{sortKey === 'marketCap' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-            </button>
-            <button
-              type="button"
-              className={
-                sortKey === 'newest'
-                  ? 'rounded-md border border-emerald-700 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-300'
-                  : 'rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800'
-              }
-              onClick={() => {
-                if (sortKey !== 'newest') {
-                  setSortKey('newest');
-                  setSortDir('desc');
-                  return;
-                }
-                setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-              }}
-            >
-              新旧{sortKey === 'newest' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-            </button>
-          </div>
         </div>
 
         {!settings ? (
@@ -416,11 +532,13 @@ export function XMonitorContent({
         </div>
       </div>
 
-      <div className="max-h-[62vh] overflow-y-auto p-3 space-y-2">
+      <div ref={listRef} className="max-h-[62vh] overflow-y-auto p-3">
         {visibleTweets.length === 0 ? (
           <div className="px-2 py-8 text-center text-[12px] text-zinc-500">暂无推文</div>
         ) : (
-          visibleTweets.map((tweet) => {
+          <div>
+            {virtualRange.top > 0 ? <div style={{ height: virtualRange.top }} /> : null}
+            {visibleTweets.slice(virtualRange.start, virtualRange.end).map((tweet) => {
             const tokens = getAssociatedTokens(tweet);
             const expanded = !!expandedTweets[tweet.key];
             const shownTokens = expanded ? tokens : tokens.slice(0, 3);
@@ -437,58 +555,168 @@ export function XMonitorContent({
                 : tweet.tweetId
                   ? `https://x.com/i/web/status/${tweet.tweetId}`
                   : null;
+            const replyHandle = tweet.type === 'reply' ? extractReplyHandle(tweet.text) : null;
+            const quoteDisplayName = tweet.quoteUserName || tweet.quoteUserScreen || null;
+            const quoteHandle = tweet.quoteUserScreen ? `@${tweet.quoteUserScreen}` : null;
+            const quoteLink =
+              tweet.quoteLink ??
+              (tweet.quoteTweetId && tweet.quoteUserScreen
+                ? `https://x.com/${tweet.quoteUserScreen}/status/${tweet.quoteTweetId}`
+                : null);
+            const quoteText = tweet.type === 'quote' ? tweet.text : null;
+            const quoteTranslatedText = tweet.type === 'quote' ? tweet.translatedText : null;
+            const followDisplayName = tweet.followTargetName || tweet.followTargetScreen || null;
+            const followHandle = tweet.followTargetScreen ? `@${tweet.followTargetScreen}` : null;
+            const followFollowers = formatCountShort(tweet.followTargetFollowers);
             return (
-              <div key={tweet.key} className="rounded-lg border border-zinc-800 bg-zinc-950/30 p-3">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-800 text-[12px] font-semibold text-zinc-300">
-                    {tweet.userAvatar ? (
-                      <img src={tweet.userAvatar} alt="" className="h-9 w-9 object-cover" loading="lazy" referrerPolicy="no-referrer" />
-                    ) : (
-                      <span>{avatarFallback}</span>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <div className="truncate text-[13px] font-semibold text-zinc-100">{displayName}</div>
-                          {handle ? <div className="truncate text-[11px] text-zinc-500">{handle}</div> : null}
-                          {followerText ? <div className="text-[11px] text-zinc-500">{followerText}</div> : null}
-                        </div>
-                        {typeMeta ? (
-                          <div className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${typeMeta.className}`}>
-                            {typeMeta.label}
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-                        <div>{timeText}</div>
-                      </div>
+              <div key={tweet.key} ref={setRowRef(tweet.key)} className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-3 mb-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-800 text-[12px] font-semibold text-zinc-300">
+                      {tweet.userAvatar ? (
+                        <img src={tweet.userAvatar} alt="" className="h-9 w-9 object-cover" loading="lazy" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span>{avatarFallback}</span>
+                      )}
                     </div>
-                    {tweet.text ? (
-                      <div className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-zinc-100">
-                        {tweet.text}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <div className="truncate text-[13px] font-semibold text-zinc-100">{displayName}</div>
+                        {handle ? <div className="truncate text-[12px] text-zinc-400">{handle}</div> : null}
+                        {followerText ? <div className="text-[11px] text-zinc-500">{followerText}</div> : null}
                       </div>
-                    ) : null}
+                      {typeMeta ? (
+                        <div className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${typeMeta.className}`}>
+                          {typeMeta.label}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+                    <div>{timeText}</div>
                     {link ? (
                       <button
                         type="button"
-                        className="mt-1 text-[11px] text-sky-400 hover:text-sky-300"
+                        className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-800"
+                        onClick={() => window.open(link, '_blank')}
+                      >
+                        ↗
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {replyHandle ? (
+                  <div className="mt-2 text-[12px] text-amber-300">
+                    ↩ 回复 @{replyHandle}
+                  </div>
+                ) : null}
+
+                {(tweet.type === 'follow' || tweet.type === 'unfollow') && (followDisplayName || tweet.followTargetBio) ? (
+                  <div className="mt-2 rounded-lg border border-l-2 border-emerald-500/60 border-zinc-800 bg-zinc-900/50 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-800 text-[10px] font-semibold text-zinc-300">
+                          {tweet.followTargetAvatar ? (
+                            <img src={tweet.followTargetAvatar} alt="" className="h-8 w-8 object-cover" loading="lazy" referrerPolicy="no-referrer" />
+                          ) : (
+                            <span>{followDisplayName ? followDisplayName.trim().charAt(0).toUpperCase() : '?'}</span>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            {followDisplayName ? (
+                              <div className="truncate text-[12px] font-semibold text-zinc-100">{followDisplayName}</div>
+                            ) : null}
+                            {followHandle ? <div className="truncate text-[11px] text-zinc-400">{followHandle}</div> : null}
+                            {followFollowers ? <div className="text-[11px] text-zinc-500">{followFollowers}</div> : null}
+                          </div>
+                          <div className="text-[11px] text-zinc-500">{tweet.type === 'follow' ? '被关注账号' : '被取消关注账号'}</div>
+                        </div>
+                      </div>
+                    </div>
+                    {tweet.followTargetBio ? (
+                      <div className="mt-2 text-[12px] text-zinc-300 whitespace-pre-wrap break-words">
+                        {tweet.followTargetBio}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {tweet.type === 'quote' && (quoteDisplayName || quoteLink) ? (
+                  <div className="mt-2 rounded-lg border border-l-2 border-amber-500/60 border-zinc-800 bg-zinc-900/50 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-800 text-[10px] font-semibold text-zinc-300">
+                          {tweet.quoteUserAvatar ? (
+                            <img src={tweet.quoteUserAvatar} alt="" className="h-7 w-7 object-cover" loading="lazy" referrerPolicy="no-referrer" />
+                          ) : (
+                            <span>{quoteDisplayName ? quoteDisplayName.trim().charAt(0).toUpperCase() : '?'}</span>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            {quoteDisplayName ? (
+                              <div className="truncate text-[12px] font-semibold text-zinc-100">{quoteDisplayName}</div>
+                            ) : null}
+                            {quoteHandle ? <div className="truncate text-[11px] text-zinc-400">{quoteHandle}</div> : null}
+                          </div>
+                          <div className="text-[11px] text-zinc-500">引用推文</div>
+                        </div>
+                      </div>
+                      {quoteLink ? (
+                        <button
+                          type="button"
+                          className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-800"
+                          onClick={() => window.open(quoteLink, '_blank')}
+                        >
+                          ↗
+                        </button>
+                      ) : null}
+                    </div>
+                    {quoteText ? (
+                      <div className="mt-2 whitespace-pre-wrap break-words text-[12px] text-zinc-200">
+                        {quoteText}
+                      </div>
+                    ) : null}
+                    {quoteTranslatedText ? (
+                      <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-950/40 px-2 py-1">
+                        <div className="text-[10px] text-zinc-500">翻译</div>
+                        <div className="mt-1 whitespace-pre-wrap break-words text-[11px] text-zinc-200">
+                          {quoteTranslatedText}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {tweet.text && tweet.type !== 'quote' ? (
+                  <div className="mt-2">
+                    {link ? (
+                      <button
+                        type="button"
+                        className="text-[11px] text-sky-400 hover:text-sky-300"
                         onClick={() => window.open(link, '_blank')}
                       >
                         原文
                       </button>
-                    ) : null}
-                    {tweet.translatedText ? (
-                      <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-900/50 px-2 py-1">
-                        <div className="text-[10px] text-zinc-500">翻译</div>
-                        <div className="mt-1 whitespace-pre-wrap break-words text-[12px] text-zinc-200">
-                          {tweet.translatedText}
-                        </div>
-                      </div>
-                    ) : null}
+                    ) : (
+                      <div className="text-[11px] text-sky-400">原文</div>
+                    )}
+                    <div className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-zinc-100">
+                      {tweet.text}
+                    </div>
                   </div>
-                </div>
+                ) : null}
+
+                {tweet.translatedText && tweet.type !== 'quote' ? (
+                  <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+                    <div className="text-[10px] text-zinc-500">翻译</div>
+                    <div className="mt-1 whitespace-pre-wrap break-words text-[12px] text-zinc-200">
+                      {tweet.translatedText}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <div className="text-[11px] text-zinc-500">关联代币：{tokens.length}</div>
@@ -532,7 +760,9 @@ export function XMonitorContent({
                 )}
               </div>
             );
-          })
+          })}
+            {virtualRange.bottom > 0 ? <div style={{ height: virtualRange.bottom }} /> : null}
+          </div>
         )}
       </div>
     </>

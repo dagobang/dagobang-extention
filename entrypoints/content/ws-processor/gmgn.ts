@@ -31,16 +31,29 @@ type WsStatus = {
 };
 
 const buildSignal = (payload: any): GmgnTwitterSignal | null => {
-  const text = typeof payload?.c === 'string' ? payload.c : extractText(payload);
+  const text =
+    (isObject(payload?.c) && typeof payload.c.t === 'string' ? payload.c.t : null) ??
+    (typeof payload?.c === 'string' ? payload.c : null) ??
+    extractText(payload);
   const tokenAddress = extractTokenAddress(payload, text);
   if (!tokenAddress) return null;
-  const tweetId = typeof payload?.ti === 'string' ? payload.ti : extractTweetId(payload, text);
+  const tweetId =
+    (typeof payload?.ti === 'string' ? payload.ti : null) ??
+    (typeof payload?.si === 'string' ? payload.si : null) ??
+    extractTweetId(payload, text);
   const user =
     (isObject(payload?.u) && (typeof payload.u.s === 'string' ? payload.u.s : typeof payload.u.n === 'string' ? payload.u.n : null)) ??
     extractUser(payload);
-  const marketCapUsd = extractNumber(payload, ['market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']);
-  const priceUsd = extractNumber(payload, ['price', 'priceUsd', 'price_usd']);
-  const createdAtMs = extractNumber(payload, ['created_at', 'createdAt', 'created_at_ms', 'createdAtMs']);
+  const tokenData = isObject(payload?.t) ? payload.t : null;
+  const marketCapUsd =
+    extractNumber(tokenData, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']) ??
+    extractNumber(payload, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']);
+  const priceUsd =
+    extractNumber(tokenData, ['p', 'p1', 'price', 'priceUsd', 'price_usd']) ??
+    extractNumber(payload, ['p', 'p1', 'price', 'priceUsd', 'price_usd']);
+  const createdAtMs =
+    extractTimestampMs(payload) ??
+    extractNumber(payload, ['created_at', 'createdAt', 'created_at_ms', 'createdAtMs']);
   const words: string[] = text
     ? Array.from(
         new Set(
@@ -62,14 +75,66 @@ const buildSignal = (payload: any): GmgnTwitterSignal | null => {
     user: user ?? undefined,
     text: text ?? undefined,
     keywords: words.length ? words : undefined,
-    tokenAddress: tokenAddress.toLowerCase(),
-    chain: extractFirstFromObject(payload, ['chain', 'chain_id']) ?? undefined,
+    tokenAddress: tokenAddress.startsWith('0x') ? tokenAddress.toLowerCase() : tokenAddress,
+    chain:
+      (isObject(tokenData) && typeof tokenData.c === 'string' ? tokenData.c : null) ??
+      extractFirstFromObject(payload, ['chain', 'chain_id', 'chainId']) ??
+      undefined,
     marketCapUsd: marketCapUsd ?? undefined,
     priceUsd: priceUsd ?? undefined,
     createdAtMs: createdAtMs ?? undefined,
     ts: Date.now(),
   };
 };
+
+type TwitterTranslation = {
+  eventId: string;
+  translatedText?: string;
+  translationLang?: string;
+  translatedTitle?: string;
+  translatedArticle?: string;
+  translatedSourceUrl?: string;
+  updatedAtMs: number;
+};
+
+const extractTranslation = (payload: any, now: number): TwitterTranslation | null => {
+  if (!isObject(payload)) return null;
+  const eventId =
+    (typeof (payload as any).ei === 'string' ? (payload as any).ei : null) ??
+    (typeof (payload as any).i === 'string' ? (payload as any).i : null) ??
+    extractFirstFromObject(payload, ['eventId', 'event_id', 'ei']) ??
+    null;
+  if (!eventId) return null;
+  const translatedText =
+    (typeof (payload as any).c === 'string' ? (payload as any).c : null) ??
+    (isObject((payload as any).c) && typeof (payload as any).c.t === 'string' ? (payload as any).c.t : null) ??
+    undefined;
+  const translationLang = typeof (payload as any).l === 'string' ? (payload as any).l : undefined;
+  const translatedTitle = typeof (payload as any).satl === 'string' ? (payload as any).satl : undefined;
+  const translatedArticle = typeof (payload as any).sat === 'string' ? (payload as any).sat : undefined;
+  const translatedSourceUrl =
+    (typeof (payload as any).sc === 'string' ? (payload as any).sc : null) ??
+    (isObject((payload as any).sc) && typeof (payload as any).sc.t === 'string' ? (payload as any).sc.t : null) ??
+    undefined;
+  return {
+    eventId,
+    translatedText,
+    translationLang,
+    translatedTitle,
+    translatedArticle,
+    translatedSourceUrl,
+    updatedAtMs: now,
+  };
+};
+
+const mergeTranslation = (signal: GmgnTwitterSignal, translation: TwitterTranslation): GmgnTwitterSignal => ({
+  ...signal,
+  translatedText: translation.translatedText ?? signal.translatedText,
+  translationLang: translation.translationLang ?? signal.translationLang,
+  translatedTitle: translation.translatedTitle ?? signal.translatedTitle,
+  translatedArticle: translation.translatedArticle ?? signal.translatedArticle,
+  translatedSourceUrl: translation.translatedSourceUrl ?? signal.translatedSourceUrl,
+});
 
 const normalizePublicTokenData = (tokenData: any, chain?: string) => {
   const address =
@@ -168,16 +233,55 @@ const extractPublicBroadcastCreates = (payload: any) => {
   return results;
 };
 
+const TWITTER_CACHE_KEY = 'dagobang_twitter_cache_v1';
+const TWITTER_CACHE_LIMIT = 50;
+
+const loadTwitterCache = () => {
+  try {
+    const raw = window.localStorage.getItem(TWITTER_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.list)) return parsed;
+  } catch {
+  }
+  return null;
+};
+
+const saveTwitterCache = (list: any[]) => {
+  const next = list.slice(-TWITTER_CACHE_LIMIT);
+  const payload = { list: next, ts: Date.now() };
+  (window as any).__DAGOBANG_TWITTER_CACHE__ = payload;
+  try {
+    window.localStorage.setItem(TWITTER_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+  }
+};
+
 const emitTwitterEvent = (channel: string, item: any, receivedAtMs: number) => {
-  window.dispatchEvent(
-    new CustomEvent('dagobang-gmgn-twitter', {
-      detail: {
-        channel,
-        item,
-        receivedAtMs,
-      },
-    }),
-  );
+  const getCacheKey = (ch: string, it: any) => {
+    const key =
+      (typeof it?.i === 'string' ? it.i : null) ??
+      (typeof it?.ei === 'string' ? it.ei : null) ??
+      (typeof it?.ti === 'string' ? it.ti : null) ??
+      (typeof it?.si === 'string' ? it.si : null);
+    return key ? `${ch}:${key}` : null;
+  };
+  const payload = { channel, item, receivedAtMs };
+  const cache = (window as any).__DAGOBANG_TWITTER_CACHE__ ?? loadTwitterCache();
+  if (cache && !(window as any).__DAGOBANG_TWITTER_CACHE__) {
+    (window as any).__DAGOBANG_TWITTER_CACHE__ = cache;
+  }
+  const list = Array.isArray(cache?.list) ? cache.list.slice() : [];
+  const key = getCacheKey(channel, item);
+  if (key) {
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const existedKey = getCacheKey(list[i]?.channel, list[i]?.item);
+      if (existedKey === key) list.splice(i, 1);
+    }
+  }
+  list.push(payload);
+  saveTwitterCache(list);
+  window.dispatchEvent(new CustomEvent('dagobang-gmgn-twitter', { detail: payload }));
 };
 
 const emitTrenchesTokenEvent = (tokenData: any, receivedAtMs: number) => {
@@ -194,6 +298,11 @@ const emitTrenchesTokenEvent = (tokenData: any, receivedAtMs: number) => {
 export function initGmgnWsMonitor(options: {
   call: <T extends BgRequest>(req: T) => Promise<BgResponse<T>>;
 }): WsSiteMonitor {
+  const cached = (window as any).__DAGOBANG_TWITTER_CACHE__ ?? loadTwitterCache();
+  if (cached) (window as any).__DAGOBANG_TWITTER_CACHE__ = cached;
+  const translationsByEventId = new Map<string, TwitterTranslation>();
+  const signalsByEventId = new Map<string, { signal: GmgnTwitterSignal; updatedAtMs: number }>();
+
   let wsStatus: WsStatus = {
     connected: false,
     lastPacketAt: 0,
@@ -239,6 +348,34 @@ export function initGmgnWsMonitor(options: {
 
   const normalizeChannel = (channel: unknown): string => (typeof channel === 'string' ? channel.trim() : '');
 
+  const pruneTranslations = (now: number) => {
+    if (translationsByEventId.size > 400) {
+      let count = 0;
+      for (const key of translationsByEventId.keys()) {
+        translationsByEventId.delete(key);
+        count += 1;
+        if (count >= 120) break;
+      }
+    }
+    for (const [key, value] of translationsByEventId) {
+      if (now - value.updatedAtMs > 20 * 60 * 1000) translationsByEventId.delete(key);
+    }
+  };
+
+  const pruneSignals = (now: number) => {
+    if (signalsByEventId.size > 400) {
+      let count = 0;
+      for (const key of signalsByEventId.keys()) {
+        signalsByEventId.delete(key);
+        count += 1;
+        if (count >= 120) break;
+      }
+    }
+    for (const [key, value] of signalsByEventId) {
+      if (now - value.updatedAtMs > 20 * 60 * 1000) signalsByEventId.delete(key);
+    }
+  };
+
   // Processor: consumes normalized DAGOBANG_WS_PACKET (site=gmgn, direction=receive).
   const handleTwitterChannel = (data: any, channel: string, payload: any, now: number) => {
     const packetTs = typeof data.timestamp === 'number' ? data.timestamp : now;
@@ -248,6 +385,27 @@ export function initGmgnWsMonitor(options: {
     const list = items.length ? items : [payload];
     for (const item of list) {
       emitTwitterEvent(channel, item, now);
+      if (channel === 'twitter_monitor_translation') {
+        const translation = extractTranslation(item, now);
+        if (!translation) continue;
+        translationsByEventId.set(translation.eventId, translation);
+        pruneTranslations(now);
+        const existing = signalsByEventId.get(translation.eventId);
+        if (!existing) continue;
+        const merged = mergeTranslation(existing.signal, translation);
+        signalsByEventId.set(translation.eventId, { signal: merged, updatedAtMs: now });
+        pruneSignals(now);
+        wsStatus = {
+          ...wsStatus,
+          lastSignalAt: now,
+          signalCount: wsStatus.signalCount + 1,
+        };
+        pushLog('signal', `${merged.tokenAddress}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
+        emitStatus();
+        void options.call({ type: 'gmgn:twitterSignal', payload: merged });
+        continue;
+      }
+
       let signal: GmgnTwitterSignal | null = null;
       try {
         signal = buildSignal(item);
@@ -255,6 +413,15 @@ export function initGmgnWsMonitor(options: {
         pushLog('error', 'signal_parse_failed');
       }
       if (!signal || !signal.tokenAddress) continue;
+      const eventId = signal.eventId;
+      if (eventId) {
+        const translation = translationsByEventId.get(eventId);
+        if (translation) {
+          signal = mergeTranslation(signal, translation);
+        }
+        signalsByEventId.set(eventId, { signal, updatedAtMs: now });
+        pruneSignals(now);
+      }
       wsStatus = {
         ...wsStatus,
         lastSignalAt: now,

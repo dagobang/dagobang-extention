@@ -27,6 +27,8 @@ declare global {
   const encryptJson: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/crypto').encryptJson
   const extractFirstFromObject: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractFirstFromObject
   const extractGmgnAuthData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI').extractGmgnAuthData
+  const extractGmgnTweetText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractGmgnTweetText
+  const extractGmgnUserFields: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractGmgnUserFields
   const extractGmgnWsConnectionInfo: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractGmgnWsConnectionInfo
   const extractNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractNumber
   const extractText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractText

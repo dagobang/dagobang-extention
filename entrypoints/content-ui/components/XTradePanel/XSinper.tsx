@@ -71,7 +71,11 @@ export function XSniperContent({
     [settings?.autoTrade]
   );
   const [draft, setDraft] = useState<AutoTradeConfig | null>(() => cloneAutoTrade(normalizedAutoTrade));
+  const [targetUsersInput, setTargetUsersInput] = useState(
+    () => normalizedAutoTrade.twitterSnipe.targetUsers.join('\n')
+  );
   const [saving, setSaving] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const [wsStatus, setWsStatus] = useState(() => {
     const initial = (window as any).__DAGOBANG_WS_STATUS__;
     return initial ?? {
@@ -88,8 +92,14 @@ export function XSniperContent({
 
   useEffect(() => {
     if (!active) return;
+    if (isDirty) return;
     setDraft(cloneAutoTrade(normalizedAutoTrade));
-  }, [active, normalizedAutoTrade]);
+    setTargetUsersInput(normalizedAutoTrade.twitterSnipe.targetUsers.join('\n'));
+  }, [active, isDirty]);
+
+  useEffect(() => {
+    if (!active) setIsDirty(false);
+  }, [active]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -121,6 +131,7 @@ export function XSniperContent({
   };
   const formatLatency = (ms?: number) => (ms == null ? '--' : `${Math.round(ms)}ms`);
   const updateTwitterSnipe = (patch: Partial<AutoTradeConfig['twitterSnipe']>) => {
+    setIsDirty(true);
     setDraft((prev) =>
       prev
         ? {
@@ -150,9 +161,14 @@ export function XSniperContent({
             <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.targetUsers')}</div>
             <textarea
               className="h-20 w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-              value={twitterSnipe?.targetUsers.join('\n') ?? ''}
+              value={targetUsersInput}
               disabled={!canEdit}
-              onChange={(e) => updateTwitterSnipe({ targetUsers: parseList(e.target.value) })}
+              aria-multiline={true}
+              onChange={(e) => {
+                const nextValue = e.target.value;
+                setTargetUsersInput(nextValue);
+                setIsDirty(true);
+              }}
             />
           </label>
           <div className="space-y-1">
@@ -171,6 +187,7 @@ export function XSniperContent({
                         const nextChecked = e.target.checked;
                         setDraft((prev) => {
                           if (!prev) return prev;
+                          setIsDirty(true);
                           const current = prev.twitterSnipe.interactionTypes;
                           const next = nextChecked
                             ? Array.from(new Set([...current, option.value]))
@@ -354,6 +371,7 @@ export function XSniperContent({
                 const v = e.target.value;
                 setDraft((prev) => {
                   if (!prev) return prev;
+                  setIsDirty(true);
                   if (v === SOUND_OFF) return { ...prev, triggerSound: { ...prev.triggerSound, enabled: false } };
                   return { ...prev, triggerSound: { ...prev.triggerSound, enabled: true, preset: v as TradeSuccessSoundPreset } };
                 });
@@ -436,12 +454,17 @@ export function XSniperContent({
       </div>
 
       <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800/60">
-        <div className="text-xs text-zinc-500">{tt('contentUi.autoTradeStrategy.footerHint')}</div>
+        <div className="text-xs text-zinc-500"></div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             className="rounded-md border border-zinc-700 px-3 py-1 text-xs text-zinc-300 hover:border-zinc-500"
-            onClick={() => setDraft(cloneAutoTrade(normalizedAutoTrade))}
+            onClick={() => {
+              const nextDraft = cloneAutoTrade(normalizedAutoTrade);
+              setIsDirty(false);
+              setDraft(nextDraft);
+              setTargetUsersInput(nextDraft?.twitterSnipe?.targetUsers.join('\n') ?? '');
+            }}
           >
             {tt('contentUi.autoTradeStrategy.reset')}
           </button>
@@ -451,9 +474,19 @@ export function XSniperContent({
             disabled={!draft || !canEdit || saving}
             onClick={async () => {
               if (!settings || !draft) return;
+              const mergedDraft = {
+                ...draft,
+                twitterSnipe: {
+                  ...draft.twitterSnipe,
+                  targetUsers: parseList(targetUsersInput),
+                },
+              };
               setSaving(true);
               try {
-                await call({ type: 'settings:set', settings: { ...settings, autoTrade: draft } } as const);
+                await call({ type: 'settings:set', settings: { ...settings, autoTrade: mergedDraft } } as const);
+                setIsDirty(false);
+                setDraft(mergedDraft);
+                setTargetUsersInput(mergedDraft.twitterSnipe.targetUsers.join('\n'));
               } finally {
                 setSaving(false);
               }
