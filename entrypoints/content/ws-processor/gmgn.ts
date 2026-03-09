@@ -124,14 +124,18 @@ const normalizeNewPoolTokenData = (pool: any, chain?: string) => {
 
 const normalizeTrenchesTokenData = (item: any) => {
   const address =
-    extractTokenAddress(item) ??
-    asAddress(item?.a);
+    asAddress(item?.a) ??
+    extractTokenAddress(item);
   const createdAtSec = typeof item?.ct === 'number' ? item.ct : null;
   const createdAtMs = createdAtSec ? createdAtSec * 1000 : null;
-  const marketCapUsd = typeof item?.mc === 'number' ? item.mc : null;
-  const liquidityUsd = typeof item?.lq === 'number' ? item.lq : null;
-  const holders = typeof item?.hd === 'number' ? item.hd : null;
-  const priceUsd = typeof item?.p === 'number' ? item.p : null;
+  const marketCapUsd = extractNumber(item, ['mc']);
+  const liquidityUsd = extractNumber(item, ['lq', 'lqdt']);
+  const holders = extractNumber(item, ['hd']);
+  const priceUsd = extractNumber(item, ['p']);
+  const devBuyRatio = extractNumber(item, ['d_br']);
+  const top10HoldRatio = extractNumber(item, ['t10']);
+  const devTokenStatus = typeof item?.d_ts === 'string' ? item.d_ts.trim() : undefined;
+  const tokenLogo = typeof item?.l === 'string' && item.l.trim() ? item.l.trim() : undefined;
   return {
     tokenAddress: address ?? undefined,
     marketCapUsd: marketCapUsd ?? undefined,
@@ -140,8 +144,12 @@ const normalizeTrenchesTokenData = (item: any) => {
     priceUsd: priceUsd ?? undefined,
     createdAtMs: createdAtMs ?? undefined,
     devAddress: asAddress(item?.d_ct) ?? undefined,
-    devHoldPercent: typeof item?.d_cor === 'number' ? item.d_cor : undefined,
+    devHoldPercent: extractNumber(item, ['d_cor']) ?? undefined,
     devHasSold: typeof item?.d_ts === 'string' ? item.d_ts.toLowerCase().includes('sell') : undefined,
+    devBuyRatio: devBuyRatio ?? undefined,
+    top10HoldRatio: top10HoldRatio ?? undefined,
+    devTokenStatus,
+    tokenLogo,
     chain: item?.n ?? item?.chain ?? undefined,
     symbol: item?.s ?? undefined,
     name: item?.nm ?? undefined,
@@ -270,24 +278,45 @@ const upsertUnifiedSignal = (signal: UnifiedTwitterSignal, cacheList?: UnifiedTw
 type TokenSnapshot = {
   tokenAddress: string;
   chain?: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  tokenLogo?: string;
   marketCapUsd?: number;
   priceUsd?: number;
   liquidityUsd?: number;
   holders?: number;
+  devBuyRatio?: number;
+  top10HoldRatio?: number;
+  devTokenStatus?: string;
   createdAtMs?: number;
   receivedAtMs: number;
+};
+
+const pickNonEmptyString = (next: any, prev?: string): string | undefined => {
+  const s = typeof next === 'string' ? next.trim() : '';
+  return s ? s : prev;
+};
+
+const pickFiniteNumber = (next: any, prev?: number): number | undefined => {
+  return typeof next === 'number' && Number.isFinite(next) ? next : prev;
 };
 
 const mergeTokenSnapshot = (signal: UnifiedTwitterSignal, snapshot: TokenSnapshot | undefined): UnifiedTwitterSignal => {
   if (!snapshot) return signal;
   return {
     ...signal,
-    chain: signal.chain ?? snapshot.chain,
-    marketCapUsd: signal.marketCapUsd ?? snapshot.marketCapUsd,
-    priceUsd: signal.priceUsd ?? snapshot.priceUsd,
-    liquidityUsd: signal.liquidityUsd ?? snapshot.liquidityUsd,
-    holders: signal.holders ?? snapshot.holders,
-    createdAtMs: signal.createdAtMs ?? snapshot.createdAtMs,
+    chain: pickNonEmptyString(snapshot.chain, signal.chain),
+    tokenSymbol: pickNonEmptyString(snapshot.tokenSymbol, signal.tokenSymbol),
+    tokenName: pickNonEmptyString(snapshot.tokenName, signal.tokenName),
+    tokenLogo: pickNonEmptyString(snapshot.tokenLogo, signal.tokenLogo),
+    marketCapUsd: pickFiniteNumber(snapshot.marketCapUsd, signal.marketCapUsd),
+    priceUsd: pickFiniteNumber(snapshot.priceUsd, signal.priceUsd),
+    liquidityUsd: pickFiniteNumber(snapshot.liquidityUsd, signal.liquidityUsd),
+    holders: pickFiniteNumber(snapshot.holders, signal.holders),
+    devBuyRatio: pickFiniteNumber(snapshot.devBuyRatio, signal.devBuyRatio),
+    top10HoldRatio: pickFiniteNumber(snapshot.top10HoldRatio, signal.top10HoldRatio),
+    devTokenStatus: pickNonEmptyString(snapshot.devTokenStatus, signal.devTokenStatus),
+    createdAtMs: pickFiniteNumber(snapshot.createdAtMs, signal.createdAtMs),
   };
 };
 
@@ -640,13 +669,31 @@ export function initGmgnWsMonitor(options: {
     if (!addrRaw) return;
     const addr = addrRaw.toLowerCase();
     const prev = tokenByAddress.get(addr);
+    const tokenSymbol = pickNonEmptyString(tokenData?.tokenSymbol ?? tokenData?.symbol ?? tokenData?.s, prev?.tokenSymbol);
+    const tokenName = pickNonEmptyString(tokenData?.tokenName ?? tokenData?.name ?? tokenData?.nm ?? tokenData?.n, prev?.tokenName);
+    const tokenLogo = pickNonEmptyString(tokenData?.tokenLogo ?? tokenData?.l ?? tokenData?.logo, prev?.tokenLogo);
+    const devTokenStatus = pickNonEmptyString(tokenData?.devTokenStatus ?? tokenData?.d_ts, prev?.devTokenStatus);
+    const devBuyRatio = pickFiniteNumber(
+      typeof tokenData?.devBuyRatio === 'number' ? tokenData.devBuyRatio : extractNumber(tokenData, ['d_br']),
+      prev?.devBuyRatio,
+    );
+    const top10HoldRatio = pickFiniteNumber(
+      typeof tokenData?.top10HoldRatio === 'number' ? tokenData.top10HoldRatio : extractNumber(tokenData, ['t10']),
+      prev?.top10HoldRatio,
+    );
     const next: TokenSnapshot = {
       tokenAddress: addr,
-      chain: typeof tokenData?.chain === 'string' ? tokenData.chain : prev?.chain,
+      chain: pickNonEmptyString(tokenData?.chain, prev?.chain),
+      tokenSymbol,
+      tokenName,
+      tokenLogo,
       marketCapUsd: typeof tokenData?.marketCapUsd === 'number' ? tokenData.marketCapUsd : prev?.marketCapUsd,
       priceUsd: typeof tokenData?.priceUsd === 'number' ? tokenData.priceUsd : prev?.priceUsd,
       liquidityUsd: typeof tokenData?.liquidityUsd === 'number' ? tokenData.liquidityUsd : prev?.liquidityUsd,
       holders: typeof tokenData?.holders === 'number' ? tokenData.holders : prev?.holders,
+      devBuyRatio,
+      top10HoldRatio,
+      devTokenStatus,
       createdAtMs: typeof tokenData?.createdAtMs === 'number' ? tokenData.createdAtMs : prev?.createdAtMs,
       receivedAtMs,
     };
@@ -662,10 +709,16 @@ export function initGmgnWsMonitor(options: {
       const merged = mergeTokenSnapshot(s, next);
       if (
         merged.chain !== s.chain ||
+        merged.tokenSymbol !== s.tokenSymbol ||
+        merged.tokenName !== s.tokenName ||
+        merged.tokenLogo !== s.tokenLogo ||
         merged.marketCapUsd !== s.marketCapUsd ||
         merged.priceUsd !== s.priceUsd ||
         merged.liquidityUsd !== s.liquidityUsd ||
         merged.holders !== s.holders ||
+        merged.devBuyRatio !== s.devBuyRatio ||
+        merged.top10HoldRatio !== s.top10HoldRatio ||
+        merged.devTokenStatus !== s.devTokenStatus ||
         merged.createdAtMs !== s.createdAtMs
       ) {
         changed = true;
@@ -679,7 +732,79 @@ export function initGmgnWsMonitor(options: {
       if (!s?.tokenAddress) continue;
       if (String(s.tokenAddress).toLowerCase() !== addr) continue;
       window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-      void options.call({ type: 'gmgn:twitterSignal', payload: s });
+      if (s.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: s });
+    }
+  };
+
+  const extractTweetIdsFromMx = (mx: unknown): string[] => {
+    if (typeof mx !== 'string') return [];
+    const text = mx.trim();
+    if (!text) return [];
+    const ids = new Set<string>();
+    for (const m of text.matchAll(/status\/(\d{6,})/gi)) {
+      if (m[1]) ids.add(m[1]);
+    }
+    for (const m of text.matchAll(/\b(\d{10,})\b/g)) {
+      if (m[1]) ids.add(m[1]);
+    }
+    return Array.from(ids);
+  };
+
+  const linkTokenToCachedSignalsByMx = (tokenData: any, mx: unknown, now: number) => {
+    const addrRaw = typeof tokenData?.tokenAddress === 'string' ? tokenData.tokenAddress : null;
+    if (!addrRaw) return;
+    const addr = addrRaw.toLowerCase();
+    const snap = tokenByAddress.get(addr);
+    if (!snap) return;
+    if (typeof mx !== 'string' || !mx.trim()) return;
+
+    const ids = extractTweetIdsFromMx(mx);
+    const cache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
+    const list = Array.isArray(cache?.list) ? (cache.list as UnifiedTwitterSignal[]).slice() : [];
+    if (!list.length) return;
+
+    let changed = false;
+    const updated = list.map((s) => {
+      if (!s) return s;
+      const hit =
+        (s.tweetId && (mx.includes(s.tweetId) || ids.includes(s.tweetId))) ||
+        (s.quotedTweetId && (mx.includes(s.quotedTweetId) || ids.includes(s.quotedTweetId)));
+      if (!hit) return s;
+
+      const merged = mergeTokenSnapshot({ ...s, tokenAddress: addr }, snap);
+      if (
+        merged.tokenAddress !== s.tokenAddress ||
+        merged.chain !== s.chain ||
+        merged.tokenSymbol !== s.tokenSymbol ||
+        merged.tokenName !== s.tokenName ||
+        merged.tokenLogo !== s.tokenLogo ||
+        merged.marketCapUsd !== s.marketCapUsd ||
+        merged.priceUsd !== s.priceUsd ||
+        merged.liquidityUsd !== s.liquidityUsd ||
+        merged.holders !== s.holders ||
+        merged.devBuyRatio !== s.devBuyRatio ||
+        merged.top10HoldRatio !== s.top10HoldRatio ||
+        merged.devTokenStatus !== s.devTokenStatus ||
+        merged.createdAtMs !== s.createdAtMs
+      ) {
+        changed = true;
+        const next = { ...merged, ts: now };
+        if (next.eventId) signalsByEventId.set(next.eventId, { signal: next, updatedAtMs: now });
+        return next;
+      }
+      return s;
+    });
+
+    if (!changed) return;
+    saveUnifiedTwitterCache(updated);
+    for (const s of updated) {
+      if (!s) continue;
+      const hit =
+        (s.tweetId && (mx.includes(s.tweetId) || ids.includes(s.tweetId))) ||
+        (s.quotedTweetId && (mx.includes(s.quotedTweetId) || ids.includes(s.quotedTweetId)));
+      if (!hit) continue;
+      window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
+      if (s.tokenAddress && s.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: s });
     }
   };
 
@@ -751,16 +876,19 @@ export function initGmgnWsMonitor(options: {
     const packetTs = typeof data.timestamp === 'number' ? data.timestamp : now;
     const latencyMs = computeLatencyMs(payload, packetTs, now);
     updatePacketStatus(channel, now, latencyMs);
-    const items = toArrayPayload(payload);
-    if (!items.length) {
-      emitStatus();
-      return;
-    }
-    for (const item of items) {
+    const inner =
+      isObject(payload) && !('_v_ch' in payload) && (payload as any).data != null ? (payload as any).data : payload;
+    const items = toArrayPayload(inner);
+    const list = items.length ? items : [inner];
+    for (const item of list) {
       const tokenData = normalizeTrenchesTokenData(item);
       if (!tokenData.tokenAddress) continue;
+      const updateType = typeof (item as any)?._v_ch === 'string' ? String((item as any)._v_ch).trim().toLowerCase() : '';
       emitTrenchesTokenEvent(tokenData, now);
       updateTokenSnapshot(tokenData, now);
+      if (updateType === 'social') {
+        linkTokenToCachedSignalsByMx(tokenData, (item as any)?.m_x, now);
+      }
       wsStatus = {
         ...wsStatus,
         lastSignalAt: now,

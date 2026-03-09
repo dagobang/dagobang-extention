@@ -656,9 +656,27 @@ export function XMonitorContent({
 
                   {tokenAddr ? (
                     <div className="mt-3 flex items-center justify-between gap-2">
-                      <div className="text-[11px] text-zinc-500">
-                        {holders != null ? `Holders ${formatCountShort(holders)}` : 'Holders --'}
-                        {mc != null ? ` · MC $${Math.round(mc).toLocaleString()}` : ''}
+                      <div className="min-w-0 flex items-center gap-2 text-[11px] text-zinc-500">
+                        {signal.tokenLogo ? (
+                          <img
+                            src={signal.tokenLogo}
+                            alt=""
+                            className="h-4 w-4 rounded-sm object-cover"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : null}
+                        <div className="min-w-0 truncate">
+                          {signal.tokenSymbol || signal.tokenName ? (
+                            <span className="text-zinc-300">{signal.tokenSymbol ?? signal.tokenName}</span>
+                          ) : null}
+                          {holders != null ? ` · Holders ${formatCountShort(holders)}` : ' · Holders --'}
+                          {mc != null ? ` · MC $${Math.round(mc).toLocaleString()}` : ''}
+                          {typeof signal.createdAtMs === 'number' ? ` · Age ${formatAgeShort(signal.createdAtMs)}` : ''}
+                          {typeof signal.devBuyRatio === 'number' ? ` · d_br ${(signal.devBuyRatio * 100).toFixed(2)}%` : ''}
+                          {typeof signal.top10HoldRatio === 'number' ? ` · t10 ${(signal.top10HoldRatio * 100).toFixed(2)}%` : ''}
+                          {signal.devTokenStatus ? ` · ${signal.devTokenStatus}` : ''}
+                        </div>
                       </div>
                       <button
                         type="button"

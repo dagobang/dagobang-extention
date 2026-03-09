@@ -293,12 +293,19 @@ export type UnifiedTwitterSignal = {
   followedUserAvatar?: string;
   followedUserBio?: string;
   followedUserFollowers?: number;
-  tokenAddress?: string;
+
   chain?: string;
+  tokenAddress?: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  tokenLogo?: string;
   marketCapUsd?: number;
   priceUsd?: number;
   liquidityUsd?: number;
   holders?: number;
+  devBuyRatio?: number;
+  top10HoldRatio?: number;
+  devTokenStatus?: string;
   createdAtMs?: number;
   receivedAtMs: number;
   ts: number;
