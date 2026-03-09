@@ -89,77 +89,77 @@ export class RpcService {
   }
 
   static async broadcastTxDetailed(signedTx: `0x${string}`): Promise<BroadcastTxResult> {
+    if (typeof signedTx !== 'string' || !signedTx.startsWith('0x') || signedTx.length <= 2) {
+      throw new Error('Invalid signed transaction');
+    }
+    if (!/^0x[0-9a-fA-F]+$/.test(signedTx)) {
+      throw new Error('Invalid signed transaction');
+    }
+
     const settings = await SettingsService.get();
     const chainConfig = settings.chains[settings.chainId];
 
-    let targetUrls: string[] = [];
-    if (chainConfig.antiMev && chainConfig.protectedRpcUrls.length > 0) {
-      targetUrls = chainConfig.protectedRpcUrls;
+    const protectedUrls = this.normalizeUrls(chainConfig.protectedRpcUrls ?? []);
+    if (protectedUrls.length === 0) {
+      throw new Error('No protected RPC URLs configured (required for broadcasting transactions)');
     }
 
-    targetUrls = this.normalizeUrls(targetUrls);
-    if (targetUrls.length === 0) {
-      throw new Error('No RPC URLs configured (check Anti-MEV settings)');
-    }
+    const tryBroadcast = async (urls: string[], includeBloxroute: boolean) => {
+      const promises: Array<Promise<BroadcastTxResult>> = [];
+      const failures: string[] = [];
 
-    const promises: Array<Promise<BroadcastTxResult>> = [];
-    const failures: string[] = [];
-
-    const bloxHeader = (settings.bloxrouteAuthHeader ?? '').trim();
-    if (this.bloxroutePrivateTxEnabled && bloxHeader) {
-      promises.push(
-        (async () => {
-          try {
-            const txHash = await BloxRouterAPI.sendBscPrivateTx(signedTx);
-            if (!txHash) {
-              throw new Error('BloxRoute did not return tx hash');
+      const bloxHeader = (settings.bloxrouteAuthHeader ?? '').trim();
+      if (includeBloxroute && this.bloxroutePrivateTxEnabled && bloxHeader) {
+        promises.push(
+          (async () => {
+            try {
+              const txHash = await BloxRouterAPI.sendBscPrivateTx(signedTx);
+              if (!txHash) throw new Error('BloxRoute did not return tx hash');
+              return { txHash, via: 'bloxroute' };
+            } catch (e: any) {
+              failures.push(`bloxroute: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
+              console.error('Error broadcasting tx via BloxRoute:', e);
+              throw e;
             }
-            
-            return { txHash, via: 'bloxroute' };
-          } catch (e: any) {
-            failures.push(`bloxroute: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
-            console.error('Error broadcasting tx via BloxRoute:', e);
-            throw e;
-          }
-        })(),
-      );
-    }
+          })(),
+        );
+      }
 
-    for (const url of targetUrls) {
-      promises.push(
-        (async () => {
-          const client = this.getClientForUrl(url);
-          try {
-            const txHash = await client.sendRawTransaction({ serializedTransaction: signedTx });
-            return { txHash, via: 'rpc', rpcUrl: url };
-          } catch (e: any) {
-            failures.push(`${url}: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
-            console.error(`Error broadcasting tx to ${url}:`, e);
-            const msg = String(e?.shortMessage || e?.message || '').toLowerCase();
-            const isAlreadyKnown =
-              msg.includes('already known') ||
-              msg.includes('known transaction') ||
-              msg.includes('already imported') ||
-              msg.includes('already exists') ||
-              msg.includes('already in mempool');
-            if (isAlreadyKnown) {
-              const txHash = keccak256(signedTx) as `0x${string}`;
+      for (const url of urls) {
+        promises.push(
+          (async () => {
+            const client = this.getClientForUrl(url);
+            try {
+              const txHash = await client.sendRawTransaction({ serializedTransaction: signedTx });
               return { txHash, via: 'rpc', rpcUrl: url };
+            } catch (e: any) {
+              failures.push(`${url}: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
+              console.error(`Error broadcasting tx to ${url}:`, e);
+              const msg = String(e?.shortMessage || e?.message || '').toLowerCase();
+              const isAlreadyKnown =
+                msg.includes('already known') ||
+                msg.includes('known transaction') ||
+                msg.includes('already imported') ||
+                msg.includes('already exists') ||
+                msg.includes('already in mempool');
+              if (isAlreadyKnown) {
+                const txHash = keccak256(signedTx) as `0x${string}`;
+                return { txHash, via: 'rpc', rpcUrl: url };
+              }
+              throw e;
             }
+          })(),
+        );
+      }
 
-            throw e;
-          }
-        })(),
-      );
-    }
+      try {
+        return await Promise.any(promises);
+      } catch {
+        const detail = failures.length ? ` Details: ${failures.join(' | ')}` : '';
+        throw new Error(`Failed to broadcast transaction to any RPC endpoint.${detail}`);
+      }
+    };
 
-    try {
-      // Return the first successful result
-      return await Promise.any(promises);
-    } catch (e) {
-      // If all fail, throw an error
-      const detail = failures.length ? ` Details: ${failures.join(' | ')}` : '';
-      throw new Error(`Failed to broadcast transaction to any RPC endpoint.${detail}`);
-    }
+    return await tryBroadcast(protectedUrls, true);
   }
 }

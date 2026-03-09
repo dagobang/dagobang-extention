@@ -212,9 +212,22 @@ function clearNonceState(chainId: number, address: `0x${string}`) {
 }
 
 function isNonceRelatedError(e: any): boolean {
-  const msg = String(e?.shortMessage || e?.message || e || '').toLowerCase();
+  const texts: string[] = [];
+  const push = (v: any) => {
+    if (typeof v !== 'string') return;
+    const t = v.trim();
+    if (t) texts.push(t.toLowerCase());
+  };
+  push(e?.shortMessage);
+  push(e?.message);
+  push(e?.details);
+  push(e?.cause?.message);
+  push(e?.cause?.details);
+  if (Array.isArray(e?.metaMessages)) {
+    for (const x of e.metaMessages) push(x);
+  }
+  const msg = texts.join(' | ');
   if (!msg) return false;
-  if (!msg.includes('nonce') && !msg.includes('replacement')) return false;
   return (
     msg.includes('nonce too low') ||
     msg.includes('nonce is too low') ||
@@ -222,8 +235,31 @@ function isNonceRelatedError(e: any): boolean {
     msg.includes('already known') ||
     msg.includes('known transaction') ||
     msg.includes('replacement transaction underpriced') ||
-    msg.includes('transaction underpriced')
+    msg.includes('transaction underpriced') ||
+    msg.includes('nonce') ||
+    msg.includes('replacement')
   );
+}
+
+function isBroadcastParamError(e: any): boolean {
+  const texts: string[] = [];
+  const push = (v: any) => {
+    if (typeof v !== 'string') return;
+    const t = v.trim();
+    if (t) texts.push(t.toLowerCase());
+  };
+  push(e?.shortMessage);
+  push(e?.message);
+  push(e?.details);
+  push(e?.cause?.message);
+  if (Array.isArray(e?.metaMessages)) {
+    for (const x of e.metaMessages) push(x);
+  }
+  const msg = texts.join(' | ');
+  if (!msg) return false;
+  if (msg.includes('failed to broadcast transaction to any rpc endpoint')) return true;
+  if (msg.includes('missing or invalid parameters')) return true;
+  return false;
 }
 
 export async function sendTransaction(
@@ -297,7 +333,7 @@ export async function sendTransaction(
   try {
     return await signAndBroadcast(nonce, '');
   } catch (e: any) {
-    if (useAutoNonce && isNonceRelatedError(e)) {
+    if (useAutoNonce && (isNonceRelatedError(e) || isBroadcastParamError(e))) {
       clearNonceState(chainId, account.address);
       try {
         const start = Date.now();
