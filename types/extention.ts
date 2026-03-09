@@ -216,6 +216,7 @@ export type LimitOrder = {
   side: LimitOrderSide;
   orderType?: LimitOrderType;
   triggerPriceUsd: number;
+  targetChangePercent?: number;
   trailingStopBps?: number;
   trailingPeakPriceUsd?: number;
   buyBnbAmountWei?: string;
@@ -235,6 +236,7 @@ export type LimitOrderCreateInput = {
   side: LimitOrderSide;
   orderType?: LimitOrderType;
   triggerPriceUsd: number;
+  targetChangePercent?: number;
   trailingStopBps?: number;
   trailingPeakPriceUsd?: number;
   buyBnbAmountWei?: string;
@@ -265,23 +267,40 @@ export type TxWaitForReceiptError = {
   data?: unknown;
 };
 
-export type GmgnTwitterSignal = {
-  site: 'gmgn';
+export type UnifiedTwitterSignal = {
+  id: string;
+  site: 'gmgn' | 'axiom';
+  channel: string;
+  tweetType: 'tweet' | 'reply' | 'quote' | 'repost' | 'follow' | 'unfollow' | 'delete_post';
+  sourceTweetType?: 'tweet' | 'reply' | 'quote' | 'repost' | 'follow' | 'unfollow';
   eventId?: string;
   tweetId?: string;
-  user?: string;
+  userScreen?: string;
+  userName?: string;
+  userAvatar?: string;
+  userFollowers?: number;
   text?: string;
   translatedText?: string;
   translationLang?: string;
-  translatedTitle?: string;
-  translatedArticle?: string;
-  translatedSourceUrl?: string;
-  keywords?: string[];
+  media?: Array<{ type: string; url: string }>;
+  quotedTweetId?: string;
+  quotedUserScreen?: string;
+  quotedUserName?: string;
+  quotedUserAvatar?: string;
+  quotedText?: string;
+  followedUserScreen?: string;
+  followedUserName?: string;
+  followedUserAvatar?: string;
+  followedUserBio?: string;
+  followedUserFollowers?: number;
   tokenAddress?: string;
   chain?: string;
   marketCapUsd?: number;
   priceUsd?: number;
+  liquidityUsd?: number;
+  holders?: number;
   createdAtMs?: number;
+  receivedAtMs: number;
   ts: number;
 };
 
@@ -320,7 +339,7 @@ export type BgRequest =
   | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
   | { type: 'autotrade:ws'; payload: any }
-  | { type: 'gmgn:twitterSignal'; payload: GmgnTwitterSignal }
+  | { type: 'gmgn:twitterSignal'; payload: UnifiedTwitterSignal }
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
   | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
   | { type: 'limitOrder:cancel'; id: string }

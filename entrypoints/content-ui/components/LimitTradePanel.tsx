@@ -347,6 +347,13 @@ export function LimitTradePanel({
     return '-';
   };
 
+  const formatTargetChange = (o: LimitOrder) => {
+    const v = o.targetChangePercent;
+    if (typeof v !== 'number' || !Number.isFinite(v)) return '-';
+    const rounded = Number(v.toFixed(2));
+    return `${rounded > 0 ? '+' : ''}${rounded}%`;
+  };
+
   const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const switchTokenInCurrentUrl = (nextTokenAddress: `0x${string}`) => {
     const tokenLink = parsePlatformTokenLink(siteInfo, nextTokenAddress);
@@ -911,10 +918,11 @@ export function LimitTradePanel({
             </div>
 
             <div className="max-h-[38vh] overflow-y-auto pr-1">
-              <div className="grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
+              <div className="grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
                 <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.token')}</div>
                 <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.type')}</div>
                 <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.triggerPrice')}</div>
+                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.targetChange')}</div>
                 <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.payAmount')}</div>
                 <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.createdAt')}</div>
                 <div className="font-medium text-right truncate">{tt('contentUi.limitTradePanel.table.action')}</div>
@@ -924,7 +932,7 @@ export function LimitTradePanel({
                 <div
                   key={o.id}
                   className={[
-                    'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
+                    'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
                     o.status === 'executed' ? 'bg-emerald-500/5' : '',
                     o.status === 'failed' ? 'bg-rose-500/5' : '',
                   ].join(' ')}
@@ -1010,6 +1018,11 @@ export function LimitTradePanel({
                       );
                     })()}
                   </div>
+                  <div className="min-w-0 text-zinc-200">
+                    <div className="truncate" title={formatTargetChange(o)}>
+                      {formatTargetChange(o)}
+                    </div>
+                  </div>
                   <div className="min-w-0 text-zinc-200">{formatPay(o)}</div>
                   <div className="min-w-0 text-zinc-400 text-[10px]" title={formatTime(o.createdAtMs, locale)}>
                     {formatTime(o.createdAtMs, locale)}
@@ -1029,6 +1042,7 @@ export function LimitTradePanel({
                               side: o.side,
                               orderType: normalizeOrderType(o),
                               triggerPriceUsd: o.triggerPriceUsd,
+                              targetChangePercent: o.targetChangePercent,
                               buyBnbAmountWei: o.buyBnbAmountWei,
                               sellPercentBps: o.sellPercentBps,
                               sellTokenAmountWei: o.sellTokenAmountWei,

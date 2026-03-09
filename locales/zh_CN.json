@@ -306,6 +306,7 @@
         "token": "代币",
         "type": "类型",
         "triggerPrice": "触发价格",
+        "targetChange": "目标涨幅",
         "payAmount": "支付数量",
         "estimateReceive": "预计获得",
         "createdAt": "委托时间",

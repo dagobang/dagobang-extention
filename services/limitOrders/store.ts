@@ -39,6 +39,11 @@ const normalizePriceUsd = (value: number) => {
   return normalizePriceValue(value, 4, 4);
 };
 
+const normalizePercentValue = (value: number) => {
+  if (!Number.isFinite(value)) return null;
+  return Number(value.toFixed(4));
+};
+
 export const patchLimitOrder = async (id: string, patch: Partial<LimitOrder>) => {
   const all = await getLimitOrders();
   const nextPatch = { ...patch } as Partial<LimitOrder>;
@@ -87,6 +92,7 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
 
   const trailingStopBps = input.trailingStopBps != null ? Number(input.trailingStopBps) : null;
   const trailingPeakPriceUsd = input.trailingPeakPriceUsd != null ? normalizePriceUsd(Number(input.trailingPeakPriceUsd)) : null;
+  const targetChangePercent = input.targetChangePercent != null ? normalizePercentValue(Number(input.targetChangePercent)) : null;
   if (orderType === 'trailing_stop_sell') {
     if (!(side === 'sell')) throw new Error('Trailing stop must be sell');
     if (trailingStopBps == null || !Number.isFinite(trailingStopBps) || !(trailingStopBps > 0 && trailingStopBps < 10000)) {
@@ -115,6 +121,49 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
     if (!hasTokenAmount && !hasPercent) throw new Error('Invalid sell amount');
   }
 
+  const all = await getLimitOrders();
+  const keyAddr = input.tokenAddress.toLowerCase();
+  const normalizedTrigger = triggerPriceUsd;
+  const normalizedTrailingPeak =
+    orderType === 'trailing_stop_sell'
+      ? (trailingPeakPriceUsd != null && Number.isFinite(trailingPeakPriceUsd) && trailingPeakPriceUsd > 0
+        ? trailingPeakPriceUsd
+        : normalizedTrigger)
+      : undefined;
+  const hasSameAmount = (o: LimitOrder) => {
+    if (side === 'buy') {
+      return !!input.buyBnbAmountWei && o.buyBnbAmountWei === input.buyBnbAmountWei;
+    }
+    if (input.sellTokenAmountWei) {
+      return o.sellTokenAmountWei === input.sellTokenAmountWei;
+    }
+    return o.sellPercentBps === input.sellPercentBps;
+  };
+  const hasSameTargetChange = (o: LimitOrder) => {
+    const existing =
+      typeof o.targetChangePercent === 'number' && Number.isFinite(o.targetChangePercent)
+        ? normalizePercentValue(o.targetChangePercent)
+        : null;
+    if (targetChangePercent == null && existing == null) return true;
+    if (targetChangePercent == null || existing == null) return false;
+    return existing === targetChangePercent;
+  };
+  const existing = all.find((o) => {
+    if (o.chainId !== input.chainId) return false;
+    if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+    if (o.status !== 'open') return false;
+    if (normalizeLimitOrderType(o.orderType, o.side) !== orderType) return false;
+    if (!hasSameAmount(o)) return false;
+    if (!hasSameTargetChange(o)) return false;
+    if (orderType === 'trailing_stop_sell') {
+      if (o.trailingStopBps !== trailingStopBps) return false;
+    }
+    return true;
+  });
+  if (existing) {
+    return existing;
+  }
+
   const order: LimitOrder = {
     id: makeLimitOrderId(),
     chainId: input.chainId,
@@ -123,6 +172,7 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
     side,
     orderType,
     triggerPriceUsd,
+    targetChangePercent: targetChangePercent ?? undefined,
     trailingStopBps: orderType === 'trailing_stop_sell' ? (trailingStopBps as number) : undefined,
     trailingPeakPriceUsd:
       orderType === 'trailing_stop_sell'
@@ -138,7 +188,6 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
     tokenInfo: input.tokenInfo,
   };
 
-  const all = await getLimitOrders();
   await setLimitOrders([order, ...all]);
   return order;
 };

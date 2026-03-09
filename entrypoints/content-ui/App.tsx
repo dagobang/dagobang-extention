@@ -503,7 +503,6 @@ export default function App() {
   async function refreshAll() {
     if (document.hidden) return;
     if (!siteInfo) return;
-    if (!tokenAddressNormalized) return;
     const res = await call({ type: 'bg:getState' });
     setState(res);
     setError(null);
@@ -578,15 +577,15 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!siteInfo || !tokenAddressNormalized) return;
+    if (!siteInfo) return;
     refreshAll();
     const timer = setInterval(refreshAll, 10000);
     return () => clearInterval(timer);
-  }, [siteInfo, tokenAddressNormalized]);
+  }, [siteInfo]);
 
   // Listen for background state changes (immediate update)
   useEffect(() => {
-    if (!siteInfo || !tokenAddressNormalized) return;
+    if (!siteInfo) return;
     const listener = (message: any) => {
       if (message.type === 'bg:stateChanged') {
         refreshAll();
@@ -595,7 +594,7 @@ export default function App() {
     };
     browser.runtime.onMessage.addListener(listener);
     return () => browser.runtime.onMessage.removeListener(listener);
-  }, [siteInfo, tokenAddressNormalized, address]);
+  }, [siteInfo, address]);
 
   useEffect(() => {
     refreshToken(true);

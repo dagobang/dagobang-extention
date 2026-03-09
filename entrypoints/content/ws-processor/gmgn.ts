@@ -1,7 +1,9 @@
-import type { BgRequest, BgResponse, GmgnTwitterSignal } from '@/types/extention';
+import type { AutoTradeInteractionType, BgRequest, BgResponse, Settings, UnifiedTwitterSignal } from '@/types/extention';
 import {
   asAddress,
   extractFirstFromObject,
+  extractGmgnUserFields,
+  extractMedia,
   extractNumber,
   extractText,
   extractTimestampMs,
@@ -30,111 +32,40 @@ type WsStatus = {
   logs: Array<{ ts: number; type: 'packet' | 'signal' | 'error'; message: string }>;
 };
 
-const buildSignal = (payload: any): GmgnTwitterSignal | null => {
-  const text =
-    (isObject(payload?.c) && typeof payload.c.t === 'string' ? payload.c.t : null) ??
-    (typeof payload?.c === 'string' ? payload.c : null) ??
-    extractText(payload);
-  const tokenAddress = extractTokenAddress(payload, text);
-  if (!tokenAddress) return null;
-  const tweetId =
-    (typeof payload?.ti === 'string' ? payload.ti : null) ??
-    (typeof payload?.si === 'string' ? payload.si : null) ??
-    extractTweetId(payload, text);
-  const user =
-    (isObject(payload?.u) && (typeof payload.u.s === 'string' ? payload.u.s : typeof payload.u.n === 'string' ? payload.u.n : null)) ??
-    extractUser(payload);
-  const tokenData = isObject(payload?.t) ? payload.t : null;
-  const marketCapUsd =
-    extractNumber(tokenData, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']) ??
-    extractNumber(payload, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']);
-  const priceUsd =
-    extractNumber(tokenData, ['p', 'p1', 'price', 'priceUsd', 'price_usd']) ??
-    extractNumber(payload, ['p', 'p1', 'price', 'priceUsd', 'price_usd']);
-  const createdAtMs =
-    extractTimestampMs(payload) ??
-    extractNumber(payload, ['created_at', 'createdAt', 'created_at_ms', 'createdAtMs']);
-  const words: string[] = text
-    ? Array.from(
-        new Set(
-          text
-            .split(/\s+/)
-            .map((w: string) => w.replace(/[^\w$]/g, '').toLowerCase())
-            .filter((w: string) => w.length > 0),
-        ),
-      )
-    : [];
-  return {
-    site: 'gmgn',
-    eventId:
-      (typeof payload?.i === 'string' ? payload.i : null) ??
-      (typeof payload?.ei === 'string' ? payload.ei : null) ??
-      extractFirstFromObject(payload, ['eventId', 'event_id']) ??
-      undefined,
-    tweetId: tweetId ?? undefined,
-    user: user ?? undefined,
-    text: text ?? undefined,
-    keywords: words.length ? words : undefined,
-    tokenAddress: tokenAddress.startsWith('0x') ? tokenAddress.toLowerCase() : tokenAddress,
-    chain:
-      (isObject(tokenData) && typeof tokenData.c === 'string' ? tokenData.c : null) ??
-      extractFirstFromObject(payload, ['chain', 'chain_id', 'chainId']) ??
-      undefined,
-    marketCapUsd: marketCapUsd ?? undefined,
-    priceUsd: priceUsd ?? undefined,
-    createdAtMs: createdAtMs ?? undefined,
-    ts: Date.now(),
-  };
-};
-
-type TwitterTranslation = {
+type TwitterTranslationPatch = {
   eventId: string;
   translatedText?: string;
   translationLang?: string;
-  translatedTitle?: string;
-  translatedArticle?: string;
-  translatedSourceUrl?: string;
   updatedAtMs: number;
 };
 
-const extractTranslation = (payload: any, now: number): TwitterTranslation | null => {
+const buildTranslatedText = (item: any): string | undefined => {
+  const main = typeof item?.c === 'string' ? item.c : isObject(item?.c) && typeof item.c.t === 'string' ? item.c.t : undefined;
+  const article = typeof item?.sat === 'string' ? item.sat : undefined;
+  const title = typeof item?.satl === 'string' ? item.satl : undefined;
+  const body = article ?? main;
+  if (!body && title) return title;
+  if (body && title && !body.startsWith(title)) return `${title}\n${body}`;
+  return body ?? undefined;
+};
+
+const extractTranslationPatch = (payload: any, now: number): TwitterTranslationPatch | null => {
   if (!isObject(payload)) return null;
   const eventId =
     (typeof (payload as any).ei === 'string' ? (payload as any).ei : null) ??
     (typeof (payload as any).i === 'string' ? (payload as any).i : null) ??
-    extractFirstFromObject(payload, ['eventId', 'event_id', 'ei']) ??
+    extractFirstFromObject(payload, ['eventId', 'event_id', 'ei', 'i']) ??
     null;
   if (!eventId) return null;
-  const translatedText =
-    (typeof (payload as any).c === 'string' ? (payload as any).c : null) ??
-    (isObject((payload as any).c) && typeof (payload as any).c.t === 'string' ? (payload as any).c.t : null) ??
-    undefined;
+  const translatedText = buildTranslatedText(payload);
   const translationLang = typeof (payload as any).l === 'string' ? (payload as any).l : undefined;
-  const translatedTitle = typeof (payload as any).satl === 'string' ? (payload as any).satl : undefined;
-  const translatedArticle = typeof (payload as any).sat === 'string' ? (payload as any).sat : undefined;
-  const translatedSourceUrl =
-    (typeof (payload as any).sc === 'string' ? (payload as any).sc : null) ??
-    (isObject((payload as any).sc) && typeof (payload as any).sc.t === 'string' ? (payload as any).sc.t : null) ??
-    undefined;
   return {
     eventId,
     translatedText,
     translationLang,
-    translatedTitle,
-    translatedArticle,
-    translatedSourceUrl,
     updatedAtMs: now,
   };
 };
-
-const mergeTranslation = (signal: GmgnTwitterSignal, translation: TwitterTranslation): GmgnTwitterSignal => ({
-  ...signal,
-  translatedText: translation.translatedText ?? signal.translatedText,
-  translationLang: translation.translationLang ?? signal.translationLang,
-  translatedTitle: translation.translatedTitle ?? signal.translatedTitle,
-  translatedArticle: translation.translatedArticle ?? signal.translatedArticle,
-  translatedSourceUrl: translation.translatedSourceUrl ?? signal.translatedSourceUrl,
-});
 
 const normalizePublicTokenData = (tokenData: any, chain?: string) => {
   const address =
@@ -233,12 +164,32 @@ const extractPublicBroadcastCreates = (payload: any) => {
   return results;
 };
 
-const TWITTER_CACHE_KEY = 'dagobang_twitter_cache_v1';
-const TWITTER_CACHE_LIMIT = 50;
+const normalizeInteractionType = (raw?: string | null): AutoTradeInteractionType | null => {
+  if (!raw) return null;
+  const v = raw.trim().toLowerCase();
+  if (v === 'tweet') return 'tweet';
+  if (v === 'reply') return 'reply';
+  if (v === 'quote') return 'quote';
+  if (v === 'retweet' || v === 'repost') return 'retweet';
+  if (v === 'follow') return 'follow';
+  return null;
+};
 
-const loadTwitterCache = () => {
+const getTwitterFilters = () => {
+  const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
+  const targets = (settings?.autoTrade?.twitterSnipe?.targetUsers ?? [])
+    .map((x) => x.trim().replace(/^@/, '').toLowerCase())
+    .filter(Boolean);
+  const interactions = (settings?.autoTrade?.twitterSnipe?.interactionTypes ?? []).map((x) => String(x).toLowerCase());
+  return { settings, targets, interactions };
+};
+
+const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';
+const TWITTER_UNIFIED_CACHE_LIMIT = 50;
+
+const loadUnifiedTwitterCache = () => {
   try {
-    const raw = window.localStorage.getItem(TWITTER_CACHE_KEY);
+    const raw = window.localStorage.getItem(TWITTER_UNIFIED_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (parsed && Array.isArray(parsed.list)) return parsed;
@@ -247,41 +198,229 @@ const loadTwitterCache = () => {
   return null;
 };
 
-const saveTwitterCache = (list: any[]) => {
-  const next = list.slice(-TWITTER_CACHE_LIMIT);
+const saveUnifiedTwitterCache = (list: UnifiedTwitterSignal[]) => {
+  const next = list.slice(-TWITTER_UNIFIED_CACHE_LIMIT);
   const payload = { list: next, ts: Date.now() };
-  (window as any).__DAGOBANG_TWITTER_CACHE__ = payload;
+  (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = payload;
   try {
-    window.localStorage.setItem(TWITTER_CACHE_KEY, JSON.stringify(payload));
+    window.localStorage.setItem(TWITTER_UNIFIED_CACHE_KEY, JSON.stringify(payload));
   } catch {
   }
 };
 
-const emitTwitterEvent = (channel: string, item: any, receivedAtMs: number) => {
-  const getCacheKey = (ch: string, it: any) => {
-    const key =
-      (typeof it?.i === 'string' ? it.i : null) ??
-      (typeof it?.ei === 'string' ? it.ei : null) ??
-      (typeof it?.ti === 'string' ? it.ti : null) ??
-      (typeof it?.si === 'string' ? it.si : null);
-    return key ? `${ch}:${key}` : null;
+const getSignalUser = (signal: UnifiedTwitterSignal): string | null => {
+  const userRaw = signal.userScreen ?? null;
+  if (!userRaw) return null;
+  return userRaw.trim().replace(/^@/, '').toLowerCase();
+};
+
+const getSignalInteraction = (signal: UnifiedTwitterSignal): AutoTradeInteractionType | null => {
+  const type = signal.tweetType === 'delete_post' ? (signal.sourceTweetType ?? null) : signal.tweetType;
+  if (type === 'repost') return 'retweet';
+  if (type === 'tweet') return 'tweet';
+  if (type === 'reply') return 'reply';
+  if (type === 'quote') return 'quote';
+  if (type === 'follow') return 'follow';
+  return null;
+};
+
+const shouldKeepUnifiedSignal = (signal: UnifiedTwitterSignal) => {
+  const { targets, interactions } = getTwitterFilters();
+  if (!targets.length && !interactions.length) return true;
+  if (targets.length) {
+    const user = getSignalUser(signal);
+    if (!user) return false;
+    if (!targets.includes(user)) return false;
+  }
+  if (interactions.length) {
+    const it = getSignalInteraction(signal);
+    if (!it) return false;
+    if (!interactions.includes(it)) return false;
+  }
+  return true;
+};
+
+const refreshUnifiedTwitterCache = () => {
+  const cache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
+  if (!cache || !Array.isArray(cache.list)) return;
+  const filtered = (cache.list as UnifiedTwitterSignal[]).filter((x) => x && shouldKeepUnifiedSignal(x));
+  const list = filtered.slice(-TWITTER_UNIFIED_CACHE_LIMIT);
+  saveUnifiedTwitterCache(list);
+};
+
+const upsertUnifiedSignal = (signal: UnifiedTwitterSignal, cacheList?: UnifiedTwitterSignal[]) => {
+  const cache = cacheList ? { list: cacheList } : (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
+  if (!cacheList && cache && !(window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__) {
+    (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = cache;
+  }
+  const list = Array.isArray(cache?.list) ? (cache.list as UnifiedTwitterSignal[]).slice() : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const it = list[i];
+    if (!it) continue;
+    if (it.id === signal.id) list.splice(i, 1);
+    else if (signal.eventId && it.site === signal.site && it.eventId === signal.eventId) list.splice(i, 1);
+  }
+  list.push(signal);
+  const next = list.slice(-TWITTER_UNIFIED_CACHE_LIMIT);
+  saveUnifiedTwitterCache(next);
+  window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: signal }));
+  return next;
+};
+
+type TokenSnapshot = {
+  tokenAddress: string;
+  chain?: string;
+  marketCapUsd?: number;
+  priceUsd?: number;
+  liquidityUsd?: number;
+  holders?: number;
+  createdAtMs?: number;
+  receivedAtMs: number;
+};
+
+const mergeTokenSnapshot = (signal: UnifiedTwitterSignal, snapshot: TokenSnapshot | undefined): UnifiedTwitterSignal => {
+  if (!snapshot) return signal;
+  return {
+    ...signal,
+    chain: signal.chain ?? snapshot.chain,
+    marketCapUsd: signal.marketCapUsd ?? snapshot.marketCapUsd,
+    priceUsd: signal.priceUsd ?? snapshot.priceUsd,
+    liquidityUsd: signal.liquidityUsd ?? snapshot.liquidityUsd,
+    holders: signal.holders ?? snapshot.holders,
+    createdAtMs: signal.createdAtMs ?? snapshot.createdAtMs,
   };
-  const payload = { channel, item, receivedAtMs };
-  const cache = (window as any).__DAGOBANG_TWITTER_CACHE__ ?? loadTwitterCache();
-  if (cache && !(window as any).__DAGOBANG_TWITTER_CACHE__) {
-    (window as any).__DAGOBANG_TWITTER_CACHE__ = cache;
-  }
-  const list = Array.isArray(cache?.list) ? cache.list.slice() : [];
-  const key = getCacheKey(channel, item);
-  if (key) {
-    for (let i = list.length - 1; i >= 0; i -= 1) {
-      const existedKey = getCacheKey(list[i]?.channel, list[i]?.item);
-      if (existedKey === key) list.splice(i, 1);
-    }
-  }
-  list.push(payload);
-  saveTwitterCache(list);
-  window.dispatchEvent(new CustomEvent('dagobang-gmgn-twitter', { detail: payload }));
+};
+
+const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number): UnifiedTwitterSignal | null => {
+  if (!item || typeof item !== 'object') return null;
+  const raw = typeof (item as any).tw === 'string' ? String((item as any).tw).trim().toLowerCase() : '';
+  if (!raw) return null;
+
+  const sourceTweetType: UnifiedTwitterSignal['sourceTweetType'] | undefined = (() => {
+    const stw = typeof (item as any).stw === 'string' ? String((item as any).stw).trim().toLowerCase() : '';
+    if (!stw) return undefined;
+    if (stw === 'tweet') return 'tweet';
+    if (stw === 'reply') return 'reply';
+    if (stw === 'quote') return 'quote';
+    if (stw === 'retweet' || stw === 'repost') return 'repost';
+    if (stw === 'follow') return 'follow';
+    if (stw === 'unfollow') return 'unfollow';
+    return undefined;
+  })();
+
+  const tweetType: UnifiedTwitterSignal['tweetType'] | null = (() => {
+    if (raw === 'tweet') return 'tweet';
+    if (raw === 'reply') return 'reply';
+    if (raw === 'quote') return 'quote';
+    if (raw === 'retweet' || raw === 'repost') return 'repost';
+    if (raw === 'follow') return 'follow';
+    if (raw === 'unfollow') return 'unfollow';
+    if (raw === 'delete' || raw === 'delete_post' || raw === 'deletepost') return 'delete_post';
+    return null;
+  })();
+  if (!tweetType) return null;
+
+  const eventId =
+    (typeof (item as any).i === 'string' ? (item as any).i : null) ??
+    (typeof (item as any).ei === 'string' ? (item as any).ei : null) ??
+    extractFirstFromObject(item, ['eventId', 'event_id', 'ei', 'i']) ??
+    undefined;
+
+  const { userScreen, userName, userAvatar, userFollowers } = extractGmgnUserFields(item);
+  const tweetId = extractTweetId(item, extractText(item) ?? undefined) ?? undefined;
+
+  const mainText =
+    (isObject((item as any).c) && typeof (item as any).c.t === 'string' ? (item as any).c.t : null) ??
+    (typeof (item as any).c === 'string' ? (item as any).c : null) ??
+    null;
+  const sourceTextRaw =
+    (isObject((item as any).sc) && typeof (item as any).sc.t === 'string' ? (item as any).sc.t : null) ??
+    (typeof (item as any).sc === 'string' ? (item as any).sc : null) ??
+    null;
+  const sourceText = sourceTextRaw && /^https?:\/\//i.test(sourceTextRaw) ? null : sourceTextRaw;
+  const followBio = isObject((item as any)?.f?.f) && typeof (item as any).f.f.d === 'string' ? (item as any).f.f.d : null;
+  const text =
+    tweetType === 'follow' || tweetType === 'unfollow'
+      ? followBio ?? extractText(item)
+      : mainText ?? extractText(item);
+
+  const quotedTweetId = typeof (item as any).si === 'string' ? (item as any).si : undefined;
+  const sourceUser = (item as any).su;
+  const quotedUserScreen = sourceUser && typeof sourceUser.s === 'string' ? sourceUser.s : undefined;
+  const quotedUserName = sourceUser && typeof sourceUser.n === 'string' ? sourceUser.n : undefined;
+  const quotedUserAvatar = sourceUser && typeof sourceUser.a === 'string' ? sourceUser.a : undefined;
+  const quotedText = tweetType === 'quote' || tweetType === 'repost' ? sourceText ?? undefined : undefined;
+
+  const followTarget = (item as any)?.f?.f;
+  const followedUserScreen = followTarget && typeof followTarget.s === 'string' ? followTarget.s : undefined;
+  const followedUserName = followTarget && typeof followTarget.n === 'string' ? followTarget.n : undefined;
+  const followedUserAvatar = followTarget && typeof followTarget.a === 'string' ? followTarget.a : undefined;
+  const followedUserBio = followTarget && typeof followTarget.d === 'string' ? followTarget.d : undefined;
+  const followedUserFollowers = followTarget && typeof followTarget.f === 'number' ? followTarget.f : undefined;
+
+  const tokenAddressRaw = extractTokenAddress(item, text ?? quotedText ?? null);
+  const tokenAddress = tokenAddressRaw?.startsWith('0x') ? (tokenAddressRaw.toLowerCase() as `0x${string}`) : (tokenAddressRaw ?? undefined);
+  const media = extractMedia(item);
+  const chain =
+    (typeof (item as any).c === 'string' ? (item as any).c : null) ??
+    (typeof (item as any).n === 'string' ? (item as any).n : null) ??
+    (isObject((item as any).t) && typeof (item as any).t.c === 'string' ? (item as any).t.c : null) ??
+    extractFirstFromObject(item, ['chain', 'chain_id', 'chainId']) ??
+    undefined;
+  const marketCapUsd =
+    extractNumber((item as any).t, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']) ??
+    extractNumber(item, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']) ??
+    undefined;
+  const priceUsd =
+    extractNumber((item as any).t, ['p', 'p1', 'price', 'priceUsd', 'price_usd']) ??
+    extractNumber(item, ['p', 'p1', 'price', 'priceUsd', 'price_usd']) ??
+    undefined;
+  const liquidityUsd = extractNumber(item, ['lq', 'lqdt', 'liquidity', 'liquidityUsd', 'liquidity_usd']) ?? undefined;
+  const holders = extractNumber(item, ['hd', 'holders', 'holderCount']) ?? undefined;
+  const createdAtMs = extractTimestampMs(item) ?? (extractNumber(item, ['created_at', 'createdAt', 'created_at_ms', 'createdAtMs']) ?? undefined);
+
+  const idSeed =
+    eventId ??
+    tweetId ??
+    quotedTweetId ??
+    (typeof (item as any).ti === 'string' ? (item as any).ti : null) ??
+    String(receivedAtMs);
+  const id = `gmgn:${channel}:${idSeed}`;
+
+  return {
+    id,
+    site: 'gmgn',
+    channel,
+    tweetType,
+    sourceTweetType,
+    eventId,
+    tweetId,
+    userScreen,
+    userName,
+    userAvatar,
+    userFollowers,
+    text: text ?? undefined,
+    media: media.length ? media : undefined,
+    quotedTweetId,
+    quotedUserScreen,
+    quotedUserName,
+    quotedUserAvatar,
+    quotedText,
+    followedUserScreen,
+    followedUserName,
+    followedUserAvatar,
+    followedUserBio,
+    followedUserFollowers,
+    tokenAddress,
+    chain,
+    marketCapUsd,
+    priceUsd,
+    liquidityUsd,
+    holders,
+    createdAtMs: createdAtMs ?? undefined,
+    receivedAtMs,
+    ts: Date.now(),
+  };
 };
 
 const emitTrenchesTokenEvent = (tokenData: any, receivedAtMs: number) => {
@@ -298,10 +437,12 @@ const emitTrenchesTokenEvent = (tokenData: any, receivedAtMs: number) => {
 export function initGmgnWsMonitor(options: {
   call: <T extends BgRequest>(req: T) => Promise<BgResponse<T>>;
 }): WsSiteMonitor {
-  const cached = (window as any).__DAGOBANG_TWITTER_CACHE__ ?? loadTwitterCache();
-  if (cached) (window as any).__DAGOBANG_TWITTER_CACHE__ = cached;
-  const translationsByEventId = new Map<string, TwitterTranslation>();
-  const signalsByEventId = new Map<string, { signal: GmgnTwitterSignal; updatedAtMs: number }>();
+  const cached = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
+  if (cached) (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = cached;
+  refreshUnifiedTwitterCache();
+  const translationsByEventId = new Map<string, TwitterTranslationPatch>();
+  const signalsByEventId = new Map<string, { signal: UnifiedTwitterSignal; updatedAtMs: number }>();
+  const tokenByAddress = new Map<string, TokenSnapshot>();
 
   let wsStatus: WsStatus = {
     connected: false,
@@ -383,55 +524,163 @@ export function initGmgnWsMonitor(options: {
     updatePacketStatus(channel, now, latencyMs);
     const items = toArrayPayload(payload);
     const list = items.length ? items : [payload];
+    const cache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
+    if (cache && !(window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__) {
+      (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = cache;
+    }
+    let cacheList = Array.isArray(cache?.list) ? (cache.list as UnifiedTwitterSignal[]).slice() : [];
+
+    const removeFromCache = (eventId?: string, tweetId?: string) => {
+      if (!eventId && !tweetId) return;
+      const next = cacheList.filter((s) => {
+        if (!s) return false;
+        if (eventId && s.site === 'gmgn' && s.eventId === eventId) return false;
+        if (tweetId && s.site === 'gmgn' && s.tweetId === tweetId) return false;
+        return true;
+      });
+      if (next.length !== cacheList.length) {
+        cacheList = next;
+        saveUnifiedTwitterCache(cacheList);
+      }
+    };
+
     for (const item of list) {
-      emitTwitterEvent(channel, item, now);
       if (channel === 'twitter_monitor_translation') {
-        const translation = extractTranslation(item, now);
-        if (!translation) continue;
-        translationsByEventId.set(translation.eventId, translation);
+        const patch = extractTranslationPatch(item, now);
+        if (!patch) continue;
+        translationsByEventId.set(patch.eventId, patch);
         pruneTranslations(now);
-        const existing = signalsByEventId.get(translation.eventId);
+        const existing = signalsByEventId.get(patch.eventId);
         if (!existing) continue;
-        const merged = mergeTranslation(existing.signal, translation);
-        signalsByEventId.set(translation.eventId, { signal: merged, updatedAtMs: now });
-        pruneSignals(now);
-        wsStatus = {
-          ...wsStatus,
-          lastSignalAt: now,
-          signalCount: wsStatus.signalCount + 1,
+        const merged: UnifiedTwitterSignal = {
+          ...existing.signal,
+          translatedText: patch.translatedText ?? existing.signal.translatedText,
+          translationLang: patch.translationLang ?? existing.signal.translationLang,
+          ts: Date.now(),
         };
-        pushLog('signal', `${merged.tokenAddress}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
+        signalsByEventId.set(patch.eventId, { signal: merged, updatedAtMs: now });
+        pruneSignals(now);
+        cacheList = cacheList.map((s) => (s && s.site === 'gmgn' && s.eventId === patch.eventId ? merged : s));
+        saveUnifiedTwitterCache(cacheList);
+        window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: merged }));
+        wsStatus = { ...wsStatus, lastSignalAt: now, signalCount: wsStatus.signalCount + 1 };
+        pushLog('signal', `${merged.tokenAddress ?? ''}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
         emitStatus();
-        void options.call({ type: 'gmgn:twitterSignal', payload: merged });
+        if (merged.tokenAddress && merged.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: merged });
         continue;
       }
 
-      let signal: GmgnTwitterSignal | null = null;
+      const rawType = typeof (item as any)?.tw === 'string' ? String((item as any).tw).trim().toLowerCase() : '';
+      if (rawType === 'delete' || rawType === 'delete_post' || rawType === 'deletepost') {
+        let delSignal: UnifiedTwitterSignal | null = null;
+        try {
+          delSignal = convertToUnifiedSignal(channel, item, now);
+        } catch {
+        }
+        if (delSignal && shouldKeepUnifiedSignal(delSignal)) {
+          if (delSignal.eventId) {
+            signalsByEventId.set(delSignal.eventId, { signal: delSignal, updatedAtMs: now });
+            pruneSignals(now);
+          }
+          cacheList = upsertUnifiedSignal(delSignal, cacheList) ?? cacheList;
+          wsStatus = {
+            ...wsStatus,
+            lastSignalAt: now,
+            signalCount: wsStatus.signalCount + 1,
+          };
+          pushLog('signal', `delete${delSignal.tweetId ? ` #${delSignal.tweetId}` : ''}`);
+          emitStatus();
+        }
+        continue;
+      }
+
+      let signal: UnifiedTwitterSignal | null = null;
       try {
-        signal = buildSignal(item);
+        signal = convertToUnifiedSignal(channel, item, now);
       } catch {
         pushLog('error', 'signal_parse_failed');
       }
-      if (!signal || !signal.tokenAddress) continue;
-      const eventId = signal.eventId;
-      if (eventId) {
-        const translation = translationsByEventId.get(eventId);
+      if (!signal) continue;
+
+      if (signal.eventId) {
+        const translation = translationsByEventId.get(signal.eventId);
         if (translation) {
-          signal = mergeTranslation(signal, translation);
+          signal = {
+            ...signal,
+            translatedText: translation.translatedText ?? signal.translatedText,
+            translationLang: translation.translationLang ?? signal.translationLang,
+          };
         }
-        signalsByEventId.set(eventId, { signal, updatedAtMs: now });
+      }
+      if (signal.tokenAddress) {
+        const snap = tokenByAddress.get(String(signal.tokenAddress).toLowerCase());
+        signal = mergeTokenSnapshot(signal, snap);
+      }
+      if (!shouldKeepUnifiedSignal(signal)) continue;
+
+      if (signal.eventId) {
+        signalsByEventId.set(signal.eventId, { signal, updatedAtMs: now });
         pruneSignals(now);
       }
+      cacheList = upsertUnifiedSignal(signal, cacheList) ?? cacheList;
       wsStatus = {
         ...wsStatus,
         lastSignalAt: now,
         signalCount: wsStatus.signalCount + 1,
       };
-      pushLog('signal', `${signal.tokenAddress}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
+      pushLog('signal', `${signal.tokenAddress ?? ''}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
       emitStatus();
-      void options.call({ type: 'gmgn:twitterSignal', payload: signal });
+      if (signal.tokenAddress && signal.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: signal });
     }
     emitStatus();
+  };
+
+  const updateTokenSnapshot = (tokenData: any, receivedAtMs: number) => {
+    const addrRaw = typeof tokenData?.tokenAddress === 'string' ? tokenData.tokenAddress : null;
+    if (!addrRaw) return;
+    const addr = addrRaw.toLowerCase();
+    const prev = tokenByAddress.get(addr);
+    const next: TokenSnapshot = {
+      tokenAddress: addr,
+      chain: typeof tokenData?.chain === 'string' ? tokenData.chain : prev?.chain,
+      marketCapUsd: typeof tokenData?.marketCapUsd === 'number' ? tokenData.marketCapUsd : prev?.marketCapUsd,
+      priceUsd: typeof tokenData?.priceUsd === 'number' ? tokenData.priceUsd : prev?.priceUsd,
+      liquidityUsd: typeof tokenData?.liquidityUsd === 'number' ? tokenData.liquidityUsd : prev?.liquidityUsd,
+      holders: typeof tokenData?.holders === 'number' ? tokenData.holders : prev?.holders,
+      createdAtMs: typeof tokenData?.createdAtMs === 'number' ? tokenData.createdAtMs : prev?.createdAtMs,
+      receivedAtMs,
+    };
+    tokenByAddress.set(addr, next);
+
+    const cache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
+    const list = Array.isArray(cache?.list) ? (cache.list as UnifiedTwitterSignal[]).slice() : [];
+    if (!list.length) return;
+    let changed = false;
+    const updated = list.map((s) => {
+      if (!s || !s.tokenAddress) return s;
+      if (String(s.tokenAddress).toLowerCase() !== addr) return s;
+      const merged = mergeTokenSnapshot(s, next);
+      if (
+        merged.chain !== s.chain ||
+        merged.marketCapUsd !== s.marketCapUsd ||
+        merged.priceUsd !== s.priceUsd ||
+        merged.liquidityUsd !== s.liquidityUsd ||
+        merged.holders !== s.holders ||
+        merged.createdAtMs !== s.createdAtMs
+      ) {
+        changed = true;
+        return { ...merged, ts: Date.now() };
+      }
+      return s;
+    });
+    if (!changed) return;
+    saveUnifiedTwitterCache(updated);
+    for (const s of updated) {
+      if (!s?.tokenAddress) continue;
+      if (String(s.tokenAddress).toLowerCase() !== addr) continue;
+      window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
+      void options.call({ type: 'gmgn:twitterSignal', payload: s });
+    }
   };
 
   const handlePublicBroadcastChannel = (data: any, channel: string, payload: any, now: number) => {
@@ -446,6 +695,7 @@ export function initGmgnWsMonitor(options: {
     for (const item of creates) {
       const tokenData = normalizePublicTokenData(item.tokenData, item.chain);
       if (!tokenData.tokenAddress) continue;
+      updateTokenSnapshot(tokenData, now);
       wsStatus = {
         ...wsStatus,
         lastSignalAt: now,
@@ -478,6 +728,7 @@ export function initGmgnWsMonitor(options: {
       for (const pool of pools) {
         const tokenData = normalizeNewPoolTokenData(pool, chain);
         if (!tokenData.tokenAddress) continue;
+        updateTokenSnapshot(tokenData, now);
         wsStatus = {
           ...wsStatus,
           lastSignalAt: now,
@@ -509,6 +760,7 @@ export function initGmgnWsMonitor(options: {
       const tokenData = normalizeTrenchesTokenData(item);
       if (!tokenData.tokenAddress) continue;
       emitTrenchesTokenEvent(tokenData, now);
+      updateTokenSnapshot(tokenData, now);
       wsStatus = {
         ...wsStatus,
         lastSignalAt: now,
@@ -535,6 +787,12 @@ export function initGmgnWsMonitor(options: {
     new_pool_info: handleNewPoolInfoChannel,
     trenches_update: handleTrenchesUpdateChannel,
     twitter_user_monitor_basic: (data, channel, payload, now) => {
+      handleTwitterChannel(data, channel, payload, now);
+    },
+    twitter_monitor_basic: (data, channel, payload, now) => {
+      handleTwitterChannel(data, channel, payload, now);
+    },
+    twitter_monitor_token: (data, channel, payload, now) => {
       handleTwitterChannel(data, channel, payload, now);
     },
     twitter_monitor_translation: (data, channel, payload, now) => {

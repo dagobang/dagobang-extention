@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, X } from 'lucide-react';
 import { TRADE_SUCCESS_SOUND_PRESETS, type AutoTradeConfig, type AutoTradeInteractionType, type Settings, type TradeSuccessSoundPreset } from '@/types/extention';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
@@ -70,6 +70,8 @@ export function XSniperContent({
     () => normalizeAutoTrade(settings?.autoTrade ?? null),
     [settings?.autoTrade]
   );
+  const autoTradeKey = useMemo(() => JSON.stringify(normalizedAutoTrade), [normalizedAutoTrade]);
+  const lastAppliedKeyRef = useRef<string>('');
   const [draft, setDraft] = useState<AutoTradeConfig | null>(() => cloneAutoTrade(normalizedAutoTrade));
   const [targetUsersInput, setTargetUsersInput] = useState(
     () => normalizedAutoTrade.twitterSnipe.targetUsers.join('\n')
@@ -93,9 +95,11 @@ export function XSniperContent({
   useEffect(() => {
     if (!active) return;
     if (isDirty) return;
+    if (lastAppliedKeyRef.current === autoTradeKey) return;
+    lastAppliedKeyRef.current = autoTradeKey;
     setDraft(cloneAutoTrade(normalizedAutoTrade));
     setTargetUsersInput(normalizedAutoTrade.twitterSnipe.targetUsers.join('\n'));
-  }, [active, isDirty]);
+  }, [active, isDirty, autoTradeKey, normalizedAutoTrade]);
 
   useEffect(() => {
     if (!active) setIsDirty(false);
@@ -453,8 +457,7 @@ export function XSniperContent({
         </div>
       </div>
 
-      <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800/60">
-        <div className="text-xs text-zinc-500"></div>
+      <div className="flex items-center justify-end px-4 py-3 border-t border-zinc-800/60">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -462,6 +465,7 @@ export function XSniperContent({
             onClick={() => {
               const nextDraft = cloneAutoTrade(normalizedAutoTrade);
               setIsDirty(false);
+              lastAppliedKeyRef.current = autoTradeKey;
               setDraft(nextDraft);
               setTargetUsersInput(nextDraft?.twitterSnipe?.targetUsers.join('\n') ?? '');
             }}
@@ -485,6 +489,7 @@ export function XSniperContent({
               try {
                 await call({ type: 'settings:set', settings: { ...settings, autoTrade: mergedDraft } } as const);
                 setIsDirty(false);
+                lastAppliedKeyRef.current = JSON.stringify(normalizeAutoTrade(mergedDraft));
                 setDraft(mergedDraft);
                 setTargetUsersInput(mergedDraft.twitterSnipe.targetUsers.join('\n'));
               } finally {

@@ -10,16 +10,19 @@ export default defineContentScript({
   runAt: 'document_start',
   async main() {
     const hostname = window.location.hostname;
-    const wsMonitor = initWsMonitorForSite({ hostname, call });
+    let state: Awaited<ReturnType<typeof call>> | null = null;
     try {
-      const state = await call({ type: 'bg:getState' } as const);
+      state = await call({ type: 'bg:getState' } as const);
       (window as any).__DAGOBANG_SETTINGS__ = state.settings;
+    } catch {
+    }
+    const wsMonitor = initWsMonitorForSite({ hostname, call });
+    if (state?.settings) {
       wsMonitor.setQuickBuySettings({
         quickBuy1Bnb: state.settings?.quickBuy1Bnb,
         quickBuy2Bnb: state.settings?.quickBuy2Bnb,
       });
-      wsMonitor.emitStatus();
-    } catch {
     }
+    wsMonitor.emitStatus();
   },
 });

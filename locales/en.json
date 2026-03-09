@@ -306,6 +306,7 @@
         "token": "Token",
         "type": "Type",
         "triggerPrice": "Trigger",
+        "targetChange": "Target Change",
         "payAmount": "Pay",
         "estimateReceive": "Est. receive",
         "createdAt": "Created",

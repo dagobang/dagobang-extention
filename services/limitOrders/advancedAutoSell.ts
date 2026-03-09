@@ -41,6 +41,7 @@ export function buildStrategySellOrderInputs(input: {
       side: 'sell',
       orderType,
       triggerPriceUsd,
+      targetChangePercent: triggerPercent,
       sellPercentBps,
       tokenInfo,
     });
@@ -86,4 +87,3 @@ export function buildStrategyTrailingSellOrderInputs(input: {
     tokenInfo,
   };
 }
-

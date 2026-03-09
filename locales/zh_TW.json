@@ -306,6 +306,7 @@
         "token": "代幣",
         "type": "類型",
         "triggerPrice": "觸發價格",
+        "targetChange": "目標漲幅",
         "payAmount": "支付數量",
         "estimateReceive": "預計獲得",
         "createdAt": "委託時間",
