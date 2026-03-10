@@ -277,6 +277,7 @@ export type UnifiedSignalToken = {
   priceUsd?: number;
   liquidityUsd?: number;
   holders?: number;
+  kol?: number;
   devAddress?: string;
   devHoldPercent?: number;
   devHasSold?: boolean;

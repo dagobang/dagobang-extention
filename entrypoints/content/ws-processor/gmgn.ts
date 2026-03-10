@@ -132,6 +132,7 @@ const normalizeTrenchesTokenData = (item: any) => {
   const marketCapUsd = extractNumber(item, ['mc']);
   const liquidityUsd = extractNumber(item, ['lq', 'lqdt']);
   const holders = extractNumber(item, ['hd']);
+  const kol = extractNumber(item, ['kol']);
   const priceUsd = extractNumber(item, ['p']);
   const devBuyRatio = extractNumber(item, ['d_br']);
   const top10HoldRatio = extractNumber(item, ['t10']);
@@ -142,6 +143,7 @@ const normalizeTrenchesTokenData = (item: any) => {
     marketCapUsd: marketCapUsd ?? undefined,
     liquidityUsd: liquidityUsd ?? undefined,
     holders: holders ?? undefined,
+    kol: kol ?? undefined,
     priceUsd: priceUsd ?? undefined,
     createdAtMs: createdAtMs ?? undefined,
     devAddress: asAddress(item?.d_ct) ?? undefined,
@@ -286,6 +288,7 @@ type TokenSnapshot = {
   priceUsd?: number;
   liquidityUsd?: number;
   holders?: number;
+  kol?: number;
   devAddress?: string;
   devHoldPercent?: number;
   devHasSold?: boolean;
@@ -322,6 +325,7 @@ const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken
       priceUsd: t.priceUsd,
       liquidityUsd: t.liquidityUsd,
       holders: t.holders,
+      kol: (t as any).kol,
       devAddress: (t as any).devAddress,
       devHoldPercent: (t as any).devHoldPercent,
       devHasSold: (t as any).devHasSold,
@@ -347,6 +351,7 @@ const mergeTokenFields = (prev: UnifiedSignalToken, next: Partial<UnifiedSignalT
     priceUsd: pickFiniteNumber(next.priceUsd, prev.priceUsd),
     liquidityUsd: pickFiniteNumber(next.liquidityUsd, prev.liquidityUsd),
     holders: pickFiniteNumber(next.holders, prev.holders),
+    kol: pickFiniteNumber((next as any).kol, (prev as any).kol),
     devAddress: pickNonEmptyString(next.devAddress, prev.devAddress),
     devHoldPercent: pickFiniteNumber(next.devHoldPercent, prev.devHoldPercent),
     devHasSold: typeof next.devHasSold === 'boolean' ? next.devHasSold : prev.devHasSold,
@@ -386,6 +391,7 @@ const upsertSignalToken = (
     mergedWithTimes.priceUsd === prev.priceUsd &&
     mergedWithTimes.liquidityUsd === prev.liquidityUsd &&
     mergedWithTimes.holders === prev.holders &&
+    (mergedWithTimes as any).kol === (prev as any).kol &&
     mergedWithTimes.devAddress === (prev as any).devAddress &&
     mergedWithTimes.devHoldPercent === (prev as any).devHoldPercent &&
     mergedWithTimes.devHasSold === (prev as any).devHasSold &&
@@ -413,6 +419,7 @@ const applySnapshotToSignal = (signal: UnifiedTwitterSignal, snapshot: TokenSnap
     priceUsd: snapshot.priceUsd,
     liquidityUsd: snapshot.liquidityUsd,
     holders: snapshot.holders,
+    kol: snapshot.kol,
     devAddress: snapshot.devAddress,
     devHoldPercent: snapshot.devHoldPercent,
     devHasSold: snapshot.devHasSold,
@@ -553,6 +560,7 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
       undefined;
     const liquidityUsd = extractNumber(item, ['lq', 'lqdt', 'liquidity', 'liquidityUsd', 'liquidity_usd']) ?? undefined;
     const holders = extractNumber(item, ['hd', 'holders', 'holderCount']) ?? undefined;
+    const kol = extractNumber(item, ['kol']) ?? undefined;
     const createdAtMs =
       extractTimestampMs(item) ?? (extractNumber(item, ['created_at', 'createdAt', 'created_at_ms', 'createdAtMs']) ?? undefined);
 
@@ -567,6 +575,7 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
         priceUsd,
         liquidityUsd,
         holders,
+        kol,
         createdAtMs: createdAtMs ?? undefined,
       };
     };
@@ -855,6 +864,7 @@ export function initGmgnWsMonitor(options: {
       priceUsd: typeof tokenData?.priceUsd === 'number' ? tokenData.priceUsd : prev?.priceUsd,
       liquidityUsd: typeof tokenData?.liquidityUsd === 'number' ? tokenData.liquidityUsd : prev?.liquidityUsd,
       holders: typeof tokenData?.holders === 'number' ? tokenData.holders : prev?.holders,
+      kol: pickFiniteNumber(typeof tokenData?.kol === 'number' ? tokenData.kol : extractNumber(tokenData, ['kol']), prev?.kol),
       devBuyRatio,
       top10HoldRatio,
       devTokenStatus,

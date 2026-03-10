@@ -148,6 +148,7 @@ const normalizeSignalTokensForDisplay = (signal: UnifiedTwitterSignal): UnifiedS
       priceUsd: t.priceUsd,
       liquidityUsd: t.liquidityUsd,
       holders: t.holders,
+      kol: (t as any).kol,
       devBuyRatio: t.devBuyRatio,
       top10HoldRatio: t.top10HoldRatio,
       devTokenStatus: t.devTokenStatus,
@@ -663,6 +664,11 @@ export function XMonitorContent({
                                   <span className="inline-flex items-center gap-1" title="Holders">
                                     <Users size={12} />
                                     {formatCompactNumber(token.holders)}
+                                  </span>
+                                ) : null}
+                                {token.kol != null ? (
+                                  <span className="inline-flex items-center gap-1" title="KOL">
+                                    KOL {formatCompactNumber(token.kol)}
                                   </span>
                                 ) : null}
                                 {age ? (
