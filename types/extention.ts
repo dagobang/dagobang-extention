@@ -277,6 +277,9 @@ export type UnifiedSignalToken = {
   priceUsd?: number;
   liquidityUsd?: number;
   holders?: number;
+  devAddress?: string;
+  devHoldPercent?: number;
+  devHasSold?: boolean;
   devBuyRatio?: number;
   top10HoldRatio?: number;
   devTokenStatus?: string;
@@ -359,8 +362,7 @@ export type BgRequest =
   | { type: 'tx:waitForReceipt'; hash: `0x${string}`; chainId: number }
   | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
-  | { type: 'autotrade:ws'; payload: any }
-  | { type: 'gmgn:twitterSignal'; payload: UnifiedTwitterSignal }
+  | { type: 'twitter:signal'; payload: UnifiedTwitterSignal }
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
   | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
   | { type: 'limitOrder:cancel'; id: string }
@@ -443,9 +445,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; txHash?: `0x${string}` }
   : T extends { type: 'tx:bloxroutePrivate' }
   ? { ok: true; txHash?: `0x${string}` }
-  : T extends { type: 'autotrade:ws' }
-  ? { ok: true }
-  : T extends { type: 'gmgn:twitterSignal' }
+  : T extends { type: 'twitter:signal' }
   ? { ok: true }
   : T extends { type: 'limitOrder:list' }
   ? { ok: true; orders: LimitOrder[] }

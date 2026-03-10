@@ -11,7 +11,7 @@ import {
 } from '@/services/limitOrders/store';
 import { debugLogTxError, extractRevertReasonFromError, serializeTxError, tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { createLimitOrderScanner } from './background/limitOrderScanner';
-import { createAutoTrade } from '@/services/autoTrade';
+import { createXSniperTrade } from '@/services/xSniperTrade';
 import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/limitOrders/executor';
 import type { BgRequest, LimitOrderScanStatus } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
@@ -51,7 +51,7 @@ export default defineBackground(() => {
   });
   limitOrderScanner.start();
 
-  const AutoTrade = createAutoTrade({ onStateChanged: broadcastStateChange });
+  const AutoTrade = createXSniperTrade({ onStateChanged: broadcastStateChange });
 
   browser.runtime.onInstalled.addListener(() => {
     console.log('Extension installed');
@@ -476,31 +476,9 @@ export default defineBackground(() => {
             }
           }
 
-          case 'autotrade:ws': {
-            await AutoTrade.handleAutoTradeWebSocket(msg.payload);
-            await AutoTrade.handleAutoSellCheck(msg.payload);
-            return { ok: true };
-          }
-          case 'gmgn:twitterSignal': {
+          case 'twitter:signal': {
             const signal = msg.payload as any;
-            const tokens = Array.isArray(signal?.tokens) ? signal.tokens : [];
-            for (const token of tokens) {
-              const tokenAddress = typeof token?.tokenAddress === 'string' ? token.tokenAddress : null;
-              if (!tokenAddress || !/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) continue;
-              const payload = {
-                direction: 'receive',
-                data: {
-                  tokenAddress,
-                  marketCapUsd: typeof token?.marketCapUsd === 'number' ? token.marketCapUsd : null,
-                  priceUsd: typeof token?.priceUsd === 'number' ? token.priceUsd : null,
-                  liquidityUsd: typeof token?.liquidityUsd === 'number' ? token.liquidityUsd : null,
-                  holders: typeof token?.holders === 'number' ? token.holders : null,
-                  createdAtMs: typeof token?.createdAtMs === 'number' ? token.createdAtMs : null,
-                },
-              };
-              await AutoTrade.handleAutoTradeWebSocket(payload);
-              await AutoTrade.handleAutoSellCheck(payload);
-            }
+            await (AutoTrade as any).handleTwitterSignal(signal);
             return { ok: true };
           }
         }

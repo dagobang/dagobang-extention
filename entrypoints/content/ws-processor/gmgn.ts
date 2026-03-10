@@ -286,6 +286,9 @@ type TokenSnapshot = {
   priceUsd?: number;
   liquidityUsd?: number;
   holders?: number;
+  devAddress?: string;
+  devHoldPercent?: number;
+  devHasSold?: boolean;
   devBuyRatio?: number;
   top10HoldRatio?: number;
   devTokenStatus?: string;
@@ -319,6 +322,9 @@ const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken
       priceUsd: t.priceUsd,
       liquidityUsd: t.liquidityUsd,
       holders: t.holders,
+      devAddress: (t as any).devAddress,
+      devHoldPercent: (t as any).devHoldPercent,
+      devHasSold: (t as any).devHasSold,
       devBuyRatio: t.devBuyRatio,
       top10HoldRatio: t.top10HoldRatio,
       devTokenStatus: t.devTokenStatus,
@@ -341,6 +347,9 @@ const mergeTokenFields = (prev: UnifiedSignalToken, next: Partial<UnifiedSignalT
     priceUsd: pickFiniteNumber(next.priceUsd, prev.priceUsd),
     liquidityUsd: pickFiniteNumber(next.liquidityUsd, prev.liquidityUsd),
     holders: pickFiniteNumber(next.holders, prev.holders),
+    devAddress: pickNonEmptyString(next.devAddress, prev.devAddress),
+    devHoldPercent: pickFiniteNumber(next.devHoldPercent, prev.devHoldPercent),
+    devHasSold: typeof next.devHasSold === 'boolean' ? next.devHasSold : prev.devHasSold,
     devBuyRatio: pickFiniteNumber(next.devBuyRatio, prev.devBuyRatio),
     top10HoldRatio: pickFiniteNumber(next.top10HoldRatio, prev.top10HoldRatio),
     devTokenStatus: pickNonEmptyString(next.devTokenStatus, prev.devTokenStatus),
@@ -377,6 +386,9 @@ const upsertSignalToken = (
     mergedWithTimes.priceUsd === prev.priceUsd &&
     mergedWithTimes.liquidityUsd === prev.liquidityUsd &&
     mergedWithTimes.holders === prev.holders &&
+    mergedWithTimes.devAddress === (prev as any).devAddress &&
+    mergedWithTimes.devHoldPercent === (prev as any).devHoldPercent &&
+    mergedWithTimes.devHasSold === (prev as any).devHasSold &&
     mergedWithTimes.devBuyRatio === prev.devBuyRatio &&
     mergedWithTimes.top10HoldRatio === prev.top10HoldRatio &&
     mergedWithTimes.devTokenStatus === prev.devTokenStatus &&
@@ -401,6 +413,9 @@ const applySnapshotToSignal = (signal: UnifiedTwitterSignal, snapshot: TokenSnap
     priceUsd: snapshot.priceUsd,
     liquidityUsd: snapshot.liquidityUsd,
     holders: snapshot.holders,
+    devAddress: snapshot.devAddress,
+    devHoldPercent: snapshot.devHoldPercent,
+    devHasSold: snapshot.devHasSold,
     devBuyRatio: snapshot.devBuyRatio,
     top10HoldRatio: snapshot.top10HoldRatio,
     devTokenStatus: snapshot.devTokenStatus,
@@ -747,7 +762,7 @@ export function initGmgnWsMonitor(options: {
         wsStatus = { ...wsStatus, lastSignalAt: now, signalCount: wsStatus.signalCount + 1 };
         pushLog('signal', `${summarizeTokensForLog(merged)}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
         emitStatus();
-        if (signalHasTokens(merged) && merged.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: merged });
+        if (signalHasTokens(merged) && merged.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: merged });
         continue;
       }
 
@@ -808,7 +823,7 @@ export function initGmgnWsMonitor(options: {
       };
       pushLog('signal', `${summarizeTokensForLog(signal)}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
       emitStatus();
-      if (signalHasTokens(signal) && signal.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: signal });
+      if (signalHasTokens(signal) && signal.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: signal });
     }
     emitStatus();
   };
@@ -872,7 +887,7 @@ export function initGmgnWsMonitor(options: {
         (s as any).tokens.some((t: any) => t && typeof t.tokenAddress === 'string' && normalizeTokenKey(t.tokenAddress) === addr);
       if (!has) continue;
       window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-      if (signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: s });
+      if (signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: s });
     }
   };
 
@@ -928,7 +943,7 @@ export function initGmgnWsMonitor(options: {
         (s.quotedTweetId && (mx.includes(s.quotedTweetId) || ids.includes(s.quotedTweetId)));
       if (!hit) continue;
       window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-      if (signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: s });
+      if (signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: s });
     }
   };
 
@@ -952,13 +967,6 @@ export function initGmgnWsMonitor(options: {
       };
       pushLog('signal', `new > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${item.chain ? ` ${item.chain}` : ''}`);
       emitStatus();
-      void options.call({
-        type: 'autotrade:ws',
-        payload: {
-          direction: 'receive',
-          data: tokenData,
-        },
-      });
     }
   };
 
@@ -985,13 +993,6 @@ export function initGmgnWsMonitor(options: {
         };
         pushLog('signal', `new_pool > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${chain ? ` ${chain}` : ''}`);
         emitStatus();
-        void options.call({
-          type: 'autotrade:ws',
-          payload: {
-            direction: 'receive',
-            data: tokenData,
-          },
-        });
       }
     }
   };
@@ -1027,13 +1028,6 @@ export function initGmgnWsMonitor(options: {
       };
       pushLog('signal', `trenches > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${tokenData.chain ? ` ${tokenData.chain}` : ''}`);
       emitStatus();
-      void options.call({
-        type: 'autotrade:ws',
-        payload: {
-          direction: 'receive',
-          data: tokenData,
-        },
-      });
     }
   };
 
