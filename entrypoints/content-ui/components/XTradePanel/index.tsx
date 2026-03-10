@@ -5,6 +5,7 @@ import { XSniperContent } from './XSinper';
 import { XMonitorContent } from './XMonitor';
 
 type XTradePanelProps = {
+  siteInfo: SiteInfo | null;
   visible: boolean;
   activeTab?: 'xmonitor' | 'xsniper';
   onActiveTabChange?: (tab: 'xmonitor' | 'xsniper') => void;
@@ -22,6 +23,7 @@ const clampPos = (value: { x: number; y: number }, panelWidth: number) => {
 };
 
 export function XTradePanel({
+  siteInfo,
   visible,
   activeTab: activeTabProp,
   onVisibleChange,
@@ -128,7 +130,7 @@ export function XTradePanel({
         </button>
       </div>
 
-      <XMonitorContent active={activeTab === 'xmonitor'} settings={settings} />
+      <XMonitorContent siteInfo={siteInfo} active={activeTab === 'xmonitor'} settings={settings} />
       <XSniperContent active={activeTab === 'xsniper'} settings={settings} isUnlocked={isUnlocked} />
     </div>
   );

@@ -267,6 +267,24 @@ export type TxWaitForReceiptError = {
   data?: unknown;
 };
 
+export type UnifiedSignalToken = {
+  tokenAddress: string;
+  chain?: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  tokenLogo?: string;
+  marketCapUsd?: number;
+  priceUsd?: number;
+  liquidityUsd?: number;
+  holders?: number;
+  devBuyRatio?: number;
+  top10HoldRatio?: number;
+  devTokenStatus?: string;
+  createdAtMs?: number;
+  firstSeenAtMs: number;
+  updatedAtMs: number;
+};
+
 export type UnifiedTwitterSignal = {
   id: string;
   site: 'gmgn' | 'axiom';
@@ -294,19 +312,7 @@ export type UnifiedTwitterSignal = {
   followedUserBio?: string;
   followedUserFollowers?: number;
 
-  chain?: string;
-  tokenAddress?: string;
-  tokenSymbol?: string;
-  tokenName?: string;
-  tokenLogo?: string;
-  marketCapUsd?: number;
-  priceUsd?: number;
-  liquidityUsd?: number;
-  holders?: number;
-  devBuyRatio?: number;
-  top10HoldRatio?: number;
-  devTokenStatus?: string;
-  createdAtMs?: number;
+  tokens?: UnifiedSignalToken[];
   receivedAtMs: number;
   ts: number;
 };

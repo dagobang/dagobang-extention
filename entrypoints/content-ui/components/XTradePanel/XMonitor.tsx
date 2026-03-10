@@ -1,37 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { X } from 'lucide-react';
-import type { Settings, UnifiedTwitterSignal } from '@/types/extention';
+import { AlarmClockCheck, Trophy, ChefHat , Users, X } from 'lucide-react';
+import type { Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
+import { formatAgeShort, formatCompactNumber, formatCountShort } from '@/utils/format';
 
 type XMonitorPanelProps = {
+  siteInfo: SiteInfo | null;
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
   settings: Settings | null;
 };
 
 type XMonitorContentProps = {
+  siteInfo: SiteInfo | null;
   active: boolean;
   settings: Settings | null;
 };
 
-const formatAgeShort = (ts?: number) => {
-  if (!ts) return '--';
-  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  return `${h}h`;
-};
-
-const formatCountShort = (value?: number) => {
-  if (!value || !Number.isFinite(value)) return null;
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(value % 1_000_000_000 === 0 ? 0 : 1)}B`;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(value % 1_000 === 0 ? 0 : 1)}K`;
-  return `${value}`;
-};
 
 const extractReplyHandle = (text?: string) => {
   if (!text) return null;
@@ -149,69 +134,32 @@ const getTypeMeta = (type?: UnifiedTwitterSignal['tweetType']) => {
   }
 };
 
-const parseFilterNumber = (value: string | undefined | null): number | null => {
-  if (!value) return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-};
-
-const tokenPassesFilters = (token: any, settings: Settings | null): boolean => {
-  const filters = settings?.autoTrade?.twitterSnipe;
-  if (!filters) return true;
-  const mc = typeof token?.marketCapUsd === 'number' ? token.marketCapUsd : null;
-  const holders = typeof token?.holders === 'number' ? token.holders : null;
-  const createdAtMs = typeof token?.createdAtMs === 'number' ? token.createdAtMs : null;
-  const devHold = typeof token?.devHoldPercent === 'number' ? token.devHoldPercent : null;
-  const devHasSold = typeof token?.devHasSold === 'boolean' ? token.devHasSold : null;
-
-  const minMcK = parseFilterNumber(filters.minMarketCapUsd);
-  const maxMcK = parseFilterNumber(filters.maxMarketCapUsd);
-  const minHoldersK = parseFilterNumber(filters.minHolders);
-  const maxHoldersK = parseFilterNumber(filters.maxHolders);
-  const minAge = parseFilterNumber(filters.minTokenAgeMinutes);
-  const maxAge = parseFilterNumber(filters.maxTokenAgeMinutes);
-  const minDev = parseFilterNumber(filters.minDevHoldPercent);
-  const maxDev = parseFilterNumber(filters.maxDevHoldPercent);
-
-  if (filters.blockIfDevSell && devHasSold === true) return false;
-
-  if (minMcK != null) {
-    if (mc == null) return false;
-    if (mc < minMcK) return false;
-  }
-  if (maxMcK != null) {
-    if (mc == null) return false;
-    if (mc > maxMcK) return false;
-  }
-  if (minHoldersK != null) {
-    if (holders == null) return false;
-    if (holders < minHoldersK) return false;
-  }
-  if (maxHoldersK != null) {
-    if (holders == null) return false;
-    if (holders > maxHoldersK) return false;
-  }
-  if (minDev != null) {
-    if (devHold == null) return false;
-    if (devHold < minDev) return false;
-  }
-  if (maxDev != null) {
-    if (devHold == null) return false;
-    if (devHold > maxDev) return false;
-  }
-  const ageMinutes = createdAtMs != null ? (Date.now() - createdAtMs) / 60000 : null;
-  if (minAge != null) {
-    if (ageMinutes == null) return false;
-    if (ageMinutes < minAge) return false;
-  }
-  if (maxAge != null) {
-    if (ageMinutes == null) return false;
-    if (ageMinutes > maxAge) return false;
-  }
-  return true;
+const normalizeSignalTokensForDisplay = (signal: UnifiedTwitterSignal): UnifiedSignalToken[] => {
+  const list = Array.isArray(signal.tokens) ? (signal.tokens as UnifiedSignalToken[]) : [];
+  const cleaned = list
+    .filter((t) => t && typeof (t as any).tokenAddress === 'string' && (t as any).tokenAddress.trim())
+    .map((t) => ({
+      tokenAddress: String(t.tokenAddress),
+      chain: t.chain,
+      tokenSymbol: t.tokenSymbol,
+      tokenName: t.tokenName,
+      tokenLogo: t.tokenLogo,
+      marketCapUsd: t.marketCapUsd,
+      priceUsd: t.priceUsd,
+      liquidityUsd: t.liquidityUsd,
+      holders: t.holders,
+      devBuyRatio: t.devBuyRatio,
+      top10HoldRatio: t.top10HoldRatio,
+      devTokenStatus: t.devTokenStatus,
+      createdAtMs: t.createdAtMs,
+      firstSeenAtMs: typeof (t as any).firstSeenAtMs === 'number' ? (t as any).firstSeenAtMs : signal.receivedAtMs ?? signal.ts,
+      updatedAtMs: typeof (t as any).updatedAtMs === 'number' ? (t as any).updatedAtMs : signal.ts,
+    }));
+  return cleaned;
 };
 
 export function XMonitorContent({
+  siteInfo,
   active,
   settings,
 }: XMonitorContentProps) {
@@ -289,8 +237,8 @@ export function XMonitorContent({
 
   const visibleSignals = useMemo(() => {
     if (!onlyWithTokens) return signalList;
-    return signalList.filter((s) => !!s.tokenAddress && tokenPassesFilters(s, resolvedSettings));
-  }, [signalList, onlyWithTokens, resolvedSettings]);
+    return signalList.filter((s) => Array.isArray(s.tokens) && s.tokens.length > 0);
+  }, [signalList, onlyWithTokens]);
 
   useEffect(() => {
     if (!listRef.current) return;
@@ -397,9 +345,10 @@ export function XMonitorContent({
               const followHandle = signal.followedUserScreen ? `@${signal.followedUserScreen}` : null;
               const followFollowers = formatCountShort(signal.followedUserFollowers);
 
-              const tokenAddr = typeof signal.tokenAddress === 'string' ? signal.tokenAddress : null;
-              const mc = typeof signal.marketCapUsd === 'number' ? signal.marketCapUsd : null;
-              const holders = typeof signal.holders === 'number' ? signal.holders : null;
+              const displayTokens = normalizeSignalTokensForDisplay(signal)
+                .slice()
+                .sort((a, b) => a.firstSeenAtMs - b.firstSeenAtMs)
+                .slice(0, 3);
 
               return (
                 <div
@@ -654,38 +603,79 @@ export function XMonitorContent({
                     </div>
                   ) : null}
 
-                  {tokenAddr ? (
-                    <div className="mt-3 flex items-center justify-between gap-2">
-                      <div className="min-w-0 flex items-center gap-2 text-[11px] text-zinc-500">
-                        {signal.tokenLogo ? (
-                          <img
-                            src={signal.tokenLogo}
-                            alt=""
-                            className="h-4 w-4 rounded-sm object-cover"
-                            loading="lazy"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : null}
-                        <div className="min-w-0 truncate">
-                          {signal.tokenSymbol || signal.tokenName ? (
-                            <span className="text-zinc-300">{signal.tokenSymbol ?? signal.tokenName}</span>
-                          ) : null}
-                          {holders != null ? ` · Holders ${formatCountShort(holders)}` : ' · Holders --'}
-                          {mc != null ? ` · MC $${Math.round(mc).toLocaleString()}` : ''}
-                          {typeof signal.createdAtMs === 'number' ? ` · Age ${formatAgeShort(signal.createdAtMs)}` : ''}
-                          {typeof signal.devBuyRatio === 'number' ? ` · d_br ${(signal.devBuyRatio * 100).toFixed(2)}%` : ''}
-                          {typeof signal.top10HoldRatio === 'number' ? ` · t10 ${(signal.top10HoldRatio * 100).toFixed(2)}%` : ''}
-                          {signal.devTokenStatus ? ` · ${signal.devTokenStatus}` : ''}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-800"
-                        onClick={() => window.open(`https://gmgn.ai/token/${tokenAddr}`, '_blank')}
-                        title={tokenAddr}
-                      >
-                        {tokenAddr.slice(0, 6)}...{tokenAddr.slice(-4)} ↗
-                      </button>
+                  {displayTokens.length ? (
+                    <div className="mt-3 space-y-2">
+                      {displayTokens.map((token) => {
+                        const tokenAddr = token.tokenAddress;
+                        const shortAddr = `${tokenAddr.slice(0, 6)}...${tokenAddr.slice(-4)}`;
+                        const symbol = token.tokenSymbol?.trim() || '';
+                        const tokenName = token.tokenName?.trim() || '';
+                        const name = symbol || tokenName || shortAddr;
+                        const mc = typeof token.marketCapUsd === 'number' ? token.marketCapUsd : null;
+                        const devBuyRatioPct = typeof token.devBuyRatio === 'number' ? token.devBuyRatio * 100 : null;
+                        const top10HoldRatioPct = typeof token.top10HoldRatio === 'number' ? token.top10HoldRatio * 100 : null;
+                        const age = typeof token.createdAtMs === 'number' ? formatAgeShort(token.createdAtMs) : null;
+                        const getRatioClassName = (pct: number | null) => {
+                          if (pct == null) return '';
+                          if (pct > 0 && pct < 10) return 'text-emerald-300';
+                          if (pct > 10) return 'text-rose-300';
+                          return '';
+                        };
+                        const devRatioClassName = getRatioClassName(devBuyRatioPct);
+                        const top10RatioClassName = getRatioClassName(top10HoldRatioPct);
+                        return (
+                          <div
+                            key={`${signal.id}:${tokenAddr}`}
+                            className="border border-zinc-800 bg-zinc-900/40 px-3 py-2"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                className="min-w-0 truncate text-left text-[12px] font-semibold text-zinc-100 hover:underline underline-offset-2"
+                                onClick={() => (window.location.href = parsePlatformTokenLink(siteInfo, tokenAddr))}
+                                title={tokenAddr}
+                              >
+                                <span>{name}</span>
+                                {symbol && tokenName ? <span className="ml-1 font-normal text-zinc-400">{tokenName}</span> : null}
+                              </button>
+                              {mc != null ? (
+                                <div className="flex-shrink-0 text-[12px] font-semibold text-emerald-300">
+                                  MC ${formatCompactNumber(Math.round(mc))}
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 flex items-center justify-between gap-2">
+                              <div className="min-w-0 truncate font-mono text-[11px] text-zinc-500">{shortAddr}</div>
+                              <div className="flex flex-shrink-0 items-center gap-2 text-[11px] text-zinc-500">
+                                {devBuyRatioPct != null ? (
+                                  <span className={`inline-flex items-center gap-1 ${devRatioClassName}`} title="DevBuyRatio">
+                                    <ChefHat  size={12} />
+                                    {devBuyRatioPct < 0.0001 ? '0%' : `${devBuyRatioPct.toFixed(2)}%`}
+                                  </span>
+                                ) : null}
+                                {top10HoldRatioPct != null ? (
+                                  <span className={`inline-flex items-center gap-1 ${top10RatioClassName}`} title="Top10HoldRatio">
+                                    <Trophy size={12} />
+                                    {top10HoldRatioPct === 0.0001 ? '0%' : `${top10HoldRatioPct.toFixed(2)}%`}
+                                  </span>
+                                ) : null}
+                                {token.holders != null ? (
+                                  <span className="inline-flex items-center gap-1" title="Holders">
+                                    <Users size={12} />
+                                    {formatCompactNumber(token.holders)}
+                                  </span>
+                                ) : null}
+                                {age ? (
+                                  <span className="inline-flex items-center gap-1" title="Age">
+                                    <AlarmClockCheck size={12} />
+                                    {age}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : null}
                 </div>
@@ -700,6 +690,7 @@ export function XMonitorContent({
 }
 
 export function XMonitorPanel({
+  siteInfo,
   visible,
   onVisibleChange,
   settings,
@@ -719,6 +710,7 @@ export function XMonitorPanel({
         </button>
       </div>
       <XMonitorContent
+        siteInfo={siteInfo}
         active={visible}
         settings={settings}
       />

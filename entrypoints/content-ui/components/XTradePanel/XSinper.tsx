@@ -412,49 +412,6 @@ export function XSniperContent({
             {tt('contentUi.autoTradeStrategy.strategyAutoSell')}
           </label>
         </div>
-        <div className="space-y-2 pt-2 border-t border-zinc-800/60">
-          <div className="flex items-center justify-between gap-3 text-[12px] text-zinc-300">
-            <div className="flex items-center gap-3">
-              <div className="text-zinc-500">{tt('contentUi.autoTradeStrategy.wsStatusShort')}</div>
-              <div className="flex items-center gap-1">
-                <div className="text-zinc-500">{tt('contentUi.autoTradeStrategy.wsConnection')}</div>
-                <div className={wsStatus.connected ? 'text-emerald-300' : 'text-zinc-400'}>
-                  {wsStatus.connected ? tt('contentUi.autoTradeStrategy.wsConnected') : tt('contentUi.autoTradeStrategy.wsDisconnected')}
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
-                <div className="text-zinc-500">{tt('contentUi.autoTradeStrategy.wsSignalAndLast')}</div>
-                <div>{wsStatus.signalCount ?? 0}</div>
-                <div className="text-zinc-500">/</div>
-                <div>{formatAge(wsStatus.lastSignalAt)}</div>
-              </div>
-              <div className="flex items-center gap-1">
-                <div className="text-zinc-500">{tt('contentUi.autoTradeStrategy.wsPacketAndLast')}</div>
-                <div>{wsStatus.packetCount ?? 0}</div>
-                <div className="text-zinc-500">/</div>
-                <div>{formatAge(wsStatus.lastPacketAt)}</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              className="text-[11px] text-zinc-400 hover:text-zinc-200"
-              onClick={() => setShowLogs((prev) => !prev)}
-            >
-              {showLogs ? tt('contentUi.autoTradeStrategy.wsHideLogs') : tt('contentUi.autoTradeStrategy.wsShowLogs')}
-            </button>
-          </div>
-          {showLogs ? (
-            <div className="max-h-28 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300">
-              {(wsStatus.logs || []).slice().reverse().map((log: any, idx: number) => (
-                <div key={`${log.ts}-${idx}`} className="flex items-center gap-2 py-0.5">
-                  <div className="text-zinc-500">{formatAge(log.ts)}</div>
-                  <div className="text-zinc-400">{log.type}</div>
-                  <div className="truncate">{log.message}</div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
       </div>
 
       <div className="flex items-center justify-end px-4 py-3 border-t border-zinc-800/60">

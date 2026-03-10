@@ -35,10 +35,14 @@ declare global {
   const extractText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractText
   const extractTimestampMs: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractTimestampMs
   const extractTokenAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractTokenAddress
+  const extractTokenAddresses: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractTokenAddresses
   const extractTweetId: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractTweetId
   const extractUser: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractUser
   const fakeBrowser: typeof import('wxt/testing').fakeBrowser
+  const formatAgeShort: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatAgeShort
   const formatBroadcastProvider: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatBroadcastProvider
+  const formatCompactNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatCompactNumber
+  const formatCountShort: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatCountShort
   const formatPriceValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatPriceValue
   const formatTime: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatTime
   const getDexPoolPrefer: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/dexUtils').getDexPoolPrefer

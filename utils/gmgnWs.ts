@@ -94,6 +94,54 @@ export const extractTokenAddress = (payload: any, text?: string | null): string 
   return addr && (isEvmAddress(addr) || isBase58Address(addr)) ? addr : null;
 };
 
+export const extractTokenAddresses = (payload: any, text?: string | null): string[] => {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (addr: string) => {
+    const trimmed = typeof addr === 'string' ? addr.trim() : '';
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(trimmed);
+  };
+
+  if (typeof text === 'string' && text) {
+    for (const m of text.matchAll(/0x[a-fA-F0-9]{40}/g)) {
+      if (m[0]) push(m[0]);
+    }
+  }
+
+  const tokenObj = isObject((payload as any)?.t) ? (payload as any).t : null;
+  if (tokenObj) {
+    const direct = extractFirst(tokenObj, ['a', 'address', 'contract', 'contractAddress', 'contract_address', 'tokenAddress', 'token_address', 'ca']);
+    if (typeof direct === 'string' && (isEvmAddress(direct) || isBase58Address(direct))) push(direct);
+  }
+
+  const keys = ['tokenAddress', 'token_address', 'contract', 'contractAddress', 'contract_address', 'address', 'ca', 'a'];
+  const visited = new WeakSet<object>();
+  const stack: any[] = [payload];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (!cur) continue;
+    if (Array.isArray(cur)) {
+      for (let i = cur.length - 1; i >= 0; i -= 1) stack.push(cur[i]);
+      continue;
+    }
+    if (!isObject(cur)) continue;
+    if (visited.has(cur as object)) continue;
+    visited.add(cur as object);
+
+    for (const k of keys) {
+      const v = (cur as any)[k];
+      if (typeof v === 'string' && (isEvmAddress(v) || isBase58Address(v))) push(v);
+    }
+    for (const v of Object.values(cur)) stack.push(v);
+  }
+
+  return out;
+};
+
 export const extractTweetId = (payload: any, text?: string | null): string | null => {
   const fromText = text?.match(/status\/(\d{10,})/i)?.[1];
   if (fromText) return fromText;

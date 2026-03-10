@@ -1,4 +1,4 @@
-import type { AutoTradeInteractionType, BgRequest, BgResponse, Settings, UnifiedTwitterSignal } from '@/types/extention';
+import type { AutoTradeInteractionType, BgRequest, BgResponse, Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import {
   asAddress,
   extractFirstFromObject,
@@ -8,6 +8,7 @@ import {
   extractText,
   extractTimestampMs,
   extractTokenAddress,
+  extractTokenAddresses,
   extractTweetId,
   extractUser,
   isObject,
@@ -301,24 +302,136 @@ const pickFiniteNumber = (next: any, prev?: number): number | undefined => {
   return typeof next === 'number' && Number.isFinite(next) ? next : prev;
 };
 
-const mergeTokenSnapshot = (signal: UnifiedTwitterSignal, snapshot: TokenSnapshot | undefined): UnifiedTwitterSignal => {
-  if (!snapshot) return signal;
+const normalizeTokenKey = (addr: string) => addr.trim().toLowerCase();
+
+const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken[] => {
+  const fromList = Array.isArray(signal.tokens)
+    ? (signal.tokens as UnifiedSignalToken[]).filter((t) => t && typeof (t as any).tokenAddress === 'string' && (t as any).tokenAddress.trim())
+    : [];
+  if (fromList.length) {
+    return fromList.map((t) => ({
+      tokenAddress: String(t.tokenAddress),
+      chain: t.chain,
+      tokenSymbol: t.tokenSymbol,
+      tokenName: t.tokenName,
+      tokenLogo: t.tokenLogo,
+      marketCapUsd: t.marketCapUsd,
+      priceUsd: t.priceUsd,
+      liquidityUsd: t.liquidityUsd,
+      holders: t.holders,
+      devBuyRatio: t.devBuyRatio,
+      top10HoldRatio: t.top10HoldRatio,
+      devTokenStatus: t.devTokenStatus,
+      createdAtMs: t.createdAtMs,
+      firstSeenAtMs: typeof (t as any).firstSeenAtMs === 'number' ? (t as any).firstSeenAtMs : signal.receivedAtMs ?? signal.ts,
+      updatedAtMs: typeof (t as any).updatedAtMs === 'number' ? (t as any).updatedAtMs : signal.ts,
+    }));
+  }
+  return [];
+};
+
+const mergeTokenFields = (prev: UnifiedSignalToken, next: Partial<UnifiedSignalToken>, updatedAtMs: number): UnifiedSignalToken => {
   return {
-    ...signal,
-    chain: pickNonEmptyString(snapshot.chain, signal.chain),
-    tokenSymbol: pickNonEmptyString(snapshot.tokenSymbol, signal.tokenSymbol),
-    tokenName: pickNonEmptyString(snapshot.tokenName, signal.tokenName),
-    tokenLogo: pickNonEmptyString(snapshot.tokenLogo, signal.tokenLogo),
-    marketCapUsd: pickFiniteNumber(snapshot.marketCapUsd, signal.marketCapUsd),
-    priceUsd: pickFiniteNumber(snapshot.priceUsd, signal.priceUsd),
-    liquidityUsd: pickFiniteNumber(snapshot.liquidityUsd, signal.liquidityUsd),
-    holders: pickFiniteNumber(snapshot.holders, signal.holders),
-    devBuyRatio: pickFiniteNumber(snapshot.devBuyRatio, signal.devBuyRatio),
-    top10HoldRatio: pickFiniteNumber(snapshot.top10HoldRatio, signal.top10HoldRatio),
-    devTokenStatus: pickNonEmptyString(snapshot.devTokenStatus, signal.devTokenStatus),
-    createdAtMs: pickFiniteNumber(snapshot.createdAtMs, signal.createdAtMs),
+    ...prev,
+    chain: pickNonEmptyString(next.chain, prev.chain),
+    tokenSymbol: pickNonEmptyString(next.tokenSymbol, prev.tokenSymbol),
+    tokenName: pickNonEmptyString(next.tokenName, prev.tokenName),
+    tokenLogo: pickNonEmptyString(next.tokenLogo, prev.tokenLogo),
+    marketCapUsd: pickFiniteNumber(next.marketCapUsd, prev.marketCapUsd),
+    priceUsd: pickFiniteNumber(next.priceUsd, prev.priceUsd),
+    liquidityUsd: pickFiniteNumber(next.liquidityUsd, prev.liquidityUsd),
+    holders: pickFiniteNumber(next.holders, prev.holders),
+    devBuyRatio: pickFiniteNumber(next.devBuyRatio, prev.devBuyRatio),
+    top10HoldRatio: pickFiniteNumber(next.top10HoldRatio, prev.top10HoldRatio),
+    devTokenStatus: pickNonEmptyString(next.devTokenStatus, prev.devTokenStatus),
+    createdAtMs: pickFiniteNumber(next.createdAtMs, prev.createdAtMs),
+    updatedAtMs,
   };
 };
+
+const upsertSignalToken = (
+  signal: UnifiedTwitterSignal,
+  token: UnifiedSignalToken,
+  updatedAtMs: number,
+): { signal: UnifiedTwitterSignal; changed: boolean } => {
+  const prevTokens = normalizeSignalTokens(signal);
+  const key = normalizeTokenKey(token.tokenAddress);
+  const idx = prevTokens.findIndex((t) => normalizeTokenKey(t.tokenAddress) === key);
+  if (idx < 0) {
+    const nextTokens = prevTokens.concat(token);
+    const nextSignal: UnifiedTwitterSignal = { ...signal, tokens: nextTokens };
+    return { signal: nextSignal, changed: true };
+  }
+
+  const prev = prevTokens[idx];
+  const merged = mergeTokenFields(prev, token, updatedAtMs);
+  const firstSeenAtMs = Math.min(prev.firstSeenAtMs, token.firstSeenAtMs);
+  const mergedWithTimes: UnifiedSignalToken = { ...merged, firstSeenAtMs };
+
+  const same =
+    mergedWithTimes.chain === prev.chain &&
+    mergedWithTimes.tokenSymbol === prev.tokenSymbol &&
+    mergedWithTimes.tokenName === prev.tokenName &&
+    mergedWithTimes.tokenLogo === prev.tokenLogo &&
+    mergedWithTimes.marketCapUsd === prev.marketCapUsd &&
+    mergedWithTimes.priceUsd === prev.priceUsd &&
+    mergedWithTimes.liquidityUsd === prev.liquidityUsd &&
+    mergedWithTimes.holders === prev.holders &&
+    mergedWithTimes.devBuyRatio === prev.devBuyRatio &&
+    mergedWithTimes.top10HoldRatio === prev.top10HoldRatio &&
+    mergedWithTimes.devTokenStatus === prev.devTokenStatus &&
+    mergedWithTimes.createdAtMs === prev.createdAtMs &&
+    mergedWithTimes.firstSeenAtMs === prev.firstSeenAtMs;
+  if (same) return { signal, changed: false };
+
+  const nextTokens = prevTokens.slice();
+  nextTokens[idx] = mergedWithTimes;
+  const nextSignal: UnifiedTwitterSignal = { ...signal, tokens: nextTokens };
+  return { signal: nextSignal, changed: true };
+};
+
+const applySnapshotToSignal = (signal: UnifiedTwitterSignal, snapshot: TokenSnapshot, now: number): { signal: UnifiedTwitterSignal; changed: boolean } => {
+  const baseToken: UnifiedSignalToken = {
+    tokenAddress: snapshot.tokenAddress,
+    chain: snapshot.chain,
+    tokenSymbol: snapshot.tokenSymbol,
+    tokenName: snapshot.tokenName,
+    tokenLogo: snapshot.tokenLogo,
+    marketCapUsd: snapshot.marketCapUsd,
+    priceUsd: snapshot.priceUsd,
+    liquidityUsd: snapshot.liquidityUsd,
+    holders: snapshot.holders,
+    devBuyRatio: snapshot.devBuyRatio,
+    top10HoldRatio: snapshot.top10HoldRatio,
+    devTokenStatus: snapshot.devTokenStatus,
+    createdAtMs: snapshot.createdAtMs,
+    firstSeenAtMs: now,
+    updatedAtMs: now,
+  };
+  return upsertSignalToken(signal, baseToken, now);
+};
+
+const applyKnownSnapshotsToSignal = (signal: UnifiedTwitterSignal, tokenByAddress: Map<string, TokenSnapshot>, now: number): UnifiedTwitterSignal => {
+  let next = signal;
+  for (const token of normalizeSignalTokens(signal)) {
+    const addr = normalizeTokenKey(token.tokenAddress);
+    const snap = tokenByAddress.get(addr);
+    if (!snap) continue;
+    const merged = applySnapshotToSignal(next, snap, now);
+    next = merged.signal;
+  }
+  return next;
+};
+
+const summarizeTokensForLog = (signal: UnifiedTwitterSignal): string => {
+  const tokens = normalizeSignalTokens(signal);
+  if (!tokens.length) return '';
+  const first = tokens[0]?.tokenAddress ?? '';
+  if (tokens.length === 1) return first;
+  return `${first}+${tokens.length - 1}`;
+};
+
+const signalHasTokens = (signal: UnifiedTwitterSignal): boolean => normalizeSignalTokens(signal).length > 0;
 
 const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number): UnifiedTwitterSignal | null => {
   if (!item || typeof item !== 'object') return null;
@@ -387,26 +500,71 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
   const followedUserBio = followTarget && typeof followTarget.d === 'string' ? followTarget.d : undefined;
   const followedUserFollowers = followTarget && typeof followTarget.f === 'number' ? followTarget.f : undefined;
 
-  const tokenAddressRaw = extractTokenAddress(item, text ?? quotedText ?? null);
-  const tokenAddress = tokenAddressRaw?.startsWith('0x') ? (tokenAddressRaw.toLowerCase() as `0x${string}`) : (tokenAddressRaw ?? undefined);
+  const tokenAddressesRaw = extractTokenAddresses(item, text ?? quotedText ?? null);
+  const tokenAddresses = tokenAddressesRaw
+    .map((addr) => (addr?.startsWith('0x') ? addr.toLowerCase() : addr))
+    .filter((addr) => typeof addr === 'string' && addr.trim())
+    .map((addr) => String(addr).trim());
+  let tokens: UnifiedSignalToken[] | undefined = tokenAddresses.length
+    ? tokenAddresses.map((addr) => ({ tokenAddress: addr, firstSeenAtMs: receivedAtMs, updatedAtMs: receivedAtMs }))
+    : undefined;
   const media = extractMedia(item);
-  const chain =
-    (typeof (item as any).c === 'string' ? (item as any).c : null) ??
-    (typeof (item as any).n === 'string' ? (item as any).n : null) ??
-    (isObject((item as any).t) && typeof (item as any).t.c === 'string' ? (item as any).t.c : null) ??
-    extractFirstFromObject(item, ['chain', 'chain_id', 'chainId']) ??
-    undefined;
-  const marketCapUsd =
-    extractNumber((item as any).t, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']) ??
-    extractNumber(item, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']) ??
-    undefined;
-  const priceUsd =
-    extractNumber((item as any).t, ['p', 'p1', 'price', 'priceUsd', 'price_usd']) ??
-    extractNumber(item, ['p', 'p1', 'price', 'priceUsd', 'price_usd']) ??
-    undefined;
-  const liquidityUsd = extractNumber(item, ['lq', 'lqdt', 'liquidity', 'liquidityUsd', 'liquidity_usd']) ?? undefined;
-  const holders = extractNumber(item, ['hd', 'holders', 'holderCount']) ?? undefined;
-  const createdAtMs = extractTimestampMs(item) ?? (extractNumber(item, ['created_at', 'createdAt', 'created_at_ms', 'createdAtMs']) ?? undefined);
+  const tokenMeta = isObject((item as any).t) ? (item as any).t : null;
+  const tokenMetaAddressRaw = tokenMeta ? extractTokenAddress(tokenMeta) ?? asAddress(tokenMeta?.a) : null;
+  const tokenMetaAddress =
+    tokenMetaAddressRaw && tokenMetaAddressRaw.startsWith('0x') ? tokenMetaAddressRaw.toLowerCase() : tokenMetaAddressRaw;
+
+  if (!tokens?.length && tokenMetaAddress) {
+    tokens = [{ tokenAddress: tokenMetaAddress, firstSeenAtMs: receivedAtMs, updatedAtMs: receivedAtMs }];
+  }
+
+  if (tokens?.length) {
+    const chain =
+      (typeof (item as any).c === 'string' ? (item as any).c : null) ??
+      (typeof (item as any).n === 'string' ? (item as any).n : null) ??
+      (tokenMeta && typeof tokenMeta.c === 'string' ? tokenMeta.c : null) ??
+      extractFirstFromObject(item, ['chain', 'chain_id', 'chainId']) ??
+      undefined;
+    const tokenSymbol = tokenMeta && typeof tokenMeta.s === 'string' ? tokenMeta.s : undefined;
+    const tokenName = tokenMeta && typeof tokenMeta.nm === 'string' ? tokenMeta.nm : undefined;
+    const tokenLogo = tokenMeta && typeof tokenMeta.l === 'string' ? tokenMeta.l : undefined;
+    const marketCapUsd =
+      extractNumber(tokenMeta, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']) ??
+      extractNumber(item, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']) ??
+      undefined;
+    const priceUsd =
+      extractNumber(tokenMeta, ['p', 'p1', 'price', 'priceUsd', 'price_usd']) ??
+      extractNumber(item, ['p', 'p1', 'price', 'priceUsd', 'price_usd']) ??
+      undefined;
+    const liquidityUsd = extractNumber(item, ['lq', 'lqdt', 'liquidity', 'liquidityUsd', 'liquidity_usd']) ?? undefined;
+    const holders = extractNumber(item, ['hd', 'holders', 'holderCount']) ?? undefined;
+    const createdAtMs =
+      extractTimestampMs(item) ?? (extractNumber(item, ['created_at', 'createdAt', 'created_at_ms', 'createdAtMs']) ?? undefined);
+
+    const attach = (idx: number) => {
+      tokens![idx] = {
+        ...tokens![idx],
+        chain,
+        tokenSymbol,
+        tokenName,
+        tokenLogo,
+        marketCapUsd,
+        priceUsd,
+        liquidityUsd,
+        holders,
+        createdAtMs: createdAtMs ?? undefined,
+      };
+    };
+
+    if (tokenMetaAddress) {
+      const key = normalizeTokenKey(tokenMetaAddress);
+      const idx = tokens.findIndex((t) => normalizeTokenKey(t.tokenAddress) === key);
+      if (idx >= 0) attach(idx);
+      else if (tokens.length === 1) attach(0);
+    } else if (tokens.length === 1) {
+      attach(0);
+    }
+  }
 
   const idSeed =
     eventId ??
@@ -440,13 +598,7 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
     followedUserAvatar,
     followedUserBio,
     followedUserFollowers,
-    tokenAddress,
-    chain,
-    marketCapUsd,
-    priceUsd,
-    liquidityUsd,
-    holders,
-    createdAtMs: createdAtMs ?? undefined,
+    tokens,
     receivedAtMs,
     ts: Date.now(),
   };
@@ -593,9 +745,9 @@ export function initGmgnWsMonitor(options: {
         saveUnifiedTwitterCache(cacheList);
         window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: merged }));
         wsStatus = { ...wsStatus, lastSignalAt: now, signalCount: wsStatus.signalCount + 1 };
-        pushLog('signal', `${merged.tokenAddress ?? ''}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
+        pushLog('signal', `${summarizeTokensForLog(merged)}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
         emitStatus();
-        if (merged.tokenAddress && merged.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: merged });
+        if (signalHasTokens(merged) && merged.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: merged });
         continue;
       }
 
@@ -641,10 +793,7 @@ export function initGmgnWsMonitor(options: {
           };
         }
       }
-      if (signal.tokenAddress) {
-        const snap = tokenByAddress.get(String(signal.tokenAddress).toLowerCase());
-        signal = mergeTokenSnapshot(signal, snap);
-      }
+      signal = applyKnownSnapshotsToSignal(signal, tokenByAddress, now);
       if (!shouldKeepUnifiedSignal(signal)) continue;
 
       if (signal.eventId) {
@@ -657,9 +806,9 @@ export function initGmgnWsMonitor(options: {
         lastSignalAt: now,
         signalCount: wsStatus.signalCount + 1,
       };
-      pushLog('signal', `${signal.tokenAddress ?? ''}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
+      pushLog('signal', `${summarizeTokensForLog(signal)}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
       emitStatus();
-      if (signal.tokenAddress && signal.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: signal });
+      if (signalHasTokens(signal) && signal.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: signal });
     }
     emitStatus();
   };
@@ -704,35 +853,26 @@ export function initGmgnWsMonitor(options: {
     if (!list.length) return;
     let changed = false;
     const updated = list.map((s) => {
-      if (!s || !s.tokenAddress) return s;
-      if (String(s.tokenAddress).toLowerCase() !== addr) return s;
-      const merged = mergeTokenSnapshot(s, next);
-      if (
-        merged.chain !== s.chain ||
-        merged.tokenSymbol !== s.tokenSymbol ||
-        merged.tokenName !== s.tokenName ||
-        merged.tokenLogo !== s.tokenLogo ||
-        merged.marketCapUsd !== s.marketCapUsd ||
-        merged.priceUsd !== s.priceUsd ||
-        merged.liquidityUsd !== s.liquidityUsd ||
-        merged.holders !== s.holders ||
-        merged.devBuyRatio !== s.devBuyRatio ||
-        merged.top10HoldRatio !== s.top10HoldRatio ||
-        merged.devTokenStatus !== s.devTokenStatus ||
-        merged.createdAtMs !== s.createdAtMs
-      ) {
-        changed = true;
-        return { ...merged, ts: Date.now() };
-      }
-      return s;
+      if (!s) return s;
+      const has =
+        Array.isArray((s as any).tokens) &&
+        (s as any).tokens.some((t: any) => t && typeof t.tokenAddress === 'string' && normalizeTokenKey(t.tokenAddress) === addr);
+      if (!has) return s;
+      const merged = applySnapshotToSignal(s, next, receivedAtMs);
+      if (!merged.changed) return s;
+      changed = true;
+      return { ...merged.signal, ts: Date.now() };
     });
     if (!changed) return;
     saveUnifiedTwitterCache(updated);
     for (const s of updated) {
-      if (!s?.tokenAddress) continue;
-      if (String(s.tokenAddress).toLowerCase() !== addr) continue;
+      if (!s) continue;
+      const has =
+        Array.isArray((s as any).tokens) &&
+        (s as any).tokens.some((t: any) => t && typeof t.tokenAddress === 'string' && normalizeTokenKey(t.tokenAddress) === addr);
+      if (!has) continue;
       window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-      if (s.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: s });
+      if (signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: s });
     }
   };
 
@@ -771,28 +911,12 @@ export function initGmgnWsMonitor(options: {
         (s.quotedTweetId && (mx.includes(s.quotedTweetId) || ids.includes(s.quotedTweetId)));
       if (!hit) return s;
 
-      const merged = mergeTokenSnapshot({ ...s, tokenAddress: addr }, snap);
-      if (
-        merged.tokenAddress !== s.tokenAddress ||
-        merged.chain !== s.chain ||
-        merged.tokenSymbol !== s.tokenSymbol ||
-        merged.tokenName !== s.tokenName ||
-        merged.tokenLogo !== s.tokenLogo ||
-        merged.marketCapUsd !== s.marketCapUsd ||
-        merged.priceUsd !== s.priceUsd ||
-        merged.liquidityUsd !== s.liquidityUsd ||
-        merged.holders !== s.holders ||
-        merged.devBuyRatio !== s.devBuyRatio ||
-        merged.top10HoldRatio !== s.top10HoldRatio ||
-        merged.devTokenStatus !== s.devTokenStatus ||
-        merged.createdAtMs !== s.createdAtMs
-      ) {
-        changed = true;
-        const next = { ...merged, ts: now };
-        if (next.eventId) signalsByEventId.set(next.eventId, { signal: next, updatedAtMs: now });
-        return next;
-      }
-      return s;
+      const merged = applySnapshotToSignal(s, snap, now);
+      if (!merged.changed) return s;
+      changed = true;
+      const nextOut = { ...merged.signal, ts: now };
+      if (nextOut.eventId) signalsByEventId.set(nextOut.eventId, { signal: nextOut, updatedAtMs: now });
+      return nextOut;
     });
 
     if (!changed) return;
@@ -804,7 +928,7 @@ export function initGmgnWsMonitor(options: {
         (s.quotedTweetId && (mx.includes(s.quotedTweetId) || ids.includes(s.quotedTweetId)));
       if (!hit) continue;
       window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-      if (s.tokenAddress && s.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: s });
+      if (signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'gmgn:twitterSignal', payload: s });
     }
   };
 
@@ -876,18 +1000,25 @@ export function initGmgnWsMonitor(options: {
     const packetTs = typeof data.timestamp === 'number' ? data.timestamp : now;
     const latencyMs = computeLatencyMs(payload, packetTs, now);
     updatePacketStatus(channel, now, latencyMs);
-    const inner =
-      isObject(payload) && !('_v_ch' in payload) && (payload as any).data != null ? (payload as any).data : payload;
+    const wrapper = isObject(payload) ? (payload as any) : null;
+    const wrapperUpdateTypeRaw = wrapper && typeof wrapper._v_ch === 'string' ? wrapper._v_ch : '';
+    const wrapperUpdateType = typeof wrapperUpdateTypeRaw === 'string' ? String(wrapperUpdateTypeRaw).trim().toLowerCase() : '';
+    const inner = wrapper && wrapper.data != null ? wrapper.data : payload;
     const items = toArrayPayload(inner);
     const list = items.length ? items : [inner];
     for (const item of list) {
       const tokenData = normalizeTrenchesTokenData(item);
       if (!tokenData.tokenAddress) continue;
-      const updateType = typeof (item as any)?._v_ch === 'string' ? String((item as any)._v_ch).trim().toLowerCase() : '';
+      const updateTypeRaw = typeof (item as any)?._v_ch === 'string' ? (item as any)._v_ch : wrapperUpdateTypeRaw;
+      const updateType = typeof updateTypeRaw === 'string' ? String(updateTypeRaw).trim().toLowerCase() : '';
       emitTrenchesTokenEvent(tokenData, now);
       updateTokenSnapshot(tokenData, now);
-      if (updateType === 'social') {
-        linkTokenToCachedSignalsByMx(tokenData, (item as any)?.m_x, now);
+      const mx = (item as any)?.m_x ?? wrapper?.m_x;
+      if (
+        (typeof mx === 'string' && /status\/\d{6,}/i.test(mx)) ||
+        (typeof mx === 'string' && mx.trim() && updateType.includes('social'))
+      ) {
+        linkTokenToCachedSignalsByMx(tokenData, mx, now);
       }
       wsStatus = {
         ...wsStatus,

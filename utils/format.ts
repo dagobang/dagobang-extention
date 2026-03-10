@@ -62,6 +62,47 @@ export const formatTime = (ms: number, locale: string = 'zh_CN') => {
   }
 };
 
+export const formatAgeShort = (ts?: number) => {
+  if (!ts) return '--';
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h`;
+};
+
+export const formatCountShort = (value?: number) => {
+  if (!value || !Number.isFinite(value)) return null;
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(value % 1_000_000_000 === 0 ? 0 : 1)}B`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value % 1_000 === 0 ? 0 : 1)}K`;
+  return `${value}`;
+};
+
+export const formatCompactNumber = (value?: number | null) => {
+  if (value == null || !Number.isFinite(value)) return null;
+  if (value === 0) return '0';
+  const sign = value < 0 ? '-' : '';
+  const abs = Math.abs(value);
+
+  const formatScaled = (scaled: number, suffix: string) => {
+    const fixed =
+      scaled >= 100 || Number.isInteger(scaled)
+        ? scaled.toFixed(0)
+        : scaled >= 10
+          ? scaled.toFixed(0)
+          : scaled.toFixed(1);
+    return `${sign}${fixed.replace(/\.0$/, '')}${suffix}`;
+  };
+
+  if (abs >= 1_000_000_000_000) return formatScaled(abs / 1_000_000_000_000, 'T');
+  if (abs >= 1_000_000_000) return formatScaled(abs / 1_000_000_000, 'B');
+  if (abs >= 1_000_000) return formatScaled(abs / 1_000_000, 'M');
+  if (abs >= 1_000) return formatScaled(abs / 1_000, 'K');
+  return `${sign}${Math.round(abs)}`;
+};
 
  export const formatBroadcastProvider = (via?: string, url?: string) => {
     if (via === 'bloxroute') return 'BloxRoute';

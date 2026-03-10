@@ -1216,6 +1216,7 @@ export default function App() {
           />
 
           <XTradePanel
+            siteInfo={siteInfo}
             visible={showXTradePanel}
             activeTab={'xmonitor'}
             onVisibleChange={setShowXTradePanel}

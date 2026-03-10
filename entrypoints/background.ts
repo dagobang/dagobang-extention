@@ -483,14 +483,19 @@ export default defineBackground(() => {
           }
           case 'gmgn:twitterSignal': {
             const signal = msg.payload as any;
-            if (signal && signal.tokenAddress) {
+            const tokens = Array.isArray(signal?.tokens) ? signal.tokens : [];
+            for (const token of tokens) {
+              const tokenAddress = typeof token?.tokenAddress === 'string' ? token.tokenAddress : null;
+              if (!tokenAddress || !/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) continue;
               const payload = {
                 direction: 'receive',
                 data: {
-                  tokenAddress: signal.tokenAddress,
-                  marketCapUsd: signal.marketCapUsd ?? null,
-                  priceUsd: signal.priceUsd ?? null,
-                  createdAtMs: signal.createdAtMs ?? null,
+                  tokenAddress,
+                  marketCapUsd: typeof token?.marketCapUsd === 'number' ? token.marketCapUsd : null,
+                  priceUsd: typeof token?.priceUsd === 'number' ? token.priceUsd : null,
+                  liquidityUsd: typeof token?.liquidityUsd === 'number' ? token.liquidityUsd : null,
+                  holders: typeof token?.holders === 'number' ? token.holders : null,
+                  createdAtMs: typeof token?.createdAtMs === 'number' ? token.createdAtMs : null,
                 },
               };
               await AutoTrade.handleAutoTradeWebSocket(payload);
