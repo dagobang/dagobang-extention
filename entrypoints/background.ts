@@ -25,6 +25,18 @@ import { getGasPriceWei, sendTransaction } from '@/services/trade/tradeTx';
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
 
+  browser.action.onClicked.addListener(async (tab) => {
+    try {
+      const api = (globalThis as any).chrome?.sidePanel;
+      const tabId = typeof tab?.id === 'number' ? tab.id : undefined;
+      if (api?.open && tabId != null) {
+        await api.open({ tabId });
+      }
+    } catch (e) {
+      console.error('Failed to open side panel:', e);
+    }
+  });
+
   const broadcastStateChange = async () => {
     try {
       const tabs = await browser.tabs.query({});
@@ -77,11 +89,15 @@ export default defineBackground(() => {
 
           case 'bg:openPopup':
             try {
-              // @ts-ignore
-              await browser.action.openPopup();
+              const api = (globalThis as any).chrome?.sidePanel;
+              const tabId = typeof sender?.tab?.id === 'number' ? sender.tab.id : undefined;
+              if (api?.open && tabId != null) {
+                await api.open({ tabId });
+                return { ok: true };
+              }
               return { ok: true };
             } catch (e) {
-              console.error('Failed to open popup:', e);
+              console.error('Failed to open side panel:', e);
               return { ok: false, error: 'Not supported' };
             }
 

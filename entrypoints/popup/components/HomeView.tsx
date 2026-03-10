@@ -137,7 +137,7 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
   })();
 
   return (
-    <div className="relative w-[360px] bg-zinc-950 text-zinc-100 h-[500px] flex flex-col">
+    <div className="relative w-[360px]  h-full bg-zinc-950 text-zinc-100 flex flex-col">
       <Header
         chainId={state.network.chainId}
         isUnlocked={state.wallet.isUnlocked}

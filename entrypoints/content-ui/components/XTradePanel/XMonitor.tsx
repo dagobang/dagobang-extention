@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AlarmClockCheck, Trophy, ChefHat , Users, X } from 'lucide-react';
+import { AlarmClockCheck, Trophy, ChefHat, Users, X, UserStar } from 'lucide-react';
 import type { Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber, formatCountShort } from '@/utils/format';
@@ -650,13 +650,13 @@ export function XMonitorContent({
                               <div className="flex flex-shrink-0 items-center gap-2 text-[11px] text-zinc-500">
                                 {devBuyRatioPct != null ? (
                                   <span className={`inline-flex items-center gap-1 ${devRatioClassName}`} title="DevBuyRatio">
-                                    <ChefHat  size={12} />
+                                    <ChefHat size={12} />
                                     {devBuyRatioPct < 0.0001 ? '0%' : `${devBuyRatioPct.toFixed(2)}%`}
                                   </span>
                                 ) : null}
                                 {top10HoldRatioPct != null ? (
                                   <span className={`inline-flex items-center gap-1 ${top10RatioClassName}`} title="Top10HoldRatio">
-                                    <Trophy size={12} />
+                                    <UserStar size={12} />
                                     {top10HoldRatioPct === 0.0001 ? '0%' : `${top10HoldRatioPct.toFixed(2)}%`}
                                   </span>
                                 ) : null}
@@ -668,7 +668,8 @@ export function XMonitorContent({
                                 ) : null}
                                 {token.kol != null ? (
                                   <span className="inline-flex items-center gap-1" title="KOL">
-                                    KOL {formatCompactNumber(token.kol)}
+                                    <Trophy size={12} />
+                                    {formatCompactNumber(token.kol)}
                                   </span>
                                 ) : null}
                                 {age ? (

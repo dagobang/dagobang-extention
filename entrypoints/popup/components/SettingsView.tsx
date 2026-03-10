@@ -64,7 +64,7 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
   };
 
   return (
-    <div className="w-[360px] bg-zinc-950 text-zinc-100 h-[500px] flex flex-col">
+    <div className="w-[360px]  h-full bg-zinc-950 text-zinc-100 flex flex-col">
       <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-3 bg-zinc-900/50">
         <button
           type="button"

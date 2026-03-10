@@ -119,7 +119,7 @@ function App() {
     content = <BackupView mnemonic={backupMnemonic} onConfirm={() => setBackupMnemonic(null)} locale={locale} />;
   } else if (view === 'loading') {
     content = (
-      <div className="w-[360px] h-[500px] bg-zinc-950 flex items-center justify-center text-zinc-500 text-xs">
+      <div className="w-[360px] h-full bg-zinc-950 flex items-center justify-center text-zinc-500 text-xs">
         {t('common.loading', locale)}
       </div>
     );
@@ -168,14 +168,14 @@ function App() {
     );
   } else {
     content = (
-      <div className="w-[360px] h-[500px] bg-zinc-950 flex items-center justify-center text-zinc-500 text-xs">
+      <div className="w-[360px] h-full bg-zinc-950 flex items-center justify-center text-zinc-500 text-xs">
         {t('common.initializing', locale)}
       </div>
     );
   }
 
   return (
-    <div className="relative">
+    <div className="relative h-full">
       {content}
       {error && (
         <div className="absolute bottom-4 left-4 right-4 bg-red-950 border border-red-900 text-red-200 p-2 rounded-md text-xs shadow-lg">
