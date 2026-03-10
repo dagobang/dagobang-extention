@@ -18,6 +18,9 @@ import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import FourmemeAPI from '@/services/api/fourmeme';
 import BloxRouterAPI from '@/services/api/bloxRouter';
+import { isAddress, parseEther } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { getGasPriceWei, sendTransaction } from '@/services/trade/tradeTx';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
@@ -344,6 +347,58 @@ export default defineBackground(() => {
               await TradeService.prewarmTurbo(msg.input);
             } catch { }
             return { ok: true };
+          }
+
+          case 'tx:transferNative': {
+            const settings = await SettingsService.get();
+            const chainId = settings.chainId;
+            const chainSettings = settings.chains[chainId];
+
+            if (!isAddress(msg.fromAddress)) throw new Error('Invalid from address');
+            if (!isAddress(msg.toAddress)) throw new Error('Invalid to address');
+
+            const pk = await WalletService.exportAccountPrivateKey(msg.password, msg.fromAddress);
+            const account = privateKeyToAccount(pk);
+            if (account.address.toLowerCase() !== msg.fromAddress.toLowerCase()) {
+              throw new Error('Invalid from address');
+            }
+
+            const client = await RpcService.getClient();
+            const gasPreset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;
+            const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
+            const gasLimit = 21000n;
+            const reserve = gasLimit * gasPriceWei;
+
+            const balanceWei = BigInt(await TokenService.getNativeBalance(msg.fromAddress));
+            const useMax = !!msg.useMax;
+            const valueWei = (() => {
+              if (useMax) {
+                return balanceWei > reserve ? (balanceWei - reserve) : 0n;
+              }
+              const raw = typeof msg.amountBnb === 'string' ? msg.amountBnb.trim() : '';
+              if (!raw) return 0n;
+              try {
+                return parseEther(raw);
+              } catch {
+                return 0n;
+              }
+            })();
+
+            if (valueWei <= 0n) throw new Error('Invalid amount');
+            if (valueWei + reserve > balanceWei) throw new Error('Insufficient balance');
+
+            const { txHash, broadcastVia, broadcastUrl } = await sendTransaction(
+              client,
+              account,
+              msg.toAddress,
+              '0x',
+              valueWei,
+              gasPriceWei,
+              chainId,
+              { skipEstimateGas: true, gasLimit }
+            );
+            broadcastStateChange();
+            return { ok: true, txHash, broadcastVia, broadcastUrl };
           }
 
           case 'tx:buy': {

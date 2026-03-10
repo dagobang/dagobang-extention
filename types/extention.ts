@@ -342,6 +342,14 @@ export type BgRequest =
   | { type: 'tx:buy'; input: TxBuyInput }
   | { type: 'tx:sell'; input: TxSellInput }
   | { type: 'tx:approve'; chainId: number; tokenAddress: `0x${string}`; spender: `0x${string}`; amountWei: string }
+  | {
+    type: 'tx:transferNative';
+    fromAddress: `0x${string}`;
+    toAddress: `0x${string}`;
+    amountBnb?: string;
+    useMax?: boolean;
+    password: string;
+  }
   | { type: 'tx:waitForReceipt'; hash: `0x${string}`; chainId: number }
   | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
@@ -414,6 +422,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
     | { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string }
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
+  : T extends { type: 'tx:transferNative' }
+  ? { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string }
   : T extends { type: 'tx:waitForReceipt' }
   ? {
     ok: boolean;

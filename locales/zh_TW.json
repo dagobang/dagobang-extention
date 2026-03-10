@@ -69,6 +69,22 @@
         "privateKey": "私鑰",
         "copy": "複製私鑰",
         "copied": "已複製"
+      },
+      "transfer": {
+        "button": "轉帳",
+        "title": "轉帳（BNB）",
+        "close": "關閉",
+        "from": "從",
+        "to": "目標地址",
+        "toPlaceholder": "0x...",
+        "amount": "金額",
+        "available": "可用餘額：",
+        "max": "MAX",
+        "unmax": "取消MAX",
+        "maxSelected": "已選擇 MAX",
+        "password": "密碼",
+        "passwordPlaceholder": "密碼",
+        "confirm": "確認轉帳"
       }
     },
     "settings": {

@@ -69,6 +69,22 @@
         "privateKey": "Private Key",
         "copy": "Copy Private Key",
         "copied": "Copied"
+      },
+      "transfer": {
+        "button": "Transfer",
+        "title": "Transfer (BNB)",
+        "close": "Close",
+        "from": "From",
+        "to": "To address",
+        "toPlaceholder": "0x...",
+        "amount": "Amount",
+        "available": "Available:",
+        "max": "MAX",
+        "unmax": "Unset MAX",
+        "maxSelected": "MAX selected",
+        "password": "Password",
+        "passwordPlaceholder": "Password",
+        "confirm": "Confirm transfer"
       }
     },
     "settings": {

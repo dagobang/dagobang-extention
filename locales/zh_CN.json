@@ -69,6 +69,22 @@
         "privateKey": "私钥",
         "copy": "复制私钥",
         "copied": "已复制"
+      },
+      "transfer": {
+        "button": "转账",
+        "title": "转账（BNB）",
+        "close": "关闭",
+        "from": "从",
+        "to": "目标地址",
+        "toPlaceholder": "0x...",
+        "amount": "金额",
+        "available": "可用余额：",
+        "max": "MAX",
+        "unmax": "取消MAX",
+        "maxSelected": "已选择 MAX",
+        "password": "密码",
+        "passwordPlaceholder": "密码",
+        "confirm": "确认转账"
       }
     },
     "settings": {

@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { call } from '@/utils/messaging';
 import { Header } from './Header';
 import type { BgGetStateResponse } from '@/types/extention';
-import { Lock, Copy, Check, Settings, KeyRound } from 'lucide-react';
+import { Lock, Copy, Check, Settings, KeyRound, Send } from 'lucide-react';
 import { t, type Locale } from '@/utils/i18n';
+import { formatEther, isAddress } from 'viem';
 
 type HomeViewProps = {
   state: BgGetStateResponse;
@@ -27,6 +28,12 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
   const [exportPassword, setExportPassword] = useState('');
   const [exportedPrivateKey, setExportedPrivateKey] = useState<`0x${string}` | null>(null);
   const [copiedPk, setCopiedPk] = useState(false);
+  const [transferFromAddress, setTransferFromAddress] = useState<`0x${string}` | null>(null);
+  const [transferToAddress, setTransferToAddress] = useState('');
+  const [transferAmountBnb, setTransferAmountBnb] = useState('');
+  const [transferUseMax, setTransferUseMax] = useState(false);
+  const [transferPassword, setTransferPassword] = useState('');
+  const [transferBalanceWei, setTransferBalanceWei] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
@@ -83,6 +90,51 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
     setExportedPrivateKey(null);
     setCopiedPk(false);
   };
+
+  const openTransfer = (addr: `0x${string}`) => {
+    setTransferFromAddress(addr);
+    setTransferToAddress('');
+    setTransferAmountBnb('');
+    setTransferUseMax(false);
+    setTransferPassword('');
+    setTransferBalanceWei(null);
+    withBusy(async () => {
+      const balRes = await call({ type: 'chain:getBalance', address: addr });
+      setTransferBalanceWei(balRes.balanceWei);
+    });
+  };
+
+  const closeTransfer = () => {
+    setTransferFromAddress(null);
+    setTransferToAddress('');
+    setTransferAmountBnb('');
+    setTransferUseMax(false);
+    setTransferPassword('');
+    setTransferBalanceWei(null);
+  };
+
+  const getTransferBalanceBnb = () => {
+    const addr = transferFromAddress;
+    if (!addr) return null;
+    if (transferBalanceWei) {
+      try {
+        return formatEther(BigInt(transferBalanceWei));
+      } catch {
+      }
+    }
+    return balances[addr] ?? null;
+  };
+
+  const canSubmitTransfer = (() => {
+    if (!transferFromAddress) return false;
+    const to = transferToAddress.trim();
+    if (!to || !isAddress(to)) return false;
+    if (!transferPassword) return false;
+    if (transferUseMax) return true;
+    const raw = transferAmountBnb.trim();
+    const n = Number(raw);
+    return raw.length > 0 && Number.isFinite(n) && n > 0;
+  })();
 
   return (
     <div className="relative w-[360px] bg-zinc-950 text-zinc-100 h-[500px] flex flex-col">
@@ -233,6 +285,17 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
                 >
                   <Settings size={14} />
                 </button>
+                <button
+                  className="w-7 h-7 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors flex items-center justify-center"
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openTransfer(acc.address);
+                  }}
+                  title={tt('popup.home.transfer.button')}
+                >
+                  <Send size={14} />
+                </button>
                 {acc.address !== getCurrentAddress() && (
                   <button
                     className="px-2 py-1 rounded bg-zinc-800 text-[12px] hover:bg-zinc-700 transition-colors"
@@ -361,6 +424,103 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {transferFromAddress && (
+        <div className="absolute inset-0 bg-black/60 flex items-center justify-center p-4">
+          <div className="w-full rounded-md bg-zinc-950 border border-zinc-800 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold">{tt('popup.home.transfer.title')}</div>
+              <button
+                className="text-[12px] text-zinc-400 hover:text-zinc-200"
+                onClick={closeTransfer}
+              >
+                {tt('popup.home.transfer.close')}
+              </button>
+            </div>
+
+            <div className="text-[12px] text-zinc-500">
+              {tt('popup.home.transfer.from')} {transferFromAddress.slice(0, 6)}...{transferFromAddress.slice(-4)}
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-[14px] text-zinc-400">{tt('popup.home.transfer.to')}</div>
+              <input
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs outline-none font-mono placeholder:font-sans"
+                placeholder={tt('popup.home.transfer.toPlaceholder')}
+                value={transferToAddress}
+                onChange={(e) => setTransferToAddress(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <div className="text-[14px] text-zinc-400">{tt('popup.home.transfer.amount')}</div>
+                <div className="text-[12px] text-zinc-500">
+                  {tt('popup.home.transfer.available')} {getTransferBalanceBnb() ?? '...'} BNB
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  className="flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs outline-none font-mono placeholder:font-sans"
+                  placeholder={transferUseMax ? tt('popup.home.transfer.maxSelected') : '0.0'}
+                  value={transferUseMax ? '' : transferAmountBnb}
+                  onChange={(e) => setTransferAmountBnb(e.target.value)}
+                  disabled={busy || transferUseMax}
+                  inputMode="decimal"
+                />
+                <button
+                  type="button"
+                  className="rounded-md bg-zinc-800 px-2 py-2 text-xs font-semibold hover:bg-zinc-700 transition-colors disabled:opacity-60"
+                  disabled={busy}
+                  onClick={() => {
+                    if (transferUseMax) {
+                      setTransferUseMax(false);
+                    } else {
+                      setTransferUseMax(true);
+                      setTransferAmountBnb('');
+                    }
+                  }}
+                >
+                  {transferUseMax ? tt('popup.home.transfer.unmax') : tt('popup.home.transfer.max')}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-[14px] text-zinc-400">{tt('popup.home.transfer.password')}</div>
+              <input
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs outline-none"
+                placeholder={tt('popup.home.transfer.passwordPlaceholder')}
+                value={transferPassword}
+                type="password"
+                onChange={(e) => setTransferPassword(e.target.value)}
+              />
+            </div>
+
+            <button
+              className="w-full rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold disabled:opacity-60 hover:bg-emerald-500 transition-colors"
+              disabled={busy || !canSubmitTransfer}
+              onClick={() =>
+                withBusy(async () => {
+                  const to = transferToAddress.trim() as `0x${string}`;
+                  await call({
+                    type: 'tx:transferNative',
+                    fromAddress: transferFromAddress,
+                    toAddress: to,
+                    amountBnb: transferAmountBnb.trim(),
+                    useMax: transferUseMax,
+                    password: transferPassword,
+                  });
+                  closeTransfer();
+                  await onRefresh();
+                })
+              }
+            >
+              {tt('popup.home.transfer.confirm')}
+            </button>
           </div>
         </div>
       )}
