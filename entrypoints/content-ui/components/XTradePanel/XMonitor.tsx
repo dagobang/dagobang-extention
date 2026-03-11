@@ -180,6 +180,20 @@ export function XMonitorContent({
     setWsMonitorEnabled(resolvedSettings?.autoTrade?.wsMonitorEnabled !== false);
   }, [resolvedSettings?.autoTrade?.wsMonitorEnabled]);
 
+  const tickerLenFilter = useMemo(() => {
+    const parseLen = (v: any) => {
+      if (typeof v !== 'string') return null;
+      const n = Number(v.trim());
+      if (!Number.isFinite(n)) return null;
+      const i = Math.floor(n);
+      return i >= 0 ? i : null;
+    };
+    const snipe = (resolvedSettings as any)?.autoTrade?.twitterSnipe ?? null;
+    const min = parseLen(snipe?.minTickerLen);
+    const max = parseLen(snipe?.maxTickerLen);
+    return { min, max };
+  }, [resolvedSettings]);
+
   const signalsRef = useRef<Map<string, UnifiedTwitterSignal>>(new Map());
   const [signalIds, setSignalIds] = useState<string[]>([]);
   const onlyWithTokensStorageKey = 'dagobang_xmonitor_onlyWithTokens_v1';
@@ -277,8 +291,24 @@ export function XMonitorContent({
   }, [signalIds]);
 
   const visibleSignals = useMemo(() => {
-    if (!onlyWithTokens) return signalList;
-    return signalList.filter((s) => Array.isArray(s.tokens) && s.tokens.length > 0);
+    const list = onlyWithTokens ? signalList.filter((s) => Array.isArray(s.tokens) && s.tokens.length > 0) : signalList;
+    const getMcapScore = (s: UnifiedTwitterSignal) => {
+      const tokens = Array.isArray(s.tokens) ? (s.tokens as UnifiedSignalToken[]) : [];
+      let best = 0;
+      for (const t of tokens) {
+        const mc = typeof (t as any)?.marketCapUsd === 'number' ? Number((t as any).marketCapUsd) : 0;
+        if (Number.isFinite(mc) && mc > best) best = mc;
+      }
+      return best;
+    };
+    return list
+      .slice()
+      .sort((a, b) => {
+        const da = getMcapScore(a);
+        const db = getMcapScore(b);
+        if (db !== da) return db - da;
+        return (b.receivedAtMs ?? b.ts) - (a.receivedAtMs ?? a.ts);
+      });
   }, [signalList, onlyWithTokens]);
 
   useEffect(() => {
@@ -441,8 +471,24 @@ export function XMonitorContent({
               const followFollowers = formatCountShort(signal.followedUserFollowers);
 
               const displayTokens = normalizeSignalTokensForDisplay(signal)
+                .filter((t) => {
+                  const min = tickerLenFilter.min;
+                  const max = tickerLenFilter.max;
+                  if (min == null && max == null) return true;
+                  const symbol = typeof t.tokenSymbol === 'string' ? t.tokenSymbol.trim() : '';
+                  if (!symbol) return false;
+                  const len = symbol.length;
+                  if (min != null && len < min) return false;
+                  if (max != null && len > max) return false;
+                  return true;
+                })
                 .slice()
-                .sort((a, b) => a.firstSeenAtMs - b.firstSeenAtMs)
+                .sort((a, b) => {
+                  const ma = typeof a.marketCapUsd === 'number' ? a.marketCapUsd : 0;
+                  const mb = typeof b.marketCapUsd === 'number' ? b.marketCapUsd : 0;
+                  if (mb !== ma) return mb - ma;
+                  return a.firstSeenAtMs - b.firstSeenAtMs;
+                })
                 .slice(0, tokenLimit);
 
               return (

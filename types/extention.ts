@@ -47,6 +47,8 @@ export type AutoTradeStrategyBase = {
   maxMarketCapUsd: string;
   minHolders: string;
   maxHolders: string;
+  minTickerLen?: string;
+  maxTickerLen?: string;
   minTokenAgeMinutes: string;
   maxTokenAgeMinutes: string;
   minDevHoldPercent: string;
@@ -56,6 +58,7 @@ export type AutoTradeStrategyBase = {
 
 export type AutoTradeTwitterSnipeStrategy = AutoTradeStrategyBase & {
   dryRun?: boolean;
+  deleteTweetSellPercent?: string;
   targetUsers: string[];
   interactionTypes: AutoTradeInteractionType[];
 };

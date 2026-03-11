@@ -226,6 +226,8 @@ export function validateSettings(input: Settings): Settings | null {
     maxMarketCapUsd: clampStringNumber(inputTwitterSnipe.maxMarketCapUsd, defaultTwitterSnipe.maxMarketCapUsd),
     minHolders: clampStringNumber(inputTwitterSnipe.minHolders, defaultTwitterSnipe.minHolders),
     maxHolders: clampStringNumber(inputTwitterSnipe.maxHolders, defaultTwitterSnipe.maxHolders),
+    minTickerLen: clampStringNumber(inputTwitterSnipe.minTickerLen, defaultTwitterSnipe.minTickerLen),
+    maxTickerLen: clampStringNumber(inputTwitterSnipe.maxTickerLen, defaultTwitterSnipe.maxTickerLen),
     minTokenAgeMinutes: clampStringNumber(inputTwitterSnipe.minTokenAgeMinutes, defaultTwitterSnipe.minTokenAgeMinutes),
     maxTokenAgeMinutes: clampStringNumber(inputTwitterSnipe.maxTokenAgeMinutes, defaultTwitterSnipe.maxTokenAgeMinutes),
     minDevHoldPercent: clampStringNumber(inputTwitterSnipe.minDevHoldPercent, defaultTwitterSnipe.minDevHoldPercent),
@@ -233,6 +235,7 @@ export function validateSettings(input: Settings): Settings | null {
     blockIfDevSell: typeof inputTwitterSnipe.blockIfDevSell === 'boolean'
       ? inputTwitterSnipe.blockIfDevSell
       : defaultTwitterSnipe.blockIfDevSell,
+    deleteTweetSellPercent: clampStringNumber(inputTwitterSnipe.deleteTweetSellPercent, defaultTwitterSnipe.deleteTweetSellPercent),
     targetUsers: parseListInput(inputTwitterSnipe.targetUsers, defaultTwitterSnipe.targetUsers),
     interactionTypes: interactionTypes.length ? (interactionTypes as any) : defaultTwitterSnipe.interactionTypes,
   };

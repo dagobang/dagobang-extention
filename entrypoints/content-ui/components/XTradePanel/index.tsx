@@ -131,7 +131,7 @@ export function XTradePanel({
       </div>
 
       <XMonitorContent siteInfo={siteInfo} active={activeTab === 'xmonitor'} settings={settings} />
-      <XSniperContent active={activeTab === 'xsniper'} settings={settings} isUnlocked={isUnlocked} />
+      <XSniperContent siteInfo={siteInfo} active={activeTab === 'xsniper'} settings={settings} isUnlocked={isUnlocked} />
     </div>
   );
 }

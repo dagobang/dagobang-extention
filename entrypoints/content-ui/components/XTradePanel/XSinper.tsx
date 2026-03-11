@@ -36,12 +36,15 @@ const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
 
 type XSniperBuyRecord = {
   id: string;
+  side?: 'buy' | 'sell';
   tsMs: number;
   chainId: number;
   tokenAddress: string;
   tokenSymbol?: string;
   tokenName?: string;
-  buyAmountBnb: number;
+  buyAmountBnb?: number;
+  sellPercent?: number;
+  sellTokenAmountWei?: string;
   txHash?: string;
   entryPriceUsd?: number;
   dryRun?: boolean;
@@ -58,6 +61,9 @@ type XSniperBuyRecord = {
   tweetType?: string;
   channel?: string;
   signalId?: string;
+  signalEventId?: string;
+  signalTweetId?: string;
+  reason?: string;
 };
 
 const cloneAutoTrade = (value: AutoTradeConfig | null) => {
@@ -494,6 +500,31 @@ export function XSniperContent({
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <div className="w-16 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.filterTickerLen')}</div>
+              <div className="grid flex-1 grid-cols-2 gap-2">
+                <div>
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMin')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={twitterSnipe?.minTickerLen ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ minTickerLen: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMax')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={twitterSnipe?.maxTickerLen ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ maxTickerLen: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
               <div className="w-16 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.filterTokenAge')}</div>
               <div className="grid flex-1 grid-cols-2 gap-2">
                 <div className="relative">
@@ -548,16 +579,31 @@ export function XSniperContent({
               </div>
             </div>
           </div>
-          <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-            <input
-              type="checkbox"
-              className="h-3 w-3 accent-amber-500"
-              checked={!!twitterSnipe?.blockIfDevSell}
-              disabled={!canEdit}
-              onChange={(e) => updateTwitterSnipe({ blockIfDevSell: e.target.checked })}
-            />
-            {tt('contentUi.autoTradeStrategy.blockIfDevSell')}
-          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-[12px] text-zinc-300">
+              <input
+                type="checkbox"
+                className="h-3 w-3 accent-amber-500"
+                checked={!!twitterSnipe?.blockIfDevSell}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ blockIfDevSell: e.target.checked })}
+              />
+              {tt('contentUi.autoTradeStrategy.blockIfDevSell')}
+            </label>
+            <div className="flex items-center gap-2 text-[12px] text-zinc-300">
+              <div className="text-zinc-400">{tt('contentUi.autoTradeStrategy.deleteTweetSellPercent')}</div>
+              <div className="relative w-[96px]">
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-6 text-[13px] outline-none"
+                  value={twitterSnipe?.deleteTweetSellPercent ?? ''}
+                  disabled={!canEdit}
+                  onChange={(e) => updateTwitterSnipe({ deleteTweetSellPercent: e.target.value })}
+                />
+                <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">%</div>
+              </div>
+            </div>
+          </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -633,6 +679,7 @@ export function XSniperContent({
                 <div key={r.id} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
                   {(() => {
                     const latest = latestTokenByAddr[String(r.tokenAddress).toLowerCase()] ?? null;
+                    const isSell = r.side === 'sell';
                     const orderMcap = typeof r.marketCapUsd === 'number' ? r.marketCapUsd : null;
                     const latestMcap = latest && typeof latest.marketCapUsd === 'number' ? (latest.marketCapUsd as number) : null;
                     const pnlPct =
@@ -673,10 +720,14 @@ export function XSniperContent({
                         </div>
                         <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-zinc-400">
                           <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: {formatBnb(r.buyAmountBnb)}
+                            {isSell
+                              ? `${tt('contentUi.autoTradeStrategy.snipeHistorySellPercent')}: ${r.sellPercent == null ? '-' : `${r.sellPercent.toFixed(2)}%`}` 
+                              : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnb(r.buyAmountBnb)}`}
                           </div>
                           <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryPrice')}: {formatUsd(r.entryPriceUsd)}
+                            {isSell
+                              ? `${tt('contentUi.autoTradeStrategy.snipeHistoryReason')}: ${r.reason ? String(r.reason) : '-'}`
+                              : `${tt('contentUi.autoTradeStrategy.snipeHistoryPrice')}: ${formatUsd(r.entryPriceUsd)}`}
                           </div>
                           <div>
                             {tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')}: {formatCompact(r.marketCapUsd)}

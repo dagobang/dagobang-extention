@@ -16,6 +16,7 @@ import { cancelAllSellLimitOrdersForToken, createLimitOrder } from '@/services/l
 
 type TokenMetrics = {
   tokenAddress?: `0x${string}`;
+  tokenSymbol?: string;
   marketCapUsd?: number;
   liquidityUsd?: number;
   holders?: number;
@@ -29,12 +30,15 @@ type TokenMetrics = {
 
 type XSniperBuyRecord = {
   id: string;
+  side?: 'buy' | 'sell';
   tsMs: number;
   chainId: number;
   tokenAddress: `0x${string}`;
   tokenSymbol?: string;
   tokenName?: string;
-  buyAmountBnb: number;
+  buyAmountBnb?: number;
+  sellPercent?: number;
+  sellTokenAmountWei?: string;
   txHash?: `0x${string}`;
   entryPriceUsd?: number;
   dryRun?: boolean;
@@ -51,6 +55,9 @@ type XSniperBuyRecord = {
   tweetType?: string;
   channel?: string;
   signalId?: string;
+  signalEventId?: string;
+  signalTweetId?: string;
+  reason?: string;
 };
 
 const parseNumber = (v: string | null | undefined) => {
@@ -88,6 +95,18 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any) => {
   if (maxHolders != null && metrics.holders == null) return false;
   if (minHolders != null && metrics.holders != null && metrics.holders < minHolders) return false;
   if (maxHolders != null && metrics.holders != null && metrics.holders > maxHolders) return false;
+
+  const minTickerLenRaw = parseNumber(config.minTickerLen);
+  const maxTickerLenRaw = parseNumber(config.maxTickerLen);
+  const minTickerLen = minTickerLenRaw != null ? Math.max(0, Math.floor(minTickerLenRaw)) : null;
+  const maxTickerLen = maxTickerLenRaw != null ? Math.max(0, Math.floor(maxTickerLenRaw)) : null;
+  if (minTickerLen != null || maxTickerLen != null) {
+    const symbol = typeof metrics.tokenSymbol === 'string' ? metrics.tokenSymbol.trim() : '';
+    if (!symbol) return false;
+    const len = symbol.length;
+    if (minTickerLen != null && len < minTickerLen) return false;
+    if (maxTickerLen != null && len > maxTickerLen) return false;
+  }
 
   const minAgeMin = parseNumber(config.minTokenAgeMinutes);
   const maxAgeMin = parseNumber(config.maxTokenAgeMinutes);
@@ -161,6 +180,16 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       list.unshift(record);
       await browser.storage.local.set({ [HISTORY_STORAGE_KEY]: list.slice(0, HISTORY_LIMIT) } as any);
     } catch {
+    }
+  };
+
+  const loadHistory = async (): Promise<XSniperBuyRecord[]> => {
+    try {
+      const res = await browser.storage.local.get(HISTORY_STORAGE_KEY);
+      const raw = (res as any)?.[HISTORY_STORAGE_KEY];
+      return Array.isArray(raw) ? (raw as XSniperBuyRecord[]) : [];
+    } catch {
+      return [];
     }
   };
 
@@ -368,6 +397,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         const now = Date.now();
         const record: XSniperBuyRecord = {
           id: `${now}-${Math.random().toString(16).slice(2)}`,
+          side: 'buy',
           tsMs: now,
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
@@ -390,6 +420,8 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
           channel: input.signal?.channel ? String(input.signal.channel) : undefined,
           signalId: input.signal?.id ? String(input.signal.id) : undefined,
+          signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+          signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
         };
         void pushHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
@@ -412,6 +444,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       const now = Date.now();
       const record: XSniperBuyRecord = {
         id: `${now}-${Math.random().toString(16).slice(2)}`,
+        side: 'buy',
         tsMs: now,
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
@@ -434,6 +467,8 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
         channel: input.signal?.channel ? String(input.signal.channel) : undefined,
         signalId: input.signal?.id ? String(input.signal.id) : undefined,
+        signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+        signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
       };
       void pushHistory(record);
       void broadcastToTabs({ type: 'bg:xsniper:buy', record });
@@ -477,6 +512,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     if (!tokenAddress) return null;
     return {
       tokenAddress,
+      tokenSymbol: typeof (t as any).tokenSymbol === 'string' ? String((t as any).tokenSymbol) : undefined,
       marketCapUsd: typeof (t as any).marketCapUsd === 'number' ? (t as any).marketCapUsd : undefined,
       liquidityUsd: typeof (t as any).liquidityUsd === 'number' ? (t as any).liquidityUsd : undefined,
       holders: typeof (t as any).holders === 'number' ? (t as any).holders : undefined,
@@ -547,6 +583,126 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     return picked;
   };
 
+  const deleteSellInFlight = new Set<string>();
+
+  const tryDeleteTweetSellOnce = async (input: {
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    percent: number;
+    signal: UnifiedTwitterSignal;
+    relatedBuy?: XSniperBuyRecord;
+    dryRun: boolean;
+  }) => {
+    const percent = Math.max(0, Math.min(100, Number(input.percent)));
+    if (!Number.isFinite(percent) || percent <= 0) return;
+    const bps = Math.floor(percent * 100);
+    if (!(bps > 0)) return;
+
+    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${String(input.signal.eventId ?? '')}:${String(input.signal.tweetId ?? '')}:${bps}`;
+    if (deleteSellInFlight.has(dedupeKey)) return;
+    deleteSellInFlight.add(dedupeKey);
+    try {
+      const now = Date.now();
+      const baseRecord: XSniperBuyRecord = {
+        id: `${now}-${Math.random().toString(16).slice(2)}`,
+        side: 'sell',
+        tsMs: now,
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        tokenSymbol: input.relatedBuy?.tokenSymbol,
+        tokenName: input.relatedBuy?.tokenName,
+        sellPercent: percent,
+        sellTokenAmountWei: undefined,
+        txHash: undefined,
+        dryRun: input.dryRun,
+        tweetType: input.signal.tweetType,
+        channel: input.signal.channel,
+        signalId: input.signal.id,
+        signalEventId: input.signal.eventId,
+        signalTweetId: input.signal.tweetId,
+      };
+
+      if (input.dryRun) {
+        const record = { ...baseRecord, reason: 'dry_run' };
+        void pushHistory(record);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+        return;
+      }
+
+      const status = await WalletService.getStatus();
+      if (status.locked || !status.address) {
+        const record = { ...baseRecord, dryRun: false, reason: 'wallet_locked' };
+        void pushHistory(record);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+        return;
+      }
+
+      const tokenInfo =
+        (await fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ??
+        (await buildGenericTokenInfo(input.chainId, input.tokenAddress));
+      if (!tokenInfo) {
+        const record = { ...baseRecord, dryRun: false, reason: 'token_info_missing' };
+        void pushHistory(record);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+        return;
+      }
+
+      const settings = await SettingsService.get();
+      const isTurbo = (settings as any).chains?.[input.chainId]?.executionMode === 'turbo';
+      let balanceWei = 0n;
+      try {
+        balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, status.address));
+      } catch {
+        balanceWei = 0n;
+      }
+
+      if (balanceWei <= 0n) {
+        const record = { ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' };
+        void pushHistory(record);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+        return;
+      }
+
+      let amountWei = (balanceWei * BigInt(bps)) / 10000n;
+      if (amountWei > balanceWei) amountWei = balanceWei;
+      const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
+      const isInnerFourMeme = !!(tokenInfo as any)?.launchpad && platform.includes('fourmeme') && (tokenInfo as any).launchpad_status !== 1;
+      if (!isTurbo && isInnerFourMeme && amountWei > 0n) {
+        amountWei = (amountWei / 1000000000n) * 1000000000n;
+      }
+      if (!isTurbo && amountWei <= 0n) {
+        const record = { ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'invalid_amount' };
+        void pushHistory(record);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+        return;
+      }
+
+      try {
+        await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
+      } catch {}
+      const rsp = await TradeService.sell({
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        tokenAmountWei: amountWei.toString(),
+        tokenInfo,
+        sellPercentBps: bps,
+      } as any);
+
+      const record: XSniperBuyRecord = {
+        ...baseRecord,
+        dryRun: false,
+        tokenSymbol: tokenInfo.symbol ? String(tokenInfo.symbol) : baseRecord.tokenSymbol,
+        tokenName: tokenInfo.name ? String(tokenInfo.name) : baseRecord.tokenName,
+        sellTokenAmountWei: amountWei.toString(),
+        txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
+      };
+      void pushHistory(record);
+      void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+    } finally {
+      deleteSellInFlight.delete(dedupeKey);
+    }
+  };
+
   const handleTwitterSignal = async (signal: UnifiedTwitterSignal) => {
     try {
       const settings = await SettingsService.get();
@@ -557,6 +713,40 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       if (!strategy) return;
       if (strategy.enabled === false) return;
       if (!matchesTwitterFilters(signal, strategy)) return;
+
+      if (signal.tweetType === 'delete_post') {
+        const pct = parseNumber(strategy.deleteTweetSellPercent) ?? 0;
+        const percent = Math.max(0, Math.min(100, pct));
+        if (!(percent > 0)) return;
+
+        const delEventId = String(signal.eventId ?? '').trim();
+        const delTweetId = String(signal.tweetId ?? '').trim();
+        if (!delEventId && !delTweetId) return;
+
+        const history = await loadHistory();
+        const matchedBuys = history.filter((r) => {
+          if (!r) return false;
+          if (r.side && r.side !== 'buy') return false;
+          const ev = typeof r.signalEventId === 'string' ? r.signalEventId.trim() : '';
+          const tw = typeof r.signalTweetId === 'string' ? r.signalTweetId.trim() : '';
+          if (delEventId && ev && ev === delEventId) return true;
+          if (delTweetId && tw && tw === delTweetId) return true;
+          return false;
+        });
+        for (const r of matchedBuys) {
+          const addr = normalizeAddress(r.tokenAddress);
+          if (!addr) continue;
+          await tryDeleteTweetSellOnce({
+            chainId: r.chainId ?? settings.chainId,
+            tokenAddress: addr,
+            percent,
+            signal,
+            relatedBuy: r,
+            dryRun: strategy.dryRun === true,
+          });
+        }
+        return;
+      }
 
       const picked = pickTokensToBuyFromSignal(signal, strategy);
       for (const { m } of picked) {
