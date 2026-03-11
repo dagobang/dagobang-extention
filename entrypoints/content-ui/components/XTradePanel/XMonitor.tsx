@@ -163,6 +163,25 @@ const normalizeSignalTokensForDisplay = (signal: UnifiedTwitterSignal): UnifiedS
   return cleaned;
 };
 
+const computeTickerLen = (symbol: string) => {
+  let total = 0;
+  for (const ch of symbol) {
+    const cp = ch.codePointAt(0) ?? 0;
+    const isCjk =
+      (cp >= 0x3400 && cp <= 0x4dbf) ||
+      (cp >= 0x4e00 && cp <= 0x9fff) ||
+      (cp >= 0xf900 && cp <= 0xfaff) ||
+      (cp >= 0x20000 && cp <= 0x2a6df) ||
+      (cp >= 0x2a700 && cp <= 0x2b73f) ||
+      (cp >= 0x2b740 && cp <= 0x2b81f) ||
+      (cp >= 0x2b820 && cp <= 0x2ceaf) ||
+      (cp >= 0x2ceb0 && cp <= 0x2ebef) ||
+      (cp >= 0x2f800 && cp <= 0x2fa1f);
+    total += isCjk ? 2 : 1;
+  }
+  return total;
+};
+
 export function XMonitorContent({
   siteInfo,
   active,
@@ -460,7 +479,7 @@ export function XMonitorContent({
                   if (min == null && max == null) return true;
                   const symbol = typeof t.tokenSymbol === 'string' ? t.tokenSymbol.trim() : '';
                   if (!symbol) return false;
-                  const len = symbol.length;
+                  const len = computeTickerLen(symbol);
                   if (min != null && len < min) return false;
                   if (max != null && len > max) return false;
                   return true;
