@@ -112,23 +112,26 @@ const renderRichText = (text?: string | null, keyPrefix = 'rt'): ReactNode => {
   return nodes;
 };
 
-const getTypeMeta = (type?: UnifiedTwitterSignal['tweetType']) => {
+const getTypeMeta = (
+  type: UnifiedTwitterSignal['tweetType'] | undefined,
+  tt: (key: string, subs?: Array<string | number>) => string,
+) => {
   const key = type;
   switch (key) {
     case 'tweet':
-      return { label: '发推', className: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200' };
+      return { label: tt('contentUi.xMonitor.type.tweet'), className: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200' };
     case 'repost':
-      return { label: '转发', className: 'border-sky-500/40 bg-sky-500/15 text-sky-200' };
+      return { label: tt('contentUi.xMonitor.type.repost'), className: 'border-sky-500/40 bg-sky-500/15 text-sky-200' };
     case 'quote':
-      return { label: '引用', className: 'border-amber-500/40 bg-amber-500/15 text-amber-200' };
+      return { label: tt('contentUi.xMonitor.type.quote'), className: 'border-amber-500/40 bg-amber-500/15 text-amber-200' };
     case 'reply':
-      return { label: '回复', className: 'border-purple-500/40 bg-purple-500/15 text-purple-200' };
+      return { label: tt('contentUi.xMonitor.type.reply'), className: 'border-purple-500/40 bg-purple-500/15 text-purple-200' };
     case 'delete_post':
-      return { label: '删除推文', className: 'border-red-500/40 bg-red-500/15 text-red-200' };
+      return { label: tt('contentUi.xMonitor.type.delete'), className: 'border-red-500/40 bg-red-500/15 text-red-200' };
     case 'follow':
-      return { label: '关注', className: 'border-rose-500/40 bg-rose-500/15 text-rose-200' };
+      return { label: tt('contentUi.xMonitor.type.follow'), className: 'border-rose-500/40 bg-rose-500/15 text-rose-200' };
     case 'unfollow':
-      return { label: '取消关注', className: 'border-zinc-600 bg-zinc-800/70 text-zinc-300' };
+      return { label: tt('contentUi.xMonitor.type.unfollow'), className: 'border-zinc-600 bg-zinc-800/70 text-zinc-300' };
     default:
       return key ? { label: key, className: 'border-zinc-700 bg-zinc-900 text-zinc-400' } : null;
   }
@@ -173,13 +176,27 @@ export function XMonitorContent({
 
   const signalsRef = useRef<Map<string, UnifiedTwitterSignal>>(new Map());
   const [signalIds, setSignalIds] = useState<string[]>([]);
-  const [onlyWithTokens, setOnlyWithTokens] = useState(false);
+  const onlyWithTokensStorageKey = 'dagobang_xmonitor_onlyWithTokens_v1';
+  const [onlyWithTokens, setOnlyWithTokens] = useState(() => {
+    try {
+      return window.localStorage.getItem(onlyWithTokensStorageKey) === '1';
+    } catch {
+      return false;
+    }
+  });
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(520);
   const rowHeightsRef = useRef<Map<string, number>>(new Map());
   const [rowVersion, setRowVersion] = useState(0);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(onlyWithTokensStorageKey, onlyWithTokens ? '1' : '0');
+    } catch {
+    }
+  }, [onlyWithTokens]);
 
   useEffect(() => {
     const loadFromStorage = () => {
@@ -301,7 +318,7 @@ export function XMonitorContent({
               checked={onlyWithTokens}
               onChange={(e) => setOnlyWithTokens(e.target.checked)}
             />
-            只看有代币
+            {tt('contentUi.xMonitor.filterOnlyWithTokens')}
           </label>
         </div>
 
@@ -312,16 +329,16 @@ export function XMonitorContent({
 
       <div ref={listRef} className="max-h-[62vh] overflow-y-auto p-3">
         {visibleSignals.length === 0 ? (
-          <div className="px-2 py-8 text-center text-[14px] text-zinc-500">暂无推文</div>
+          <div className="px-2 py-8 text-center text-[14px] text-zinc-500">{tt('contentUi.xMonitor.empty')}</div>
         ) : (
           <div>
             {virtualRange.top > 0 ? <div style={{ height: virtualRange.top }} /> : null}
             {visibleSignals.slice(virtualRange.start, virtualRange.end).map((signal) => {
               const timeText = formatAgeShort(signal.receivedAtMs ?? signal.ts);
-              const displayName = signal.userName || signal.userScreen || 'Unknown';
+              const displayName = signal.userName || signal.userScreen || tt('contentUi.xMonitor.unknownUser');
               const handle = signal.userScreen ? `@${signal.userScreen}` : null;
               const followerText = formatCountShort(signal.userFollowers);
-              const typeMeta = getTypeMeta(signal.tweetType);
+              const typeMeta = getTypeMeta(signal.tweetType, tt);
               const avatarFallback = displayName ? displayName.trim().charAt(0).toUpperCase() : '?';
 
               const tweetLink = signal.tweetId
@@ -402,7 +419,7 @@ export function XMonitorContent({
                   </div>
 
                   {replyHandle ? (
-                    <div className="mt-2 text-[14px] text-amber-300">↩ 回复 @{replyHandle}</div>
+                    <div className="mt-2 text-[14px] text-amber-300">{tt('contentUi.xMonitor.replyTo', [replyHandle])}</div>
                   ) : null}
 
                   {followDisplayName && (signal.tweetType === 'follow' || signal.tweetType === 'unfollow') ? (
@@ -429,7 +446,7 @@ export function XMonitorContent({
                               {followFollowers ? <div className="text-[11px] text-zinc-500">{followFollowers}</div> : null}
                             </div>
                             <div className="text-[11px] text-zinc-500">
-                              {signal.tweetType === 'follow' ? '被关注账号' : '被取消关注账号'}
+                              {signal.tweetType === 'follow' ? tt('contentUi.xMonitor.followTarget') : tt('contentUi.xMonitor.unfollowTarget')}
                             </div>
                           </div>
                         </div>
@@ -475,7 +492,7 @@ export function XMonitorContent({
                               ) : null}
                               {quoteHandle ? <div className="truncate text-[11px] text-zinc-400">{quoteHandle}</div> : null}
                             </div>
-                            <div className="text-[11px] text-zinc-500">引用推文</div>
+                            <div className="text-[11px] text-zinc-500">{tt('contentUi.xMonitor.quotedTweet')}</div>
                           </div>
                         </div>
                         {quotedLink ? (
@@ -520,7 +537,7 @@ export function XMonitorContent({
                               ) : null}
                               {quoteHandle ? <div className="truncate text-[11px] text-zinc-400">{quoteHandle}</div> : null}
                             </div>
-                            <div className="text-[11px] text-zinc-500">被转发推文</div>
+                            <div className="text-[11px] text-zinc-500">{tt('contentUi.xMonitor.repostedTweet')}</div>
                           </div>
                         </div>
                         {quotedLink ? (
@@ -540,7 +557,7 @@ export function XMonitorContent({
                       ) : null}
                       {signal.translatedText ? (
                         <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
-                          <div className="text-[10px] text-zinc-500">翻译</div>
+                          <div className="text-[10px] text-zinc-500">{tt('contentUi.xMonitor.translation')}</div>
                           <div className="mt-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
                             {renderRichText(signal.translatedText, `${signal.id}:translated:repost`)}
                           </div>
@@ -597,7 +614,7 @@ export function XMonitorContent({
 
                   {signal.translatedText && signal.tweetType !== 'repost' ? (
                     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
-                      <div className="text-[10px] text-zinc-500">翻译</div>
+                      <div className="text-[10px] text-zinc-500">{tt('contentUi.xMonitor.translation')}</div>
                       <div className="mt-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
                         {renderRichText(signal.translatedText, `${signal.id}:translated`)}
                       </div>
@@ -704,6 +721,10 @@ export function XMonitorPanel({
 }: XMonitorPanelProps) {
   if (!visible) return null;
 
+  const resolvedSettings = settings ?? ((window as any).__DAGOBANG_SETTINGS__ ?? null);
+  const locale: Locale = normalizeLocale(resolvedSettings?.locale ?? 'zh_CN');
+  const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
+
   return (
     <div
       className="fixed right-4 top-32 z-[2147483647] w-[360px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/20 font-sans"
@@ -711,7 +732,7 @@ export function XMonitorPanel({
       <div
         className="flex items-center justify-between gap-3 px-4 py-3 border-b border-zinc-800/60"
       >
-        <div className="text-xs font-semibold text-emerald-300">推特监控</div>
+        <div className="text-xs font-semibold text-emerald-300">{tt('contentUi.xMonitor.title')}</div>
         <button className="text-zinc-400 hover:text-zinc-200" onClick={() => onVisibleChange(false)}>
           <X size={16} />
         </button>

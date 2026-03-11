@@ -173,6 +173,27 @@
     "common": {
       "token": "Token"
     },
+    "xMonitor": {
+      "title": "X Monitor",
+      "filterOnlyWithTokens": "Only with tokens",
+      "empty": "No posts",
+      "unknownUser": "Unknown",
+      "replyTo": "↩ Reply @{0}",
+      "followTarget": "Followed account",
+      "unfollowTarget": "Unfollowed account",
+      "quotedTweet": "Quoted tweet",
+      "repostedTweet": "Reposted tweet",
+      "translation": "Translation",
+      "type": {
+        "tweet": "Tweet",
+        "repost": "Repost",
+        "quote": "Quote",
+        "reply": "Reply",
+        "delete": "Delete tweet",
+        "follow": "Follow",
+        "unfollow": "Unfollow"
+      }
+    },
     "toast": {
       "trading": "[{0}] Trading...",
       "buySuccessTime": "[{0}] Buy succeeded! {1}s ({2})",

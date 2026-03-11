@@ -173,6 +173,27 @@
     "common": {
       "token": "代幣"
     },
+    "xMonitor": {
+      "title": "推特監控",
+      "filterOnlyWithTokens": "只看有代幣",
+      "empty": "暫無推文",
+      "unknownUser": "未知",
+      "replyTo": "↩ 回覆 @{0}",
+      "followTarget": "被關注帳號",
+      "unfollowTarget": "被取消關注帳號",
+      "quotedTweet": "引用推文",
+      "repostedTweet": "被轉發推文",
+      "translation": "翻譯",
+      "type": {
+        "tweet": "發推",
+        "repost": "轉發",
+        "quote": "引用",
+        "reply": "回覆",
+        "delete": "刪除推文",
+        "follow": "關注",
+        "unfollow": "取消關注"
+      }
+    },
     "toast": {
       "trading": "[{0}] 交易執行中...",
       "buySuccessTime": "[{0}] 成功買入！耗時 {1} 秒（{2}）",
