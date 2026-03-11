@@ -784,7 +784,9 @@ export function initGmgnWsMonitor(options: {
         wsStatus = { ...wsStatus, lastSignalAt: now, signalCount: wsStatus.signalCount + 1 };
         pushLog('signal', `${summarizeTokensForLog(merged)}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
         emitStatus();
-        if (signalHasTokens(merged) && merged.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: merged });
+        if (signalHasTokens(merged) && merged.tweetType !== 'delete_post') {
+          void options.call({ type: 'twitter:signal', payload: merged }).catch(() => {});
+        }
         continue;
       }
 
@@ -845,7 +847,9 @@ export function initGmgnWsMonitor(options: {
       };
       pushLog('signal', `${summarizeTokensForLog(signal)}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
       emitStatus();
-      if (signalHasTokens(signal) && signal.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: signal });
+      if (signalHasTokens(signal) && signal.tweetType !== 'delete_post') {
+        void options.call({ type: 'twitter:signal', payload: signal }).catch(() => {});
+      }
     }
     emitStatus();
   };

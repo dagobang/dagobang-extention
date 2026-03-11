@@ -7,6 +7,8 @@ export async function call<T extends BgRequest>(req: T): Promise<BgResponse<T>> 
     // Longer timeout for transaction waiting
     const timeoutMs = (req.type === 'tx:waitForReceipt' || req.type === 'ai:generateLogo')
       ? 60000
+      : req.type === 'twitter:signal'
+        ? 20000
       : req.type.startsWith('limitOrder:')
         ? 15000
         : 5000;
@@ -17,7 +19,10 @@ export async function call<T extends BgRequest>(req: T): Promise<BgResponse<T>> 
     }
     return res as BgResponse<T>;
   } catch (e: any) {
-    console.error('Call failed:', req.type, e);
+    const isTimeout = e?.message?.includes('Request timed out');
+    if (!(req.type === 'twitter:signal' && isTimeout)) {
+      console.error('Call failed:', req.type, e);
+    }
     if (req.type === 'bg:ping') throw e;
     if (e?.message?.includes('Could not establish connection') || e?.message?.includes('closed')) {
       await new Promise(r => setTimeout(r, 1000));
