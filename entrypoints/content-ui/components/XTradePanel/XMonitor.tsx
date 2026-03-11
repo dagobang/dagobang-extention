@@ -291,24 +291,7 @@ export function XMonitorContent({
   }, [signalIds]);
 
   const visibleSignals = useMemo(() => {
-    const list = onlyWithTokens ? signalList.filter((s) => Array.isArray(s.tokens) && s.tokens.length > 0) : signalList;
-    const getMcapScore = (s: UnifiedTwitterSignal) => {
-      const tokens = Array.isArray(s.tokens) ? (s.tokens as UnifiedSignalToken[]) : [];
-      let best = 0;
-      for (const t of tokens) {
-        const mc = typeof (t as any)?.marketCapUsd === 'number' ? Number((t as any).marketCapUsd) : 0;
-        if (Number.isFinite(mc) && mc > best) best = mc;
-      }
-      return best;
-    };
-    return list
-      .slice()
-      .sort((a, b) => {
-        const da = getMcapScore(a);
-        const db = getMcapScore(b);
-        if (db !== da) return db - da;
-        return (b.receivedAtMs ?? b.ts) - (a.receivedAtMs ?? a.ts);
-      });
+    return onlyWithTokens ? signalList.filter((s) => Array.isArray(s.tokens) && s.tokens.length > 0) : signalList;
   }, [signalList, onlyWithTokens]);
 
   useEffect(() => {
