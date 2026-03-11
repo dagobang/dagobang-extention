@@ -1,4 +1,5 @@
 import { parseEther } from 'viem';
+import { browser } from 'wxt/browser';
 import { WalletService } from '@/services/wallet';
 import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
@@ -18,11 +19,38 @@ type TokenMetrics = {
   marketCapUsd?: number;
   liquidityUsd?: number;
   holders?: number;
+  kol?: number;
   createdAtMs?: number;
   devAddress?: `0x${string}`;
   devHoldPercent?: number;
   devHasSold?: boolean;
   priceUsd?: number;
+};
+
+type XSniperBuyRecord = {
+  id: string;
+  tsMs: number;
+  chainId: number;
+  tokenAddress: `0x${string}`;
+  tokenSymbol?: string;
+  tokenName?: string;
+  buyAmountBnb: number;
+  txHash?: `0x${string}`;
+  entryPriceUsd?: number;
+  dryRun?: boolean;
+  marketCapUsd?: number;
+  liquidityUsd?: number;
+  holders?: number;
+  kol?: number;
+  createdAtMs?: number;
+  devAddress?: `0x${string}`;
+  devHoldPercent?: number;
+  devHasSold?: boolean;
+  userScreen?: string;
+  userName?: string;
+  tweetType?: string;
+  channel?: string;
+  signalId?: string;
 };
 
 const parseNumber = (v: string | null | undefined) => {
@@ -84,8 +112,68 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any) => {
 };
 
 export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
-  const boughtOnce = new Set<string>();
+  const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
+  const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
+  const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
+  const HISTORY_LIMIT = 200;
+
+  let boughtOnceLoaded = false;
+  const boughtOnceAtMs = new Map<string, number>();
   const buyInFlight = new Set<string>();
+
+  const loadBoughtOnceIfNeeded = async () => {
+    if (boughtOnceLoaded) return;
+    boughtOnceLoaded = true;
+    try {
+      const res = await browser.storage.local.get(BOUGHT_ONCE_STORAGE_KEY);
+      const raw = (res as any)?.[BOUGHT_ONCE_STORAGE_KEY];
+      if (!raw || typeof raw !== 'object') return;
+      const now = Date.now();
+      for (const [key, ts] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof key !== 'string') continue;
+        const n = typeof ts === 'number' ? ts : Number(ts);
+        if (!Number.isFinite(n)) continue;
+        if (now - n > BOUGHT_ONCE_TTL_MS) continue;
+        boughtOnceAtMs.set(key, n);
+      }
+    } catch {
+    }
+  };
+
+  const persistBoughtOnce = async () => {
+    try {
+      const now = Date.now();
+      const obj: Record<string, number> = {};
+      for (const [k, ts] of boughtOnceAtMs) {
+        if (now - ts > BOUGHT_ONCE_TTL_MS) continue;
+        obj[k] = ts;
+      }
+      await browser.storage.local.set({ [BOUGHT_ONCE_STORAGE_KEY]: obj } as any);
+    } catch {
+    }
+  };
+
+  const pushHistory = async (record: XSniperBuyRecord) => {
+    try {
+      const res = await browser.storage.local.get(HISTORY_STORAGE_KEY);
+      const raw = (res as any)?.[HISTORY_STORAGE_KEY];
+      const list = Array.isArray(raw) ? raw.slice() : [];
+      list.unshift(record);
+      await browser.storage.local.set({ [HISTORY_STORAGE_KEY]: list.slice(0, HISTORY_LIMIT) } as any);
+    } catch {
+    }
+  };
+
+  const broadcastToTabs = async (message: any) => {
+    try {
+      const tabs = await browser.tabs.query({});
+      for (const tab of tabs) {
+        if (!tab.id) continue;
+        browser.tabs.sendMessage(tab.id, message).catch(() => { });
+      }
+    } catch {
+    }
+  };
 
   const normalizeAutoTrade = (input: any) => {
     const defaults = defaultSettings().autoTrade;
@@ -104,7 +192,8 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     };
   };
 
-  const getKey = (chainId: number, tokenAddress: `0x${string}`) => `${chainId}:${tokenAddress.toLowerCase()}`;
+  const getKey = (chainId: number, tokenAddress: `0x${string}`, type?: 'dry') =>
+    `${type === 'dry' ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}`;
 
   const isFlapAddress = (addr: string) => {
     const low = addr.toLowerCase();
@@ -242,9 +331,12 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     tokenAddress: `0x${string}`;
     metrics: TokenMetrics;
     strategy: any;
+    signal?: UnifiedTwitterSignal;
   }) => {
-    const key = getKey(input.chainId, input.tokenAddress);
-    if (boughtOnce.has(key)) return;
+    await loadBoughtOnceIfNeeded();
+    const dryRun = input.strategy?.dryRun === true;
+    const key = getKey(input.chainId, input.tokenAddress, dryRun ? 'dry' : undefined);
+    if (boughtOnceAtMs.has(key)) return;
     if (buyInFlight.has(key)) return;
     buyInFlight.add(key);
     try {
@@ -267,6 +359,43 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       };
       if (!shouldBuyByConfig(refreshedMetrics, input.strategy)) return;
 
+      if (dryRun) {
+        const entryPriceUsd = await getFreshPriceUsd(input.chainId, input.tokenAddress, tokenInfo, refreshedMetrics.priceUsd ?? null);
+        boughtOnceAtMs.set(key, Date.now());
+        void persistBoughtOnce();
+        deps.onStateChanged();
+
+        const now = Date.now();
+        const record: XSniperBuyRecord = {
+          id: `${now}-${Math.random().toString(16).slice(2)}`,
+          tsMs: now,
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          tokenSymbol: tokenInfo.symbol ? String(tokenInfo.symbol) : undefined,
+          tokenName: tokenInfo.name ? String(tokenInfo.name) : undefined,
+          buyAmountBnb: amountNumber,
+          txHash: undefined,
+          entryPriceUsd: entryPriceUsd ?? undefined,
+          dryRun: true,
+          marketCapUsd: refreshedMetrics.marketCapUsd,
+          liquidityUsd: refreshedMetrics.liquidityUsd,
+          holders: refreshedMetrics.holders,
+          kol: refreshedMetrics.kol,
+          createdAtMs: refreshedMetrics.createdAtMs,
+          devAddress: refreshedMetrics.devAddress,
+          devHoldPercent: refreshedMetrics.devHoldPercent,
+          devHasSold: refreshedMetrics.devHasSold,
+          userScreen: input.signal?.userScreen ? String(input.signal.userScreen) : undefined,
+          userName: input.signal?.userName ? String(input.signal.userName) : undefined,
+          tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
+          channel: input.signal?.channel ? String(input.signal.channel) : undefined,
+          signalId: input.signal?.id ? String(input.signal.id) : undefined,
+        };
+        void pushHistory(record);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+        return;
+      }
+
       const amountWei = parseEther(String(amountNumber));
       const rsp = await TradeService.buy({
         chainId: input.chainId,
@@ -276,10 +405,40 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       } as any);
 
       const entryPriceUsd = await getFreshPriceUsd(input.chainId, input.tokenAddress, tokenInfo, refreshedMetrics.priceUsd ?? null);
-      boughtOnce.add(key);
+      boughtOnceAtMs.set(key, Date.now());
+      void persistBoughtOnce();
       deps.onStateChanged();
 
-      if (entryPriceUsd != null && entryPriceUsd > 0) {
+      const now = Date.now();
+      const record: XSniperBuyRecord = {
+        id: `${now}-${Math.random().toString(16).slice(2)}`,
+        tsMs: now,
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        tokenSymbol: tokenInfo.symbol ? String(tokenInfo.symbol) : undefined,
+        tokenName: tokenInfo.name ? String(tokenInfo.name) : undefined,
+        buyAmountBnb: amountNumber,
+        txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
+        entryPriceUsd: entryPriceUsd ?? undefined,
+        dryRun: false,
+        marketCapUsd: refreshedMetrics.marketCapUsd,
+        liquidityUsd: refreshedMetrics.liquidityUsd,
+        holders: refreshedMetrics.holders,
+        kol: refreshedMetrics.kol,
+        createdAtMs: refreshedMetrics.createdAtMs,
+        devAddress: refreshedMetrics.devAddress,
+        devHoldPercent: refreshedMetrics.devHoldPercent,
+        devHasSold: refreshedMetrics.devHasSold,
+        userScreen: input.signal?.userScreen ? String(input.signal.userScreen) : undefined,
+        userName: input.signal?.userName ? String(input.signal.userName) : undefined,
+        tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
+        channel: input.signal?.channel ? String(input.signal.channel) : undefined,
+        signalId: input.signal?.id ? String(input.signal.id) : undefined,
+      };
+      void pushHistory(record);
+      void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+
+      if (input.strategy?.autoSellEnabled && entryPriceUsd != null && entryPriceUsd > 0) {
         try {
           await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
           await placeAutoSellOrdersIfEnabled(input.chainId, input.tokenAddress, tokenInfo, entryPriceUsd);
@@ -293,17 +452,24 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   };
 
   const matchesTwitterFilters = (signal: UnifiedTwitterSignal, strategy: any) => {
-    const type = String((signal as any).interactionType ?? '').toLowerCase();
+    const type = (() => {
+      const raw = signal.tweetType === 'delete_post' ? (signal.sourceTweetType ?? null) : signal.tweetType;
+      if (raw === 'repost') return 'retweet';
+      if (raw === 'tweet') return 'tweet';
+      if (raw === 'reply') return 'reply';
+      if (raw === 'quote') return 'quote';
+      if (raw === 'follow') return 'follow';
+      return '';
+    })();
     const allowedTypes = Array.isArray(strategy?.interactionTypes) ? strategy.interactionTypes.map((x: any) => String(x).toLowerCase()) : [];
     if (allowedTypes.length && !allowedTypes.includes(type)) return false;
 
     const targetUsers = Array.isArray(strategy?.targetUsers) ? strategy.targetUsers.map((x: any) => String(x).toLowerCase()).filter(Boolean) : [];
     if (!targetUsers.length) return true;
 
-    const screen = String((signal as any).userScreenName ?? '').toLowerCase();
-    const name = String((signal as any).userName ?? '').toLowerCase();
-    const author = String((signal as any).author ?? '').toLowerCase();
-    return targetUsers.some((u: string) => u === screen || u === name || u === author);
+    const screen = String(signal.userScreen ?? '').replace(/^@/, '').toLowerCase();
+    const name = String(signal.userName ?? '').toLowerCase();
+    return targetUsers.some((u: string) => u === screen || u === name);
   };
 
   const metricsFromUnifiedToken = (t: UnifiedSignalToken): TokenMetrics | null => {
@@ -314,6 +480,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       marketCapUsd: typeof (t as any).marketCapUsd === 'number' ? (t as any).marketCapUsd : undefined,
       liquidityUsd: typeof (t as any).liquidityUsd === 'number' ? (t as any).liquidityUsd : undefined,
       holders: typeof (t as any).holders === 'number' ? (t as any).holders : undefined,
+      kol: typeof (t as any).kol === 'number' ? (t as any).kol : undefined,
       createdAtMs: typeof (t as any).createdAtMs === 'number' ? (t as any).createdAtMs : undefined,
       devAddress: normalizeAddress((t as any).devAddress) ?? undefined,
       devHoldPercent: typeof (t as any).devHoldPercent === 'number' ? (t as any).devHoldPercent : undefined,
@@ -327,26 +494,57 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   const pickTokensToBuyFromSignal = (signal: UnifiedTwitterSignal, strategy: any) => {
     const tokens = Array.isArray(signal.tokens) ? (signal.tokens as UnifiedSignalToken[]) : [];
     const now = Date.now();
-    const candidates = tokens
+    const perTweetMax = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
+    if (perTweetMax <= 0) return [];
+    const unique: UnifiedSignalToken[] = [];
+    const seen = new Set<string>();
+    for (const t of tokens) {
+      const addr = typeof (t as any)?.tokenAddress === 'string' ? String((t as any).tokenAddress).trim() : '';
+      const key = addr.toLowerCase();
+      if (!addr) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(t);
+      if (unique.length >= Math.max(5, perTweetMax)) break;
+    }
+
+    const candidates = unique
       .map((t) => ({ t, m: metricsFromUnifiedToken(t) }))
       .filter((x) => x.m && x.m.tokenAddress && shouldBuyByConfig(x.m, strategy));
 
-    const newCa: typeof candidates = [];
-    const og: typeof candidates = [];
+    const ogCount = Math.max(0, Math.floor(parseNumber(strategy?.buyOgCount) ?? 0));
+    const maxCount = perTweetMax;
+    let leftNew = perTweetMax;
+    let leftOg = ogCount;
+
+    const picked: typeof candidates = [];
+    const pickedKey = new Set<string>();
     for (const c of candidates) {
+      if (picked.length >= maxCount) break;
+      const key = String(c.m!.tokenAddress).toLowerCase();
+      if (pickedKey.has(key)) continue;
       const first = typeof (c.t as any).firstSeenAtMs === 'number' ? (c.t as any).firstSeenAtMs : now;
-      if (now - first <= 60_000) newCa.push(c);
-      else og.push(c);
+      const isNew = now - first <= 60_000;
+      if (isNew && leftNew > 0) {
+        leftNew -= 1;
+        picked.push(c);
+        pickedKey.add(key);
+      } else if (!isNew && leftOg > 0) {
+        leftOg -= 1;
+        picked.push(c);
+        pickedKey.add(key);
+      }
     }
 
-    const newCount = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
-    const ogCount = Math.max(0, Math.floor(parseNumber(strategy?.buyOgCount) ?? 0));
-    const take = (list: typeof candidates, n: number) => (n > 0 ? list.slice(0, n) : []);
+    for (const c of candidates) {
+      if (picked.length >= maxCount) break;
+      const key = String(c.m!.tokenAddress).toLowerCase();
+      if (pickedKey.has(key)) continue;
+      picked.push(c);
+      pickedKey.add(key);
+    }
 
-    const picked = [...take(newCa, newCount), ...take(og, ogCount)];
-    if (picked.length) return picked;
-    if (!candidates.length) return [];
-    return [candidates[0]];
+    return picked;
   };
 
   const handleTwitterSignal = async (signal: UnifiedTwitterSignal) => {
@@ -354,14 +552,16 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       const settings = await SettingsService.get();
       const config = normalizeAutoTrade((settings as any).autoTrade);
       if (!config) return;
+      if (config.wsMonitorEnabled === false) return;
       const strategy = config.twitterSnipe;
-      if (!strategy || !strategy.autoSellEnabled) return;
+      if (!strategy) return;
+      if (strategy.enabled === false) return;
       if (!matchesTwitterFilters(signal, strategy)) return;
 
       const picked = pickTokensToBuyFromSignal(signal, strategy);
       for (const { m } of picked) {
         if (!m?.tokenAddress) continue;
-        await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy });
+        await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
       }
     } catch (e) {
       console.error('XSniperTrade twitter signal handler error', e);

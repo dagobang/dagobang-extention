@@ -186,13 +186,21 @@ const normalizeInteractionType = (raw?: string | null): AutoTradeInteractionType
   return null;
 };
 
+const isWsMonitorEnabled = (): boolean => {
+  const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
+  const enabled = (settings as any)?.autoTrade?.wsMonitorEnabled;
+  if (typeof enabled === 'boolean') return enabled;
+  return true;
+};
+
 const getTwitterFilters = () => {
   const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
+  const enabled = isWsMonitorEnabled() && (settings?.autoTrade?.twitterSnipe?.enabled ?? true);
   const targets = (settings?.autoTrade?.twitterSnipe?.targetUsers ?? [])
     .map((x) => x.trim().replace(/^@/, '').toLowerCase())
     .filter(Boolean);
   const interactions = (settings?.autoTrade?.twitterSnipe?.interactionTypes ?? []).map((x) => String(x).toLowerCase());
-  return { settings, targets, interactions };
+  return { settings, enabled, targets, interactions };
 };
 
 const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';
@@ -274,7 +282,9 @@ const upsertUnifiedSignal = (signal: UnifiedTwitterSignal, cacheList?: UnifiedTw
   list.push(signal);
   const next = list.slice(-TWITTER_UNIFIED_CACHE_LIMIT);
   saveUnifiedTwitterCache(next);
-  window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: signal }));
+  if (isWsMonitorEnabled()) {
+    window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: signal }));
+  }
   return next;
 };
 
@@ -724,6 +734,7 @@ export function initGmgnWsMonitor(options: {
 
   // Processor: consumes normalized DAGOBANG_WS_PACKET (site=gmgn, direction=receive).
   const handleTwitterChannel = (data: any, channel: string, payload: any, now: number) => {
+    if (!isWsMonitorEnabled()) return;
     const packetTs = typeof data.timestamp === 'number' ? data.timestamp : now;
     const latencyMs = computeLatencyMs(payload, packetTs, now);
     updatePacketStatus(channel, now, latencyMs);
@@ -767,7 +778,9 @@ export function initGmgnWsMonitor(options: {
         pruneSignals(now);
         cacheList = cacheList.map((s) => (s && s.site === 'gmgn' && s.eventId === patch.eventId ? merged : s));
         saveUnifiedTwitterCache(cacheList);
-        window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: merged }));
+        if (isWsMonitorEnabled()) {
+          window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: merged }));
+        }
         wsStatus = { ...wsStatus, lastSignalAt: now, signalCount: wsStatus.signalCount + 1 };
         pushLog('signal', `${summarizeTokensForLog(merged)}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
         emitStatus();
@@ -896,8 +909,10 @@ export function initGmgnWsMonitor(options: {
         Array.isArray((s as any).tokens) &&
         (s as any).tokens.some((t: any) => t && typeof t.tokenAddress === 'string' && normalizeTokenKey(t.tokenAddress) === addr);
       if (!has) continue;
-      window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-      if (signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: s });
+      if (isWsMonitorEnabled()) {
+        window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
+        if (signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: s });
+      }
     }
   };
 
@@ -946,14 +961,17 @@ export function initGmgnWsMonitor(options: {
 
     if (!changed) return;
     saveUnifiedTwitterCache(updated);
+    const { enabled } = getTwitterFilters();
     for (const s of updated) {
       if (!s) continue;
       const hit =
         (s.tweetId && (mx.includes(s.tweetId) || ids.includes(s.tweetId))) ||
         (s.quotedTweetId && (mx.includes(s.quotedTweetId) || ids.includes(s.quotedTweetId)));
       if (!hit) continue;
-      window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-      if (signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: s });
+      if (isWsMonitorEnabled()) {
+        window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
+        if (enabled && signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: s });
+      }
     }
   };
 
@@ -1065,6 +1083,7 @@ export function initGmgnWsMonitor(options: {
 
   const onMessage = (event: MessageEvent) => {
     if (event.source !== window) return;
+    if (!isWsMonitorEnabled()) return;
     const data = (event as any).data as any;
     if (!data || data.type !== 'DAGOBANG_WS_PACKET') return;
     if (data.site !== 'gmgn' || data.direction !== 'receive') return;

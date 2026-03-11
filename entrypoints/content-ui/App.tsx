@@ -83,6 +83,14 @@ export default function App() {
     buyPreset: settings?.tradeSuccessSoundPresetBuy,
     sellPreset: settings?.tradeSuccessSoundPresetSell,
   });
+  const autoTradeSoundEnabled = settings?.autoTrade?.triggerSound?.enabled ?? true;
+  const autoTradeSoundPreset = (settings?.autoTrade?.triggerSound?.preset ?? 'Boom') as any;
+  const { ensureReady: ensureAutoTradeAudioReady, playPreset: playAutoTradePreset } = useTradeSuccessSound({
+    enabled: autoTradeSoundEnabled,
+    volume: settings?.tradeSuccessSoundVolume,
+    buyPreset: autoTradeSoundPreset,
+    sellPreset: autoTradeSoundPreset,
+  });
 
   useEffect(() => {
     siteInfoRef.current = siteInfo;
@@ -590,6 +598,11 @@ export default function App() {
       if (message.type === 'bg:stateChanged') {
         refreshAll();
         refreshToken();
+        return;
+      }
+      if (message.type === 'bg:xsniper:buy') {
+        ensureAutoTradeAudioReady();
+        playAutoTradePreset(autoTradeSoundPreset);
       }
     };
     browser.runtime.onMessage.addListener(listener);

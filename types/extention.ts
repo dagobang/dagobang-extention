@@ -38,6 +38,7 @@ export type AutoTradeTriggerSound = {
 };
 
 export type AutoTradeStrategyBase = {
+  enabled: boolean;
   autoSellEnabled: boolean;
   buyAmountBnb: string;
   buyNewCaCount: string;
@@ -54,6 +55,7 @@ export type AutoTradeStrategyBase = {
 };
 
 export type AutoTradeTwitterSnipeStrategy = AutoTradeStrategyBase & {
+  dryRun?: boolean;
   targetUsers: string[];
   interactionTypes: AutoTradeInteractionType[];
 };
@@ -62,6 +64,7 @@ export type AutoTradeConfig = {
   takeProfitMultiple: string;
   stopLossMultiple: string;
   maxHoldMinutes: string;
+  wsMonitorEnabled: boolean;
   triggerSound: AutoTradeTriggerSound;
   twitterSnipe: AutoTradeTwitterSnipeStrategy;
 };

@@ -87,6 +87,16 @@ export default defineContentScript({
       }
     })();
 
+    function isWsCaptureEnabled(): boolean {
+      try {
+        const raw = window.localStorage.getItem('dagobang_ws_monitor_enabled_v1');
+        if (raw === '0') return false;
+        if (raw === '1') return true;
+      } catch {
+      }
+      return true;
+    }
+
     function installUrlChangeEmitter() {
       const dispatchUrlChange = () => {
         window.postMessage(
@@ -129,6 +139,7 @@ export default defineContentScript({
     }
 
     function postWsPacket(adapter: WsAdapter, direction: 'send' | 'receive', parsed: any, raw: any, connectionInfo: any): void {
+      if (!isWsCaptureEnabled()) return;
       const normalized = adapter.parseEnvelope(parsed);
       window.postMessage(
         {
@@ -156,6 +167,7 @@ export default defineContentScript({
         const originalSend = ws.send;
 
         ws.send = function (data: any) {
+          if (!isWsCaptureEnabled()) return originalSend.call(this, data);
           try {
             const parsed = JSON.parse(data);
             postWsPacket(adapter, 'send', parsed, data, connectionInfo);
@@ -166,6 +178,7 @@ export default defineContentScript({
         };
 
         ws.addEventListener('message', function (event: MessageEvent) {
+          if (!isWsCaptureEnabled()) return;
           try {
             const parsed = JSON.parse(event.data);
             postWsPacket(adapter, 'receive', parsed, event.data, connectionInfo);
@@ -305,6 +318,11 @@ export default defineContentScript({
           return { payload: data };
         };
         const postWsPacket = (site: WsSite, direction: 'send' | 'receive', parsed: any, raw: any, connectionInfo: any): void => {
+          try {
+            const rawEnabled = window.localStorage.getItem('dagobang_ws_monitor_enabled_v1');
+            if (rawEnabled === '0') return;
+          } catch {
+          }
           const gmgnParsed = site === 'gmgn' ? parseGmgnEnvelope(parsed) : { payload: parsed };
           const message = {
             __DAGOBANG_WORKER_WS__: true,
@@ -345,6 +363,11 @@ export default defineContentScript({
 
             ws.send = function (data: any) {
               try {
+                const rawEnabled = window.localStorage.getItem('dagobang_ws_monitor_enabled_v1');
+                if (rawEnabled === '0') return originalSend.call(this, data);
+              } catch {
+              }
+              try {
                 const parsed = JSON.parse(data);
                 postWsPacket(site, 'send', parsed, data, connectionInfo);
               } catch {
@@ -354,6 +377,11 @@ export default defineContentScript({
             };
 
             ws.addEventListener('message', function (event: MessageEvent) {
+              try {
+                const rawEnabled = window.localStorage.getItem('dagobang_ws_monitor_enabled_v1');
+                if (rawEnabled === '0') return;
+              } catch {
+              }
               try {
                 const parsed = JSON.parse(event.data);
                 postWsPacket(site, 'receive', parsed, event.data, connectionInfo);

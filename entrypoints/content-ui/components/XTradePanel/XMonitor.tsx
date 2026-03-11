@@ -3,6 +3,7 @@ import { AlarmClockCheck, Trophy, ChefHat, Users, X, UserStar } from 'lucide-rea
 import type { Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber, formatCountShort } from '@/utils/format';
+import { call } from '@/utils/messaging';
 
 type XMonitorPanelProps = {
   siteInfo: SiteInfo | null;
@@ -174,6 +175,11 @@ export function XMonitorContent({
   const locale: Locale = normalizeLocale(resolvedSettings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
 
+  const [wsMonitorEnabled, setWsMonitorEnabled] = useState(() => resolvedSettings?.autoTrade?.wsMonitorEnabled !== false);
+  useEffect(() => {
+    setWsMonitorEnabled(resolvedSettings?.autoTrade?.wsMonitorEnabled !== false);
+  }, [resolvedSettings?.autoTrade?.wsMonitorEnabled]);
+
   const signalsRef = useRef<Map<string, UnifiedTwitterSignal>>(new Map());
   const [signalIds, setSignalIds] = useState<string[]>([]);
   const onlyWithTokensStorageKey = 'dagobang_xmonitor_onlyWithTokens_v1';
@@ -183,6 +189,16 @@ export function XMonitorContent({
     } catch {
       return false;
     }
+  });
+  const tokenLimitStorageKey = 'dagobang_xmonitor_tokenLimit_v1';
+  const [tokenLimit, setTokenLimit] = useState<number>(() => {
+    try {
+      const raw = window.localStorage.getItem(tokenLimitStorageKey);
+      const n = raw ? Number(raw) : NaN;
+      if (Number.isFinite(n) && n > 0) return Math.floor(n);
+    } catch {
+    }
+    return 10;
   });
 
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -197,6 +213,13 @@ export function XMonitorContent({
     } catch {
     }
   }, [onlyWithTokens]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(tokenLimitStorageKey, String(tokenLimit));
+    } catch {
+    }
+  }, [tokenLimit]);
 
   useEffect(() => {
     const loadFromStorage = () => {
@@ -311,6 +334,40 @@ export function XMonitorContent({
     <>
       <div className="px-4 py-2 border-b border-zinc-800/60 space-y-2">
         <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center justify-between gap-2 flex-1">
+            <div className="flex flex-col">
+              <div className="text-[14px] font-semibold text-zinc-200">{tt('contentUi.xMonitor.wsMonitorEnabled')}</div>
+              <div className="text-[11px] text-zinc-500">{tt('contentUi.xMonitor.wsMonitorEnabledDesc')}</div>
+            </div>
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-emerald-500"
+              checked={wsMonitorEnabled}
+              onChange={async (e) => {
+                const next = e.target.checked;
+                setWsMonitorEnabled(next);
+                try {
+                  window.localStorage.setItem('dagobang_ws_monitor_enabled_v1', next ? '1' : '0');
+                } catch {
+                }
+                if (!resolvedSettings) return;
+                const nextSettings: Settings = {
+                  ...resolvedSettings,
+                  autoTrade: {
+                    ...(resolvedSettings as any).autoTrade,
+                    wsMonitorEnabled: next,
+                  } as any,
+                };
+                (window as any).__DAGOBANG_SETTINGS__ = nextSettings;
+                try {
+                  await call({ type: 'settings:set', settings: nextSettings } as const);
+                } catch {
+                }
+              }}
+            />
+          </label>
+        </div>
+        <div className="flex items-center justify-between gap-2">
           <label className="flex items-center gap-2 text-[14px] text-zinc-300">
             <input
               type="checkbox"
@@ -320,6 +377,24 @@ export function XMonitorContent({
             />
             {tt('contentUi.xMonitor.filterOnlyWithTokens')}
           </label>
+          <div className="flex items-center gap-2 text-[12px] text-zinc-400">
+            <div>{tt('contentUi.xMonitor.tokenLimit')}</div>
+            <select
+              className="h-7 rounded-md border border-zinc-800 bg-zinc-950/30 px-2 text-[12px] text-zinc-200 outline-none"
+              value={String(tokenLimit)}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                const next = Number.isFinite(n) && n > 0 ? Math.floor(n) : 10;
+                setTokenLimit(next);
+              }}
+            >
+              {[5, 10, 20, 50].map((n) => (
+                <option key={n} value={String(n)}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {!resolvedSettings ? (
@@ -328,7 +403,9 @@ export function XMonitorContent({
       </div>
 
       <div ref={listRef} className="max-h-[62vh] overflow-y-auto p-3">
-        {visibleSignals.length === 0 ? (
+        {!wsMonitorEnabled ? (
+          <div className="px-2 py-8 text-center text-[14px] text-zinc-500">{tt('contentUi.xMonitor.wsMonitorDisabled')}</div>
+        ) : visibleSignals.length === 0 ? (
           <div className="px-2 py-8 text-center text-[14px] text-zinc-500">{tt('contentUi.xMonitor.empty')}</div>
         ) : (
           <div>
@@ -366,7 +443,7 @@ export function XMonitorContent({
               const displayTokens = normalizeSignalTokensForDisplay(signal)
                 .slice()
                 .sort((a, b) => a.firstSeenAtMs - b.firstSeenAtMs)
-                .slice(0, 5);
+                .slice(0, tokenLimit);
 
               return (
                 <div

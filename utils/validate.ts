@@ -193,6 +193,9 @@ export function validateSettings(input: Settings): Settings | null {
 
   const inputAutoTrade = (input as any).autoTrade as Partial<AutoTradeConfig> | undefined;
   const defaultAutoTrade = defaults.autoTrade;
+  const wsMonitorEnabled = typeof (inputAutoTrade as any)?.wsMonitorEnabled === 'boolean'
+    ? !!(inputAutoTrade as any).wsMonitorEnabled
+    : !!(defaultAutoTrade as any).wsMonitorEnabled;
   const inputTriggerSound = (inputAutoTrade as any)?.triggerSound as any;
   const defaultTriggerSound = (defaultAutoTrade as any).triggerSound as any;
   const triggerSoundPreset = TRADE_SUCCESS_SOUND_PRESETS.includes(inputTriggerSound?.preset)
@@ -207,6 +210,12 @@ export function validateSettings(input: Settings): Settings | null {
   const interactionTypesRaw = parseListInput(inputTwitterSnipe.interactionTypes, defaultTwitterSnipe.interactionTypes);
   const interactionTypes = interactionTypesRaw.filter((x) => allowedInteractionTypes.includes(x as any));
   const twitterSnipe = {
+    enabled: typeof inputTwitterSnipe.enabled === 'boolean'
+      ? inputTwitterSnipe.enabled
+      : defaultTwitterSnipe.enabled ?? true,
+    dryRun: typeof inputTwitterSnipe.dryRun === 'boolean'
+      ? inputTwitterSnipe.dryRun
+      : (defaultTwitterSnipe as any).dryRun ?? false,
     autoSellEnabled: typeof inputTwitterSnipe.autoSellEnabled === 'boolean'
       ? inputTwitterSnipe.autoSellEnabled
       : defaultTwitterSnipe.autoSellEnabled,
@@ -238,6 +247,7 @@ export function validateSettings(input: Settings): Settings | null {
     maxHoldMinutes: typeof inputAutoTrade?.maxHoldMinutes === 'string'
       ? inputAutoTrade.maxHoldMinutes.trim()
       : defaultAutoTrade.maxHoldMinutes,
+    wsMonitorEnabled,
     triggerSound: {
       enabled: triggerSoundEnabled,
       preset: triggerSoundPreset,

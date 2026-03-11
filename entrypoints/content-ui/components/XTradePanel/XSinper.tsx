@@ -5,8 +5,11 @@ import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { defaultSettings } from '@/utils/defaults';
 import { call } from '@/utils/messaging';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
+import { browser } from 'wxt/browser';
+import { SiteInfo } from '@/utils/sites';
 
 type XSniperPanelProps = {
+  siteInfo: SiteInfo
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
   settings: Settings | null;
@@ -14,6 +17,7 @@ type XSniperPanelProps = {
 };
 
 type XSniperContentProps = {
+  siteInfo: SiteInfo | null;
   active: boolean;
   settings: Settings | null;
   isUnlocked: boolean;
@@ -28,6 +32,33 @@ const interactionOptions: Array<{ value: AutoTradeInteractionType; labelKey: str
 ];
 
 const SOUND_OFF = '__off__';
+const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
+
+type XSniperBuyRecord = {
+  id: string;
+  tsMs: number;
+  chainId: number;
+  tokenAddress: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  buyAmountBnb: number;
+  txHash?: string;
+  entryPriceUsd?: number;
+  dryRun?: boolean;
+  marketCapUsd?: number;
+  liquidityUsd?: number;
+  holders?: number;
+  kol?: number;
+  createdAtMs?: number;
+  devAddress?: string;
+  devHoldPercent?: number;
+  devHasSold?: boolean;
+  userScreen?: string;
+  userName?: string;
+  tweetType?: string;
+  channel?: string;
+  signalId?: string;
+};
 
 const cloneAutoTrade = (value: AutoTradeConfig | null) => {
   if (!value) return null;
@@ -59,6 +90,7 @@ const parseList = (value: string) =>
     .filter(Boolean);
 
 export function XSniperContent({
+  siteInfo,
   active,
   settings,
   isUnlocked,
@@ -91,6 +123,8 @@ export function XSniperContent({
     };
   });
   const [showLogs, setShowLogs] = useState(false);
+  const [buyHistory, setBuyHistory] = useState<XSniperBuyRecord[]>([]);
+  const [latestTokenByAddr, setLatestTokenByAddr] = useState<Record<string, any>>({});
 
   useEffect(() => {
     if (!active) return;
@@ -117,7 +151,80 @@ export function XSniperContent({
     };
   }, []);
 
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await browser.storage.local.get(HISTORY_STORAGE_KEY);
+        const raw = (res as any)?.[HISTORY_STORAGE_KEY];
+        const list = Array.isArray(raw) ? (raw as XSniperBuyRecord[]) : [];
+        if (!cancelled) setBuyHistory(list);
+      } catch {
+        if (!cancelled) setBuyHistory([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active]);
+
+  useEffect(() => {
+    const listener = (message: any) => {
+      if (!message || message.type !== 'bg:xsniper:buy') return;
+      const record = message.record as XSniperBuyRecord | undefined;
+      if (!record || typeof record.tsMs !== 'number' || typeof record.tokenAddress !== 'string') return;
+      setBuyHistory((prev) => [record, ...prev].slice(0, 200));
+    };
+    browser.runtime.onMessage.addListener(listener);
+    return () => browser.runtime.onMessage.removeListener(listener);
+  }, []);
+
   const canEdit = !!settings && isUnlocked;
+  const [wsMonitorEnabled, setWsMonitorEnabled] = useState(() => normalizedAutoTrade.wsMonitorEnabled !== false);
+  useEffect(() => {
+    setWsMonitorEnabled(normalizedAutoTrade.wsMonitorEnabled !== false);
+  }, [normalizedAutoTrade.wsMonitorEnabled]);
+
+  useEffect(() => {
+    if (!active) return;
+
+    const readLatest = () => {
+      const cache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? null;
+      const list = Array.isArray(cache?.list) ? (cache.list as any[]) : [];
+      const next: Record<string, any> = {};
+      for (const s of list) {
+        if (!s) continue;
+        const tokens = Array.isArray((s as any).tokens) ? ((s as any).tokens as any[]) : [];
+        for (const t of tokens) {
+          const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
+          if (!addr) continue;
+          const key = addr.toLowerCase();
+          const updatedAtMs =
+            typeof t?.updatedAtMs === 'number'
+              ? t.updatedAtMs
+              : typeof (s as any)?.ts === 'number'
+                ? (s as any).ts
+                : 0;
+          const prev = next[key];
+          if (prev && typeof prev.updatedAtMs === 'number' && updatedAtMs <= prev.updatedAtMs) continue;
+          next[key] = {
+            updatedAtMs,
+            marketCapUsd: typeof t?.marketCapUsd === 'number' ? t.marketCapUsd : undefined,
+            holders: typeof t?.holders === 'number' ? t.holders : undefined,
+            devHoldPercent: typeof t?.devHoldPercent === 'number' ? t.devHoldPercent : undefined,
+            devHasSold: typeof t?.devHasSold === 'boolean' ? t.devHasSold : undefined,
+            kol: typeof t?.kol === 'number' ? t.kol : undefined,
+          };
+        }
+      }
+      setLatestTokenByAddr(next);
+    };
+
+    readLatest();
+    const timer = setInterval(readLatest, 2000);
+    return () => clearInterval(timer);
+  }, [active, wsMonitorEnabled]);
 
   const presetOptions = useMemo(
     () => TRADE_SUCCESS_SOUND_PRESETS.map((preset) => ({ value: preset, label: preset })),
@@ -125,26 +232,51 @@ export function XSniperContent({
   );
   const previewSound = useTradeSuccessSound({ enabled: true, volume: 60 });
   const twitterSnipe = draft?.twitterSnipe;
-  const formatAge = (ts?: number) => {
-    if (!ts) return '--';
-    const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-    if (s < 60) return `${s}s`;
-    const m = Math.floor(s / 60);
-    const r = s % 60;
-    return `${m}m ${r}s`;
+  const formatTs = (tsMs: number) => {
+    try {
+      return new Date(tsMs).toLocaleString();
+    } catch {
+      return String(tsMs);
+    }
   };
-  const formatLatency = (ms?: number) => (ms == null ? '--' : `${Math.round(ms)}ms`);
+  const formatCompact = (n: number | null | undefined) => {
+    if (n == null || !Number.isFinite(n)) return '-';
+    const abs = Math.abs(n);
+    const fmt = (v: number, s: string) => `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)}${s}`;
+    if (abs >= 1e9) return fmt(n / 1e9, 'B');
+    if (abs >= 1e6) return fmt(n / 1e6, 'M');
+    if (abs >= 1e3) return fmt(n / 1e3, 'K');
+    return String(Math.round(n));
+  };
+  const formatBnb = (n: number | null | undefined) => {
+    if (n == null || !Number.isFinite(n)) return '-';
+    const s = (n >= 1 ? n.toFixed(4) : n.toFixed(6)).replace(/0+$/, '').replace(/\.$/, '');
+    return s || '0';
+  };
+  const formatUsd = (n: number | null | undefined) => {
+    if (n == null || !Number.isFinite(n)) return '-';
+    const abs = Math.abs(n);
+    const raw = abs >= 1 ? n.toFixed(4) : abs >= 0.01 ? n.toFixed(6) : n.toFixed(8);
+    const s = raw.replace(/0+$/, '').replace(/\.$/, '');
+    return `$${s || '0'}`;
+  };
+  const shortAddr = (addr: string) => {
+    const a = String(addr || '').trim();
+    if (!a) return '';
+    if (a.length <= 12) return a;
+    return `${a.slice(0, 6)}...${a.slice(-4)}`;
+  };
   const updateTwitterSnipe = (patch: Partial<AutoTradeConfig['twitterSnipe']>) => {
     setIsDirty(true);
     setDraft((prev) =>
       prev
         ? {
-            ...prev,
-            twitterSnipe: {
-              ...prev.twitterSnipe,
-              ...patch,
-            },
-          }
+          ...prev,
+          twitterSnipe: {
+            ...prev.twitterSnipe,
+            ...patch,
+          },
+        }
         : prev
     );
   };
@@ -157,10 +289,73 @@ export function XSniperContent({
     <>
       <div className="p-3 space-y-3 max-h-[64vh] overflow-y-auto">
         <div className="space-y-2 pb-3 border-b border-zinc-800/60">
+          <label className="flex items-center justify-between gap-3">
+            <div className="flex flex-col">
+              <div className="text-[14px] font-semibold text-zinc-200">{tt('contentUi.xMonitor.wsMonitorEnabled')}</div>
+              <div className="text-[11px] text-zinc-500">{tt('contentUi.xMonitor.wsMonitorEnabledDesc')}</div>
+            </div>
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-emerald-500"
+              checked={wsMonitorEnabled}
+              disabled={!canEdit}
+              onChange={async (e) => {
+                const next = e.target.checked;
+                setWsMonitorEnabled(next);
+                try {
+                  window.localStorage.setItem('dagobang_ws_monitor_enabled_v1', next ? '1' : '0');
+                } catch {
+                }
+                setDraft((prev) => (prev ? { ...prev, wsMonitorEnabled: next } : prev));
+                if (!settings) return;
+                const nextSettings: Settings = {
+                  ...settings,
+                  autoTrade: {
+                    ...(settings as any).autoTrade,
+                    wsMonitorEnabled: next,
+                  } as any,
+                };
+                (window as any).__DAGOBANG_SETTINGS__ = nextSettings;
+                try {
+                  await call({ type: 'settings:set', settings: nextSettings } as const);
+                } catch {
+                }
+              }}
+            />
+          </label>
+          {!wsMonitorEnabled ? (
+            <div className="text-[11px] text-amber-200/90">{tt('contentUi.xMonitor.wsMonitorDisabledSniperTip')}</div>
+          ) : null}
+        </div>
+        <div className="space-y-2 pb-3 border-b border-zinc-800/60">
           <div>
             {/* <div className="text-sm font-semibold">{tt('contentUi.autoTradeStrategy.twitterSnipe')}</div> */}
             <div className="text-xs text-zinc-500">{tt('contentUi.autoTradeStrategy.twitterSnipeDesc')}</div>
           </div>
+          <label className="flex items-center justify-between gap-2 text-[12px] text-zinc-300">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-emerald-500"
+                checked={twitterSnipe?.enabled !== false}
+                disabled={!canEdit || !wsMonitorEnabled}
+                onChange={(e) => updateTwitterSnipe({ enabled: e.target.checked })}
+              />
+              {tt('contentUi.autoTradeStrategy.twitterSnipeEnabled')}
+            </div>
+          </label>
+          <label className="flex items-center justify-between gap-2 text-[12px] text-zinc-300">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-amber-500"
+                checked={!!twitterSnipe?.dryRun}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ dryRun: e.target.checked })}
+              />
+              {tt('contentUi.autoTradeStrategy.twitterSnipeDryRun')}
+            </div>
+          </label>
           <label className="block space-y-1">
             <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.targetUsers')}</div>
             <textarea
@@ -412,6 +607,119 @@ export function XSniperContent({
             {tt('contentUi.autoTradeStrategy.strategyAutoSell')}
           </label>
         </div>
+        <div className="space-y-2 pt-3 border-t border-zinc-800/60">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.snipeHistoryTitle')}</div>
+            <button
+              type="button"
+              className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+              disabled={!canEdit || buyHistory.length === 0}
+              onClick={async () => {
+                try {
+                  await browser.storage.local.set({ [HISTORY_STORAGE_KEY]: [] } as any);
+                } finally {
+                  setBuyHistory([]);
+                }
+              }}
+            >
+              {tt('contentUi.autoTradeStrategy.snipeHistoryClear')}
+            </button>
+          </div>
+          {buyHistory.length === 0 ? (
+            <div className="text-[12px] text-zinc-500">{tt('contentUi.autoTradeStrategy.snipeHistoryEmpty')}</div>
+          ) : (
+            <div className="space-y-2">
+              {buyHistory.slice(0, 20).map((r) => (
+                <div key={r.id} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+                  {(() => {
+                    const latest = latestTokenByAddr[String(r.tokenAddress).toLowerCase()] ?? null;
+                    const orderMcap = typeof r.marketCapUsd === 'number' ? r.marketCapUsd : null;
+                    const latestMcap = latest && typeof latest.marketCapUsd === 'number' ? (latest.marketCapUsd as number) : null;
+                    const pnlPct =
+                      orderMcap != null && latestMcap != null && orderMcap > 0
+                        ? ((latestMcap / orderMcap) - 1) * 100
+                        : null;
+                    const pnlText = pnlPct == null || !Number.isFinite(pnlPct) ? '-' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
+                    const pnlClass =
+                      pnlPct == null || !Number.isFinite(pnlPct)
+                        ? 'text-zinc-400'
+                        : pnlPct >= 0
+                          ? 'text-emerald-300'
+                          : 'text-rose-300';
+                    const tokenLabel =
+                      (() => {
+                        const sym = r.tokenSymbol ? String(r.tokenSymbol).trim() : '';
+                        const name = r.tokenName ? String(r.tokenName).trim() : '';
+                        if (sym && name && sym !== name) return `${sym} (${name})`;
+                        return sym || name || shortAddr(r.tokenAddress);
+                      })();
+                    const tokenLink = parsePlatformTokenLink(siteInfo, r.tokenAddress);
+
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-[12px] text-zinc-200">
+                            {r.dryRun ? (
+                              <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-200">
+                                {tt('contentUi.autoTradeStrategy.snipeHistoryDry')}
+                              </span>
+                            ) : null}
+                            <a href={tokenLink} className="hover:underline">
+                              {tokenLabel}
+                            </a>{' '}
+                            <span className="text-zinc-500">{shortAddr(r.tokenAddress)}</span>
+                          </div>
+                          <div className="text-[11px] text-zinc-500">{formatTs(r.tsMs)}</div>
+                        </div>
+                        <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-zinc-400">
+                          <div>
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: {formatBnb(r.buyAmountBnb)}
+                          </div>
+                          <div>
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryPrice')}: {formatUsd(r.entryPriceUsd)}
+                          </div>
+                          <div>
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')}: {formatCompact(r.marketCapUsd)}
+                            {latestMcap != null ? <span className="text-zinc-500"> → {formatCompact(latestMcap)}</span> : null}
+                          </div>
+                          <div>
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryHolders')}: {formatCompact(r.holders)}
+                            {latest && typeof latest.holders === 'number' ? (
+                              <span className="text-zinc-500"> → {formatCompact(latest.holders)}</span>
+                            ) : null}
+                          </div>
+                          <div>
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryDevHold')}:{' '}
+                            {r.devHoldPercent == null ? '-' : `${r.devHoldPercent.toFixed(2)}%`}
+                            {latest && typeof latest.devHoldPercent === 'number' ? (
+                              <span className="text-zinc-500"> → {latest.devHoldPercent.toFixed(2)}%</span>
+                            ) : null}
+                          </div>
+                          <div>
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryDevSold')}:{' '}
+                            {r.devHasSold === true ? 'Y' : r.devHasSold === false ? 'N' : '-'}
+                          </div>
+                          <div>
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryKol')}: {formatCompact(r.kol)}
+                            {latest && typeof latest.kol === 'number' ? (
+                              <span className="text-zinc-500"> → {formatCompact(latest.kol)}</span>
+                            ) : null}
+                          </div>
+                          <div className={pnlClass}>
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryPnlMcap')}: {pnlText}
+                          </div>
+                          <div>
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryUser')}: {r.userScreen ? String(r.userScreen) : '-'}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center justify-end px-4 py-3 border-t border-zinc-800/60">
@@ -463,6 +771,7 @@ export function XSniperContent({
 }
 
 export function XSniperPanel({
+  siteInfo,
   visible,
   onVisibleChange,
   settings,
@@ -504,6 +813,7 @@ export function XSniperPanel({
         </button>
       </div>
       <XSniperContent
+        siteInfo={siteInfo}
         active={visible}
         settings={settings}
         isUnlocked={isUnlocked}

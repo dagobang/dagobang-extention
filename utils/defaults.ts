@@ -40,13 +40,16 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
   takeProfitMultiple: '2',
   stopLossMultiple: '0.5',
   maxHoldMinutes: '',
+  wsMonitorEnabled: false,
   triggerSound: {
     enabled: true,
     preset: 'Boom',
   },
   twitterSnipe: {
+    enabled: true,
+    dryRun: true,
     autoSellEnabled: true,
-    buyAmountBnb: '0.05',
+    buyAmountBnb: '0.01',
     buyNewCaCount: '1',
     buyOgCount: '1',
     minMarketCapUsd: '',
