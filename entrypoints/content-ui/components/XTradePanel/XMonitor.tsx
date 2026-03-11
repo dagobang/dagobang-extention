@@ -294,7 +294,7 @@ export function XMonitorContent({
     <>
       <div className="px-4 py-2 border-b border-zinc-800/60 space-y-2">
         <div className="flex items-center justify-between gap-2">
-          <label className="flex items-center gap-2 text-[12px] text-zinc-300">
+          <label className="flex items-center gap-2 text-[14px] text-zinc-300">
             <input
               type="checkbox"
               className="h-3 w-3 accent-emerald-500"
@@ -312,7 +312,7 @@ export function XMonitorContent({
 
       <div ref={listRef} className="max-h-[62vh] overflow-y-auto p-3">
         {visibleSignals.length === 0 ? (
-          <div className="px-2 py-8 text-center text-[12px] text-zinc-500">暂无推文</div>
+          <div className="px-2 py-8 text-center text-[14px] text-zinc-500">暂无推文</div>
         ) : (
           <div>
             {virtualRange.top > 0 ? <div style={{ height: virtualRange.top }} /> : null}
@@ -359,7 +359,7 @@ export function XMonitorContent({
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2">
-                      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-800 text-[12px] font-semibold text-zinc-300">
+                      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-800 text-[14px] font-semibold text-zinc-300">
                         {signal.userAvatar ? (
                           <img
                             src={signal.userAvatar}
@@ -375,7 +375,7 @@ export function XMonitorContent({
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <div className="truncate text-[13px] font-semibold text-zinc-100">{displayName}</div>
-                          {handle ? <div className="truncate text-[12px] text-zinc-400">{handle}</div> : null}
+                          {handle ? <div className="truncate text-[14px] text-zinc-400">{handle}</div> : null}
                           {followerText ? <div className="text-[11px] text-zinc-500">{followerText}</div> : null}
                         </div>
                         {typeMeta ? (
@@ -402,7 +402,7 @@ export function XMonitorContent({
                   </div>
 
                   {replyHandle ? (
-                    <div className="mt-2 text-[12px] text-amber-300">↩ 回复 @{replyHandle}</div>
+                    <div className="mt-2 text-[14px] text-amber-300">↩ 回复 @{replyHandle}</div>
                   ) : null}
 
                   {followDisplayName && (signal.tweetType === 'follow' || signal.tweetType === 'unfollow') ? (
@@ -424,7 +424,7 @@ export function XMonitorContent({
                           </div>
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              <div className="truncate text-[12px] font-semibold text-zinc-100">{followDisplayName}</div>
+                              <div className="truncate text-[14px] font-semibold text-zinc-100">{followDisplayName}</div>
                               {followHandle ? <div className="truncate text-[11px] text-zinc-400">{followHandle}</div> : null}
                               {followFollowers ? <div className="text-[11px] text-zinc-500">{followFollowers}</div> : null}
                             </div>
@@ -444,7 +444,7 @@ export function XMonitorContent({
                         ) : null}
                       </div>
                       {signal.followedUserBio ? (
-                        <div className="mt-2 text-[12px] text-zinc-300 whitespace-pre-wrap break-words">
+                        <div className="mt-2 text-[14px] text-zinc-300 whitespace-pre-wrap break-words">
                           {renderRichText(signal.followedUserBio, `${signal.id}:followBio`)}
                         </div>
                       ) : null}
@@ -471,7 +471,7 @@ export function XMonitorContent({
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               {quoteDisplayName ? (
-                                <div className="truncate text-[12px] font-semibold text-zinc-100">{quoteDisplayName}</div>
+                                <div className="truncate text-[14px] font-semibold text-zinc-100">{quoteDisplayName}</div>
                               ) : null}
                               {quoteHandle ? <div className="truncate text-[11px] text-zinc-400">{quoteHandle}</div> : null}
                             </div>
@@ -489,7 +489,7 @@ export function XMonitorContent({
                         ) : null}
                       </div>
                       {signal.quotedText ? (
-                        <div className="mt-2 whitespace-pre-wrap break-words text-[12px] text-zinc-200">
+                        <div className="mt-2 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
                           {renderRichText(signal.quotedText, `${signal.id}:quotedText:quote`)}
                         </div>
                       ) : null}
@@ -516,7 +516,7 @@ export function XMonitorContent({
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               {quoteDisplayName ? (
-                                <div className="truncate text-[12px] font-semibold text-zinc-100">{quoteDisplayName}</div>
+                                <div className="truncate text-[14px] font-semibold text-zinc-100">{quoteDisplayName}</div>
                               ) : null}
                               {quoteHandle ? <div className="truncate text-[11px] text-zinc-400">{quoteHandle}</div> : null}
                             </div>
@@ -534,14 +534,14 @@ export function XMonitorContent({
                         ) : null}
                       </div>
                       {signal.quotedText ? (
-                        <div className="mt-2 whitespace-pre-wrap break-words text-[12px] text-zinc-200">
+                        <div className="mt-2 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
                           {renderRichText(signal.quotedText, `${signal.id}:quotedText:repost`)}
                         </div>
                       ) : null}
                       {signal.translatedText ? (
                         <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
                           <div className="text-[10px] text-zinc-500">翻译</div>
-                          <div className="mt-1 whitespace-pre-wrap break-words text-[12px] text-zinc-200">
+                          <div className="mt-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
                             {renderRichText(signal.translatedText, `${signal.id}:translated:repost`)}
                           </div>
                         </div>
@@ -598,7 +598,7 @@ export function XMonitorContent({
                   {signal.translatedText && signal.tweetType !== 'repost' ? (
                     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
                       <div className="text-[10px] text-zinc-500">翻译</div>
-                      <div className="mt-1 whitespace-pre-wrap break-words text-[12px] text-zinc-200">
+                      <div className="mt-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
                         {renderRichText(signal.translatedText, `${signal.id}:translated`)}
                       </div>
                     </div>
@@ -632,7 +632,7 @@ export function XMonitorContent({
                             <div className="flex items-center justify-between gap-2">
                               <button
                                 type="button"
-                                className="min-w-0 truncate text-left text-[12px] font-semibold text-zinc-100 hover:underline underline-offset-2"
+                                className="min-w-0 truncate text-left text-[14px] font-semibold text-zinc-100 hover:underline underline-offset-2"
                                 onClick={() => (window.location.href = parsePlatformTokenLink(siteInfo, tokenAddr))}
                                 title={tokenAddr}
                               >
@@ -640,7 +640,7 @@ export function XMonitorContent({
                                 {symbol && tokenName ? <span className="ml-1 font-normal text-zinc-400">{tokenName}</span> : null}
                               </button>
                               {mc != null ? (
-                                <div className="flex-shrink-0 text-[12px] font-semibold text-emerald-300">
+                                <div className="flex-shrink-0 text-[14px] font-semibold text-emerald-300">
                                   MC ${formatCompactNumber(Math.round(mc))}
                                 </div>
                               ) : null}
