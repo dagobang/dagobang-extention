@@ -325,6 +325,8 @@ export type BgRequest =
   | { type: 'bg:ping' }
   | { type: 'bg:openPopup' }
   | { type: 'bg:getState' }
+  | { type: 'bloxroute:probe'; authHeader?: string }
+  | { type: 'bloxroute:openCertPage' }
   | { type: 'settings:set'; settings: Settings }
   | { type: 'settings:setAccountAlias'; address: `0x${string}`; alias: string }
   | { type: 'wallet:create'; input: WalletCreateInput }
@@ -375,6 +377,10 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; time: number }
   : T extends { type: 'bg:getState' }
   ? BgGetStateResponse
+  : T extends { type: 'bloxroute:probe' }
+  ? { ok: true; status: 'reachable' | 'failed'; httpStatus?: number; message?: string; hasAuthHeader: boolean }
+  : T extends { type: 'bloxroute:openCertPage' }
+  ? { ok: true }
   : T extends { type: 'settings:set' }
   ? { ok: true }
   : T extends { type: 'settings:setAccountAlias' }

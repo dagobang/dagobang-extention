@@ -61,6 +61,7 @@ function isAllowedProtectedRpcUrl(raw: string): boolean {
   if (host.includes('blockrazor')) return true;
   if (host.includes('pancakeswap.finance')) return true;
   if (host.includes('dagobang.site')) return true;
+  if (host.includes('blxrbdn.com')) return true;
   return false;
 }
 

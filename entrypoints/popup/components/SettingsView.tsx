@@ -52,7 +52,7 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
   const chainId = settingsDraft.chainId;
   const validated = validateSettings(settingsDraft);
   const protectedRpcUrlsValidated = validated?.chains?.[chainId]?.protectedRpcUrls ?? [];
-  const saveDisabled = section === 'network' && protectedRpcUrlsValidated.length === 0;
+  const saveDisabled = section === 'network' && protectedRpcUrlsValidated.length === 0 && !settingsDraft.bloxrouteAuthHeader;
 
   const titleBySection: Record<SettingsSectionId, string> = {
     root: tt('popup.settings.title'),

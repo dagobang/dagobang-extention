@@ -100,7 +100,7 @@ export class RpcService {
     const chainConfig = settings.chains[settings.chainId];
 
     const protectedUrls = this.normalizeUrls(chainConfig.protectedRpcUrls ?? []);
-    if (protectedUrls.length === 0) {
+    if (protectedUrls.length === 0 && !settings.bloxrouteAuthHeader) {
       throw new Error('No protected RPC URLs configured (required for broadcasting transactions)');
     }
 

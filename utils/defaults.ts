@@ -21,6 +21,7 @@ const BSC_MAINNET: ChainSettings = {
     'https://bscrpc.pancakeswap.finance',
     'https://pancake.rpc.48.club',
     'https://four.rpc.48.club',
+    'https://debot.bsc.blockrazor.xyz'
   ],
   antiMev: true,
   gasPreset: 'standard',

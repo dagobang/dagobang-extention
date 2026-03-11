@@ -119,6 +119,29 @@ export default defineBackground(() => {
             };
           }
 
+          case 'bloxroute:openCertPage': {
+            await browser.tabs.create({ url: 'https://api.blxrbdn.com', active: true });
+            return { ok: true };
+          }
+
+          case 'bloxroute:probe': {
+            const authHeader = typeof msg.authHeader === 'string' ? msg.authHeader.replace(/[\r\n]+/g, '').trim() : '';
+            const hasAuthHeader = !!authHeader;
+            try {
+              const response = await fetch('https://api.blxrbdn.com', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(hasAuthHeader ? { Authorization: authHeader } : {}),
+                },
+                body: '{}',
+              });
+              return { ok: true, status: 'reachable', httpStatus: response.status, hasAuthHeader };
+            } catch (e: any) {
+              return { ok: true, status: 'failed', message: String(e?.message || e || ''), hasAuthHeader };
+            }
+          }
+
           case 'settings:set':
             await SettingsService.update(msg.settings);
             limitOrderScanner?.setIntervalMsFromValue((msg.settings as any).limitOrderScanIntervalMs);

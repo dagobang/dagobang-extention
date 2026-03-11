@@ -349,7 +349,7 @@ export function XMonitorContent({
               const displayTokens = normalizeSignalTokensForDisplay(signal)
                 .slice()
                 .sort((a, b) => a.firstSeenAtMs - b.firstSeenAtMs)
-                .slice(0, 3);
+                .slice(0, 5);
 
               return (
                 <div

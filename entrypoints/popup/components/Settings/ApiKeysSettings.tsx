@@ -36,9 +36,14 @@ export function ApiKeysSettings({ settingsDraft, setSettingsDraft, tt }: ApiKeys
             }
             placeholder={tt('popup.settings.bloxrouteAuthHeaderPlaceholder')}
           />
+          <div className="text-[11px] text-zinc-500">
+            {tt('popup.settings.bloxrouteAuthHeaderApplyHint')}{' '}
+            <a className="underline hover:text-zinc-300" href="https://portal.bloxroute.com/" target="_blank" rel="noreferrer">
+              https://portal.bloxroute.com/
+            </a>
+          </div>
         </label>
       </div>
     </div>
   );
 }
-
