@@ -108,8 +108,8 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any) => {
   if (minMcap != null && metrics.marketCapUsd != null && metrics.marketCapUsd < minMcap) return false;
   if (maxMcap != null && metrics.marketCapUsd != null && metrics.marketCapUsd > maxMcap) return false;
 
-  const minHolders = parseKNumber(config.minHolders);
-  const maxHolders = parseKNumber(config.maxHolders);
+  const minHolders = parseNumber(config.minHolders);
+  const maxHolders = parseNumber(config.maxHolders);
   if (minHolders != null && metrics.holders == null) return false;
   if (maxHolders != null && metrics.holders == null) return false;
   if (minHolders != null && metrics.holders != null && metrics.holders < minHolders) return false;
@@ -127,16 +127,16 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any) => {
     if (maxTickerLen != null && len > maxTickerLen) return false;
   }
 
-  const minAgeMin = parseNumber(config.minTokenAgeMinutes);
-  const maxAgeMin = parseNumber(config.maxTokenAgeMinutes);
-  if ((minAgeMin != null || maxAgeMin != null) && metrics.createdAtMs == null) return false;
-  if (minAgeMin != null && metrics.createdAtMs != null) {
-    const ageMin = (Date.now() - metrics.createdAtMs) / 60000;
-    if (ageMin < minAgeMin) return false;
+  const minAgeSec = parseNumber(config.minTokenAgeSeconds);
+  const maxAgeSec = parseNumber(config.maxTokenAgeSeconds);
+  if ((minAgeSec != null || maxAgeSec != null) && metrics.createdAtMs == null) return false;
+  if (minAgeSec != null && metrics.createdAtMs != null) {
+    const ageSec = (Date.now() - metrics.createdAtMs) / 1000;
+    if (ageSec < minAgeSec) return false;
   }
-  if (maxAgeMin != null && metrics.createdAtMs != null) {
-    const ageMin = (Date.now() - metrics.createdAtMs) / 60000;
-    if (ageMin > maxAgeMin) return false;
+  if (maxAgeSec != null && metrics.createdAtMs != null) {
+    const ageSec = (Date.now() - metrics.createdAtMs) / 1000;
+    if (ageSec > maxAgeSec) return false;
   }
 
   const minDevPct = parseNumber(config.minDevHoldPercent);
@@ -392,7 +392,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       if (amountNumber <= 0) return;
 
       const status = await WalletService.getStatus();
-      if (status.locked || !status.address) return;
+      if (!dryRun && (status.locked || !status.address)) return;
 
       const tokenInfo = (await fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ?? (await buildGenericTokenInfo(input.chainId, input.tokenAddress));
       if (!tokenInfo) return;

@@ -228,8 +228,8 @@ export function validateSettings(input: Settings): Settings | null {
     maxHolders: clampStringNumber(inputTwitterSnipe.maxHolders, defaultTwitterSnipe.maxHolders),
     minTickerLen: clampStringNumber(inputTwitterSnipe.minTickerLen, defaultTwitterSnipe.minTickerLen),
     maxTickerLen: clampStringNumber(inputTwitterSnipe.maxTickerLen, defaultTwitterSnipe.maxTickerLen),
-    minTokenAgeMinutes: clampStringNumber(inputTwitterSnipe.minTokenAgeMinutes, defaultTwitterSnipe.minTokenAgeMinutes),
-    maxTokenAgeMinutes: clampStringNumber(inputTwitterSnipe.maxTokenAgeMinutes, defaultTwitterSnipe.maxTokenAgeMinutes),
+    minTokenAgeSeconds: clampStringNumber(inputTwitterSnipe.minTokenAgeSeconds, defaultTwitterSnipe.minTokenAgeSeconds),
+    maxTokenAgeSeconds: clampStringNumber(inputTwitterSnipe.maxTokenAgeSeconds, defaultTwitterSnipe.maxTokenAgeSeconds),
     minDevHoldPercent: clampStringNumber(inputTwitterSnipe.minDevHoldPercent, defaultTwitterSnipe.minDevHoldPercent),
     maxDevHoldPercent: clampStringNumber(inputTwitterSnipe.maxDevHoldPercent, defaultTwitterSnipe.maxDevHoldPercent),
     blockIfDevSell: typeof inputTwitterSnipe.blockIfDevSell === 'boolean'

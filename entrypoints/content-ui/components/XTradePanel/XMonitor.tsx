@@ -4,6 +4,7 @@ import type { Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber, formatCountShort } from '@/utils/format';
 import { call } from '@/utils/messaging';
+import { browser } from 'wxt/browser';
 
 type XMonitorPanelProps = {
   siteInfo: SiteInfo | null;
@@ -16,6 +17,130 @@ type XMonitorContentProps = {
   siteInfo: SiteInfo | null;
   active: boolean;
   settings: Settings | null;
+};
+
+type XSniperBuyRecordLite = {
+  side?: 'buy' | 'sell';
+  tokenAddress: string;
+  tsMs: number;
+  dryRun?: boolean;
+};
+
+const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
+
+const parseNumber = (v: any) => {
+  if (v == null) return null;
+  const s = typeof v === 'string' ? v.trim() : String(v).trim();
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return n;
+};
+
+const parseKNumber = (v: any) => {
+  const n = parseNumber(v);
+  if (n == null) return null;
+  return n * 1000;
+};
+
+const getSignalInteraction = (signal: UnifiedTwitterSignal) => {
+  const type = signal.tweetType === 'delete_post' ? ((signal as any).sourceTweetType ?? null) : signal.tweetType;
+  if (type === 'repost') return 'retweet';
+  if (type === 'tweet') return 'tweet';
+  if (type === 'reply') return 'reply';
+  if (type === 'quote') return 'quote';
+  if (type === 'follow') return 'follow';
+  return null;
+};
+
+const matchesTwitterFilters = (signal: UnifiedTwitterSignal, strategy: any) => {
+  const allowedTypes = Array.isArray(strategy?.interactionTypes) ? strategy.interactionTypes.map((x: any) => String(x).toLowerCase()) : [];
+  const it = getSignalInteraction(signal);
+  if (allowedTypes.length && (!it || !allowedTypes.includes(it))) return false;
+
+  const targetUsers = Array.isArray(strategy?.targetUsers) ? strategy.targetUsers.map((x: any) => String(x).toLowerCase()).filter(Boolean) : [];
+  if (!targetUsers.length) return true;
+
+  const screen = String((signal as any).userScreen ?? '').replace(/^@/, '').toLowerCase();
+  const name = String((signal as any).userName ?? '').toLowerCase();
+  return targetUsers.some((u: string) => u === screen || u === name);
+};
+
+const getDevHasSold = (token: UnifiedSignalToken) => {
+  const v = (token as any).devHasSold;
+  if (typeof v === 'boolean') return v;
+  const status = (token as any).devTokenStatus;
+  if (typeof status === 'string') return status.toLowerCase().includes('sell');
+  return null;
+};
+
+const buildNotBoughtReason = (input: {
+  wsMonitorEnabled: boolean;
+  strategy: any;
+  signal: UnifiedTwitterSignal;
+  token: UnifiedSignalToken;
+}) => {
+  if (!input.wsMonitorEnabled) return '推特监控已关闭';
+  if (!input.strategy?.enabled) return '推特狙击未启用';
+  if (!matchesTwitterFilters(input.signal, input.strategy)) return '目标用户/互动类型不匹配';
+
+  const perTweetMax = Math.max(0, Math.floor(parseNumber(input.strategy?.buyNewCaCount) ?? 0));
+  if (perTweetMax <= 0) return '买入新CA数量=0';
+  const amount = parseNumber(input.strategy?.buyAmountBnb) ?? 0;
+  if (amount <= 0) return '买入金额=0';
+
+  const token = input.token as any;
+  const mc = typeof token.marketCapUsd === 'number' ? token.marketCapUsd : null;
+  const holders = typeof token.holders === 'number' ? token.holders : null;
+  const symbol = typeof token.tokenSymbol === 'string' ? token.tokenSymbol.trim() : '';
+  const createdAtMs = typeof token.createdAtMs === 'number' ? token.createdAtMs : null;
+  const devHold = typeof token.devHoldPercent === 'number' ? token.devHoldPercent : null;
+  const devHasSold = getDevHasSold(input.token);
+
+  const minMcap = parseKNumber(input.strategy?.minMarketCapUsd);
+  const maxMcap = parseKNumber(input.strategy?.maxMarketCapUsd);
+  if (minMcap != null && mc == null) return '缺少市值';
+  if (maxMcap != null && mc == null) return '缺少市值';
+  if (minMcap != null && mc != null && mc < minMcap) return `市值${Math.round(mc)} < Min ${Math.round(minMcap)}`;
+  if (maxMcap != null && mc != null && mc > maxMcap) return `市值${Math.round(mc)} > Max ${Math.round(maxMcap)}`;
+
+  const minHolders = parseNumber(input.strategy?.minHolders);
+  const maxHolders = parseNumber(input.strategy?.maxHolders);
+  if (minHolders != null && holders == null) return '缺少持币人数';
+  if (maxHolders != null && holders == null) return '缺少持币人数';
+  if (minHolders != null && holders != null && holders < minHolders) return `持币人数${holders} < Min ${Math.floor(minHolders)}`;
+  if (maxHolders != null && holders != null && holders > maxHolders) return `持币人数${holders} > Max ${Math.floor(maxHolders)}`;
+
+  const minTickerLenRaw = parseNumber(input.strategy?.minTickerLen);
+  const maxTickerLenRaw = parseNumber(input.strategy?.maxTickerLen);
+  const minTickerLen = minTickerLenRaw != null ? Math.max(0, Math.floor(minTickerLenRaw)) : null;
+  const maxTickerLen = maxTickerLenRaw != null ? Math.max(0, Math.floor(maxTickerLenRaw)) : null;
+  if (minTickerLen != null || maxTickerLen != null) {
+    if (!symbol) return '缺少Ticker';
+    const len = computeTickerLen(symbol);
+    if (minTickerLen != null && len < minTickerLen) return `Ticker长度${len} < Min ${minTickerLen}`;
+    if (maxTickerLen != null && len > maxTickerLen) return `Ticker长度${len} > Max ${maxTickerLen}`;
+  }
+
+  const minAgeSec = parseNumber(input.strategy?.minTokenAgeSeconds);
+  const maxAgeSec = parseNumber(input.strategy?.maxTokenAgeSeconds);
+  if ((minAgeSec != null || maxAgeSec != null) && createdAtMs == null) return '缺少创建时间';
+  if (createdAtMs != null) {
+    const ageSec = (Date.now() - createdAtMs) / 1000;
+    if (minAgeSec != null && ageSec < minAgeSec) return `年龄${Math.floor(ageSec)}s < Min ${Math.floor(minAgeSec)}s`;
+    if (maxAgeSec != null && ageSec > maxAgeSec) return `年龄${Math.floor(ageSec)}s > Max ${Math.floor(maxAgeSec)}s`;
+  }
+
+  const minDevPct = parseNumber(input.strategy?.minDevHoldPercent);
+  const maxDevPct = parseNumber(input.strategy?.maxDevHoldPercent);
+  if (minDevPct != null && devHold == null) return '缺少Dev持仓';
+  if (maxDevPct != null && devHold == null) return '缺少Dev持仓';
+  if (minDevPct != null && devHold != null && devHold < minDevPct) return `Dev持仓${devHold.toFixed(2)}% < Min ${minDevPct}%`;
+  if (maxDevPct != null && devHold != null && devHold > maxDevPct) return `Dev持仓${devHold.toFixed(2)}% > Max ${maxDevPct}%`;
+  if (input.strategy?.blockIfDevSell && devHasSold === true) return 'Dev已清仓';
+
+  if (input.strategy?.dryRun === true) return 'DryRun（仅记录）';
+  return '已满足筛选但未下单（可能达到本推买入上限/钱包未解锁/重复买入）';
 };
 
 
@@ -212,6 +337,56 @@ export function XMonitorContent({
     const max = parseLen(snipe?.maxTickerLen);
     return { min, max };
   }, [resolvedSettings]);
+
+  const twitterSnipeStrategy = (resolvedSettings as any)?.autoTrade?.twitterSnipe ?? null;
+
+  const [boughtByAddr, setBoughtByAddr] = useState<Record<string, { dryRun: boolean; tsMs: number }>>({});
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await browser.storage.local.get(HISTORY_STORAGE_KEY);
+        const raw = (res as any)?.[HISTORY_STORAGE_KEY];
+        const list = Array.isArray(raw) ? (raw as XSniperBuyRecordLite[]) : [];
+        const next: Record<string, { dryRun: boolean; tsMs: number }> = {};
+        for (const r of list) {
+          if (!r || r.side !== 'buy') continue;
+          const addr = typeof r.tokenAddress === 'string' ? r.tokenAddress.trim().toLowerCase() : '';
+          if (!addr) continue;
+          const tsMs = typeof r.tsMs === 'number' ? r.tsMs : 0;
+          const prev = next[addr];
+          if (prev && prev.tsMs >= tsMs) continue;
+          next[addr] = { dryRun: r.dryRun === true, tsMs };
+        }
+        if (!cancelled) setBoughtByAddr(next);
+      } catch {
+        if (!cancelled) setBoughtByAddr({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    const listener = (message: any) => {
+      if (!message || message.type !== 'bg:xsniper:buy') return;
+      const record = message.record as XSniperBuyRecordLite | undefined;
+      if (!record || record.side !== 'buy') return;
+      const addr = typeof record.tokenAddress === 'string' ? record.tokenAddress.trim().toLowerCase() : '';
+      if (!addr) return;
+      const tsMs = typeof record.tsMs === 'number' ? record.tsMs : 0;
+      setBoughtByAddr((prev) => {
+        const cur = prev[addr];
+        if (cur && cur.tsMs >= tsMs) return prev;
+        return { ...prev, [addr]: { dryRun: record.dryRun === true, tsMs } };
+      });
+    };
+    browser.runtime.onMessage.addListener(listener as any);
+    return () => browser.runtime.onMessage.removeListener(listener as any);
+  }, [active]);
 
   const signalsRef = useRef<Map<string, UnifiedTwitterSignal>>(new Map());
   const [signalIds, setSignalIds] = useState<string[]>([]);
@@ -750,6 +925,15 @@ export function XMonitorContent({
                     <div className="mt-3 space-y-2">
                       {displayTokens.map((token) => {
                         const tokenAddr = token.tokenAddress;
+                        const bought = boughtByAddr[tokenAddr.toLowerCase()] ?? null;
+                        const notBoughtReason = !bought
+                          ? buildNotBoughtReason({
+                            wsMonitorEnabled,
+                            strategy: twitterSnipeStrategy,
+                            signal,
+                            token,
+                          })
+                          : null;
                         const shortAddr = `${tokenAddr.slice(0, 6)}...${tokenAddr.slice(-4)}`;
                         const symbol = token.tokenSymbol?.trim() || '';
                         const tokenName = token.tokenName?.trim() || '';
@@ -769,7 +953,14 @@ export function XMonitorContent({
                         return (
                           <div
                             key={`${signal.id}:${tokenAddr}`}
-                            className="border border-zinc-800 bg-zinc-900/40 px-3 py-2"
+                            className={[
+                              'border px-3 py-2',
+                              bought
+                                ? bought.dryRun
+                                  ? 'border-amber-500/40 bg-amber-500/10'
+                                  : 'border-emerald-500/40 bg-emerald-500/10'
+                                : 'border-zinc-800 bg-zinc-900/40',
+                            ].join(' ')}
                           >
                             <div className="flex items-center justify-between gap-2">
                               <button
@@ -781,11 +972,23 @@ export function XMonitorContent({
                                 <span>{name}</span>
                                 {symbol && tokenName ? <span className="ml-1 font-normal text-zinc-400">{tokenName}</span> : null}
                               </button>
-                              {mc != null ? (
-                                <div className="flex-shrink-0 text-[14px] font-semibold text-emerald-300">
-                                  MC ${formatCompactNumber(Math.round(mc))}
-                                </div>
-                              ) : null}
+                              <div className="flex flex-shrink-0 items-center gap-2">
+                                {bought ? (
+                                  <div
+                                    className={[
+                                      'rounded border px-1.5 py-0.5 text-[10px] font-semibold',
+                                      bought.dryRun ? 'border-amber-500/40 text-amber-200' : 'border-emerald-500/40 text-emerald-200',
+                                    ].join(' ')}
+                                  >
+                                    {bought.dryRun ? 'DRY' : 'BUY'}
+                                  </div>
+                                ) : null}
+                                {mc != null ? (
+                                  <div className="text-[14px] font-semibold text-emerald-300">
+                                    MC ${formatCompactNumber(Math.round(mc))}
+                                  </div>
+                                ) : null}
+                              </div>
                             </div>
                             <div className="mt-1 flex items-center justify-between gap-2">
                               <div className="min-w-0 truncate font-mono text-[11px] text-zinc-500">{shortAddr}</div>
@@ -822,6 +1025,9 @@ export function XMonitorContent({
                                 ) : null}
                               </div>
                             </div>
+                            {!bought && notBoughtReason ? (
+                              <div className="mt-1 text-[10px] text-zinc-500">未买入：{notBoughtReason}</div>
+                            ) : null}
                           </div>
                         );
                       })}

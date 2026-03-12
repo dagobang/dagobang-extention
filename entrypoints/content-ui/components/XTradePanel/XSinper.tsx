@@ -194,8 +194,7 @@ export function XSniperContent({
 
   useEffect(() => {
     if (!active) return;
-
-    const readLatest = () => {
+    const readLatestFromCache = () => {
       const cache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? null;
       const list = Array.isArray(cache?.list) ? (cache.list as any[]) : [];
       const next: Record<string, any> = {};
@@ -227,9 +226,43 @@ export function XSniperContent({
       setLatestTokenByAddr(next);
     };
 
-    readLatest();
-    const timer = setInterval(readLatest, 2000);
-    return () => clearInterval(timer);
+    readLatestFromCache();
+
+    if (!wsMonitorEnabled) return;
+
+    const onSignal = (e: Event) => {
+      const signal = (e as CustomEvent<any>).detail as any;
+      if (!signal || typeof signal !== 'object') return;
+      const tokens = Array.isArray(signal.tokens) ? (signal.tokens as any[]) : [];
+      if (!tokens.length) return;
+      const signalTs = typeof signal.ts === 'number' ? signal.ts : 0;
+
+      setLatestTokenByAddr((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const t of tokens) {
+          const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
+          if (!addr) continue;
+          const key = addr.toLowerCase();
+          const updatedAtMs = typeof t?.updatedAtMs === 'number' ? t.updatedAtMs : signalTs;
+          const cur = next[key];
+          if (cur && typeof cur.updatedAtMs === 'number' && updatedAtMs <= cur.updatedAtMs) continue;
+          next[key] = {
+            updatedAtMs,
+            marketCapUsd: typeof t?.marketCapUsd === 'number' ? t.marketCapUsd : undefined,
+            holders: typeof t?.holders === 'number' ? t.holders : undefined,
+            devHoldPercent: typeof t?.devHoldPercent === 'number' ? t.devHoldPercent : undefined,
+            devHasSold: typeof t?.devHasSold === 'boolean' ? t.devHasSold : undefined,
+            kol: typeof t?.kol === 'number' ? t.kol : undefined,
+          };
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+    };
+
+    window.addEventListener('dagobang-twitter-signal' as any, onSignal as any);
+    return () => window.removeEventListener('dagobang-twitter-signal' as any, onSignal as any);
   }, [active, wsMonitorEnabled]);
 
   const presetOptions = useMemo(
@@ -475,27 +508,25 @@ export function XSniperContent({
             <div className="flex items-center gap-3">
               <div className="w-16 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.filterHolders')}</div>
               <div className="grid flex-1 grid-cols-2 gap-2">
-                <div className="relative">
+                <div>
                   <input
                     type="number"
                     placeholder={tt('contentUi.autoTradeStrategy.placeholderMin')}
-                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-8 text-[13px] outline-none"
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
                     value={twitterSnipe?.minHolders ?? ''}
                     disabled={!canEdit}
                     onChange={(e) => updateTwitterSnipe({ minHolders: e.target.value })}
                   />
-                  <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">K</div>
                 </div>
-                <div className="relative">
+                <div>
                   <input
                     type="number"
                     placeholder={tt('contentUi.autoTradeStrategy.placeholderMax')}
-                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-8 text-[13px] outline-none"
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
                     value={twitterSnipe?.maxHolders ?? ''}
                     disabled={!canEdit}
                     onChange={(e) => updateTwitterSnipe({ maxHolders: e.target.value })}
                   />
-                  <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">K</div>
                 </div>
               </div>
             </div>
@@ -532,22 +563,22 @@ export function XSniperContent({
                     type="number"
                     placeholder={tt('contentUi.autoTradeStrategy.placeholderMin')}
                     className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-9 text-[13px] outline-none"
-                    value={twitterSnipe?.minTokenAgeMinutes ?? ''}
+                    value={twitterSnipe?.minTokenAgeSeconds ?? ''}
                     disabled={!canEdit}
-                    onChange={(e) => updateTwitterSnipe({ minTokenAgeMinutes: e.target.value })}
+                    onChange={(e) => updateTwitterSnipe({ minTokenAgeSeconds: e.target.value })}
                   />
-                  <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">min</div>
+                  <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">s</div>
                 </div>
                 <div className="relative">
                   <input
                     type="number"
                     placeholder={tt('contentUi.autoTradeStrategy.placeholderMax')}
                     className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-9 text-[13px] outline-none"
-                    value={twitterSnipe?.maxTokenAgeMinutes ?? ''}
+                    value={twitterSnipe?.maxTokenAgeSeconds ?? ''}
                     disabled={!canEdit}
-                    onChange={(e) => updateTwitterSnipe({ maxTokenAgeMinutes: e.target.value })}
+                    onChange={(e) => updateTwitterSnipe({ maxTokenAgeSeconds: e.target.value })}
                   />
-                  <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">min</div>
+                  <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">s</div>
                 </div>
               </div>
             </div>
@@ -725,9 +756,7 @@ export function XSniperContent({
                               : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnb(r.buyAmountBnb)}`}
                           </div>
                           <div>
-                            {isSell
-                              ? `${tt('contentUi.autoTradeStrategy.snipeHistoryReason')}: ${r.reason ? String(r.reason) : '-'}`
-                              : `${tt('contentUi.autoTradeStrategy.snipeHistoryPrice')}: ${formatUsd(r.entryPriceUsd)}`}
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryReason')}: {r.reason ? String(r.reason) : '-'}
                           </div>
                           <div>
                             {tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')}: {formatCompact(r.marketCapUsd)}

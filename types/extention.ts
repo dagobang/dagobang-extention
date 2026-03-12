@@ -49,8 +49,8 @@ export type AutoTradeStrategyBase = {
   maxHolders: string;
   minTickerLen?: string;
   maxTickerLen?: string;
-  minTokenAgeMinutes: string;
-  maxTokenAgeMinutes: string;
+  minTokenAgeSeconds: string;
+  maxTokenAgeSeconds: string;
   minDevHoldPercent: string;
   maxDevHoldPercent: string;
   blockIfDevSell: boolean;
