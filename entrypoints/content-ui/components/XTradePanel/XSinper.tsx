@@ -7,6 +7,8 @@ import { call } from '@/utils/messaging';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import { browser } from 'wxt/browser';
 import { SiteInfo } from '@/utils/sites';
+import { chainNames } from '@/constants/chains/chainName';
+import type { TokenInfo } from '@/types/token';
 
 type XSniperPanelProps = {
   siteInfo: SiteInfo
@@ -132,6 +134,7 @@ export function XSniperContent({
   const [buyHistory, setBuyHistory] = useState<XSniperBuyRecord[]>([]);
   const [latestTokenByAddr, setLatestTokenByAddr] = useState<Record<string, any>>({});
   const [athMcapByAddr, setAthMcapByAddr] = useState<Record<string, number>>({});
+  const [sellingKey, setSellingKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -350,6 +353,87 @@ export function XSniperContent({
   };
   const soundSelectValue =
     draft?.triggerSound.enabled === false ? SOUND_OFF : (draft?.triggerSound.preset ?? 'Boom');
+
+  const sellByPercent = async (record: XSniperBuyRecord, pct: number) => {
+    if (!settings) return;
+    if (!isUnlocked) return;
+    const chainId = typeof record.chainId === 'number' ? record.chainId : settings.chainId;
+    const tokenAddressNormalized = String(record.tokenAddress || '').toLowerCase() as `0x${string}`;
+    if (!tokenAddressNormalized || !tokenAddressNormalized.startsWith('0x')) return;
+
+    const percentBps = Math.max(1, Math.min(10000, Math.floor(pct * 100)));
+    const isTurbo = settings.chains[chainId]?.executionMode === 'turbo';
+
+    const key = `${record.id}:${pct}`;
+    setSellingKey(key);
+    try {
+      const state = await call({ type: 'bg:getState' } as const);
+      const address = state?.wallet?.address;
+      if (!address) throw new Error('Wallet not ready');
+
+      const balRes = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address } as const);
+      const balanceWei = BigInt(balRes.balanceWei || '0');
+      if (balanceWei <= 0n) throw new Error('No balance');
+
+      const meta = await call({ type: 'token:getMeta', tokenAddress: tokenAddressNormalized } as const);
+      const chain = chainNames[chainId] ?? String(chainId);
+      const httpTokenInfoRes = await call({
+        type: 'token:getTokenInfo:fourmemeHttp',
+        platform: siteInfo?.platform ?? 'gmgn',
+        chain,
+        address: tokenAddressNormalized,
+      } as const);
+
+      const tokenInfo: TokenInfo =
+        httpTokenInfoRes.tokenInfo ??
+        ({
+          chain,
+          address: tokenAddressNormalized,
+          name: record.tokenName ? String(record.tokenName) : meta.symbol,
+          symbol: record.tokenSymbol ? String(record.tokenSymbol) : meta.symbol,
+          decimals: Number(meta.decimals) || 18,
+          logo: '',
+          launchpad: '',
+          launchpad_progress: 0,
+          launchpad_platform: '',
+          launchpad_status: 1,
+          quote_token: '',
+        } as TokenInfo);
+
+      const approveRes = await call({
+        type: 'tx:approveMaxForSellIfNeeded',
+        chainId,
+        tokenAddress: tokenAddressNormalized,
+        tokenInfo,
+      } as const);
+      if (approveRes.txHash) {
+        const receipt = await call({ type: 'tx:waitForReceipt', hash: approveRes.txHash, chainId } as const);
+        if (!receipt.ok) {
+          const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
+          throw new Error(detail || 'Approve failed');
+        }
+      }
+
+      const tokenAmountWei = isTurbo ? '0' : ((balanceWei * BigInt(pct)) / 100n).toString();
+      const sellRes = await call({
+        type: 'tx:sell',
+        input: {
+          chainId,
+          tokenAddress: tokenAddressNormalized,
+          tokenAmountWei,
+          sellPercentBps: isTurbo ? percentBps : undefined,
+          expectedTokenInWei: isTurbo ? balanceWei.toString() : undefined,
+          tokenInfo,
+        },
+      } as const);
+      if (!sellRes.ok) {
+        const detail = sellRes.revertReason || sellRes.error?.shortMessage || sellRes.error?.message;
+        throw new Error(detail || 'Sell failed');
+      }
+    } finally {
+      setSellingKey((prev) => (prev === key ? null : prev));
+    }
+  };
 
   if (!active || !draft) return null;
 
@@ -776,6 +860,8 @@ export function XSniperContent({
                     const tokenLink = parsePlatformTokenLink(siteInfo, r.tokenAddress);
                     const entryPriceUsd = typeof r.entryPriceUsd === 'number' ? r.entryPriceUsd : null;
                     const latestPriceUsd = latest && typeof latest.priceUsd === 'number' ? (latest.priceUsd as number) : null;
+                    const sellDisabledBase = !settings || !isUnlocked || r.dryRun === true;
+                    const sellingForRecord = sellingKey != null && sellingKey.startsWith(`${r.id}:`);
 
                     return (
                       <div>
@@ -843,6 +929,29 @@ export function XSniperContent({
                             {tt('contentUi.autoTradeStrategy.snipeHistoryUser')}: {r.userScreen ? String(r.userScreen) : '-'}
                           </div>
                         </div>
+                        {!isSell ? (
+                          <div className="mt-2 grid grid-cols-4 gap-2">
+                            {[10, 25, 50, 100].map((pct) => {
+                              const key = `${r.id}:${pct}`;
+                              const busy = sellingKey === key || sellingForRecord;
+                              return (
+                                <button
+                                  key={pct}
+                                  type="button"
+                                  className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-200 hover:border-zinc-500 disabled:opacity-50"
+                                  disabled={sellDisabledBase || busy}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void sellByPercent(r, pct);
+                                  }}
+                                >
+                                  {pct}%
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })()}

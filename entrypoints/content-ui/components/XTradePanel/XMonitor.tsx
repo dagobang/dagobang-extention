@@ -140,7 +140,113 @@ const buildNotBoughtReason = (input: {
   if (input.strategy?.blockIfDevSell && devHasSold === true) return 'Dev已清仓';
 
   if (input.strategy?.dryRun === true) return 'DryRun（仅记录）';
-  return '已满足筛选但未下单（可能达到本推买入上限/钱包未解锁/重复买入）';
+  const shouldPickByMcap = (() => {
+    const tokens = Array.isArray(input.signal.tokens) ? (input.signal.tokens as UnifiedSignalToken[]) : [];
+    const scanLimit = Math.min(500, tokens.length);
+    const now = Date.now();
+    const unique: UnifiedSignalToken[] = [];
+    const seen = new Set<string>();
+    for (const t of tokens) {
+      const addr = typeof (t as any)?.tokenAddress === 'string' ? String((t as any).tokenAddress).trim() : '';
+      const key = addr.toLowerCase();
+      if (!addr) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(t);
+      if (unique.length >= scanLimit) break;
+    }
+
+    const passes = (t: UnifiedSignalToken) => {
+      const token = t as any;
+      const mcRaw = typeof token.marketCapUsd === 'number' ? token.marketCapUsd : null;
+      const mc = mcRaw != null && Number.isFinite(mcRaw) && mcRaw >= 3000 ? mcRaw : null;
+      const holders = typeof token.holders === 'number' ? token.holders : null;
+      const symbol = typeof token.tokenSymbol === 'string' ? token.tokenSymbol.trim() : '';
+      const createdAtMs = typeof token.createdAtMs === 'number' ? token.createdAtMs : null;
+      const devHold = typeof token.devHoldPercent === 'number' ? token.devHoldPercent : 0;
+      const devHasSold = getDevHasSold(t);
+
+      if ((minMcap != null || maxMcap != null) && mcRaw != null && mc == null) return false;
+      if (minMcap != null && mc == null) return false;
+      if (maxMcap != null && mc == null) return false;
+      if (minMcap != null && mc != null && mc < minMcap) return false;
+      if (maxMcap != null && mc != null && mc > maxMcap) return false;
+
+      if (minHolders != null && holders == null) return false;
+      if (maxHolders != null && holders == null) return false;
+      if (minHolders != null && holders != null && holders < minHolders) return false;
+      if (maxHolders != null && holders != null && holders > maxHolders) return false;
+
+      if (minTickerLen != null || maxTickerLen != null) {
+        if (!symbol) return false;
+        const len = computeTickerLen(symbol);
+        if (minTickerLen != null && len < minTickerLen) return false;
+        if (maxTickerLen != null && len > maxTickerLen) return false;
+      }
+
+      if ((minAgeSec != null || maxAgeSec != null) && createdAtMs == null) return false;
+      if (createdAtMs != null) {
+        const ageSec = (now - createdAtMs) / 1000;
+        if (minAgeSec != null && ageSec < minAgeSec) return false;
+        if (maxAgeSec != null && ageSec > maxAgeSec) return false;
+      }
+
+      if (minDevPct != null && devHold < minDevPct) return false;
+      if (maxDevPct != null && devHold > maxDevPct) return false;
+      if (input.strategy?.blockIfDevSell && devHasSold === true) return false;
+
+      return true;
+    };
+
+    const candidates = unique.filter(passes).slice();
+    candidates.sort((a, b) => {
+      const ma = typeof (a as any).marketCapUsd === 'number' ? (a as any).marketCapUsd : 0;
+      const mb = typeof (b as any).marketCapUsd === 'number' ? (b as any).marketCapUsd : 0;
+      if (mb !== ma) return mb - ma;
+      const ta = typeof (a as any).firstSeenAtMs === 'number' ? (a as any).firstSeenAtMs : 0;
+      const tb = typeof (b as any).firstSeenAtMs === 'number' ? (b as any).firstSeenAtMs : 0;
+      return ta - tb;
+    });
+
+    const ogCount = Math.max(0, Math.floor(parseNumber(input.strategy?.buyOgCount) ?? 0));
+    const maxCount = perTweetMax;
+    let leftNew = perTweetMax;
+    let leftOg = ogCount;
+
+    const selected: UnifiedSignalToken[] = [];
+    const selectedKey = new Set<string>();
+    for (const t of candidates) {
+      if (selected.length >= maxCount) break;
+      const addr = typeof (t as any)?.tokenAddress === 'string' ? String((t as any).tokenAddress).trim().toLowerCase() : '';
+      if (!addr) continue;
+      if (selectedKey.has(addr)) continue;
+      const first = typeof (t as any).firstSeenAtMs === 'number' ? (t as any).firstSeenAtMs : now;
+      const isNew = now - first <= 60_000;
+      if (isNew && leftNew > 0) {
+        leftNew -= 1;
+        selected.push(t);
+        selectedKey.add(addr);
+      } else if (!isNew && leftOg > 0) {
+        leftOg -= 1;
+        selected.push(t);
+        selectedKey.add(addr);
+      }
+    }
+
+    for (const t of candidates) {
+      if (selected.length >= maxCount) break;
+      const addr = typeof (t as any)?.tokenAddress === 'string' ? String((t as any).tokenAddress).trim().toLowerCase() : '';
+      if (!addr) continue;
+      if (selectedKey.has(addr)) continue;
+      selected.push(t);
+      selectedKey.add(addr);
+    }
+    const curAddr = typeof (input.token as any)?.tokenAddress === 'string' ? String((input.token as any).tokenAddress).trim().toLowerCase() : '';
+    return curAddr ? selectedKey.has(curAddr) : false;
+  })();
+
+  if (!shouldPickByMcap) return '已满足筛选但超出本推买入名额（按市值排序）';
+  return '已满足筛选但未下单（可能钱包未解锁/重复买入/买入中）';
 };
 
 
@@ -406,7 +512,7 @@ export function XMonitorContent({
       if (Number.isFinite(n) && n > 0) return Math.floor(n);
     } catch {
     }
-    return 10;
+    return 200;
   });
 
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -595,7 +701,7 @@ export function XMonitorContent({
                 setTokenLimit(next);
               }}
             >
-              {[5, 10, 20, 50].map((n) => (
+              {[5, 10, 20, 50, 100, 200].map((n) => (
                 <option key={n} value={String(n)}>
                   {n}
                 </option>
@@ -661,6 +767,16 @@ export function XMonitorContent({
                 })
                 .slice()
                 .sort((a, b) => {
+                  const aa = typeof a.tokenAddress === 'string' ? a.tokenAddress.trim().toLowerCase() : '';
+                  const bb = typeof b.tokenAddress === 'string' ? b.tokenAddress.trim().toLowerCase() : '';
+                  const ba = aa ? boughtByAddr[aa] : null;
+                  const bbought = bb ? boughtByAddr[bb] : null;
+                  const ra = ba ? (ba.dryRun ? 1 : 0) : 2;
+                  const rb = bbought ? (bbought.dryRun ? 1 : 0) : 2;
+                  if (ra !== rb) return ra - rb;
+                  const ta = ba ? ba.tsMs : 0;
+                  const tb = bbought ? bbought.tsMs : 0;
+                  if (tb !== ta) return tb - ta;
                   const ma = typeof a.marketCapUsd === 'number' ? a.marketCapUsd : 0;
                   const mb = typeof b.marketCapUsd === 'number' ? b.marketCapUsd : 0;
                   if (mb !== ma) return mb - ma;

@@ -584,6 +584,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     const now = Date.now();
     const perTweetMax = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
     if (perTweetMax <= 0) return [];
+    const scanLimit = Math.min(500, tokens.length);
     const unique: UnifiedSignalToken[] = [];
     const seen = new Set<string>();
     for (const t of tokens) {
@@ -593,13 +594,25 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       if (seen.has(key)) continue;
       seen.add(key);
       unique.push(t);
-      if (unique.length >= Math.max(5, perTweetMax)) break;
+      if (unique.length >= scanLimit) break;
     }
 
     const candidates = unique
       .map((t) => ({ t, m: metricsFromUnifiedToken(t) }))
       .filter((x) => x.m && x.m.tokenAddress && shouldBuyByConfig(x.m, strategy));
 
+    candidates.sort((a, b) => {
+      const ma = typeof a.m?.marketCapUsd === 'number' ? a.m.marketCapUsd : 0;
+      const mb = typeof b.m?.marketCapUsd === 'number' ? b.m.marketCapUsd : 0;
+      if (mb !== ma) return mb - ma;
+      const ta = typeof (a.t as any).firstSeenAtMs === 'number' ? (a.t as any).firstSeenAtMs : 0;
+      const tb = typeof (b.t as any).firstSeenAtMs === 'number' ? (b.t as any).firstSeenAtMs : 0;
+      return ta - tb;
+    });
+
+    if (strategy?.dryRun === true) {
+      return candidates;
+    }
     const ogCount = Math.max(0, Math.floor(parseNumber(strategy?.buyOgCount) ?? 0));
     const maxCount = perTweetMax;
     let leftNew = perTweetMax;
