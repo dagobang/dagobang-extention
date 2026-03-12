@@ -90,15 +90,17 @@ const buildNotBoughtReason = (input: {
   if (amount <= 0) return '买入金额=0';
 
   const token = input.token as any;
-  const mc = typeof token.marketCapUsd === 'number' ? token.marketCapUsd : null;
+  const mcRaw = typeof token.marketCapUsd === 'number' ? token.marketCapUsd : null;
+  const mc = mcRaw != null && Number.isFinite(mcRaw) && mcRaw >= 3000 ? mcRaw : null;
   const holders = typeof token.holders === 'number' ? token.holders : null;
   const symbol = typeof token.tokenSymbol === 'string' ? token.tokenSymbol.trim() : '';
   const createdAtMs = typeof token.createdAtMs === 'number' ? token.createdAtMs : null;
-  const devHold = typeof token.devHoldPercent === 'number' ? token.devHoldPercent : null;
+  const devHold = typeof token.devHoldPercent === 'number' ? token.devHoldPercent : 0;
   const devHasSold = getDevHasSold(input.token);
 
   const minMcap = parseKNumber(input.strategy?.minMarketCapUsd);
   const maxMcap = parseKNumber(input.strategy?.maxMarketCapUsd);
+  if ((minMcap != null || maxMcap != null) && mcRaw != null && mc == null) return '市值无效';
   if (minMcap != null && mc == null) return '缺少市值';
   if (maxMcap != null && mc == null) return '缺少市值';
   if (minMcap != null && mc != null && mc < minMcap) return `市值${Math.round(mc)} < Min ${Math.round(minMcap)}`;
@@ -133,10 +135,8 @@ const buildNotBoughtReason = (input: {
 
   const minDevPct = parseNumber(input.strategy?.minDevHoldPercent);
   const maxDevPct = parseNumber(input.strategy?.maxDevHoldPercent);
-  if (minDevPct != null && devHold == null) return '缺少Dev持仓';
-  if (maxDevPct != null && devHold == null) return '缺少Dev持仓';
-  if (minDevPct != null && devHold != null && devHold < minDevPct) return `Dev持仓${devHold.toFixed(2)}% < Min ${minDevPct}%`;
-  if (maxDevPct != null && devHold != null && devHold > maxDevPct) return `Dev持仓${devHold.toFixed(2)}% > Max ${maxDevPct}%`;
+  if (minDevPct != null && devHold < minDevPct) return `Dev持仓${devHold.toFixed(2)}% < Min ${minDevPct}%`;
+  if (maxDevPct != null && devHold > maxDevPct) return `Dev持仓${devHold.toFixed(2)}% > Max ${maxDevPct}%`;
   if (input.strategy?.blockIfDevSell && devHasSold === true) return 'Dev已清仓';
 
   if (input.strategy?.dryRun === true) return 'DryRun（仅记录）';

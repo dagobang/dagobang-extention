@@ -877,9 +877,29 @@ export function initGmgnWsMonitor(options: {
       tokenSymbol,
       tokenName,
       tokenLogo,
-      marketCapUsd: typeof tokenData?.marketCapUsd === 'number' ? tokenData.marketCapUsd : prev?.marketCapUsd,
-      priceUsd: typeof tokenData?.priceUsd === 'number' ? tokenData.priceUsd : prev?.priceUsd,
-      liquidityUsd: typeof tokenData?.liquidityUsd === 'number' ? tokenData.liquidityUsd : prev?.liquidityUsd,
+      marketCapUsd: (() => {
+        const v =
+          typeof tokenData?.marketCapUsd === 'number'
+            ? tokenData.marketCapUsd
+            : typeof tokenData?.mc === 'number'
+              ? tokenData.mc
+              : null;
+        if (v != null && Number.isFinite(v) && v >= 3000) return v;
+        const p = typeof prev?.marketCapUsd === 'number' ? prev.marketCapUsd : null;
+        return p != null && Number.isFinite(p) && p >= 3000 ? p : undefined;
+      })(),
+      priceUsd:
+        typeof tokenData?.priceUsd === 'number'
+          ? tokenData.priceUsd
+          : typeof tokenData?.p === 'number'
+            ? tokenData.p
+            : prev?.priceUsd,
+      liquidityUsd:
+        typeof tokenData?.liquidityUsd === 'number'
+          ? tokenData.liquidityUsd
+          : typeof tokenData?.lqdt === 'number'
+            ? tokenData.lqdt
+            : prev?.liquidityUsd,
       holders: typeof tokenData?.holders === 'number' ? tokenData.holders : prev?.holders,
       kol: pickFiniteNumber(typeof tokenData?.kol === 'number' ? tokenData.kol : extractNumber(tokenData, ['kol']), prev?.kol),
       devBuyRatio,

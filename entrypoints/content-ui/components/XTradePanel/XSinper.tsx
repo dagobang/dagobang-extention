@@ -131,6 +131,7 @@ export function XSniperContent({
   const [showLogs, setShowLogs] = useState(false);
   const [buyHistory, setBuyHistory] = useState<XSniperBuyRecord[]>([]);
   const [latestTokenByAddr, setLatestTokenByAddr] = useState<Record<string, any>>({});
+  const [athMcapByAddr, setAthMcapByAddr] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!active) return;
@@ -198,6 +199,7 @@ export function XSniperContent({
       const cache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? null;
       const list = Array.isArray(cache?.list) ? (cache.list as any[]) : [];
       const next: Record<string, any> = {};
+      const ath: Record<string, number> = {};
       for (const s of list) {
         if (!s) continue;
         const tokens = Array.isArray((s as any).tokens) ? ((s as any).tokens as any[]) : [];
@@ -213,9 +215,15 @@ export function XSniperContent({
                 : 0;
           const prev = next[key];
           if (prev && typeof prev.updatedAtMs === 'number' && updatedAtMs <= prev.updatedAtMs) continue;
+          const mcap = typeof t?.marketCapUsd === 'number' && Number.isFinite(t.marketCapUsd) && t.marketCapUsd >= 3000 ? t.marketCapUsd : null;
+          if (mcap != null) {
+            const prevAth = ath[key];
+            ath[key] = prevAth != null && Number.isFinite(prevAth) ? Math.max(prevAth, mcap) : mcap;
+          }
           next[key] = {
             updatedAtMs,
             marketCapUsd: typeof t?.marketCapUsd === 'number' ? t.marketCapUsd : undefined,
+            priceUsd: typeof t?.priceUsd === 'number' ? t.priceUsd : undefined,
             holders: typeof t?.holders === 'number' ? t.holders : undefined,
             devHoldPercent: typeof t?.devHoldPercent === 'number' ? t.devHoldPercent : undefined,
             devHasSold: typeof t?.devHasSold === 'boolean' ? t.devHasSold : undefined,
@@ -224,6 +232,7 @@ export function XSniperContent({
         }
       }
       setLatestTokenByAddr(next);
+      setAthMcapByAddr(ath);
     };
 
     readLatestFromCache();
@@ -236,6 +245,25 @@ export function XSniperContent({
       const tokens = Array.isArray(signal.tokens) ? (signal.tokens as any[]) : [];
       if (!tokens.length) return;
       const signalTs = typeof signal.ts === 'number' ? signal.ts : 0;
+
+      setAthMcapByAddr((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const t of tokens) {
+          const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
+          if (!addr) continue;
+          const key = addr.toLowerCase();
+          const mcap = typeof t?.marketCapUsd === 'number' && Number.isFinite(t.marketCapUsd) && t.marketCapUsd >= 3000 ? t.marketCapUsd : null;
+          if (mcap == null) continue;
+          const cur = next[key];
+          const merged = cur != null && Number.isFinite(cur) ? Math.max(cur, mcap) : mcap;
+          if (merged !== cur) {
+            next[key] = merged;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
 
       setLatestTokenByAddr((prev) => {
         let changed = false;
@@ -250,6 +278,7 @@ export function XSniperContent({
           next[key] = {
             updatedAtMs,
             marketCapUsd: typeof t?.marketCapUsd === 'number' ? t.marketCapUsd : undefined,
+            priceUsd: typeof t?.priceUsd === 'number' ? t.priceUsd : undefined,
             holders: typeof t?.holders === 'number' ? t.holders : undefined,
             devHoldPercent: typeof t?.devHoldPercent === 'number' ? t.devHoldPercent : undefined,
             devHasSold: typeof t?.devHasSold === 'boolean' ? t.devHasSold : undefined,
@@ -713,6 +742,7 @@ export function XSniperContent({
                     const isSell = r.side === 'sell';
                     const orderMcap = typeof r.marketCapUsd === 'number' ? r.marketCapUsd : null;
                     const latestMcap = latest && typeof latest.marketCapUsd === 'number' ? (latest.marketCapUsd as number) : null;
+                    const athMcap = athMcapByAddr[String(r.tokenAddress).toLowerCase()] ?? null;
                     const pnlPct =
                       orderMcap != null && latestMcap != null && orderMcap > 0
                         ? ((latestMcap / orderMcap) - 1) * 100
@@ -724,6 +754,18 @@ export function XSniperContent({
                         : pnlPct >= 0
                           ? 'text-emerald-300'
                           : 'text-rose-300';
+                    const pnlAthPct =
+                      orderMcap != null && athMcap != null && Number.isFinite(athMcap) && orderMcap > 0
+                        ? ((athMcap / orderMcap) - 1) * 100
+                        : null;
+                    const pnlAthText =
+                      pnlAthPct == null || !Number.isFinite(pnlAthPct) ? '-' : `${pnlAthPct >= 0 ? '+' : ''}${pnlAthPct.toFixed(2)}%`;
+                    const pnlAthClass =
+                      pnlAthPct == null || !Number.isFinite(pnlAthPct)
+                        ? 'text-zinc-400'
+                        : pnlAthPct >= 0
+                          ? 'text-emerald-300'
+                          : 'text-rose-300';
                     const tokenLabel =
                       (() => {
                         const sym = r.tokenSymbol ? String(r.tokenSymbol).trim() : '';
@@ -732,6 +774,8 @@ export function XSniperContent({
                         return sym || name || shortAddr(r.tokenAddress);
                       })();
                     const tokenLink = parsePlatformTokenLink(siteInfo, r.tokenAddress);
+                    const entryPriceUsd = typeof r.entryPriceUsd === 'number' ? r.entryPriceUsd : null;
+                    const latestPriceUsd = latest && typeof latest.priceUsd === 'number' ? (latest.priceUsd as number) : null;
 
                     return (
                       <div>
@@ -756,11 +800,15 @@ export function XSniperContent({
                               : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnb(r.buyAmountBnb)}`}
                           </div>
                           <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryReason')}: {r.reason ? String(r.reason) : '-'}
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryPrice')}: {formatUsd(entryPriceUsd)}
+                            {latestPriceUsd != null ? <span className="text-zinc-500"> → {formatUsd(latestPriceUsd)}</span> : null}
                           </div>
                           <div>
                             {tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')}: {formatCompact(r.marketCapUsd)}
                             {latestMcap != null ? <span className="text-zinc-500"> → {formatCompact(latestMcap)}</span> : null}
+                          </div>
+                          <div>
+                            {tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')} ATH: {athMcap == null ? '-' : formatCompact(athMcap)}
                           </div>
                           <div>
                             {tt('contentUi.autoTradeStrategy.snipeHistoryHolders')}: {formatCompact(r.holders)}
@@ -787,6 +835,9 @@ export function XSniperContent({
                           </div>
                           <div className={pnlClass}>
                             {tt('contentUi.autoTradeStrategy.snipeHistoryPnlMcap')}: {pnlText}
+                          </div>
+                          <div className={pnlAthClass}>
+                            PNL(ATH): {pnlAthText}
                           </div>
                           <div>
                             {tt('contentUi.autoTradeStrategy.snipeHistoryUser')}: {r.userScreen ? String(r.userScreen) : '-'}

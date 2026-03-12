@@ -73,6 +73,12 @@ const parseKNumber = (v: string | null | undefined) => {
   return n * 1000;
 };
 
+const sanitizeMarketCapUsd = (v: unknown) => {
+  if (typeof v !== 'number') return null;
+  if (!Number.isFinite(v)) return null;
+  return v >= 3000 ? v : null;
+};
+
 const computeTickerLen = (symbol: string) => {
   let total = 0;
   for (const ch of symbol) {
@@ -101,12 +107,13 @@ const normalizeAddress = (addr: string | null | undefined): `0x${string}` | null
 
 const shouldBuyByConfig = (metrics: TokenMetrics, config: any) => {
   if (!metrics || !config) return false;
+  const marketCapUsd = sanitizeMarketCapUsd(metrics.marketCapUsd);
   const minMcap = parseKNumber(config.minMarketCapUsd);
   const maxMcap = parseKNumber(config.maxMarketCapUsd);
-  if (minMcap != null && metrics.marketCapUsd == null) return false;
-  if (maxMcap != null && metrics.marketCapUsd == null) return false;
-  if (minMcap != null && metrics.marketCapUsd != null && metrics.marketCapUsd < minMcap) return false;
-  if (maxMcap != null && metrics.marketCapUsd != null && metrics.marketCapUsd > maxMcap) return false;
+  if (minMcap != null && marketCapUsd == null) return false;
+  if (maxMcap != null && marketCapUsd == null) return false;
+  if (minMcap != null && marketCapUsd != null && marketCapUsd < minMcap) return false;
+  if (maxMcap != null && marketCapUsd != null && marketCapUsd > maxMcap) return false;
 
   const minHolders = parseNumber(config.minHolders);
   const maxHolders = parseNumber(config.maxHolders);
@@ -141,10 +148,9 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any) => {
 
   const minDevPct = parseNumber(config.minDevHoldPercent);
   const maxDevPct = parseNumber(config.maxDevHoldPercent);
-  if (minDevPct != null && metrics.devHoldPercent == null) return false;
-  if (maxDevPct != null && metrics.devHoldPercent == null) return false;
-  if (minDevPct != null && metrics.devHoldPercent != null && metrics.devHoldPercent < minDevPct) return false;
-  if (maxDevPct != null && metrics.devHoldPercent != null && metrics.devHoldPercent > maxDevPct) return false;
+  const devHoldPct = typeof metrics.devHoldPercent === 'number' ? metrics.devHoldPercent : 0;
+  if (minDevPct != null && devHoldPct < minDevPct) return false;
+  if (maxDevPct != null && devHoldPct > maxDevPct) return false;
   if (config.blockIfDevSell && metrics.devHasSold === true) return false;
   return true;
 };
@@ -328,10 +334,13 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     }
   };
 
-  const getFreshPriceUsd = async (chainId: number, tokenAddress: `0x${string}`, tokenInfo: TokenInfo, fallback: number | null) => {
-    if (fallback != null && Number.isFinite(fallback) && fallback > 0) return fallback;
-    const p = Number(tokenInfo?.tokenPrice?.price ?? 0);
-    if (Number.isFinite(p) && p > 0) return p;
+  const getEntryPriceUsd = async (
+    chainId: number,
+    tokenAddress: `0x${string}`,
+    tokenInfo: TokenInfo,
+    fallback: number | null,
+    fallbackMcapUsd: number | null,
+  ) => {
     try {
       const q = await TokenService.getTokenPriceUsdFromRpc({
         chainId,
@@ -340,10 +349,21 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         cacheTtlMs: 0,
       } as any);
       const n = typeof q === 'number' ? q : Number(q);
-      return Number.isFinite(n) && n > 0 ? n : null;
+      if (Number.isFinite(n) && n > 0) return n;
     } catch {
-      return null;
     }
+    if (fallback != null && Number.isFinite(fallback) && fallback > 0) return fallback;
+    const p = Number(tokenInfo?.tokenPrice?.price ?? 0);
+    const mcap = Number(fallbackMcapUsd ?? tokenInfo?.tokenPrice?.marketCap ?? 0);
+    if (Number.isFinite(p) && p > 0) {
+      if (Number.isFinite(mcap) && mcap > 0) {
+        const impliedSupply = mcap / p;
+        if (Number.isFinite(impliedSupply) && impliedSupply > 0 && impliedSupply <= 1e15) return p;
+      } else {
+        return p;
+      }
+    }
+    return null;
   };
 
   const placeAutoSellOrdersIfEnabled = async (chainId: number, tokenAddress: `0x${string}`, tokenInfo: TokenInfo, basePriceUsd: number) => {
@@ -398,17 +418,24 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       if (!tokenInfo) return;
 
       const refreshedMcap = Number(tokenInfo?.tokenPrice?.marketCap ?? 0);
-      const refreshedPrice = Number(tokenInfo?.tokenPrice?.price ?? 0);
+      const sanitizedRefreshedMcap = sanitizeMarketCapUsd(refreshedMcap);
+      const sanitizedInputMcap = sanitizeMarketCapUsd(input.metrics.marketCapUsd);
       const refreshedMetrics: TokenMetrics = {
         ...input.metrics,
         tokenAddress: input.tokenAddress,
-        marketCapUsd: Number.isFinite(refreshedMcap) && refreshedMcap > 0 ? refreshedMcap : input.metrics.marketCapUsd,
-        priceUsd: Number.isFinite(refreshedPrice) && refreshedPrice > 0 ? refreshedPrice : input.metrics.priceUsd,
+        marketCapUsd: sanitizedRefreshedMcap ?? sanitizedInputMcap ?? undefined,
+        priceUsd: input.metrics.priceUsd,
       };
       if (!shouldBuyByConfig(refreshedMetrics, input.strategy)) return;
 
       if (dryRun) {
-        const entryPriceUsd = await getFreshPriceUsd(input.chainId, input.tokenAddress, tokenInfo, refreshedMetrics.priceUsd ?? null);
+        const entryPriceUsd = await getEntryPriceUsd(
+          input.chainId,
+          input.tokenAddress,
+          tokenInfo,
+          refreshedMetrics.priceUsd ?? null,
+          refreshedMetrics.marketCapUsd ?? null,
+        );
         boughtOnceAtMs.set(key, Date.now());
         void persistBoughtOnce();
         deps.onStateChanged();
@@ -455,7 +482,13 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         tokenInfo,
       } as any);
 
-      const entryPriceUsd = await getFreshPriceUsd(input.chainId, input.tokenAddress, tokenInfo, refreshedMetrics.priceUsd ?? null);
+      const entryPriceUsd = await getEntryPriceUsd(
+        input.chainId,
+        input.tokenAddress,
+        tokenInfo,
+        refreshedMetrics.priceUsd ?? null,
+        refreshedMetrics.marketCapUsd ?? null,
+      );
       boughtOnceAtMs.set(key, Date.now());
       void persistBoughtOnce();
       deps.onStateChanged();
@@ -532,7 +565,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     return {
       tokenAddress,
       tokenSymbol: typeof (t as any).tokenSymbol === 'string' ? String((t as any).tokenSymbol) : undefined,
-      marketCapUsd: typeof (t as any).marketCapUsd === 'number' ? (t as any).marketCapUsd : undefined,
+      marketCapUsd: sanitizeMarketCapUsd((t as any).marketCapUsd) ?? undefined,
       liquidityUsd: typeof (t as any).liquidityUsd === 'number' ? (t as any).liquidityUsd : undefined,
       holders: typeof (t as any).holders === 'number' ? (t as any).holders : undefined,
       kol: typeof (t as any).kol === 'number' ? (t as any).kol : undefined,
