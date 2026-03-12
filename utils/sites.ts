@@ -20,9 +20,9 @@ export function parsePlatformTokenLink(siteInfo: SiteInfo, tokenAddress: string)
     case 'axiom':
       return `https://axiom.trade/meme/${tokenAddress}?chain=${siteInfo.chain == 'bsc' ? 'bnb' : siteInfo.chain}`;
     case 'binance':
-      return `https://web3.binance.com/zh-TW/token/${siteInfo.chain == 'bsc' ? 'bnb' : siteInfo.chain}/${tokenAddress}`;
+      return `https://web3.binance.com/zh-CN/token/${siteInfo.chain}/${tokenAddress}`;
     case 'okx':
-      return `https://web3.okx.com/zh-TW/token/${siteInfo.chain == 'bsc' ? 'bnb' : siteInfo.chain}/${tokenAddress}`;
+      return `https://web3.okx.com/zh-hans/token/${siteInfo.chain}/${tokenAddress}`;
     case 'flap':
       return `https://flap.sh/${siteInfo.chain == 'bsc' ? 'bnb' : siteInfo.chain}/${tokenAddress}`;
     case 'fourmeme':
