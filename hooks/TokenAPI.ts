@@ -206,7 +206,6 @@ export class TokenAPI {
                 tokenAddress: tokenAddress as `0x${string}`,
                 tokenInfo: tokenInfo ?? null,
             });
-            console.error('getTokenPriceUsd', tokenAddress, res);
             const v = Number(res.priceUsd);
             return Number.isFinite(v) && v > 0 ? v : null;
         } catch {

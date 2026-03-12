@@ -38,6 +38,46 @@ export function parsePlatformTokenLink(siteInfo: SiteInfo, tokenAddress: string)
   }
 }
 
+export function navigateToUrl(href: string) {
+  if (typeof window === 'undefined') return;
+  const raw = typeof href === 'string' ? href.trim() : '';
+  if (!raw) return;
+  try {
+    const target = new URL(raw, window.location.href);
+    const current = new URL(window.location.href);
+    if (target.origin !== current.origin) {
+      window.location.href = target.href;
+      return;
+    }
+    if (target.href === current.href) return;
+    const navId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let done = false;
+    const onMessage = (e: MessageEvent) => {
+      const data = (e as any).data;
+      if (!data || data.type !== 'DAGOBANG_NAV_DONE') return;
+      if (typeof data.navId !== 'string' || data.navId !== navId) return;
+      done = true;
+      window.removeEventListener('message', onMessage);
+    };
+    window.addEventListener('message', onMessage);
+    window.postMessage({ type: 'DAGOBANG_NAVIGATE', href: target.href, navId }, '*');
+    window.setTimeout(() => {
+      window.removeEventListener('message', onMessage);
+      if (done) return;
+      try {
+        if (window.location.href === target.href) return;
+        window.location.assign(target.href);
+      } catch {
+      }
+    }, 900);
+  } catch {
+    try {
+      window.location.href = raw;
+    } catch {
+    }
+  }
+}
+
 export function parseCurrentUrl(href: string): SiteInfo | null {
   try {
     const u = new URL(href);

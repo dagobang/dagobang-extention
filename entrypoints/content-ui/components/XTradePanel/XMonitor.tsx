@@ -4,6 +4,7 @@ import type { Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber, formatCountShort } from '@/utils/format';
 import { call } from '@/utils/messaging';
+import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { browser } from 'wxt/browser';
 
 type XMonitorPanelProps = {
@@ -1082,7 +1083,10 @@ export function XMonitorContent({
                               <button
                                 type="button"
                                 className="min-w-0 truncate text-left text-[14px] font-semibold text-zinc-100 hover:underline underline-offset-2"
-                                onClick={() => (window.location.href = parsePlatformTokenLink(siteInfo, tokenAddr))}
+                                onClick={() => {
+                                  if (!siteInfo) return;
+                                  navigateToUrl(parsePlatformTokenLink(siteInfo, tokenAddr));
+                                }}
                                 title={tokenAddr}
                               >
                                 <span>{name}</span>

@@ -33,6 +33,6 @@ declare module '#imports' {
   export { isObject, asAddress, toArrayPayload, extractFirstFromObject, extractNumber, extractTokenAddress, extractTokenAddresses, extractTweetId, extractText, extractMedia, extractGmgnTweetText, extractGmgnUserFields, extractUser, extractTimestampMs, parseGmgnEnvelope, extractGmgnWsConnectionInfo } from '../utils/gmgnWs';
   export { t, normalizeLocale, Locale } from '../utils/i18n';
   export { call } from '../utils/messaging';
-  export { parsePlatformTokenLink, parseCurrentUrl, parseCurrentUrlFull, SiteInfo } from '../utils/sites';
+  export { parsePlatformTokenLink, navigateToUrl, parseCurrentUrl, parseCurrentUrlFull, SiteInfo } from '../utils/sites';
   export { validateSettings } from '../utils/validate';
 }

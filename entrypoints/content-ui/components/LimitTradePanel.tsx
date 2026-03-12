@@ -9,7 +9,7 @@ import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
 import { formatPriceValue, parseNumberLoose, formatTime } from '@/utils/format';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
-import { parsePlatformTokenLink } from '@/utils/sites';
+import { navigateToUrl, parsePlatformTokenLink } from '@/utils/sites';
 
 type LimitTradePanelProps = {
   siteInfo: SiteInfo;
@@ -358,7 +358,7 @@ export function LimitTradePanel({
   const switchTokenInCurrentUrl = (nextTokenAddress: `0x${string}`) => {
     const tokenLink = parsePlatformTokenLink(siteInfo, nextTokenAddress);
     if (tokenLink) {
-      window.location.href = tokenLink;
+      navigateToUrl(tokenLink);
       return;
     }
     try {
@@ -368,7 +368,7 @@ export function LimitTradePanel({
       const current = match[0];
       if (current.toLowerCase() === nextTokenAddress.toLowerCase()) return;
       const nextHref = href.replace(new RegExp(escapeRegex(current), 'i'), nextTokenAddress);
-      window.location.href = nextHref;
+      navigateToUrl(nextHref);
     } catch {
     }
   };

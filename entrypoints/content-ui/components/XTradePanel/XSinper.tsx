@@ -6,7 +6,7 @@ import { defaultSettings } from '@/utils/defaults';
 import { call } from '@/utils/messaging';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import { browser } from 'wxt/browser';
-import { SiteInfo } from '@/utils/sites';
+import { navigateToUrl, SiteInfo, parsePlatformTokenLink } from '@/utils/sites';
 import { chainNames } from '@/constants/chains/chainName';
 import type { TokenInfo } from '@/types/token';
 
@@ -21,6 +21,7 @@ type XSniperPanelProps = {
 type XSniperContentProps = {
   siteInfo: SiteInfo | null;
   active: boolean;
+  view?: 'config' | 'history';
   settings: Settings | null;
   isUnlocked: boolean;
 };
@@ -100,6 +101,7 @@ const parseList = (value: string) =>
 export function XSniperContent({
   siteInfo,
   active,
+  view = 'config',
   settings,
   isUnlocked,
 }: XSniperContentProps) {
@@ -337,6 +339,18 @@ export function XSniperContent({
     if (a.length <= 12) return a;
     return `${a.slice(0, 6)}...${a.slice(-4)}`;
   };
+  const formatWsTime = (ts: number) => {
+    if (!ts || !Number.isFinite(ts)) return '-';
+    try {
+      return new Date(ts).toLocaleTimeString();
+    } catch {
+      return String(ts);
+    }
+  };
+  const formatWsLatency = (n: any) => {
+    const v = typeof n === 'number' && Number.isFinite(n) ? n : null;
+    return v == null ? '-' : `${Math.round(v)}ms`;
+  };
   const updateTwitterSnipe = (patch: Partial<AutoTradeConfig['twitterSnipe']>) => {
     setIsDirty(true);
     setDraft((prev) =>
@@ -440,6 +454,8 @@ export function XSniperContent({
   return (
     <>
       <div className="p-3 space-y-3 max-h-[64vh] overflow-y-auto">
+        {view === 'config' ? (
+          <>
         <div className="space-y-2 pb-3 border-b border-zinc-800/60">
           <label className="flex items-center justify-between gap-3">
             <div className="flex flex-col">
@@ -797,7 +813,65 @@ export function XSniperContent({
             {tt('contentUi.autoTradeStrategy.strategyAutoSell')}
           </label>
         </div>
-        <div className="space-y-2 pt-3 border-t border-zinc-800/60">
+          </>
+        ) : null}
+        {view === 'config' ? (
+          <div className="space-y-2 pt-3 border-t border-zinc-800/60">
+            <div className="flex items-center justify-between gap-3 text-[11px] text-zinc-400">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className={wsStatus?.connected ? 'text-emerald-300' : 'text-rose-300'}>
+                  WS {wsStatus?.connected ? 'ON' : 'OFF'}
+                </span>
+                <span>Latency {formatWsLatency((wsStatus as any)?.latencyMs)}</span>
+                <span>Packets {Number.isFinite((wsStatus as any)?.packetCount) ? (wsStatus as any).packetCount : 0}</span>
+                <span>Signals {Number.isFinite((wsStatus as any)?.signalCount) ? (wsStatus as any).signalCount : 0}</span>
+                <span>LastPkt {formatWsTime((wsStatus as any)?.lastPacketAt || 0)}</span>
+                <span>LastSig {formatWsTime((wsStatus as any)?.lastSignalAt || 0)}</span>
+              </div>
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+                disabled={!Array.isArray((wsStatus as any)?.logs) || (wsStatus as any).logs.length === 0}
+                onClick={() => setShowLogs((v) => !v)}
+              >
+                {showLogs ? '收起日志' : '日志'}
+              </button>
+            </div>
+            {showLogs ? (
+              <div className="max-h-[180px] overflow-y-auto rounded-md border border-zinc-800 bg-zinc-900/40 p-2 text-[11px] text-zinc-300 whitespace-pre-wrap break-words">
+                {(
+                  Array.isArray((wsStatus as any)?.logs) ? ((wsStatus as any).logs as any[]) : []
+                )
+                  .slice(-80)
+                  .map((x, idx) => {
+                    const obj = x && typeof x === 'object' ? (x as any) : null;
+                    const type = obj && typeof obj.type === 'string' ? obj.type : 'log';
+                    const message = obj && typeof obj.message === 'string' ? obj.message : String(x);
+                    const ts = obj && typeof obj.ts === 'number' ? obj.ts : 0;
+                    const badgeClass =
+                      type === 'signal'
+                        ? 'border-emerald-500/40 bg-emerald-500/20 text-emerald-200'
+                        : type === 'error'
+                          ? 'border-rose-500/40 bg-rose-500/20 text-rose-200'
+                          : 'border-zinc-700 bg-zinc-800/40 text-zinc-200';
+                    return (
+                      <div key={idx} className="flex items-start justify-between gap-2 py-0.5">
+                        <div className="flex min-w-0 items-start gap-2">
+                          <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${badgeClass}`}>
+                            {type}
+                          </span>
+                          <div className="min-w-0 text-zinc-300">{message}</div>
+                        </div>
+                        <div className="shrink-0 text-[10px] text-zinc-500">{formatWsTime(ts)}</div>
+                      </div>
+                    );
+                  })}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {view === 'history' ? (
+        <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.snipeHistoryTitle')}</div>
             <button
@@ -857,7 +931,7 @@ export function XSniperContent({
                         if (sym && name && sym !== name) return `${sym} (${name})`;
                         return sym || name || shortAddr(r.tokenAddress);
                       })();
-                    const tokenLink = parsePlatformTokenLink(siteInfo, r.tokenAddress);
+                    const tokenLink = siteInfo ? parsePlatformTokenLink(siteInfo, r.tokenAddress) : '';
                     const entryPriceUsd = typeof r.entryPriceUsd === 'number' ? r.entryPriceUsd : null;
                     const latestPriceUsd = latest && typeof latest.priceUsd === 'number' ? (latest.priceUsd as number) : null;
                     const sellDisabledBase = !settings || !isUnlocked || r.dryRun === true;
@@ -872,7 +946,16 @@ export function XSniperContent({
                                 {tt('contentUi.autoTradeStrategy.snipeHistoryDry')}
                               </span>
                             ) : null}
-                            <a href={tokenLink} className="hover:underline">
+                            <a
+                              href={tokenLink || '#'}
+                              className="hover:underline"
+                              onClick={(e) => {
+                                if (!tokenLink) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                navigateToUrl(tokenLink);
+                              }}
+                            >
                               {tokenLabel}
                             </a>{' '}
                             <span className="text-zinc-500">{shortAddr(r.tokenAddress)}</span>
@@ -960,52 +1043,55 @@ export function XSniperContent({
             </div>
           )}
         </div>
+        ) : null}
       </div>
 
-      <div className="flex items-center justify-end px-4 py-3 border-t border-zinc-800/60">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="rounded-md border border-zinc-700 px-3 py-1 text-xs text-zinc-300 hover:border-zinc-500"
-            onClick={() => {
-              const nextDraft = cloneAutoTrade(normalizedAutoTrade);
-              setIsDirty(false);
-              lastAppliedKeyRef.current = autoTradeKey;
-              setDraft(nextDraft);
-              setTargetUsersInput(nextDraft?.twitterSnipe?.targetUsers.join('\n') ?? '');
-            }}
-          >
-            {tt('contentUi.autoTradeStrategy.reset')}
-          </button>
-          <button
-            type="button"
-            className="rounded-md bg-emerald-500/20 px-3 py-1 text-xs text-emerald-200 hover:bg-emerald-500/30 disabled:opacity-50"
-            disabled={!draft || !canEdit || saving}
-            onClick={async () => {
-              if (!settings || !draft) return;
-              const mergedDraft = {
-                ...draft,
-                twitterSnipe: {
-                  ...draft.twitterSnipe,
-                  targetUsers: parseList(targetUsersInput),
-                },
-              };
-              setSaving(true);
-              try {
-                await call({ type: 'settings:set', settings: { ...settings, autoTrade: mergedDraft } } as const);
+      {view === 'config' ? (
+        <div className="flex items-center justify-end px-4 py-3 border-t border-zinc-800/60">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-zinc-700 px-3 py-1 text-xs text-zinc-300 hover:border-zinc-500"
+              onClick={() => {
+                const nextDraft = cloneAutoTrade(normalizedAutoTrade);
                 setIsDirty(false);
-                lastAppliedKeyRef.current = JSON.stringify(normalizeAutoTrade(mergedDraft));
-                setDraft(mergedDraft);
-                setTargetUsersInput(mergedDraft.twitterSnipe.targetUsers.join('\n'));
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            {saving ? tt('contentUi.autoTradeStrategy.saving') : tt('contentUi.autoTradeStrategy.save')}
-          </button>
+                lastAppliedKeyRef.current = autoTradeKey;
+                setDraft(nextDraft);
+                setTargetUsersInput(nextDraft?.twitterSnipe?.targetUsers.join('\n') ?? '');
+              }}
+            >
+              {tt('contentUi.autoTradeStrategy.reset')}
+            </button>
+            <button
+              type="button"
+              className="rounded-md bg-emerald-500/20 px-3 py-1 text-xs text-emerald-200 hover:bg-emerald-500/30 disabled:opacity-50"
+              disabled={!draft || !canEdit || saving}
+              onClick={async () => {
+                if (!settings || !draft) return;
+                const mergedDraft = {
+                  ...draft,
+                  twitterSnipe: {
+                    ...draft.twitterSnipe,
+                    targetUsers: parseList(targetUsersInput),
+                  },
+                };
+                setSaving(true);
+                try {
+                  await call({ type: 'settings:set', settings: { ...settings, autoTrade: mergedDraft } } as const);
+                  setIsDirty(false);
+                  lastAppliedKeyRef.current = JSON.stringify(normalizeAutoTrade(mergedDraft));
+                  setDraft(mergedDraft);
+                  setTargetUsersInput(mergedDraft.twitterSnipe.targetUsers.join('\n'));
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              {saving ? tt('contentUi.autoTradeStrategy.saving') : tt('contentUi.autoTradeStrategy.save')}
+            </button>
+          </div>
         </div>
-      </div>
+      ) : null}
     </>
   );
 }

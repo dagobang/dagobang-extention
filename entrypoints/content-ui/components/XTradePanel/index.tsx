@@ -7,8 +7,8 @@ import { XMonitorContent } from './XMonitor';
 type XTradePanelProps = {
   siteInfo: SiteInfo | null;
   visible: boolean;
-  activeTab?: 'xmonitor' | 'xsniper';
-  onActiveTabChange?: (tab: 'xmonitor' | 'xsniper') => void;
+  activeTab?: 'xmonitor' | 'xsniper' | 'xhistory';
+  onActiveTabChange?: (tab: 'xmonitor' | 'xsniper' | 'xhistory') => void;
   onVisibleChange: (visible: boolean) => void;
   settings: Settings | null;
   isUnlocked: boolean;
@@ -26,12 +26,13 @@ export function XTradePanel({
   siteInfo,
   visible,
   activeTab: activeTabProp,
+  onActiveTabChange,
   onVisibleChange,
   settings,
   isUnlocked,
 }: XTradePanelProps) {
   const panelWidth = 360;
-  const [activeTab, setActiveTab] = useState<'xmonitor' | 'xsniper'>(() => activeTabProp ?? 'xmonitor');
+  const [activeTab, setActiveTab] = useState<'xmonitor' | 'xsniper' | 'xhistory'>(() => activeTabProp ?? 'xmonitor');
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
     const defaultX = Math.max(0, width - panelWidth);
@@ -40,6 +41,10 @@ export function XTradePanel({
   });
   const posRef = useRef(pos);
   const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
+  const applyTab = (next: 'xmonitor' | 'xsniper' | 'xhistory') => {
+    setActiveTab(next);
+    onActiveTabChange?.(next);
+  };
 
   useEffect(() => {
     posRef.current = pos;
@@ -109,7 +114,7 @@ export function XTradePanel({
                 ? 'rounded-full border border-emerald-500/50 bg-emerald-500/20 px-3 py-1 text-[12px] text-emerald-200'
                 : 'rounded-full border border-zinc-700 px-3 py-1 text-[12px] text-zinc-300 hover:border-zinc-500'
             }
-            onClick={() => setActiveTab('xmonitor')}
+            onClick={() => applyTab('xmonitor')}
           >
             推特监控
           </button>
@@ -120,9 +125,20 @@ export function XTradePanel({
                 ? 'rounded-full border border-emerald-500/50 bg-emerald-500/20 px-3 py-1 text-[12px] text-emerald-200'
                 : 'rounded-full border border-zinc-700 px-3 py-1 text-[12px] text-zinc-300 hover:border-zinc-500'
             }
-            onClick={() => setActiveTab('xsniper')}
+            onClick={() => applyTab('xsniper')}
           >
             推特狙击
+          </button>
+          <button
+            type="button"
+            className={
+              activeTab === 'xhistory'
+                ? 'rounded-full border border-emerald-500/50 bg-emerald-500/20 px-3 py-1 text-[12px] text-emerald-200'
+                : 'rounded-full border border-zinc-700 px-3 py-1 text-[12px] text-zinc-300 hover:border-zinc-500'
+            }
+            onClick={() => applyTab('xhistory')}
+          >
+            订单/仓位
           </button>
         </div>
         <button className="text-zinc-400 hover:text-zinc-200" onClick={() => onVisibleChange(false)}>
@@ -131,7 +147,13 @@ export function XTradePanel({
       </div>
 
       <XMonitorContent siteInfo={siteInfo} active={activeTab === 'xmonitor'} settings={settings} />
-      <XSniperContent siteInfo={siteInfo} active={activeTab === 'xsniper'} settings={settings} isUnlocked={isUnlocked} />
+      <XSniperContent
+        siteInfo={siteInfo}
+        active={activeTab === 'xsniper' || activeTab === 'xhistory'}
+        view={activeTab === 'xhistory' ? 'history' : 'config'}
+        settings={settings}
+        isUnlocked={isUnlocked}
+      />
     </div>
   );
 }

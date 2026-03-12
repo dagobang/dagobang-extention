@@ -77,6 +77,7 @@ export default defineContentScript({
       g.__DAGOBANG_MAIN_WORLD_READY__ = true;
 
       installUrlChangeEmitter();
+      installNavigateListener();
 
       const host = window.location.hostname;
       if (!shouldMonitorWsOnHost(host)) return;
@@ -125,6 +126,141 @@ export default defineContentScript({
       window.addEventListener('popstate', dispatchUrlChange);
       window.addEventListener('hashchange', dispatchUrlChange);
       dispatchUrlChange();
+    }
+
+    function installNavigateListener() {
+      const findNextRouter = (): any | null => {
+        try {
+          const g = globalThis as any;
+          if (g.__DAGOBANG_NEXT_ROUTER__ && typeof g.__DAGOBANG_NEXT_ROUTER__.push === 'function') return g.__DAGOBANG_NEXT_ROUTER__;
+          const directCandidates = [
+            g.next?.router,
+            g.__NEXT_ROUTER__,
+            g.__router,
+            g.router,
+          ].filter(Boolean);
+          for (const c of directCandidates) {
+            if (c && typeof c.push === 'function' && typeof c.replace === 'function') {
+              g.__DAGOBANG_NEXT_ROUTER__ = c;
+              return c;
+            }
+          }
+
+          const host = document.getElementById('__next') ?? document.body;
+          if (!host) return null;
+          const anyHost = host as any;
+          const keys = Object.keys(anyHost);
+          const containerKey = keys.find((k) => k.startsWith('__reactContainer$') || k.startsWith('__reactFiber$')) ?? null;
+          const rootKey = keys.find((k) => k.startsWith('_reactRootContainer')) ?? null;
+          const rootFiber = (() => {
+            if (containerKey && anyHost[containerKey]) return anyHost[containerKey];
+            const root = rootKey ? anyHost[rootKey] : null;
+            const current = root?.current ?? root?._internalRoot?.current ?? null;
+            return current ?? null;
+          })();
+          if (!rootFiber) return null;
+
+          const seen = new Set<any>();
+          const stack: any[] = [rootFiber];
+          let steps = 0;
+          while (stack.length && steps < 20000) {
+            const node = stack.pop();
+            steps += 1;
+            if (!node || seen.has(node)) continue;
+            seen.add(node);
+
+            const probe = (obj: any) => {
+              if (!obj || typeof obj !== 'object') return null;
+              if (typeof obj.push === 'function' && typeof obj.replace === 'function') return obj;
+              return null;
+            };
+            const found =
+              probe(node.memoizedProps) ??
+              probe(node.memoizedState) ??
+              probe(node.stateNode) ??
+              probe(node.pendingProps);
+            if (found) {
+              g.__DAGOBANG_NEXT_ROUTER__ = found;
+              return found;
+            }
+
+            if (node.child) stack.push(node.child);
+            if (node.sibling) stack.push(node.sibling);
+            if (node.return) stack.push(node.return);
+          }
+        } catch {
+        }
+        return null;
+      };
+
+      const handler = (e: MessageEvent) => {
+        const data = (e as any).data;
+        if (!data || data.type !== 'DAGOBANG_NAVIGATE') return;
+        const href = typeof data.href === 'string' ? data.href.trim() : '';
+        const navId = typeof data.navId === 'string' ? data.navId : '';
+        if (!href) return;
+        try {
+          const target = new URL(href, window.location.href);
+          const current = new URL(window.location.href);
+          if (target.origin !== current.origin) {
+            window.location.href = target.href;
+            if (navId) window.postMessage({ type: 'DAGOBANG_NAV_DONE', navId, ok: true, mode: 'assign' }, '*');
+            return;
+          }
+          if (target.href === current.href) return;
+          const nextUrl = `${target.pathname}${target.search}${target.hash}`;
+
+          const router = findNextRouter();
+          if (router && typeof router.push === 'function') {
+            try {
+              const ret = router.push(nextUrl);
+              if (navId) window.postMessage({ type: 'DAGOBANG_NAV_DONE', navId, ok: true, mode: 'router' }, '*');
+              if (ret && typeof ret.then === 'function') {
+                void ret.then(
+                  () => navId && window.postMessage({ type: 'DAGOBANG_NAV_DONE', navId, ok: true, mode: 'router' }, '*'),
+                  () => navId && window.postMessage({ type: 'DAGOBANG_NAV_DONE', navId, ok: false, mode: 'router' }, '*'),
+                );
+              }
+              return;
+            } catch {
+            }
+          }
+
+          const prevState = history.state;
+          const nextState = (() => {
+            const base: any =
+              prevState && typeof prevState === 'object'
+                ? { ...(prevState as any) }
+                : {
+                    url: nextUrl,
+                    as: nextUrl,
+                    options: {},
+                  };
+            base.url = nextUrl;
+            base.as = nextUrl;
+            if (!base.options || typeof base.options !== 'object') base.options = {};
+            base.__N = true;
+            base.__NA = true;
+            base.key = typeof base.key === 'string' && base.key ? base.key : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            return base;
+          })();
+          history.pushState(nextState, '', target.href);
+          try {
+            window.dispatchEvent(new PopStateEvent('popstate', { state: nextState }));
+          } catch {
+            window.dispatchEvent(new Event('popstate'));
+          }
+          try {
+            window.dispatchEvent(new Event('pushstate'));
+            window.dispatchEvent(new Event('locationchange'));
+          } catch {
+          }
+          if (navId) window.postMessage({ type: 'DAGOBANG_NAV_DONE', navId, ok: true, mode: 'history' }, '*');
+        } catch {
+          if (navId) window.postMessage({ type: 'DAGOBANG_NAV_DONE', navId, ok: false, mode: 'error' }, '*');
+        }
+      };
+      window.addEventListener('message', handler);
     }
 
     function shouldMonitorWsOnHost(hostname: string) {
