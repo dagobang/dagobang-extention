@@ -190,6 +190,46 @@
       "quotedTweet": "Quoted tweet",
       "repostedTweet": "Reposted tweet",
       "translation": "Translation",
+      "tag": {
+        "buy": "BUY",
+        "dry": "DRY"
+      },
+      "tooltip": {
+        "devBuyRatio": "Dev buy ratio",
+        "top10HoldRatio": "Top10 hold ratio",
+        "holders": "Holders",
+        "kol": "KOL",
+        "age": "Age"
+      },
+      "notBought": {
+        "prefix": "Not bought: {0}",
+        "reason": {
+          "wsMonitorDisabled": "X Monitor is disabled",
+          "sniperDisabled": "X sniper is disabled",
+          "filterMismatch": "Target user / interaction type mismatch",
+          "buyNewCaCountZero": "Buy new CA count = 0",
+          "buyAmountZero": "Buy amount = 0",
+          "marketCapInvalid": "Invalid market cap",
+          "marketCapMissing": "Missing market cap",
+          "marketCapTooLow": "MC {0} < Min {1}",
+          "marketCapTooHigh": "MC {0} > Max {1}",
+          "holdersMissing": "Missing holders",
+          "holdersTooLow": "Holders {0} < Min {1}",
+          "holdersTooHigh": "Holders {0} > Max {1}",
+          "tickerMissing": "Missing ticker",
+          "tickerLenTooShort": "Ticker length {0} < Min {1}",
+          "tickerLenTooLong": "Ticker length {0} > Max {1}",
+          "createdAtMissing": "Missing created time",
+          "ageTooYoung": "Age {0}s < Min {1}s",
+          "ageTooOld": "Age {0}s > Max {1}s",
+          "devHoldTooLow": "Dev hold {0}% < Min {1}%",
+          "devHoldTooHigh": "Dev hold {0}% > Max {1}%",
+          "devHasSold": "Dev has sold",
+          "dryRun": "DryRun (record only)",
+          "quotaExceeded": "Passed filters but exceeded per-post quota (sorted by market cap)",
+          "passedButNoOrder": "Passed filters but no order (wallet locked / duplicate / in progress)"
+        }
+      },
       "type": {
         "tweet": "Tweet",
         "repost": "Repost",

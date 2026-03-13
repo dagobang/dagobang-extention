@@ -190,6 +190,46 @@
       "quotedTweet": "引用推文",
       "repostedTweet": "被轉發推文",
       "translation": "翻譯",
+      "tag": {
+        "buy": "買入",
+        "dry": "模擬"
+      },
+      "tooltip": {
+        "devBuyRatio": "Dev 買入占比",
+        "top10HoldRatio": "Top10 持倉占比",
+        "holders": "持幣人數",
+        "kol": "KOL",
+        "age": "年齡"
+      },
+      "notBought": {
+        "prefix": "未買入：{0}",
+        "reason": {
+          "wsMonitorDisabled": "推特監控已關閉",
+          "sniperDisabled": "推特狙擊未啟用",
+          "filterMismatch": "目標用戶/互動類型不匹配",
+          "buyNewCaCountZero": "買入新CA數量=0",
+          "buyAmountZero": "買入金額=0",
+          "marketCapInvalid": "市值無效",
+          "marketCapMissing": "缺少市值",
+          "marketCapTooLow": "市值{0} < Min {1}",
+          "marketCapTooHigh": "市值{0} > Max {1}",
+          "holdersMissing": "缺少持幣人數",
+          "holdersTooLow": "持幣人數{0} < Min {1}",
+          "holdersTooHigh": "持幣人數{0} > Max {1}",
+          "tickerMissing": "缺少Ticker",
+          "tickerLenTooShort": "Ticker長度{0} < Min {1}",
+          "tickerLenTooLong": "Ticker長度{0} > Max {1}",
+          "createdAtMissing": "缺少建立時間",
+          "ageTooYoung": "年齡{0}s < Min {1}s",
+          "ageTooOld": "年齡{0}s > Max {1}s",
+          "devHoldTooLow": "Dev持倉{0}% < Min {1}%",
+          "devHoldTooHigh": "Dev持倉{0}% > Max {1}%",
+          "devHasSold": "Dev已清倉",
+          "dryRun": "DryRun（僅記錄）",
+          "quotaExceeded": "已滿足篩選但超出本推買入名額（按市值排序）",
+          "passedButNoOrder": "已滿足篩選但未下單（可能錢包未解鎖/重複買入/買入中）"
+        }
+      },
       "type": {
         "tweet": "發推",
         "repost": "轉發",

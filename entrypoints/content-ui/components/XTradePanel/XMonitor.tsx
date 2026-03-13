@@ -7,6 +7,8 @@ import { call } from '@/utils/messaging';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { browser } from 'wxt/browser';
 
+type TTFunc = (key: string, subs?: Array<string | number>) => string;
+
 type XMonitorPanelProps = {
   siteInfo: SiteInfo | null;
   visible: boolean;
@@ -76,19 +78,20 @@ const getDevHasSold = (token: UnifiedSignalToken) => {
 };
 
 const buildNotBoughtReason = (input: {
+  tt: TTFunc;
   wsMonitorEnabled: boolean;
   strategy: any;
   signal: UnifiedTwitterSignal;
   token: UnifiedSignalToken;
 }) => {
-  if (!input.wsMonitorEnabled) return '推特监控已关闭';
-  if (!input.strategy?.enabled) return '推特狙击未启用';
-  if (!matchesTwitterFilters(input.signal, input.strategy)) return '目标用户/互动类型不匹配';
+  if (!input.wsMonitorEnabled) return input.tt('contentUi.xMonitor.notBought.reason.wsMonitorDisabled');
+  if (!input.strategy?.enabled) return input.tt('contentUi.xMonitor.notBought.reason.sniperDisabled');
+  if (!matchesTwitterFilters(input.signal, input.strategy)) return input.tt('contentUi.xMonitor.notBought.reason.filterMismatch');
 
   const perTweetMax = Math.max(0, Math.floor(parseNumber(input.strategy?.buyNewCaCount) ?? 0));
-  if (perTweetMax <= 0) return '买入新CA数量=0';
+  if (perTweetMax <= 0) return input.tt('contentUi.xMonitor.notBought.reason.buyNewCaCountZero');
   const amount = parseNumber(input.strategy?.buyAmountBnb) ?? 0;
-  if (amount <= 0) return '买入金额=0';
+  if (amount <= 0) return input.tt('contentUi.xMonitor.notBought.reason.buyAmountZero');
 
   const token = input.token as any;
   const mcRaw = typeof token.marketCapUsd === 'number' ? token.marketCapUsd : null;
@@ -107,46 +110,46 @@ const buildNotBoughtReason = (input: {
 
   const minMcap = parseKNumber(input.strategy?.minMarketCapUsd);
   const maxMcap = parseKNumber(input.strategy?.maxMarketCapUsd);
-  if ((minMcap != null || maxMcap != null) && mcRaw != null && mc == null) return '市值无效';
-  if (minMcap != null && mc == null) return '缺少市值';
-  if (maxMcap != null && mc == null) return '缺少市值';
-  if (minMcap != null && mc != null && mc < minMcap) return `市值${Math.round(mc)} < Min ${Math.round(minMcap)}`;
-  if (maxMcap != null && mc != null && mc > maxMcap) return `市值${Math.round(mc)} > Max ${Math.round(maxMcap)}`;
+  if ((minMcap != null || maxMcap != null) && mcRaw != null && mc == null) return input.tt('contentUi.xMonitor.notBought.reason.marketCapInvalid');
+  if (minMcap != null && mc == null) return input.tt('contentUi.xMonitor.notBought.reason.marketCapMissing');
+  if (maxMcap != null && mc == null) return input.tt('contentUi.xMonitor.notBought.reason.marketCapMissing');
+  if (minMcap != null && mc != null && mc < minMcap) return input.tt('contentUi.xMonitor.notBought.reason.marketCapTooLow', [Math.round(mc), Math.round(minMcap)]);
+  if (maxMcap != null && mc != null && mc > maxMcap) return input.tt('contentUi.xMonitor.notBought.reason.marketCapTooHigh', [Math.round(mc), Math.round(maxMcap)]);
 
   const minHolders = parseNumber(input.strategy?.minHolders);
   const maxHolders = parseNumber(input.strategy?.maxHolders);
-  if (minHolders != null && holders == null) return '缺少持币人数';
-  if (maxHolders != null && holders == null) return '缺少持币人数';
-  if (minHolders != null && holders != null && holders < minHolders) return `持币人数${holders} < Min ${Math.floor(minHolders)}`;
-  if (maxHolders != null && holders != null && holders > maxHolders) return `持币人数${holders} > Max ${Math.floor(maxHolders)}`;
+  if (minHolders != null && holders == null) return input.tt('contentUi.xMonitor.notBought.reason.holdersMissing');
+  if (maxHolders != null && holders == null) return input.tt('contentUi.xMonitor.notBought.reason.holdersMissing');
+  if (minHolders != null && holders != null && holders < minHolders) return input.tt('contentUi.xMonitor.notBought.reason.holdersTooLow', [holders, Math.floor(minHolders)]);
+  if (maxHolders != null && holders != null && holders > maxHolders) return input.tt('contentUi.xMonitor.notBought.reason.holdersTooHigh', [holders, Math.floor(maxHolders)]);
 
   const minTickerLenRaw = parseNumber(input.strategy?.minTickerLen);
   const maxTickerLenRaw = parseNumber(input.strategy?.maxTickerLen);
   const minTickerLen = minTickerLenRaw != null ? Math.max(0, Math.floor(minTickerLenRaw)) : null;
   const maxTickerLen = maxTickerLenRaw != null ? Math.max(0, Math.floor(maxTickerLenRaw)) : null;
   if (minTickerLen != null || maxTickerLen != null) {
-    if (!symbol) return '缺少Ticker';
+    if (!symbol) return input.tt('contentUi.xMonitor.notBought.reason.tickerMissing');
     const len = computeTickerLen(symbol);
-    if (minTickerLen != null && len < minTickerLen) return `Ticker长度${len} < Min ${minTickerLen}`;
-    if (maxTickerLen != null && len > maxTickerLen) return `Ticker长度${len} > Max ${maxTickerLen}`;
+    if (minTickerLen != null && len < minTickerLen) return input.tt('contentUi.xMonitor.notBought.reason.tickerLenTooShort', [len, minTickerLen]);
+    if (maxTickerLen != null && len > maxTickerLen) return input.tt('contentUi.xMonitor.notBought.reason.tickerLenTooLong', [len, maxTickerLen]);
   }
 
   const minAgeSec = parseNumber(input.strategy?.minTokenAgeSeconds);
   const maxAgeSec = parseNumber(input.strategy?.maxTokenAgeSeconds);
-  if ((minAgeSec != null || maxAgeSec != null) && createdAtMs == null) return '缺少创建时间';
+  if ((minAgeSec != null || maxAgeSec != null) && createdAtMs == null) return input.tt('contentUi.xMonitor.notBought.reason.createdAtMissing');
   if (createdAtMs != null) {
     const ageSec = Math.max(0, (signalAtMs - createdAtMs) / 1000);
-    if (minAgeSec != null && ageSec < minAgeSec) return `年龄${Math.floor(ageSec)}s < Min ${Math.floor(minAgeSec)}s`;
-    if (maxAgeSec != null && ageSec > maxAgeSec) return `年龄${Math.floor(ageSec)}s > Max ${Math.floor(maxAgeSec)}s`;
+    if (minAgeSec != null && ageSec < minAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(ageSec), Math.floor(minAgeSec)]);
+    if (maxAgeSec != null && ageSec > maxAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(ageSec), Math.floor(maxAgeSec)]);
   }
 
   const minDevPct = parseNumber(input.strategy?.minDevHoldPercent);
   const maxDevPct = parseNumber(input.strategy?.maxDevHoldPercent);
-  if (minDevPct != null && devHold < minDevPct) return `Dev持仓${devHold.toFixed(2)}% < Min ${minDevPct}%`;
-  if (maxDevPct != null && devHold > maxDevPct) return `Dev持仓${devHold.toFixed(2)}% > Max ${maxDevPct}%`;
-  if (input.strategy?.blockIfDevSell && devHasSold === true) return 'Dev已清仓';
+  if (minDevPct != null && devHold < minDevPct) return input.tt('contentUi.xMonitor.notBought.reason.devHoldTooLow', [devHold.toFixed(2), minDevPct]);
+  if (maxDevPct != null && devHold > maxDevPct) return input.tt('contentUi.xMonitor.notBought.reason.devHoldTooHigh', [devHold.toFixed(2), maxDevPct]);
+  if (input.strategy?.blockIfDevSell && devHasSold === true) return input.tt('contentUi.xMonitor.notBought.reason.devHasSold');
 
-  if (input.strategy?.dryRun === true) return 'DryRun（仅记录）';
+  if (input.strategy?.dryRun === true) return input.tt('contentUi.xMonitor.notBought.reason.dryRun');
   const shouldPickByMcap = (() => {
     const tokens = Array.isArray(input.signal.tokens) ? (input.signal.tokens as UnifiedSignalToken[]) : [];
     const scanLimit = Math.min(500, tokens.length);
@@ -252,8 +255,8 @@ const buildNotBoughtReason = (input: {
     return curAddr ? selectedKey.has(curAddr) : false;
   })();
 
-  if (!shouldPickByMcap) return '已满足筛选但超出本推买入名额（按市值排序）';
-  return '已满足筛选但未下单（可能钱包未解锁/重复买入/买入中）';
+  if (!shouldPickByMcap) return input.tt('contentUi.xMonitor.notBought.reason.quotaExceeded');
+  return input.tt('contentUi.xMonitor.notBought.reason.passedButNoOrder');
 };
 
 
@@ -1051,6 +1054,7 @@ export function XMonitorContent({
                         const bought = boughtByAddr[tokenAddr.toLowerCase()] ?? null;
                         const notBoughtReason = !bought
                           ? buildNotBoughtReason({
+                            tt,
                             wsMonitorEnabled,
                             strategy: twitterSnipeStrategy,
                             signal,
@@ -1106,7 +1110,7 @@ export function XMonitorContent({
                                       bought.dryRun ? 'border-amber-500/40 text-amber-200' : 'border-emerald-500/40 text-emerald-200',
                                     ].join(' ')}
                                   >
-                                    {bought.dryRun ? 'DRY' : 'BUY'}
+                                    {bought.dryRun ? tt('contentUi.xMonitor.tag.dry') : tt('contentUi.xMonitor.tag.buy')}
                                   </div>
                                 ) : null}
                                 {mc != null ? (
@@ -1120,31 +1124,31 @@ export function XMonitorContent({
                               <div className="min-w-0 truncate font-mono text-[11px] text-zinc-500">{shortAddr}</div>
                               <div className="flex flex-shrink-0 items-center gap-2 text-[11px] text-zinc-500">
                                 {devBuyRatioPct != null ? (
-                                  <span className={`inline-flex items-center gap-1 ${devRatioClassName}`} title="DevBuyRatio">
+                                  <span className={`inline-flex items-center gap-1 ${devRatioClassName}`} title={tt('contentUi.xMonitor.tooltip.devBuyRatio')}>
                                     <ChefHat size={12} />
                                     {devBuyRatioPct < 0.0001 ? '0%' : `${devBuyRatioPct.toFixed(2)}%`}
                                   </span>
                                 ) : null}
                                 {top10HoldRatioPct != null ? (
-                                  <span className={`inline-flex items-center gap-1 ${top10RatioClassName}`} title="Top10HoldRatio">
+                                  <span className={`inline-flex items-center gap-1 ${top10RatioClassName}`} title={tt('contentUi.xMonitor.tooltip.top10HoldRatio')}>
                                     <UserStar size={12} />
                                     {top10HoldRatioPct === 0.0001 ? '0%' : `${top10HoldRatioPct.toFixed(2)}%`}
                                   </span>
                                 ) : null}
                                 {token.holders != null ? (
-                                  <span className="inline-flex items-center gap-1" title="Holders">
+                                  <span className="inline-flex items-center gap-1" title={tt('contentUi.xMonitor.tooltip.holders')}>
                                     <Users size={12} />
                                     {formatCompactNumber(token.holders)}
                                   </span>
                                 ) : null}
                                 {token.kol != null ? (
-                                  <span className="inline-flex items-center gap-1" title="KOL">
+                                  <span className="inline-flex items-center gap-1" title={tt('contentUi.xMonitor.tooltip.kol')}>
                                     <Trophy size={12} />
                                     {formatCompactNumber(token.kol)}
                                   </span>
                                 ) : null}
                                 {age ? (
-                                  <span className="inline-flex items-center gap-1" title="Age">
+                                  <span className="inline-flex items-center gap-1" title={tt('contentUi.xMonitor.tooltip.age')}>
                                     <AlarmClockCheck size={12} />
                                     {age}
                                   </span>
@@ -1152,7 +1156,7 @@ export function XMonitorContent({
                               </div>
                             </div>
                             {!bought && notBoughtReason ? (
-                              <div className="mt-1 text-[10px] text-zinc-500">未买入：{notBoughtReason}</div>
+                              <div className="mt-1 text-[10px] text-zinc-500">{tt('contentUi.xMonitor.notBought.prefix', [notBoughtReason])}</div>
                             ) : null}
                           </div>
                         );
