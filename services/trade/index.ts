@@ -15,6 +15,19 @@ import { getGasPriceWei, prewarmNonce, sendTransaction } from './tradeTx';
 import { formatBroadcastProvider } from '@/utils/format';
 import { getDexPoolPrefer } from '@/utils/dexUtils';
 
+function parseGweiToWei(value: string): bigint {
+  const trimmed = value.trim();
+  if (!trimmed) return 0n;
+  const match = trimmed.match(/^(\d+)(?:\.(\d+))?$/);
+  if (!match) return 0n;
+  const intPart = match[1] || '0';
+  const fracPartRaw = match[2] || '';
+  const fracPadded = (fracPartRaw + '000000000').slice(0, 9);
+  const intBig = BigInt(intPart);
+  const fracBig = BigInt(fracPadded);
+  return intBig * 1000000000n + fracBig;
+}
+
 const tokenManagerHelper3Abi = parseAbi([
   'function tryBuy(address token, uint256 amount, uint256 funds) view returns (address tokenManager, address quote, uint256 estimatedAmount, uint256 estimatedCost, uint256 estimatedFee, uint256 amountMsgValue, uint256 amountApproval, uint256 amountFunds)',
   'function trySell(address token, uint256 amount) view returns (address tokenManager, address quote, uint256 funds, uint256 fee)',
@@ -726,8 +739,9 @@ export class TradeService {
     const account = await WalletService.getSigner();
     const client = await RpcService.getClient();
     const chainSettings = settings.chains[chainId];
-    const gasPreset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;
-    const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
+    const approveGasGwei = chainSettings.approveGasGwei ?? '0.06';
+    let gasPriceWei = parseGweiToWei(approveGasGwei);
+    if (gasPriceWei <= 0n) gasPriceWei = parseGweiToWei('0.06');
 
     const data = encodeFunctionData({
       abi: erc20Abi,

@@ -94,9 +94,29 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
               ))}
             </div>
           </div>
+
+          <label className="block space-y-1">
+            <div className="text-[14px] text-zinc-400">{tt('popup.settings.approveGasGwei')}</div>
+            <input
+              className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+              value={settingsDraft.chains[settingsDraft.chainId].approveGasGwei ?? ''}
+              onChange={(e) =>
+                setSettingsDraft((s) => ({
+                  ...s,
+                  chains: {
+                    ...s.chains,
+                    [s.chainId]: {
+                      ...s.chains[s.chainId],
+                      approveGasGwei: e.target.value,
+                    },
+                  },
+                }))
+              }
+              placeholder="0.06"
+            />
+          </label>
         </div>
       </div>
     </div>
   );
 }
-

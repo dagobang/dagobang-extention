@@ -96,6 +96,12 @@ const buildNotBoughtReason = (input: {
   const holders = typeof token.holders === 'number' ? token.holders : null;
   const symbol = typeof token.tokenSymbol === 'string' ? token.tokenSymbol.trim() : '';
   const createdAtMs = typeof token.createdAtMs === 'number' ? token.createdAtMs : null;
+  const signalAtMs =
+    typeof (input.signal as any).receivedAtMs === 'number'
+      ? (input.signal as any).receivedAtMs
+      : typeof (input.signal as any).ts === 'number'
+        ? (input.signal as any).ts
+        : Date.now();
   const devHold = typeof token.devHoldPercent === 'number' ? token.devHoldPercent : 0;
   const devHasSold = getDevHasSold(input.token);
 
@@ -129,7 +135,7 @@ const buildNotBoughtReason = (input: {
   const maxAgeSec = parseNumber(input.strategy?.maxTokenAgeSeconds);
   if ((minAgeSec != null || maxAgeSec != null) && createdAtMs == null) return '缺少创建时间';
   if (createdAtMs != null) {
-    const ageSec = (Date.now() - createdAtMs) / 1000;
+    const ageSec = Math.max(0, (signalAtMs - createdAtMs) / 1000);
     if (minAgeSec != null && ageSec < minAgeSec) return `年龄${Math.floor(ageSec)}s < Min ${Math.floor(minAgeSec)}s`;
     if (maxAgeSec != null && ageSec > maxAgeSec) return `年龄${Math.floor(ageSec)}s > Max ${Math.floor(maxAgeSec)}s`;
   }
@@ -187,7 +193,7 @@ const buildNotBoughtReason = (input: {
 
       if ((minAgeSec != null || maxAgeSec != null) && createdAtMs == null) return false;
       if (createdAtMs != null) {
-        const ageSec = (now - createdAtMs) / 1000;
+        const ageSec = Math.max(0, (signalAtMs - createdAtMs) / 1000);
         if (minAgeSec != null && ageSec < minAgeSec) return false;
         if (maxAgeSec != null && ageSec > maxAgeSec) return false;
       }

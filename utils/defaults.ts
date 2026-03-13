@@ -34,6 +34,7 @@ const BSC_MAINNET: ChainSettings = {
   sellPresets: ['25', '50', '75', '100'],
   buyGasGwei: DEFAULT_GAS_GWEI,
   sellGasGwei: DEFAULT_GAS_GWEI,
+  approveGasGwei: '0.06',
 };
 
 const DEFAULT_AUTOTRADE: AutoTradeConfig = {

@@ -268,22 +268,74 @@ const refreshUnifiedTwitterCache = () => {
 };
 
 const upsertUnifiedSignal = (signal: UnifiedTwitterSignal, cacheList?: UnifiedTwitterSignal[]) => {
+  let nextSignal = signal;
   const cache = cacheList ? { list: cacheList } : (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
   if (!cacheList && cache && !(window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__) {
     (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = cache;
   }
   const list = Array.isArray(cache?.list) ? (cache.list as UnifiedTwitterSignal[]).slice() : [];
+  let minReceivedAtMs: number | null = null;
+  const minTokenFirstSeenByAddr = new Map<string, number>();
+  const recordExisting = (existing: UnifiedTwitterSignal) => {
+    const recv = typeof (existing as any).receivedAtMs === 'number' ? (existing as any).receivedAtMs : null;
+    const ts = typeof (existing as any).ts === 'number' ? (existing as any).ts : null;
+    const base = recv ?? ts;
+    if (base != null && Number.isFinite(base)) {
+      minReceivedAtMs = minReceivedAtMs == null ? base : Math.min(minReceivedAtMs, base);
+    }
+    const tokens = Array.isArray((existing as any).tokens) ? ((existing as any).tokens as any[]) : [];
+    for (const t of tokens) {
+      const addrRaw = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
+      if (!addrRaw) continue;
+      const key = addrRaw.toLowerCase();
+      const firstSeen =
+        typeof t?.firstSeenAtMs === 'number'
+          ? t.firstSeenAtMs
+          : base != null && Number.isFinite(base)
+            ? base
+            : 0;
+      const prev = minTokenFirstSeenByAddr.get(key);
+      minTokenFirstSeenByAddr.set(key, prev != null ? Math.min(prev, firstSeen) : firstSeen);
+    }
+  };
   for (let i = list.length - 1; i >= 0; i -= 1) {
     const it = list[i];
     if (!it) continue;
-    if (it.id === signal.id) list.splice(i, 1);
-    else if (signal.eventId && it.site === signal.site && it.eventId === signal.eventId) list.splice(i, 1);
+    if (it.id === nextSignal.id) {
+      recordExisting(it);
+      list.splice(i, 1);
+    } else if (nextSignal.eventId && it.site === nextSignal.site && it.eventId === nextSignal.eventId) {
+      recordExisting(it);
+      list.splice(i, 1);
+    }
   }
-  list.push(signal);
+  if (minReceivedAtMs != null && Number.isFinite(minReceivedAtMs)) {
+    const nextRecv = Math.min(nextSignal.receivedAtMs, minReceivedAtMs);
+    if (nextRecv !== nextSignal.receivedAtMs) nextSignal = { ...nextSignal, receivedAtMs: nextRecv };
+  }
+  if (minTokenFirstSeenByAddr.size && Array.isArray(nextSignal.tokens) && nextSignal.tokens.length) {
+    const base =
+      typeof (nextSignal as any).receivedAtMs === 'number'
+        ? (nextSignal as any).receivedAtMs
+        : typeof (nextSignal as any).ts === 'number'
+          ? (nextSignal as any).ts
+          : Date.now();
+    const nextTokens = (nextSignal.tokens as any[]).map((t) => {
+      const addrRaw = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
+      if (!addrRaw) return t;
+      const key = addrRaw.toLowerCase();
+      const prevFirstSeen = minTokenFirstSeenByAddr.get(key);
+      const curFirstSeen = typeof t?.firstSeenAtMs === 'number' ? t.firstSeenAtMs : base;
+      const mergedFirstSeen = prevFirstSeen != null ? Math.min(prevFirstSeen, curFirstSeen) : curFirstSeen;
+      return mergedFirstSeen === curFirstSeen ? t : { ...t, firstSeenAtMs: mergedFirstSeen };
+    });
+    nextSignal = { ...nextSignal, tokens: nextTokens as any };
+  }
+  list.push(nextSignal);
   const next = list.slice(-TWITTER_UNIFIED_CACHE_LIMIT);
   saveUnifiedTwitterCache(next);
   if (isWsMonitorEnabled()) {
-    window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: signal }));
+    window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: nextSignal }));
   }
   return next;
 };

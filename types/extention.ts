@@ -26,6 +26,7 @@ export type ChainSettings = {
   sellPresets: string[];
   buyGasGwei: GasGweiConfig;
   sellGasGwei: GasGweiConfig;
+  approveGasGwei: string;
   buyGasPreset: GasPreset;
   sellGasPreset: GasPreset;
 };

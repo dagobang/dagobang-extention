@@ -105,7 +105,16 @@ const normalizeAddress = (addr: string | null | undefined): `0x${string}` | null
   return trimmed as `0x${string}`;
 };
 
-const shouldBuyByConfig = (metrics: TokenMetrics, config: any) => {
+const getSignalTimeMs = (signal?: UnifiedTwitterSignal): number | null => {
+  if (!signal) return null;
+  const received = typeof (signal as any).receivedAtMs === 'number' ? (signal as any).receivedAtMs : null;
+  if (received != null && Number.isFinite(received)) return received;
+  const ts = typeof (signal as any).ts === 'number' ? (signal as any).ts : null;
+  if (ts != null && Number.isFinite(ts)) return ts;
+  return null;
+};
+
+const shouldBuyByConfig = (metrics: TokenMetrics, config: any, referenceAtMs?: number | null) => {
   if (!metrics || !config) return false;
   const marketCapUsd = sanitizeMarketCapUsd(metrics.marketCapUsd);
   const minMcap = parseKNumber(config.minMarketCapUsd);
@@ -137,13 +146,11 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any) => {
   const minAgeSec = parseNumber(config.minTokenAgeSeconds);
   const maxAgeSec = parseNumber(config.maxTokenAgeSeconds);
   if ((minAgeSec != null || maxAgeSec != null) && metrics.createdAtMs == null) return false;
-  if (minAgeSec != null && metrics.createdAtMs != null) {
-    const ageSec = (Date.now() - metrics.createdAtMs) / 1000;
-    if (ageSec < minAgeSec) return false;
-  }
-  if (maxAgeSec != null && metrics.createdAtMs != null) {
-    const ageSec = (Date.now() - metrics.createdAtMs) / 1000;
-    if (ageSec > maxAgeSec) return false;
+  if (metrics.createdAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
+    const ref = typeof referenceAtMs === 'number' && Number.isFinite(referenceAtMs) ? referenceAtMs : Date.now();
+    const ageSec = Math.max(0, (ref - metrics.createdAtMs) / 1000);
+    if (minAgeSec != null && ageSec < minAgeSec) return false;
+    if (maxAgeSec != null && ageSec > maxAgeSec) return false;
   }
 
   const minDevPct = parseNumber(config.minDevHoldPercent);
@@ -426,7 +433,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         marketCapUsd: sanitizedRefreshedMcap ?? sanitizedInputMcap ?? undefined,
         priceUsd: input.metrics.priceUsd,
       };
-      if (!shouldBuyByConfig(refreshedMetrics, input.strategy)) return;
+      if (!shouldBuyByConfig(refreshedMetrics, input.strategy, getSignalTimeMs(input.signal))) return;
 
       if (dryRun) {
         const entryPriceUsd = await getEntryPriceUsd(
@@ -582,6 +589,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   const pickTokensToBuyFromSignal = (signal: UnifiedTwitterSignal, strategy: any) => {
     const tokens = Array.isArray(signal.tokens) ? (signal.tokens as UnifiedSignalToken[]) : [];
     const now = Date.now();
+    const signalAtMs = getSignalTimeMs(signal) ?? now;
     const perTweetMax = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
     if (perTweetMax <= 0) return [];
     const scanLimit = Math.min(500, tokens.length);
@@ -599,7 +607,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
 
     const candidates = unique
       .map((t) => ({ t, m: metricsFromUnifiedToken(t) }))
-      .filter((x) => x.m && x.m.tokenAddress && shouldBuyByConfig(x.m, strategy));
+      .filter((x) => x.m && x.m.tokenAddress && shouldBuyByConfig(x.m, strategy, signalAtMs));
 
     candidates.sort((a, b) => {
       const ma = typeof a.m?.marketCapUsd === 'number' ? a.m.marketCapUsd : 0;

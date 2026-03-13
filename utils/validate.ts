@@ -139,6 +139,10 @@ export function validateSettings(input: Settings): Settings | null {
           fast: typeof inputSellGas?.fast === 'string' && inputSellGas.fast.trim() ? inputSellGas.fast.trim() : cDef.sellGasGwei.fast,
           turbo: typeof inputSellGas?.turbo === 'string' && inputSellGas.turbo.trim() ? inputSellGas.turbo.trim() : cDef.sellGasGwei.turbo,
         };
+        const approveGasGwei =
+          typeof (cInput as any).approveGasGwei === 'string' && (cInput as any).approveGasGwei.trim()
+            ? (cInput as any).approveGasGwei.trim()
+            : (cDef as any).approveGasGwei ?? '0.06';
         const defaultBuyGasPreset = (cDef as any).buyGasPreset ?? cDef.gasPreset;
         const defaultSellGasPreset = (cDef as any).sellGasPreset ?? cDef.gasPreset;
         const buyGasPreset = allowedGasPresets.includes(inputBuyGasPreset) ? inputBuyGasPreset : defaultBuyGasPreset;
@@ -161,6 +165,7 @@ export function validateSettings(input: Settings): Settings | null {
           sellPresets: Array.isArray(cInput.sellPresets) ? cInput.sellPresets.map(String) : cDef.sellPresets,
           buyGasGwei,
           sellGasGwei,
+          approveGasGwei,
         };
         // Fallback for RPCs if empty
         if (chains[cid].rpcUrls.length === 0) {
