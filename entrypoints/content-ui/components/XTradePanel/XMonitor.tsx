@@ -98,14 +98,15 @@ const buildNotBoughtReason = (input: {
   const mc = mcRaw != null && Number.isFinite(mcRaw) && mcRaw >= 3000 ? mcRaw : null;
   const holders = typeof token.holders === 'number' ? token.holders : null;
   const symbol = typeof token.tokenSymbol === 'string' ? token.tokenSymbol.trim() : '';
-  const createdAtMs = typeof token.createdAtMs === 'number' ? token.createdAtMs : null;
+  const createdAtMs = typeof token.createdAtMs === 'number' && token.createdAtMs > 0 ? token.createdAtMs : null;
+  const firstSeenAtMs = typeof token.firstSeenAtMs === 'number' && token.firstSeenAtMs > 0 ? token.firstSeenAtMs : null;
   const signalAtMs =
     typeof (input.signal as any).receivedAtMs === 'number'
       ? (input.signal as any).receivedAtMs
       : typeof (input.signal as any).ts === 'number'
         ? (input.signal as any).ts
         : Date.now();
-  const devHold = typeof token.devHoldPercent === 'number' ? token.devHoldPercent : 0;
+  const devHold = typeof token.devHoldPercent === 'number' && Number.isFinite(token.devHoldPercent) ? token.devHoldPercent : null;
   const devHasSold = getDevHasSold(input.token);
 
   const minMcap = parseKNumber(input.strategy?.minMarketCapUsd);
@@ -136,15 +137,18 @@ const buildNotBoughtReason = (input: {
 
   const minAgeSec = parseNumber(input.strategy?.minTokenAgeSeconds);
   const maxAgeSec = parseNumber(input.strategy?.maxTokenAgeSeconds);
-  if ((minAgeSec != null || maxAgeSec != null) && createdAtMs == null) return input.tt('contentUi.xMonitor.notBought.reason.createdAtMissing');
-  if (createdAtMs != null) {
-    const ageSec = Math.max(0, (signalAtMs - createdAtMs) / 1000);
-    if (minAgeSec != null && ageSec < minAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(ageSec), Math.floor(minAgeSec)]);
-    if (maxAgeSec != null && ageSec > maxAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(ageSec), Math.floor(maxAgeSec)]);
+  const tokenAtMs = firstSeenAtMs ?? createdAtMs;
+  if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return input.tt('contentUi.xMonitor.notBought.reason.createdAtMissing');
+  if (tokenAtMs != null) {
+    const diffSec = (tokenAtMs - signalAtMs) / 1000;
+    if (minAgeSec != null && diffSec < minAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(diffSec), Math.floor(minAgeSec)]);
+    if (maxAgeSec != null && diffSec > maxAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(diffSec), Math.floor(maxAgeSec)]);
   }
 
   const minDevPct = parseNumber(input.strategy?.minDevHoldPercent);
   const maxDevPct = parseNumber(input.strategy?.maxDevHoldPercent);
+  if (minDevPct != null && devHold == null) return input.tt('contentUi.xMonitor.notBought.reason.devHoldMissing');
+  if (maxDevPct != null && devHold == null) return input.tt('contentUi.xMonitor.notBought.reason.devHoldMissing');
   if (minDevPct != null && devHold < minDevPct) return input.tt('contentUi.xMonitor.notBought.reason.devHoldTooLow', [devHold.toFixed(2), minDevPct]);
   if (maxDevPct != null && devHold > maxDevPct) return input.tt('contentUi.xMonitor.notBought.reason.devHoldTooHigh', [devHold.toFixed(2), maxDevPct]);
   if (input.strategy?.blockIfDevSell && devHasSold === true) return input.tt('contentUi.xMonitor.notBought.reason.devHasSold');
@@ -172,8 +176,9 @@ const buildNotBoughtReason = (input: {
       const mc = mcRaw != null && Number.isFinite(mcRaw) && mcRaw >= 3000 ? mcRaw : null;
       const holders = typeof token.holders === 'number' ? token.holders : null;
       const symbol = typeof token.tokenSymbol === 'string' ? token.tokenSymbol.trim() : '';
-      const createdAtMs = typeof token.createdAtMs === 'number' ? token.createdAtMs : null;
-      const devHold = typeof token.devHoldPercent === 'number' ? token.devHoldPercent : 0;
+      const createdAtMs = typeof token.createdAtMs === 'number' && token.createdAtMs > 0 ? token.createdAtMs : null;
+      const firstSeenAtMs = typeof token.firstSeenAtMs === 'number' && token.firstSeenAtMs > 0 ? token.firstSeenAtMs : null;
+      const devHold = typeof token.devHoldPercent === 'number' && Number.isFinite(token.devHoldPercent) ? token.devHoldPercent : null;
       const devHasSold = getDevHasSold(t);
 
       if ((minMcap != null || maxMcap != null) && mcRaw != null && mc == null) return false;
@@ -194,13 +199,16 @@ const buildNotBoughtReason = (input: {
         if (maxTickerLen != null && len > maxTickerLen) return false;
       }
 
-      if ((minAgeSec != null || maxAgeSec != null) && createdAtMs == null) return false;
-      if (createdAtMs != null) {
-        const ageSec = Math.max(0, (signalAtMs - createdAtMs) / 1000);
-        if (minAgeSec != null && ageSec < minAgeSec) return false;
-        if (maxAgeSec != null && ageSec > maxAgeSec) return false;
+      const tokenAtMs = firstSeenAtMs ?? createdAtMs;
+      if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
+      if (tokenAtMs != null) {
+        const diffSec = (tokenAtMs - signalAtMs) / 1000;
+        if (minAgeSec != null && diffSec < minAgeSec) return false;
+        if (maxAgeSec != null && diffSec > maxAgeSec) return false;
       }
 
+      if (minDevPct != null && devHold == null) return false;
+      if (maxDevPct != null && devHold == null) return false;
       if (minDevPct != null && devHold < minDevPct) return false;
       if (maxDevPct != null && devHold > maxDevPct) return false;
       if (input.strategy?.blockIfDevSell && devHasSold === true) return false;
@@ -213,8 +221,8 @@ const buildNotBoughtReason = (input: {
       const ma = typeof (a as any).marketCapUsd === 'number' ? (a as any).marketCapUsd : 0;
       const mb = typeof (b as any).marketCapUsd === 'number' ? (b as any).marketCapUsd : 0;
       if (mb !== ma) return mb - ma;
-      const ta = typeof (a as any).firstSeenAtMs === 'number' ? (a as any).firstSeenAtMs : 0;
-      const tb = typeof (b as any).firstSeenAtMs === 'number' ? (b as any).firstSeenAtMs : 0;
+      const ta = typeof (a as any).firstSeenAtMs === 'number' && (a as any).firstSeenAtMs > 0 ? (a as any).firstSeenAtMs : 0;
+      const tb = typeof (b as any).firstSeenAtMs === 'number' && (b as any).firstSeenAtMs > 0 ? (b as any).firstSeenAtMs : 0;
       return ta - tb;
     });
 
@@ -230,8 +238,8 @@ const buildNotBoughtReason = (input: {
       const addr = typeof (t as any)?.tokenAddress === 'string' ? String((t as any).tokenAddress).trim().toLowerCase() : '';
       if (!addr) continue;
       if (selectedKey.has(addr)) continue;
-      const first = typeof (t as any).firstSeenAtMs === 'number' ? (t as any).firstSeenAtMs : now;
-      const isNew = now - first <= 60_000;
+      const first = typeof (t as any).firstSeenAtMs === 'number' && (t as any).firstSeenAtMs > 0 ? (t as any).firstSeenAtMs : 0;
+      const isNew = first > 0 && now - first <= 60_000;
       if (isNew && leftNew > 0) {
         leftNew -= 1;
         selected.push(t);
@@ -398,7 +406,7 @@ const normalizeSignalTokensForDisplay = (signal: UnifiedTwitterSignal): UnifiedS
       top10HoldRatio: t.top10HoldRatio,
       devTokenStatus: t.devTokenStatus,
       createdAtMs: t.createdAtMs,
-      firstSeenAtMs: typeof (t as any).firstSeenAtMs === 'number' ? (t as any).firstSeenAtMs : signal.receivedAtMs ?? signal.ts,
+      firstSeenAtMs: typeof (t as any).firstSeenAtMs === 'number' && (t as any).firstSeenAtMs > 0 ? (t as any).firstSeenAtMs : 0,
       updatedAtMs: typeof (t as any).updatedAtMs === 'number' ? (t as any).updatedAtMs : signal.ts,
     }));
   return cleaned;
@@ -784,12 +792,12 @@ export function XMonitorContent({
                   const ra = ba ? (ba.dryRun ? 1 : 0) : 2;
                   const rb = bbought ? (bbought.dryRun ? 1 : 0) : 2;
                   if (ra !== rb) return ra - rb;
-                  const ta = ba ? ba.tsMs : 0;
-                  const tb = bbought ? bbought.tsMs : 0;
-                  if (tb !== ta) return tb - ta;
                   const ma = typeof a.marketCapUsd === 'number' ? a.marketCapUsd : 0;
                   const mb = typeof b.marketCapUsd === 'number' ? b.marketCapUsd : 0;
                   if (mb !== ma) return mb - ma;
+                  const ta = ba ? ba.tsMs : 0;
+                  const tb = bbought ? bbought.tsMs : 0;
+                  if (tb !== ta) return tb - ta;
                   return a.firstSeenAtMs - b.firstSeenAtMs;
                 })
                 .slice(0, tokenLimit);
@@ -1066,7 +1074,12 @@ export function XMonitorContent({
                         const tokenName = token.tokenName?.trim() || '';
                         const name = symbol || tokenName || shortAddr;
                         const mc = typeof token.marketCapUsd === 'number' ? token.marketCapUsd : null;
-                        const devBuyRatioPct = typeof token.devBuyRatio === 'number' ? token.devBuyRatio * 100 : null;
+      const devBuyRatioPct =
+        typeof token.devBuyRatio === 'number'
+          ? token.devBuyRatio * 100
+          : typeof token.devHoldPercent === 'number' && Number.isFinite(token.devHoldPercent)
+            ? token.devHoldPercent
+            : null;
                         const top10HoldRatioPct = typeof token.top10HoldRatio === 'number' ? token.top10HoldRatio * 100 : null;
                         const age = typeof token.createdAtMs === 'number' ? formatAgeShort(token.createdAtMs) : null;
                         const getRatioClassName = (pct: number | null) => {

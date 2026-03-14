@@ -134,7 +134,7 @@ const normalizeTrenchesTokenData = (item: any) => {
   const holders = extractNumber(item, ['hd']);
   const kol = extractNumber(item, ['kol']);
   const priceUsd = extractNumber(item, ['p']);
-  const devBuyRatio = extractNumber(item, ['d_br']);
+  const devHoldRatio = extractNumber(item, ['d_br']);
   const top10HoldRatio = extractNumber(item, ['t10']);
   const devTokenStatus = typeof item?.d_ts === 'string' ? item.d_ts.trim() : undefined;
   const tokenLogo = typeof item?.l === 'string' && item.l.trim() ? item.l.trim() : undefined;
@@ -147,9 +147,9 @@ const normalizeTrenchesTokenData = (item: any) => {
     priceUsd: priceUsd ?? undefined,
     createdAtMs: createdAtMs ?? undefined,
     devAddress: asAddress(item?.d_ct) ?? undefined,
-    devHoldPercent: extractNumber(item, ['d_cor']) ?? undefined,
+    devHoldPercent: normalizePercentValue(devHoldRatio ?? null),
     devHasSold: typeof item?.d_ts === 'string' ? item.d_ts.toLowerCase().includes('sell') : undefined,
-    devBuyRatio: devBuyRatio ?? undefined,
+    devBuyRatio: devHoldRatio ?? undefined,
     top10HoldRatio: top10HoldRatio ?? undefined,
     devTokenStatus,
     tokenLogo,
@@ -288,12 +288,8 @@ const upsertUnifiedSignal = (signal: UnifiedTwitterSignal, cacheList?: UnifiedTw
       const addrRaw = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
       if (!addrRaw) continue;
       const key = addrRaw.toLowerCase();
-      const firstSeen =
-        typeof t?.firstSeenAtMs === 'number'
-          ? t.firstSeenAtMs
-          : base != null && Number.isFinite(base)
-            ? base
-            : 0;
+      const firstSeen = typeof t?.firstSeenAtMs === 'number' && Number.isFinite(t.firstSeenAtMs) ? t.firstSeenAtMs : null;
+      if (firstSeen == null || firstSeen <= 0) continue;
       const prev = minTokenFirstSeenByAddr.get(key);
       minTokenFirstSeenByAddr.set(key, prev != null ? Math.min(prev, firstSeen) : firstSeen);
     }
@@ -314,19 +310,15 @@ const upsertUnifiedSignal = (signal: UnifiedTwitterSignal, cacheList?: UnifiedTw
     if (nextRecv !== nextSignal.receivedAtMs) nextSignal = { ...nextSignal, receivedAtMs: nextRecv };
   }
   if (minTokenFirstSeenByAddr.size && Array.isArray(nextSignal.tokens) && nextSignal.tokens.length) {
-    const base =
-      typeof (nextSignal as any).receivedAtMs === 'number'
-        ? (nextSignal as any).receivedAtMs
-        : typeof (nextSignal as any).ts === 'number'
-          ? (nextSignal as any).ts
-          : Date.now();
     const nextTokens = (nextSignal.tokens as any[]).map((t) => {
       const addrRaw = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
       if (!addrRaw) return t;
       const key = addrRaw.toLowerCase();
       const prevFirstSeen = minTokenFirstSeenByAddr.get(key);
-      const curFirstSeen = typeof t?.firstSeenAtMs === 'number' ? t.firstSeenAtMs : base;
-      const mergedFirstSeen = prevFirstSeen != null ? Math.min(prevFirstSeen, curFirstSeen) : curFirstSeen;
+      if (prevFirstSeen == null) return t;
+      const curFirstSeen = typeof t?.firstSeenAtMs === 'number' && Number.isFinite(t.firstSeenAtMs) ? t.firstSeenAtMs : null;
+      if (curFirstSeen == null || curFirstSeen <= 0) return { ...t, firstSeenAtMs: prevFirstSeen };
+      const mergedFirstSeen = Math.min(prevFirstSeen, curFirstSeen);
       return mergedFirstSeen === curFirstSeen ? t : { ...t, firstSeenAtMs: mergedFirstSeen };
     });
     nextSignal = { ...nextSignal, tokens: nextTokens as any };
@@ -370,6 +362,12 @@ const pickFiniteNumber = (next: any, prev?: number): number | undefined => {
   return typeof next === 'number' && Number.isFinite(next) ? next : prev;
 };
 
+const normalizePercentValue = (v: number | null | undefined): number | undefined => {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return undefined;
+  if (v >= 0 && v <= 1) return v * 100;
+  return v;
+};
+
 const normalizeTokenKey = (addr: string) => addr.trim().toLowerCase();
 
 const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken[] => {
@@ -395,7 +393,7 @@ const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken
       top10HoldRatio: t.top10HoldRatio,
       devTokenStatus: t.devTokenStatus,
       createdAtMs: t.createdAtMs,
-      firstSeenAtMs: typeof (t as any).firstSeenAtMs === 'number' ? (t as any).firstSeenAtMs : signal.receivedAtMs ?? signal.ts,
+      firstSeenAtMs: typeof (t as any).firstSeenAtMs === 'number' && (t as any).firstSeenAtMs > 0 ? (t as any).firstSeenAtMs : 0,
       updatedAtMs: typeof (t as any).updatedAtMs === 'number' ? (t as any).updatedAtMs : signal.ts,
     }));
   }
@@ -441,7 +439,11 @@ const upsertSignalToken = (
 
   const prev = prevTokens[idx];
   const merged = mergeTokenFields(prev, token, updatedAtMs);
-  const firstSeenAtMs = Math.min(prev.firstSeenAtMs, token.firstSeenAtMs);
+  const prevFirst = typeof prev.firstSeenAtMs === 'number' ? prev.firstSeenAtMs : 0;
+  const nextFirst = typeof token.firstSeenAtMs === 'number' ? token.firstSeenAtMs : 0;
+  const prevOk = prevFirst > 0;
+  const nextOk = nextFirst > 0;
+  const firstSeenAtMs = prevOk && nextOk ? Math.min(prevFirst, nextFirst) : prevOk ? prevFirst : nextOk ? nextFirst : 0;
   const mergedWithTimes: UnifiedSignalToken = { ...merged, firstSeenAtMs };
 
   const same =
@@ -489,7 +491,7 @@ const applySnapshotToSignal = (signal: UnifiedTwitterSignal, snapshot: TokenSnap
     top10HoldRatio: snapshot.top10HoldRatio,
     devTokenStatus: snapshot.devTokenStatus,
     createdAtMs: snapshot.createdAtMs,
-    firstSeenAtMs: now,
+    firstSeenAtMs: typeof snapshot.createdAtMs === 'number' && snapshot.createdAtMs > 0 ? snapshot.createdAtMs : now,
     updatedAtMs: now,
   };
   return upsertSignalToken(signal, baseToken, now);
@@ -519,6 +521,7 @@ const signalHasTokens = (signal: UnifiedTwitterSignal): boolean => normalizeSign
 
 const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number): UnifiedTwitterSignal | null => {
   if (!item || typeof item !== 'object') return null;
+  const tweetAtMs = extractTimestampMs(item) ?? receivedAtMs;
   const raw = typeof (item as any).tw === 'string' ? String((item as any).tw).trim().toLowerCase() : '';
   if (!raw) return null;
 
@@ -590,7 +593,7 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
     .filter((addr) => typeof addr === 'string' && addr.trim())
     .map((addr) => String(addr).trim());
   let tokens: UnifiedSignalToken[] | undefined = tokenAddresses.length
-    ? tokenAddresses.map((addr) => ({ tokenAddress: addr, firstSeenAtMs: receivedAtMs, updatedAtMs: receivedAtMs }))
+    ? tokenAddresses.map((addr) => ({ tokenAddress: addr, firstSeenAtMs: 0, updatedAtMs: receivedAtMs }))
     : undefined;
   const media = extractMedia(item);
   const tokenMeta = isObject((item as any).t) ? (item as any).t : null;
@@ -599,7 +602,7 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
     tokenMetaAddressRaw && tokenMetaAddressRaw.startsWith('0x') ? tokenMetaAddressRaw.toLowerCase() : tokenMetaAddressRaw;
 
   if (!tokens?.length && tokenMetaAddress) {
-    tokens = [{ tokenAddress: tokenMetaAddress, firstSeenAtMs: receivedAtMs, updatedAtMs: receivedAtMs }];
+    tokens = [{ tokenAddress: tokenMetaAddress, firstSeenAtMs: 0, updatedAtMs: receivedAtMs }];
   }
 
   if (tokens?.length) {
@@ -623,8 +626,7 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
     const liquidityUsd = extractNumber(item, ['lq', 'lqdt', 'liquidity', 'liquidityUsd', 'liquidity_usd']) ?? undefined;
     const holders = extractNumber(item, ['hd', 'holders', 'holderCount']) ?? undefined;
     const kol = extractNumber(item, ['kol']) ?? undefined;
-    const createdAtMs =
-      extractTimestampMs(item) ?? (extractNumber(item, ['created_at', 'createdAt', 'created_at_ms', 'createdAtMs']) ?? undefined);
+    const createdAtMs = tokenMeta ? extractTimestampMs(tokenMeta) ?? undefined : undefined;
 
     const attach = (idx: number) => {
       tokens![idx] = {
@@ -639,6 +641,10 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
         holders,
         kol,
         createdAtMs: createdAtMs ?? undefined,
+        firstSeenAtMs:
+          (typeof tokens![idx].firstSeenAtMs === 'number' && tokens![idx].firstSeenAtMs > 0) || createdAtMs == null
+            ? tokens![idx].firstSeenAtMs
+            : createdAtMs,
       };
     };
 
@@ -685,7 +691,7 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
     followedUserBio,
     followedUserFollowers,
     tokens,
-    receivedAtMs,
+    receivedAtMs: tweetAtMs,
     ts: Date.now(),
   };
 };
@@ -911,18 +917,44 @@ export function initGmgnWsMonitor(options: {
     if (!addrRaw) return;
     const addr = addrRaw.toLowerCase();
     const prev = tokenByAddress.get(addr);
+    const vch = typeof tokenData?._v_ch === 'string' ? String(tokenData._v_ch).trim().toLowerCase() : '';
+    const preferDevMetrics = vch === 'social' || vch === 'stat';
     const tokenSymbol = pickNonEmptyString(tokenData?.tokenSymbol ?? tokenData?.symbol ?? tokenData?.s, prev?.tokenSymbol);
     const tokenName = pickNonEmptyString(tokenData?.tokenName ?? tokenData?.name ?? tokenData?.nm ?? tokenData?.n, prev?.tokenName);
     const tokenLogo = pickNonEmptyString(tokenData?.tokenLogo ?? tokenData?.l ?? tokenData?.logo, prev?.tokenLogo);
     const devTokenStatus = pickNonEmptyString(tokenData?.devTokenStatus ?? tokenData?.d_ts, prev?.devTokenStatus);
+    const devHoldPercent = (() => {
+      const raw =
+        typeof tokenData?.devHoldPercent === 'number'
+          ? tokenData.devHoldPercent
+          : preferDevMetrics
+            ? extractNumber(tokenData, ['d_br'])
+            : undefined;
+      const next = normalizePercentValue(raw ?? null);
+      return pickFiniteNumber(next, prev?.devHoldPercent);
+    })();
     const devBuyRatio = pickFiniteNumber(
-      typeof tokenData?.devBuyRatio === 'number' ? tokenData.devBuyRatio : extractNumber(tokenData, ['d_br']),
+      typeof tokenData?.devBuyRatio === 'number'
+        ? tokenData.devBuyRatio
+        : preferDevMetrics
+          ? extractNumber(tokenData, ['d_br'])
+          : undefined,
       prev?.devBuyRatio,
     );
     const top10HoldRatio = pickFiniteNumber(
-      typeof tokenData?.top10HoldRatio === 'number' ? tokenData.top10HoldRatio : extractNumber(tokenData, ['t10']),
+      typeof tokenData?.top10HoldRatio === 'number'
+        ? tokenData.top10HoldRatio
+        : preferDevMetrics
+          ? extractNumber(tokenData, ['t10'])
+          : undefined,
       prev?.top10HoldRatio,
     );
+    const devHasSold =
+      typeof tokenData?.devHasSold === 'boolean'
+        ? tokenData.devHasSold
+        : typeof devTokenStatus === 'string'
+          ? devTokenStatus.toLowerCase().includes('sell') || devTokenStatus.toLowerCase().includes('close')
+          : prev?.devHasSold;
     const next: TokenSnapshot = {
       tokenAddress: addr,
       chain: pickNonEmptyString(tokenData?.chain, prev?.chain),
@@ -952,8 +984,21 @@ export function initGmgnWsMonitor(options: {
           : typeof tokenData?.lqdt === 'number'
             ? tokenData.lqdt
             : prev?.liquidityUsd,
-      holders: typeof tokenData?.holders === 'number' ? tokenData.holders : prev?.holders,
-      kol: pickFiniteNumber(typeof tokenData?.kol === 'number' ? tokenData.kol : extractNumber(tokenData, ['kol']), prev?.kol),
+      holders: (() => {
+        const next = typeof tokenData?.holders === 'number' ? tokenData.holders : prev?.holders;
+        if (preferDevMetrics) return next;
+        const prevH = typeof prev?.holders === 'number' ? prev.holders : null;
+        return next === 0 && prevH != null && prevH > 0 ? prevH : next;
+      })(),
+      kol: (() => {
+        const next = pickFiniteNumber(typeof tokenData?.kol === 'number' ? tokenData.kol : extractNumber(tokenData, ['kol']), prev?.kol);
+        if (preferDevMetrics) return next;
+        const prevK = typeof prev?.kol === 'number' ? prev.kol : null;
+        return next === 0 && prevK != null && prevK > 0 ? prevK : next;
+      })(),
+      devAddress: pickNonEmptyString(tokenData?.devAddress ?? tokenData?.d_ct, prev?.devAddress),
+      devHoldPercent,
+      devHasSold,
       devBuyRatio,
       top10HoldRatio,
       devTokenStatus,

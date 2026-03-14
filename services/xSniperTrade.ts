@@ -22,6 +22,7 @@ type TokenMetrics = {
   holders?: number;
   kol?: number;
   createdAtMs?: number;
+  firstSeenAtMs?: number;
   devAddress?: `0x${string}`;
   devHoldPercent?: number;
   devHasSold?: boolean;
@@ -32,6 +33,8 @@ type XSniperBuyRecord = {
   id: string;
   side?: 'buy' | 'sell';
   tsMs: number;
+  tweetAtMs?: number;
+  tweetUrl?: string;
   chainId: number;
   tokenAddress: `0x${string}`;
   tokenSymbol?: string;
@@ -114,6 +117,17 @@ const getSignalTimeMs = (signal?: UnifiedTwitterSignal): number | null => {
   return null;
 };
 
+const buildTweetUrl = (signal?: UnifiedTwitterSignal): string | undefined => {
+  if (!signal) return undefined;
+  const id = String(signal.tweetId ?? '').trim();
+  if (!/^\d{6,}$/.test(id)) return undefined;
+  const user = String(signal.userScreen ?? '')
+    .trim()
+    .replace(/^@/, '');
+  if (user) return `https://x.com/${encodeURIComponent(user)}/status/${id}`;
+  return `https://x.com/i/web/status/${id}`;
+};
+
 const shouldBuyByConfig = (metrics: TokenMetrics, config: any, referenceAtMs?: number | null) => {
   if (!metrics || !config) return false;
   const marketCapUsd = sanitizeMarketCapUsd(metrics.marketCapUsd);
@@ -145,19 +159,28 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any, referenceAtMs?: n
 
   const minAgeSec = parseNumber(config.minTokenAgeSeconds);
   const maxAgeSec = parseNumber(config.maxTokenAgeSeconds);
-  if ((minAgeSec != null || maxAgeSec != null) && metrics.createdAtMs == null) return false;
-  if (metrics.createdAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
+  const firstSeenAtMs = typeof metrics.firstSeenAtMs === 'number' && metrics.firstSeenAtMs > 0 ? metrics.firstSeenAtMs : null;
+  const createdAtMs = typeof metrics.createdAtMs === 'number' && metrics.createdAtMs > 0 ? metrics.createdAtMs : null;
+  const tokenAtMs = firstSeenAtMs ?? createdAtMs;
+  if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
+  if (tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
     const ref = typeof referenceAtMs === 'number' && Number.isFinite(referenceAtMs) ? referenceAtMs : Date.now();
-    const ageSec = Math.max(0, (ref - metrics.createdAtMs) / 1000);
-    if (minAgeSec != null && ageSec < minAgeSec) return false;
-    if (maxAgeSec != null && ageSec > maxAgeSec) return false;
+    const diffSec = (tokenAtMs - ref) / 1000;
+    if (minAgeSec != null && diffSec < minAgeSec) return false;
+    if (maxAgeSec != null && diffSec > maxAgeSec) return false;
   }
 
   const minDevPct = parseNumber(config.minDevHoldPercent);
   const maxDevPct = parseNumber(config.maxDevHoldPercent);
-  const devHoldPct = typeof metrics.devHoldPercent === 'number' ? metrics.devHoldPercent : 0;
-  if (minDevPct != null && devHoldPct < minDevPct) return false;
-  if (maxDevPct != null && devHoldPct > maxDevPct) return false;
+  const devHoldPct = typeof metrics.devHoldPercent === 'number' && Number.isFinite(metrics.devHoldPercent) ? metrics.devHoldPercent : null;
+  if (minDevPct != null) {
+    if (devHoldPct == null) return false;
+    if (devHoldPct < minDevPct) return false;
+  }
+  if (maxDevPct != null) {
+    if (devHoldPct == null) return false;
+    if (devHoldPct > maxDevPct) return false;
+  }
   if (config.blockIfDevSell && metrics.devHasSold === true) return false;
   return true;
 };
@@ -448,10 +471,14 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         deps.onStateChanged();
 
         const now = Date.now();
+        const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
+        const tweetUrl = buildTweetUrl(input.signal);
         const record: XSniperBuyRecord = {
           id: `${now}-${Math.random().toString(16).slice(2)}`,
           side: 'buy',
           tsMs: now,
+          tweetAtMs,
+          tweetUrl,
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
           tokenSymbol: tokenInfo.symbol ? String(tokenInfo.symbol) : undefined,
@@ -501,10 +528,14 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       deps.onStateChanged();
 
       const now = Date.now();
+      const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
+      const tweetUrl = buildTweetUrl(input.signal);
       const record: XSniperBuyRecord = {
         id: `${now}-${Math.random().toString(16).slice(2)}`,
         side: 'buy',
         tsMs: now,
+        tweetAtMs,
+        tweetUrl,
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         tokenSymbol: tokenInfo.symbol ? String(tokenInfo.symbol) : undefined,
@@ -569,6 +600,13 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   const metricsFromUnifiedToken = (t: UnifiedSignalToken): TokenMetrics | null => {
     const tokenAddress = normalizeAddress(t.tokenAddress);
     if (!tokenAddress) return null;
+    const devHoldPercentRaw = typeof (t as any).devHoldPercent === 'number' ? (t as any).devHoldPercent : undefined;
+    const devHoldPercent =
+      typeof devHoldPercentRaw === 'number' && Number.isFinite(devHoldPercentRaw)
+        ? devHoldPercentRaw >= 0 && devHoldPercentRaw <= 1
+          ? devHoldPercentRaw * 100
+          : devHoldPercentRaw
+        : undefined;
     return {
       tokenAddress,
       tokenSymbol: typeof (t as any).tokenSymbol === 'string' ? String((t as any).tokenSymbol) : undefined,
@@ -577,8 +615,9 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       holders: typeof (t as any).holders === 'number' ? (t as any).holders : undefined,
       kol: typeof (t as any).kol === 'number' ? (t as any).kol : undefined,
       createdAtMs: typeof (t as any).createdAtMs === 'number' ? (t as any).createdAtMs : undefined,
+    firstSeenAtMs: typeof (t as any).firstSeenAtMs === 'number' ? (t as any).firstSeenAtMs : undefined,
       devAddress: normalizeAddress((t as any).devAddress) ?? undefined,
-      devHoldPercent: typeof (t as any).devHoldPercent === 'number' ? (t as any).devHoldPercent : undefined,
+      devHoldPercent,
       devHasSold: typeof (t as any).devHasSold === 'boolean'
         ? (t as any).devHasSold
         : (typeof (t as any).devTokenStatus === 'string' ? String((t as any).devTokenStatus).toLowerCase().includes('sell') : undefined),
@@ -676,10 +715,14 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     deleteSellInFlight.add(dedupeKey);
     try {
       const now = Date.now();
+      const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
+      const tweetUrl = buildTweetUrl(input.signal);
       const baseRecord: XSniperBuyRecord = {
         id: `${now}-${Math.random().toString(16).slice(2)}`,
         side: 'sell',
         tsMs: now,
+        tweetAtMs,
+        tweetUrl,
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         tokenSymbol: input.relatedBuy?.tokenSymbol,

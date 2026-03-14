@@ -41,6 +41,8 @@ type XSniperBuyRecord = {
   id: string;
   side?: 'buy' | 'sell';
   tsMs: number;
+  tweetAtMs?: number;
+  tweetUrl?: string;
   chainId: number;
   tokenAddress: string;
   tokenSymbol?: string;
@@ -97,6 +99,16 @@ const parseList = (value: string) =>
     .flatMap((x) => x.split(/\s+/))
     .map((x) => x.trim())
     .filter(Boolean);
+
+const buildTweetUrlFallback = (record: XSniperBuyRecord): string => {
+  const id = String(record.signalTweetId ?? '').trim();
+  if (!/^\d{6,}$/.test(id)) return '';
+  const user = String(record.userScreen ?? '')
+    .trim()
+    .replace(/^@/, '');
+  if (user) return `https://x.com/${encodeURIComponent(user)}/status/${id}`;
+  return `https://x.com/i/web/status/${id}`;
+};
 
 export function XSniperContent({
   siteInfo,
@@ -936,6 +948,8 @@ export function XSniperContent({
                     const latestPriceUsd = latest && typeof latest.priceUsd === 'number' ? (latest.priceUsd as number) : null;
                     const sellDisabledBase = !settings || !isUnlocked || r.dryRun === true;
                     const sellingForRecord = sellingKey != null && sellingKey.startsWith(`${r.id}:`);
+                    const tweetAtMs = typeof r.tweetAtMs === 'number' && Number.isFinite(r.tweetAtMs) ? r.tweetAtMs : null;
+                    const tweetUrl = typeof r.tweetUrl === 'string' && r.tweetUrl.trim() ? r.tweetUrl.trim() : buildTweetUrlFallback(r);
 
                     return (
                       <div>
@@ -960,7 +974,29 @@ export function XSniperContent({
                             </a>{' '}
                             <span className="text-zinc-500">{shortAddr(r.tokenAddress)}</span>
                           </div>
-                          <div className="text-[11px] text-zinc-500">{formatTs(r.tsMs)}</div>
+                          <div className="text-right text-[11px] text-zinc-500">
+                            <div>{formatTs(r.tsMs)}</div>
+                            {tweetAtMs != null ? (
+                              <div>
+                                {tt('contentUi.autoTradeStrategy.snipeHistoryTweet')}: {' '}
+                                {tweetUrl ? (
+                                  <a
+                                    href={tweetUrl}
+                                    className="text-zinc-400 hover:underline"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      navigateToUrl(tweetUrl);
+                                    }}
+                                  >
+                                    {formatTs(tweetAtMs)}
+                                  </a>
+                                ) : (
+                                  <span className="text-zinc-400">{formatTs(tweetAtMs)}</span>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                         <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-zinc-400">
                           <div>

@@ -195,8 +195,8 @@
         "dry": "DRY"
       },
       "tooltip": {
-        "devBuyRatio": "Dev buy ratio",
-        "top10HoldRatio": "Top10 hold ratio",
+        "devBuyRatio": "Dev holding",
+        "top10HoldRatio": "Top10 holding",
         "holders": "Holders",
         "kol": "KOL",
         "age": "Age"
@@ -222,6 +222,7 @@
           "createdAtMissing": "Missing created time",
           "ageTooYoung": "Age {0}s < Min {1}s",
           "ageTooOld": "Age {0}s > Max {1}s",
+          "devHoldMissing": "Missing dev holding",
           "devHoldTooLow": "Dev hold {0}% < Min {1}%",
           "devHoldTooHigh": "Dev hold {0}% > Max {1}%",
           "devHasSold": "Dev has sold",
@@ -335,6 +336,7 @@
       "snipeHistoryKol": "KOL",
       "snipeHistoryPnlMcap": "PNL (mcap)",
       "snipeHistoryUser": "User",
+      "snipeHistoryTweet": "Tweet",
       "fixedSnipe": "Fixed Snipe",
       "fixedSnipeDesc": "Lock specific X users and buy on new tweets",
       "activitySnipe": "Activity Snipe",

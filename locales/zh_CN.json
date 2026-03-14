@@ -194,8 +194,8 @@
         "buy": "买入",
         "dry": "模拟"
       },
-      "tooltip": {
-        "devBuyRatio": "Dev 买入占比",
+        "tooltip": {
+          "devBuyRatio": "Dev持仓占比",
         "top10HoldRatio": "Top10 持仓占比",
         "holders": "持币人数",
         "kol": "KOL",
@@ -222,6 +222,7 @@
           "createdAtMissing": "缺少创建时间",
           "ageTooYoung": "年龄{0}s < Min {1}s",
           "ageTooOld": "年龄{0}s > Max {1}s",
+          "devHoldMissing": "缺少Dev持仓",
           "devHoldTooLow": "Dev持仓{0}% < Min {1}%",
           "devHoldTooHigh": "Dev持仓{0}% > Max {1}%",
           "devHasSold": "Dev已清仓",
@@ -335,6 +336,7 @@
       "snipeHistoryKol": "KOL",
       "snipeHistoryPnlMcap": "PNL(市值)",
       "snipeHistoryUser": "来源用户",
+      "snipeHistoryTweet": "推文",
       "fixedSnipe": "定点狙击",
       "fixedSnipeDesc": "锁定特定 X 用户，发推即触发买入",
       "activitySnipe": "异动狙击",
