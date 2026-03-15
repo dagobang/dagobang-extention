@@ -58,7 +58,10 @@ export const tickLimitOrdersForToken = async (input: {
   return { triggered, executed, failed };
 };
 
-export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) => {
+export const createLimitOrderExecutor = (deps: {
+  onOrdersChanged: () => void;
+  onOrderSubmitted?: (input: { order: LimitOrder; txHash: `0x${string}` }) => void;
+}) => {
   const ensureTxSuccess = async (txHash: `0x${string}`) => {
     try {
       const client = await RpcService.getClient();
@@ -85,6 +88,7 @@ export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) 
       });
       const txHash = res.txHash as `0x${string}`;
       await patchLimitOrder(order.id, { txHash });
+      deps.onOrderSubmitted?.({ order, txHash });
       await ensureTxSuccess(txHash);
 
       await TradeService.approveMaxForSellIfNeeded(order.chainId, order.tokenAddress, order.tokenInfo);
@@ -171,6 +175,7 @@ export const createLimitOrderExecutor = (deps: { onOrdersChanged: () => void }) 
       sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
     });
     await patchLimitOrder(order.id, { txHash });
+    deps.onOrderSubmitted?.({ order, txHash });
     await ensureTxSuccess(txHash);
 
     try {

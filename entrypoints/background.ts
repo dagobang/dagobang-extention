@@ -37,16 +37,36 @@ export default defineBackground(() => {
     }
   });
 
-  const broadcastStateChange = async () => {
+  const broadcastToTabs = async (payload: any) => {
     try {
       const tabs = await browser.tabs.query({});
       for (const tab of tabs) {
         if (tab.id) {
-          browser.tabs.sendMessage(tab.id, { type: 'bg:stateChanged' }).catch(() => { });
+          browser.tabs.sendMessage(tab.id, payload).catch(() => { });
         }
       }
     } catch (e) {
       console.error('Broadcast failed', e);
+    }
+  };
+
+  const broadcastStateChange = async () => {
+    await broadcastToTabs({ type: 'bg:stateChanged' });
+  };
+
+  const broadcastTradeSuccess = async (payload: any, tabId?: number | null) => {
+    if (typeof tabId === 'number' && tabId > 0) {
+      browser.tabs.sendMessage(tabId, payload).catch(() => { });
+      return;
+    }
+    try {
+      const activeTabs = await browser.tabs.query({ active: true });
+      for (const tab of activeTabs) {
+        if (!tab.id) continue;
+        browser.tabs.sendMessage(tab.id, payload).catch(() => { });
+      }
+    } catch {
+      broadcastToTabs(payload);
     }
   };
 
@@ -55,7 +75,18 @@ export default defineBackground(() => {
     onOrdersChanged: () => {
       broadcastStateChange();
       limitOrderScanner?.scheduleFromStorage().catch(() => { });
-    }
+    },
+    onOrderSubmitted: ({ order, txHash }) => {
+      broadcastTradeSuccess({
+        type: 'bg:tradeSuccess',
+        source: 'limitOrder',
+        id: order.id,
+        side: order.side,
+        chainId: order.chainId,
+        tokenAddress: order.tokenAddress,
+        txHash,
+      });
+    },
   });
   limitOrderScanner = createLimitOrderScanner({
     executeLimitOrder: limitOrderExecutor.executeLimitOrder,
@@ -443,6 +474,17 @@ export default defineBackground(() => {
           case 'tx:buy': {
             try {
               const rsp = await TradeService.buy(msg.input);
+              broadcastTradeSuccess(
+                {
+                  type: 'bg:tradeSuccess',
+                  source: 'tx:buy',
+                  side: 'buy',
+                  chainId: msg.input.chainId,
+                  tokenAddress: msg.input.tokenAddress,
+                  txHash: (rsp as any)?.txHash,
+                },
+                sender?.tab?.id ?? null,
+              );
               broadcastStateChange();
               return { ok: true, ...rsp };
             } catch (e: any) {
@@ -457,6 +499,17 @@ export default defineBackground(() => {
           case 'tx:sell': {
             try {
               const rsp = await TradeService.sell(msg.input);
+              broadcastTradeSuccess(
+                {
+                  type: 'bg:tradeSuccess',
+                  source: 'tx:sell',
+                  side: 'sell',
+                  chainId: msg.input.chainId,
+                  tokenAddress: msg.input.tokenAddress,
+                  txHash: (rsp as any)?.txHash,
+                },
+                sender?.tab?.id ?? null,
+              );
               broadcastStateChange();
               return { ok: true, ...rsp };
             } catch (e: any) {

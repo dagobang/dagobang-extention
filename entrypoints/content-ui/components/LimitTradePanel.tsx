@@ -41,7 +41,7 @@ export function LimitTradePanel({
   tokenInfo,
 }: LimitTradePanelProps) {
   const panelWidth = 680;
-  const { ensureReady: ensureTradeSuccessAudioReady, playBuy: playTradeBuySound, playSell: playTradeSellSound } = useTradeSuccessSound({
+  const { ensureReady: ensureTradeSuccessAudioReady } = useTradeSuccessSound({
     enabled: settings?.tradeSuccessSoundEnabled,
     volume: settings?.tradeSuccessSoundVolume,
     buyPreset: settings?.tradeSuccessSoundPresetBuy,
@@ -111,7 +111,6 @@ export function LimitTradePanel({
   const [sellOrderType, setSellOrderType] = useState<LimitOrderType>('take_profit_sell');
   const [onlyCurrentToken, setOnlyCurrentToken] = useState(false);
   const [orders, setOrders] = useState<LimitOrder[]>([]);
-  const lastOrderStatusRef = useRef<Record<string, string>>({});
   const [scanStatus, setScanStatus] = useState<LimitOrderScanStatus | null>(null);
   const [latestTokenPriceUsd, setLatestTokenPriceUsd] = useState<number | null>(null);
   const [priceByTokenKey, setPriceByTokenKey] = useState<Record<string, { priceUsd: number | null; ts: number }>>({});
@@ -201,22 +200,6 @@ export function LimitTradePanel({
   useEffect(() => {
     priceByTokenKeyRef.current = priceByTokenKey;
   }, [priceByTokenKey]);
-
-  useEffect(() => {
-    if (!orders.length) return;
-    let played = false;
-    const next: Record<string, string> = { ...lastOrderStatusRef.current };
-    for (const o of orders) {
-      const prev = next[o.id];
-      next[o.id] = o.status;
-      if (!played && prev && prev !== 'executed' && o.status === 'executed') {
-        if (o.side === 'buy') playTradeBuySound();
-        else playTradeSellSound();
-        played = true;
-      }
-    }
-    lastOrderStatusRef.current = next;
-  }, [orders, playTradeBuySound, playTradeSellSound]);
 
   useEffect(() => {
     if (!visible) return;

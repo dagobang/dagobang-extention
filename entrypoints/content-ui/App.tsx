@@ -603,11 +603,17 @@ export default function App() {
       if (message.type === 'bg:xsniper:buy') {
         ensureAutoTradeAudioReady();
         playAutoTradePreset(autoTradeSoundPreset);
+        return;
+      }
+      if (message.type === 'bg:tradeSuccess') {
+        ensureTradeSuccessAudioReady();
+        if (message?.side === 'buy') playTradeBuySound();
+        else playTradeSellSound();
       }
     };
     browser.runtime.onMessage.addListener(listener);
     return () => browser.runtime.onMessage.removeListener(listener);
-  }, [siteInfo, address]);
+  }, [siteInfo, address, ensureAutoTradeAudioReady, playAutoTradePreset, autoTradeSoundPreset, ensureTradeSuccessAudioReady, playTradeBuySound, playTradeSellSound]);
 
   useEffect(() => {
     refreshToken(true);
@@ -730,7 +736,6 @@ export default function App() {
           const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
           throw new Error(detail || 'Transaction failed');
         }
-        playTradeBuySound();
         toast.success(t('contentUi.toast.buyDone', locale, [sym, amountStr]), { icon: '✅' });
         setPendingBuyTokenMinOutWei(null);
 
@@ -891,7 +896,6 @@ export default function App() {
           const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
           throw new Error(detail || 'Transaction failed');
         }
-        playTradeSellSound();
         toast.success(t('contentUi.toast.sellDone', locale, [sym, pct]), { icon: '✅' });
         await Promise.all([refreshToken(true), refreshAll()]);
         setPendingBuyTokenMinOutWei(null);

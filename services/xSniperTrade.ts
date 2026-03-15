@@ -259,6 +259,17 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     }
   };
 
+  const broadcastToActiveTabs = async (message: any) => {
+    try {
+      const tabs = await browser.tabs.query({ active: true });
+      for (const tab of tabs) {
+        if (!tab.id) continue;
+        browser.tabs.sendMessage(tab.id, message).catch(() => { });
+      }
+    } catch {
+    }
+  };
+
   const normalizeAutoTrade = (input: any) => {
     const defaults = defaultSettings().autoTrade;
     if (!input) return defaults;
@@ -515,6 +526,14 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         bnbAmountWei: amountWei.toString(),
         tokenInfo,
       } as any);
+      void broadcastToActiveTabs({
+        type: 'bg:tradeSuccess',
+        source: 'xsniper',
+        side: 'buy',
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        txHash: (rsp as any)?.txHash,
+      });
 
       const entryPriceUsd = await getEntryPriceUsd(
         input.chainId,
@@ -803,6 +822,14 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         tokenInfo,
         sellPercentBps: bps,
       } as any);
+      void broadcastToActiveTabs({
+        type: 'bg:tradeSuccess',
+        source: 'xsniper',
+        side: 'sell',
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        txHash: (rsp as any)?.txHash,
+      });
 
       const record: XSniperBuyRecord = {
         ...baseRecord,
