@@ -672,6 +672,31 @@ export function XSniperContent({
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <div className="w-16 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.filterKol')}</div>
+              <div className="grid flex-1 grid-cols-2 gap-2">
+                <div>
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMin')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={twitterSnipe?.minKol ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ minKol: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMax')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={twitterSnipe?.maxKol ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ maxKol: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
               <div className="w-16 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.filterTickerLen')}</div>
               <div className="grid flex-1 grid-cols-2 gap-2">
                 <div>

@@ -48,6 +48,8 @@ export type AutoTradeStrategyBase = {
   maxMarketCapUsd: string;
   minHolders: string;
   maxHolders: string;
+  minKol: string;
+  maxKol: string;
   minTickerLen?: string;
   maxTickerLen?: string;
   minTokenAgeSeconds: string;

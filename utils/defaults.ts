@@ -57,6 +57,8 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
     maxMarketCapUsd: '',
     minHolders: '',
     maxHolders: '',
+    minKol: '',
+    maxKol: '',
     minTickerLen: '',
     maxTickerLen: '',
     minTokenAgeSeconds: '',

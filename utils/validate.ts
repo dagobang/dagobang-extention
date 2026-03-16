@@ -231,6 +231,8 @@ export function validateSettings(input: Settings): Settings | null {
     maxMarketCapUsd: clampStringNumber(inputTwitterSnipe.maxMarketCapUsd, defaultTwitterSnipe.maxMarketCapUsd),
     minHolders: clampStringNumber(inputTwitterSnipe.minHolders, defaultTwitterSnipe.minHolders),
     maxHolders: clampStringNumber(inputTwitterSnipe.maxHolders, defaultTwitterSnipe.maxHolders),
+    minKol: clampStringNumber((inputTwitterSnipe as any).minKol, (defaultTwitterSnipe as any).minKol),
+    maxKol: clampStringNumber((inputTwitterSnipe as any).maxKol, (defaultTwitterSnipe as any).maxKol),
     minTickerLen: clampStringNumber(inputTwitterSnipe.minTickerLen, defaultTwitterSnipe.minTickerLen),
     maxTickerLen: clampStringNumber(inputTwitterSnipe.maxTickerLen, defaultTwitterSnipe.maxTickerLen),
     minTokenAgeSeconds: clampStringNumber(inputTwitterSnipe.minTokenAgeSeconds, defaultTwitterSnipe.minTokenAgeSeconds),

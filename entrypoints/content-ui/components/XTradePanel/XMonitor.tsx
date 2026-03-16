@@ -137,12 +137,22 @@ const buildNotBoughtReason = (input: {
 
   const minAgeSec = parseNumber(input.strategy?.minTokenAgeSeconds);
   const maxAgeSec = parseNumber(input.strategy?.maxTokenAgeSeconds);
-  const tokenAtMs = firstSeenAtMs ?? createdAtMs;
+  const tokenAtMs = createdAtMs ?? firstSeenAtMs;
   if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return input.tt('contentUi.xMonitor.notBought.reason.createdAtMissing');
   if (tokenAtMs != null) {
-    const diffSec = (tokenAtMs - signalAtMs) / 1000;
-    if (minAgeSec != null && diffSec < minAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(diffSec), Math.floor(minAgeSec)]);
-    if (maxAgeSec != null && diffSec > maxAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(diffSec), Math.floor(maxAgeSec)]);
+    const tokenAgeAtSignalSec = (signalAtMs - tokenAtMs) / 1000;
+    if (tokenAgeAtSignalSec < 0) return input.tt('contentUi.xMonitor.notBought.reason.tokenCreatedAfterTweet');
+    if (minAgeSec != null && tokenAgeAtSignalSec < minAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(tokenAgeAtSignalSec), Math.floor(minAgeSec)]);
+    if (maxAgeSec != null && tokenAgeAtSignalSec > maxAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(tokenAgeAtSignalSec), Math.floor(maxAgeSec)]);
+  }
+
+  const minOrderDelaySec = minAgeSec;
+  const maxOrderDelaySec = maxAgeSec;
+  if (minOrderDelaySec != null || maxOrderDelaySec != null) {
+    const orderDelaySec = (Date.now() - signalAtMs) / 1000;
+    if (orderDelaySec < 0) return input.tt('contentUi.xMonitor.notBought.reason.orderWindowExpired', ['0', String(Math.floor(maxOrderDelaySec ?? 0))]);
+    if (minOrderDelaySec != null && orderDelaySec < minOrderDelaySec) return input.tt('contentUi.xMonitor.notBought.reason.orderWindowTooEarly', [Math.floor(orderDelaySec), Math.floor(minOrderDelaySec)]);
+    if (maxOrderDelaySec != null && orderDelaySec > maxOrderDelaySec) return input.tt('contentUi.xMonitor.notBought.reason.orderWindowExpired', [Math.floor(orderDelaySec), Math.floor(maxOrderDelaySec)]);
   }
 
   const minDevPct = parseNumber(input.strategy?.minDevHoldPercent);
@@ -199,12 +209,22 @@ const buildNotBoughtReason = (input: {
         if (maxTickerLen != null && len > maxTickerLen) return false;
       }
 
-      const tokenAtMs = firstSeenAtMs ?? createdAtMs;
+      const tokenAtMs = createdAtMs ?? firstSeenAtMs;
       if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
       if (tokenAtMs != null) {
-        const diffSec = (tokenAtMs - signalAtMs) / 1000;
-        if (minAgeSec != null && diffSec < minAgeSec) return false;
-        if (maxAgeSec != null && diffSec > maxAgeSec) return false;
+        const tokenAgeAtSignalSec = (signalAtMs - tokenAtMs) / 1000;
+        if (tokenAgeAtSignalSec < 0) return false;
+        if (minAgeSec != null && tokenAgeAtSignalSec < minAgeSec) return false;
+        if (maxAgeSec != null && tokenAgeAtSignalSec > maxAgeSec) return false;
+      }
+
+      const minOrderDelaySec = minAgeSec;
+      const maxOrderDelaySec = maxAgeSec;
+      if (minOrderDelaySec != null || maxOrderDelaySec != null) {
+        const orderDelaySec = (Date.now() - signalAtMs) / 1000;
+        if (orderDelaySec < 0) return false;
+        if (minOrderDelaySec != null && orderDelaySec < minOrderDelaySec) return false;
+        if (maxOrderDelaySec != null && orderDelaySec > maxOrderDelaySec) return false;
       }
 
       if (minDevPct != null && devHold == null) return false;

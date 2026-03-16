@@ -128,7 +128,7 @@ const buildTweetUrl = (signal?: UnifiedTwitterSignal): string | undefined => {
   return `https://x.com/i/web/status/${id}`;
 };
 
-const shouldBuyByConfig = (metrics: TokenMetrics, config: any, referenceAtMs?: number | null) => {
+const shouldBuyByConfig = (metrics: TokenMetrics, config: any, signalAtMs?: number | null, orderAtMs?: number | null) => {
   if (!metrics || !config) return false;
   const marketCapUsd = sanitizeMarketCapUsd(metrics.marketCapUsd);
   const minMcap = parseKNumber(config.minMarketCapUsd);
@@ -144,6 +144,13 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any, referenceAtMs?: n
   if (maxHolders != null && metrics.holders == null) return false;
   if (minHolders != null && metrics.holders != null && metrics.holders < minHolders) return false;
   if (maxHolders != null && metrics.holders != null && metrics.holders > maxHolders) return false;
+
+  const minKol = parseNumber(config.minKol);
+  const maxKol = parseNumber(config.maxKol);
+  if (minKol != null && metrics.kol == null) return false;
+  if (maxKol != null && metrics.kol == null) return false;
+  if (minKol != null && metrics.kol != null && metrics.kol < minKol) return false;
+  if (maxKol != null && metrics.kol != null && metrics.kol > maxKol) return false;
 
   const minTickerLenRaw = parseNumber(config.minTickerLen);
   const maxTickerLenRaw = parseNumber(config.maxTickerLen);
@@ -161,13 +168,27 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any, referenceAtMs?: n
   const maxAgeSec = parseNumber(config.maxTokenAgeSeconds);
   const firstSeenAtMs = typeof metrics.firstSeenAtMs === 'number' && metrics.firstSeenAtMs > 0 ? metrics.firstSeenAtMs : null;
   const createdAtMs = typeof metrics.createdAtMs === 'number' && metrics.createdAtMs > 0 ? metrics.createdAtMs : null;
-  const tokenAtMs = firstSeenAtMs ?? createdAtMs;
+  const tokenAtMs = createdAtMs ?? firstSeenAtMs;
   if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
   if (tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
-    const ref = typeof referenceAtMs === 'number' && Number.isFinite(referenceAtMs) ? referenceAtMs : Date.now();
-    const diffSec = (tokenAtMs - ref) / 1000;
-    if (minAgeSec != null && diffSec < minAgeSec) return false;
-    if (maxAgeSec != null && diffSec > maxAgeSec) return false;
+    const ref = typeof signalAtMs === 'number' && Number.isFinite(signalAtMs) ? signalAtMs : null;
+    if (ref == null) return false;
+    const tokenAgeAtSignalSec = (ref - tokenAtMs) / 1000;
+    if (tokenAgeAtSignalSec < 0) return false;
+    if (minAgeSec != null && tokenAgeAtSignalSec < minAgeSec) return false;
+    if (maxAgeSec != null && tokenAgeAtSignalSec > maxAgeSec) return false;
+  }
+
+  const minOrderDelaySec = minAgeSec;
+  const maxOrderDelaySec = maxAgeSec;
+  if (minOrderDelaySec != null || maxOrderDelaySec != null) {
+    const ref = typeof signalAtMs === 'number' && Number.isFinite(signalAtMs) ? signalAtMs : null;
+    const now = typeof orderAtMs === 'number' && Number.isFinite(orderAtMs) ? orderAtMs : Date.now();
+    if (ref == null) return false;
+    const orderDelaySec = (now - ref) / 1000;
+    if (orderDelaySec < 0) return false;
+    if (minOrderDelaySec != null && orderDelaySec < minOrderDelaySec) return false;
+    if (maxOrderDelaySec != null && orderDelaySec > maxOrderDelaySec) return false;
   }
 
   const minDevPct = parseNumber(config.minDevHoldPercent);
@@ -467,7 +488,8 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         marketCapUsd: sanitizedRefreshedMcap ?? sanitizedInputMcap ?? undefined,
         priceUsd: input.metrics.priceUsd,
       };
-      if (!shouldBuyByConfig(refreshedMetrics, input.strategy, getSignalTimeMs(input.signal))) return;
+      const signalAtMs = getSignalTimeMs(input.signal);
+      if (!shouldBuyByConfig(refreshedMetrics, input.strategy, signalAtMs, Date.now())) return;
 
       if (dryRun) {
         const entryPriceUsd = await getEntryPriceUsd(
@@ -665,7 +687,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
 
     const candidates = unique
       .map((t) => ({ t, m: metricsFromUnifiedToken(t) }))
-      .filter((x) => x.m && x.m.tokenAddress && shouldBuyByConfig(x.m, strategy, signalAtMs));
+      .filter((x) => x.m && x.m.tokenAddress && shouldBuyByConfig(x.m, strategy, signalAtMs, now));
 
     candidates.sort((a, b) => {
       const ma = typeof a.m?.marketCapUsd === 'number' ? a.m.marketCapUsd : 0;
