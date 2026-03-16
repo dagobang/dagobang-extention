@@ -57,10 +57,22 @@ type XSniperBuyRecord = {
   liquidityUsd?: number;
   holders?: number;
   kol?: number;
+  vol24hUsd?: number;
+  netBuy24hUsd?: number;
+  buyTx24h?: number;
+  sellTx24h?: number;
+  smartMoney?: number;
   createdAtMs?: number;
   devAddress?: string;
   devHoldPercent?: number;
   devHasSold?: boolean;
+  confirmWindowMs?: number;
+  confirmMcapChangePct?: number;
+  confirmHoldersDelta?: number;
+  confirmBuySellRatio?: number;
+  eval10s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
+  eval30s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
+  eval60s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
   userScreen?: string;
   userName?: string;
   tweetType?: string;
@@ -815,6 +827,92 @@ export function XSniperContent({
             </div>
           </div>
         </div>
+        <div className="space-y-2 pb-3 border-b border-zinc-800/60">
+          <div className="flex items-center justify-between gap-2 text-[12px] text-zinc-300">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-emerald-500"
+                checked={twitterSnipe?.wsConfirmEnabled !== false}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ wsConfirmEnabled: e.target.checked } as any)}
+              />
+              <span>WS 二次确认</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block space-y-1">
+              <div className="text-[12px] text-zinc-400">确认窗口(ms)</div>
+              <input
+                type="number"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                value={(twitterSnipe as any)?.wsConfirmWindowMs ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ wsConfirmWindowMs: e.target.value } as any)}
+              />
+            </label>
+            <label className="block space-y-1">
+              <div className="text-[12px] text-zinc-400">最低市值涨幅(%)</div>
+              <input
+                type="number"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                value={(twitterSnipe as any)?.wsConfirmMinMcapChangePct ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ wsConfirmMinMcapChangePct: e.target.value } as any)}
+              />
+            </label>
+            <label className="block space-y-1">
+              <div className="text-[12px] text-zinc-400">最低持有人增量</div>
+              <input
+                type="number"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                value={(twitterSnipe as any)?.wsConfirmMinHoldersDelta ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ wsConfirmMinHoldersDelta: e.target.value } as any)}
+              />
+            </label>
+            <label className="block space-y-1">
+              <div className="text-[12px] text-zinc-400">最低买卖比(b/s)</div>
+              <input
+                type="number"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                value={(twitterSnipe as any)?.wsConfirmMinBuySellRatio ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ wsConfirmMinBuySellRatio: e.target.value } as any)}
+              />
+            </label>
+            <label className="block space-y-1">
+              <div className="text-[12px] text-zinc-400">最低 24h 净买入($)</div>
+              <input
+                type="number"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                value={(twitterSnipe as any)?.wsConfirmMinNetBuy24hUsd ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ wsConfirmMinNetBuy24hUsd: e.target.value } as any)}
+              />
+            </label>
+            <label className="block space-y-1">
+              <div className="text-[12px] text-zinc-400">最低 24h 成交额($)</div>
+              <input
+                type="number"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                value={(twitterSnipe as any)?.wsConfirmMinVol24hUsd ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ wsConfirmMinVol24hUsd: e.target.value } as any)}
+              />
+            </label>
+            <label className="block space-y-1">
+              <div className="text-[12px] text-zinc-400">最低聪明钱(smt)</div>
+              <input
+                type="number"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                value={(twitterSnipe as any)?.wsConfirmMinSmartMoney ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ wsConfirmMinSmartMoney: e.target.value } as any)}
+              />
+            </label>
+          </div>
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.sectionSound')}</div>
@@ -939,6 +1037,37 @@ export function XSniperContent({
               {tt('contentUi.autoTradeStrategy.snipeHistoryClear')}
             </button>
           </div>
+          {buyHistory.length ? (
+            <div className="rounded-md border border-zinc-800 bg-zinc-900/30 px-3 py-2 text-[11px] text-zinc-400">
+              {(() => {
+                const list = buyHistory.filter((x) => x && x.side !== 'sell');
+                const total = list.length;
+                const dry = list.filter((x) => x.dryRun === true).length;
+                const confirmFail = list.filter((x) => x.reason === 'ws_confirm_failed').length;
+                const collect = (key: 'eval10s' | 'eval30s' | 'eval60s') =>
+                  list
+                    .map((x) => (x as any)[key]?.pnlMcapPct)
+                    .filter((v) => typeof v === 'number' && Number.isFinite(v)) as number[];
+                const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+                const winRate = (arr: number[]) => (arr.length ? arr.filter((x) => x > 0).length / arr.length : null);
+                const a10 = collect('eval10s');
+                const a30 = collect('eval30s');
+                const a60 = collect('eval60s');
+                const fmtPct = (v: number | null) => (v == null ? '-' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`);
+                const fmtRate = (v: number | null) => (v == null ? '-' : `${(v * 100).toFixed(1)}%`);
+                return (
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    <span>记录 {total}</span>
+                    <span>Dry {dry}</span>
+                    <span>WS拒绝 {confirmFail}</span>
+                    <span>10s 平均 {fmtPct(avg(a10))} 胜率 {fmtRate(winRate(a10))}</span>
+                    <span>30s 平均 {fmtPct(avg(a30))} 胜率 {fmtRate(winRate(a30))}</span>
+                    <span>60s 平均 {fmtPct(avg(a60))} 胜率 {fmtRate(winRate(a60))}</span>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : null}
           {buyHistory.length === 0 ? (
             <div className="text-[12px] text-zinc-500">{tt('contentUi.autoTradeStrategy.snipeHistoryEmpty')}</div>
           ) : (
@@ -1076,6 +1205,21 @@ export function XSniperContent({
                               <span className="text-zinc-500"> → {formatCompact(latest.kol)}</span>
                             ) : null}
                           </div>
+                          <div>
+                            24h 成交额: {formatCompact((r as any).vol24hUsd)}
+                          </div>
+                          <div>
+                            24h 净买入: {formatCompact((r as any).netBuy24hUsd)}
+                          </div>
+                          <div>
+                            24h 买卖: {typeof (r as any).buyTx24h === 'number' ? (r as any).buyTx24h : '-'} / {typeof (r as any).sellTx24h === 'number' ? (r as any).sellTx24h : '-'}
+                            {typeof (r as any).buyTx24h === 'number' && typeof (r as any).sellTx24h === 'number' && (r as any).sellTx24h > 0 ? (
+                              <span className="text-zinc-500"> (b/s {((r as any).buyTx24h / (r as any).sellTx24h).toFixed(2)})</span>
+                            ) : null}
+                          </div>
+                          <div>
+                            聪明钱: {typeof (r as any).smartMoney === 'number' ? (r as any).smartMoney : '-'}
+                          </div>
                           <div className={pnlClass}>
                             {tt('contentUi.autoTradeStrategy.snipeHistoryPnlMcap')}: {pnlText}
                           </div>
@@ -1085,6 +1229,28 @@ export function XSniperContent({
                           <div>
                             {tt('contentUi.autoTradeStrategy.snipeHistoryUser')}: {r.userScreen ? String(r.userScreen) : '-'}
                           </div>
+                          <div>
+                            WS确认: {typeof (r as any).confirmWindowMs === 'number' && (r as any).confirmWindowMs > 0 ? `${(r as any).confirmWindowMs}ms` : '-'}{' '}
+                            {typeof (r as any).confirmMcapChangePct === 'number' ? (
+                              <span className="text-zinc-500">ΔMC {(r as any).confirmMcapChangePct >= 0 ? '+' : ''}{(r as any).confirmMcapChangePct.toFixed(2)}%</span>
+                            ) : null}
+                            {typeof (r as any).confirmHoldersDelta === 'number' ? (
+                              <span className="text-zinc-500"> ΔHD {(r as any).confirmHoldersDelta >= 0 ? '+' : ''}{(r as any).confirmHoldersDelta.toFixed(0)}</span>
+                            ) : null}
+                            {typeof (r as any).confirmBuySellRatio === 'number' ? (
+                              <span className="text-zinc-500"> b/s {(r as any).confirmBuySellRatio.toFixed(2)}</span>
+                            ) : null}
+                          </div>
+                          <div>
+                            10/30/60s: {(r as any).eval10s?.pnlMcapPct == null ? '-' : `${(r as any).eval10s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval10s.pnlMcapPct.toFixed(2)}%`}{' '}
+                            / {(r as any).eval30s?.pnlMcapPct == null ? '-' : `${(r as any).eval30s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval30s.pnlMcapPct.toFixed(2)}%`}{' '}
+                            / {(r as any).eval60s?.pnlMcapPct == null ? '-' : `${(r as any).eval60s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval60s.pnlMcapPct.toFixed(2)}%`}
+                          </div>
+                          {r.reason ? (
+                            <div className="col-span-2 text-[11px] text-amber-200/90">
+                              reason: {String(r.reason)}
+                            </div>
+                          ) : null}
                         </div>
                         {!isSell ? (
                           <div className="mt-2 grid grid-cols-4 gap-2">

@@ -1190,6 +1190,26 @@ export function XMonitorContent({
                                     {formatCompactNumber(token.kol)}
                                   </span>
                                 ) : null}
+                                {typeof (token as any).vol24hUsd === 'number' && Number.isFinite((token as any).vol24hUsd) ? (
+                                  <span className="inline-flex items-center gap-1" title="24h 成交额">
+                                    V24h ${formatCompactNumber(Math.round((token as any).vol24hUsd))}
+                                  </span>
+                                ) : null}
+                                {typeof (token as any).netBuy24hUsd === 'number' && Number.isFinite((token as any).netBuy24hUsd) ? (
+                                  <span className="inline-flex items-center gap-1" title="24h 净买入">
+                                    NBA ${formatCompactNumber(Math.round((token as any).netBuy24hUsd))}
+                                  </span>
+                                ) : null}
+                                {typeof (token as any).buyTx24h === 'number' && typeof (token as any).sellTx24h === 'number' ? (
+                                  <span className="inline-flex items-center gap-1" title="24h 买/卖 交易数">
+                                    B/S {(token as any).buyTx24h}/{(token as any).sellTx24h}
+                                  </span>
+                                ) : null}
+                                {typeof (token as any).smartMoney === 'number' && Number.isFinite((token as any).smartMoney) ? (
+                                  <span className="inline-flex items-center gap-1" title="聪明钱">
+                                    SMT {(token as any).smartMoney}
+                                  </span>
+                                ) : null}
                                 {age ? (
                                   <span className="inline-flex items-center gap-1" title={tt('contentUi.xMonitor.tooltip.age')}>
                                     <AlarmClockCheck size={12} />

@@ -21,8 +21,14 @@ type TokenMetrics = {
   liquidityUsd?: number;
   holders?: number;
   kol?: number;
+  vol24hUsd?: number;
+  netBuy24hUsd?: number;
+  buyTx24h?: number;
+  sellTx24h?: number;
+  smartMoney?: number;
   createdAtMs?: number;
   firstSeenAtMs?: number;
+  updatedAtMs?: number;
   devAddress?: `0x${string}`;
   devHoldPercent?: number;
   devHasSold?: boolean;
@@ -49,10 +55,22 @@ type XSniperBuyRecord = {
   liquidityUsd?: number;
   holders?: number;
   kol?: number;
+  vol24hUsd?: number;
+  netBuy24hUsd?: number;
+  buyTx24h?: number;
+  sellTx24h?: number;
+  smartMoney?: number;
   createdAtMs?: number;
   devAddress?: `0x${string}`;
   devHoldPercent?: number;
   devHasSold?: boolean;
+  confirmWindowMs?: number;
+  confirmMcapChangePct?: number;
+  confirmHoldersDelta?: number;
+  confirmBuySellRatio?: number;
+  eval10s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
+  eval30s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
+  eval60s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
   userScreen?: string;
   userName?: string;
   tweetType?: string;
@@ -215,6 +233,100 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   let boughtOnceLoaded = false;
   const boughtOnceAtMs = new Map<string, number>();
   const buyInFlight = new Set<string>();
+  const wsConfirmFailDedupe = new Map<string, number>();
+  const wsSnapshotsByAddr = new Map<string, Array<{
+    atMs: number;
+    marketCapUsd?: number;
+    holders?: number;
+    vol24hUsd?: number;
+    netBuy24hUsd?: number;
+    buyTx24h?: number;
+    sellTx24h?: number;
+    smartMoney?: number;
+  }>>();
+
+  const shouldLogWsConfirmFail = (key: string, nowMs: number) => {
+    const last = wsConfirmFailDedupe.get(key);
+    if (typeof last === 'number' && Number.isFinite(last) && nowMs - last < 20_000) return false;
+    wsConfirmFailDedupe.set(key, nowMs);
+    if (wsConfirmFailDedupe.size > 800) {
+      const entries = Array.from(wsConfirmFailDedupe.entries()).sort((a, b) => a[1] - b[1]);
+      for (let i = 0; i < Math.min(200, entries.length); i++) wsConfirmFailDedupe.delete(entries[i][0]);
+    }
+    return true;
+  };
+
+  const pushWsSnapshot = (tokenAddress: `0x${string}`, metrics: TokenMetrics) => {
+    const atMsRaw = typeof metrics.updatedAtMs === 'number' && metrics.updatedAtMs > 0 ? metrics.updatedAtMs : Date.now();
+    const list = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+    const last = list.length ? list[list.length - 1] : null;
+    if (last && Math.abs(last.atMs - atMsRaw) < 200) return;
+    const next = list.concat({
+      atMs: atMsRaw,
+      marketCapUsd: metrics.marketCapUsd,
+      holders: metrics.holders,
+      vol24hUsd: metrics.vol24hUsd,
+      netBuy24hUsd: metrics.netBuy24hUsd,
+      buyTx24h: metrics.buyTx24h,
+      sellTx24h: metrics.sellTx24h,
+      smartMoney: metrics.smartMoney,
+    });
+    const keepMs = 2 * 60 * 1000;
+    const cutoff = atMsRaw - keepMs;
+    const trimmed = next.filter((x) => x.atMs >= cutoff).slice(-80);
+    wsSnapshotsByAddr.set(tokenAddress, trimmed);
+  };
+
+  const getWsWindowStats = (tokenAddress: `0x${string}`, nowMs: number, windowMs: number) => {
+    const list = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+    if (!list.length) return null;
+    const cutoff = nowMs - windowMs;
+    const cur = list[list.length - 1];
+    let base: (typeof cur) | null = null;
+    let hasCoverage = false;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const s = list[i];
+      if (s.atMs <= cutoff) {
+        base = s;
+        hasCoverage = true;
+        break;
+      }
+    }
+    if (!base) base = list[0] ?? null;
+    const mcapChangePct = (() => {
+      const c = Number(cur.marketCapUsd);
+      const b = Number(base?.marketCapUsd);
+      if (!Number.isFinite(c) || !Number.isFinite(b) || b <= 0) return null;
+      return ((c - b) / b) * 100;
+    })();
+    const holdersDelta = (() => {
+      const c = Number(cur.holders);
+      const b = Number(base?.holders);
+      if (!Number.isFinite(c) || !Number.isFinite(b)) return null;
+      return c - b;
+    })();
+    const buySellRatio = (() => {
+      const b = Number(cur.buyTx24h);
+      const s = Number(cur.sellTx24h);
+      if (!Number.isFinite(b) || !Number.isFinite(s)) return null;
+      if (s <= 0) return b > 0 ? 999 : null;
+      return b / s;
+    })();
+    return {
+      windowMs,
+      hasCoverage,
+      mcapChangePct,
+      holdersDelta,
+      buySellRatio,
+      vol24hUsd: typeof cur.vol24hUsd === 'number' && Number.isFinite(cur.vol24hUsd) ? cur.vol24hUsd : null,
+      netBuy24hUsd: typeof cur.netBuy24hUsd === 'number' && Number.isFinite(cur.netBuy24hUsd) ? cur.netBuy24hUsd : null,
+      smartMoney: typeof cur.smartMoney === 'number' && Number.isFinite(cur.smartMoney) ? cur.smartMoney : null,
+      snapshotAtMs: cur.atMs,
+      baseAtMs: base?.atMs ?? null,
+      marketCapUsd: cur.marketCapUsd,
+      holders: cur.holders,
+    };
+  };
 
   const loadBoughtOnceIfNeeded = async () => {
     if (boughtOnceLoaded) return;
@@ -267,6 +379,88 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     } catch {
       return [];
     }
+  };
+
+  const maybeUpdateEvaluationsFromSnapshot = async (tokenAddress: `0x${string}`, nowMs: number) => {
+    const snapshots = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+    const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
+    if (!cur) return;
+    const curMcap = typeof cur.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
+    const curHolders = typeof cur.holders === 'number' && Number.isFinite(cur.holders) ? cur.holders : null;
+    if (curMcap == null && curHolders == null) return;
+    const res = await browser.storage.local.get(HISTORY_STORAGE_KEY);
+    const raw = (res as any)?.[HISTORY_STORAGE_KEY];
+    const historyList: XSniperBuyRecord[] = Array.isArray(raw) ? raw.slice() : [];
+    let changed = false;
+    for (let i = 0; i < historyList.length; i++) {
+      const r = historyList[i];
+      if (!r || r.side !== 'buy') continue;
+      if (r.tokenAddress !== tokenAddress) continue;
+      if (typeof r.tsMs !== 'number' || r.tsMs <= 0) continue;
+      const ageMs = nowMs - r.tsMs;
+      if (ageMs < 10_000) continue;
+      const entryMcap = typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) ? r.marketCapUsd : null;
+      const buildEval = () => {
+        const pnlMcapPct = (() => {
+          if (entryMcap == null || curMcap == null || entryMcap <= 0) return undefined;
+          return ((curMcap - entryMcap) / entryMcap) * 100;
+        })();
+        return { atMs: nowMs, marketCapUsd: curMcap ?? undefined, holders: curHolders ?? undefined, pnlMcapPct };
+      };
+      if (ageMs >= 10_000 && !r.eval10s) {
+        r.eval10s = buildEval();
+        changed = true;
+      }
+      if (ageMs >= 30_000 && !r.eval30s) {
+        r.eval30s = buildEval();
+        changed = true;
+      }
+      if (ageMs >= 60_000 && !r.eval60s) {
+        r.eval60s = buildEval();
+        changed = true;
+      }
+    }
+    if (changed) {
+      await browser.storage.local.set({ [HISTORY_STORAGE_KEY]: historyList.slice(0, HISTORY_LIMIT) } as any);
+    }
+  };
+
+  const computeWsConfirm = (tokenAddress: `0x${string}`, nowMs: number, strategy: any) => {
+    const enabled = strategy?.wsConfirmEnabled !== false;
+    if (!enabled) return { pass: true, stats: null as any, windowMs: 0 };
+    const windowMs = Math.max(500, Math.min(60_000, parseNumber(strategy?.wsConfirmWindowMs) ?? 5000));
+    const stats = getWsWindowStats(tokenAddress, nowMs, windowMs);
+    const minMcapChangePct = parseNumber(strategy?.wsConfirmMinMcapChangePct) ?? 0;
+    const minHoldersDelta = parseNumber(strategy?.wsConfirmMinHoldersDelta) ?? 0;
+    const minBuySellRatio = parseNumber(strategy?.wsConfirmMinBuySellRatio) ?? 0;
+    const minNetBuy24hUsd = parseNumber(strategy?.wsConfirmMinNetBuy24hUsd) ?? 0;
+    const minVol24hUsd = parseNumber(strategy?.wsConfirmMinVol24hUsd) ?? 0;
+    const minSmartMoney = parseNumber(strategy?.wsConfirmMinSmartMoney) ?? 0;
+
+    const requireNumberAtLeast = (v: number | null | undefined, min: number) => {
+      if (!(min > 0)) return true;
+      if (typeof v !== 'number' || !Number.isFinite(v)) return false;
+      return v >= min;
+    };
+
+    if (!stats) {
+      const pass = !(minMcapChangePct > 0 || minHoldersDelta > 0 || minBuySellRatio > 0 || minNetBuy24hUsd > 0 || minVol24hUsd > 0 || minSmartMoney > 0);
+      return { pass, stats: null as any, windowMs };
+    }
+
+    if ((minMcapChangePct > 0 || minHoldersDelta > 0) && stats.hasCoverage !== true) {
+      return { pass: false, stats, windowMs };
+    }
+
+    const pass =
+      requireNumberAtLeast(stats.mcapChangePct, minMcapChangePct) &&
+      requireNumberAtLeast(stats.holdersDelta, minHoldersDelta) &&
+      requireNumberAtLeast(stats.buySellRatio, minBuySellRatio) &&
+      requireNumberAtLeast(stats.netBuy24hUsd, minNetBuy24hUsd) &&
+      requireNumberAtLeast(stats.vol24hUsd, minVol24hUsd) &&
+      requireNumberAtLeast(stats.smartMoney, minSmartMoney);
+
+    return { pass, stats, windowMs };
   };
 
   const broadcastToTabs = async (message: any) => {
@@ -473,6 +667,59 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       const amountNumber = parseNumber(input.strategy.buyAmountBnb) ?? 0;
       if (amountNumber <= 0) return;
 
+      const confirmNowMs = Date.now();
+      const confirm = computeWsConfirm(input.tokenAddress, confirmNowMs, input.strategy);
+      if (!confirm.pass) {
+        if (dryRun) {
+          const sigKey = typeof input.signal?.id === 'string' && input.signal.id.trim() ? input.signal.id.trim() : '';
+          const dedupe = `${sigKey}:${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+          if (shouldLogWsConfirmFail(dedupe, confirmNowMs)) {
+            const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
+            const tweetUrl = buildTweetUrl(input.signal);
+            const record: XSniperBuyRecord = {
+              id: `${confirmNowMs}-${Math.random().toString(16).slice(2)}`,
+              side: 'buy',
+              tsMs: confirmNowMs,
+              tweetAtMs,
+              tweetUrl,
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              tokenSymbol: input.metrics.tokenSymbol,
+              buyAmountBnb: amountNumber,
+              dryRun: true,
+              reason: 'ws_confirm_failed',
+              marketCapUsd: input.metrics.marketCapUsd,
+              liquidityUsd: input.metrics.liquidityUsd,
+              holders: input.metrics.holders,
+              kol: input.metrics.kol,
+              vol24hUsd: input.metrics.vol24hUsd,
+              netBuy24hUsd: input.metrics.netBuy24hUsd,
+              buyTx24h: input.metrics.buyTx24h,
+              sellTx24h: input.metrics.sellTx24h,
+              smartMoney: input.metrics.smartMoney,
+              createdAtMs: input.metrics.createdAtMs,
+              devAddress: input.metrics.devAddress,
+              devHoldPercent: input.metrics.devHoldPercent,
+              devHasSold: input.metrics.devHasSold,
+              confirmWindowMs: confirm.windowMs,
+              confirmMcapChangePct: confirm.stats?.mcapChangePct ?? undefined,
+              confirmHoldersDelta: confirm.stats?.holdersDelta ?? undefined,
+              confirmBuySellRatio: confirm.stats?.buySellRatio ?? undefined,
+              userScreen: input.signal?.userScreen ? String(input.signal.userScreen) : undefined,
+              userName: input.signal?.userName ? String(input.signal.userName) : undefined,
+              tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
+              channel: input.signal?.channel ? String(input.signal.channel) : undefined,
+              signalId: input.signal?.id ? String(input.signal.id) : undefined,
+              signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+              signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+            };
+            void pushHistory(record);
+            void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+          }
+        }
+        return;
+      }
+
       const status = await WalletService.getStatus();
       if (!dryRun && (status.locked || !status.address)) return;
 
@@ -524,10 +771,19 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           liquidityUsd: refreshedMetrics.liquidityUsd,
           holders: refreshedMetrics.holders,
           kol: refreshedMetrics.kol,
+          vol24hUsd: refreshedMetrics.vol24hUsd,
+          netBuy24hUsd: refreshedMetrics.netBuy24hUsd,
+          buyTx24h: refreshedMetrics.buyTx24h,
+          sellTx24h: refreshedMetrics.sellTx24h,
+          smartMoney: refreshedMetrics.smartMoney,
           createdAtMs: refreshedMetrics.createdAtMs,
           devAddress: refreshedMetrics.devAddress,
           devHoldPercent: refreshedMetrics.devHoldPercent,
           devHasSold: refreshedMetrics.devHasSold,
+          confirmWindowMs: confirm.windowMs,
+          confirmMcapChangePct: confirm.stats?.mcapChangePct ?? undefined,
+          confirmHoldersDelta: confirm.stats?.holdersDelta ?? undefined,
+          confirmBuySellRatio: confirm.stats?.buySellRatio ?? undefined,
           userScreen: input.signal?.userScreen ? String(input.signal.userScreen) : undefined,
           userName: input.signal?.userName ? String(input.signal.userName) : undefined,
           tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
@@ -589,10 +845,19 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         liquidityUsd: refreshedMetrics.liquidityUsd,
         holders: refreshedMetrics.holders,
         kol: refreshedMetrics.kol,
+        vol24hUsd: refreshedMetrics.vol24hUsd,
+        netBuy24hUsd: refreshedMetrics.netBuy24hUsd,
+        buyTx24h: refreshedMetrics.buyTx24h,
+        sellTx24h: refreshedMetrics.sellTx24h,
+        smartMoney: refreshedMetrics.smartMoney,
         createdAtMs: refreshedMetrics.createdAtMs,
         devAddress: refreshedMetrics.devAddress,
         devHoldPercent: refreshedMetrics.devHoldPercent,
         devHasSold: refreshedMetrics.devHasSold,
+        confirmWindowMs: confirm.windowMs,
+        confirmMcapChangePct: confirm.stats?.mcapChangePct ?? undefined,
+        confirmHoldersDelta: confirm.stats?.holdersDelta ?? undefined,
+        confirmBuySellRatio: confirm.stats?.buySellRatio ?? undefined,
         userScreen: input.signal?.userScreen ? String(input.signal.userScreen) : undefined,
         userName: input.signal?.userName ? String(input.signal.userName) : undefined,
         tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
@@ -664,8 +929,14 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       liquidityUsd: typeof (t as any).liquidityUsd === 'number' ? (t as any).liquidityUsd : undefined,
       holders: typeof (t as any).holders === 'number' ? (t as any).holders : undefined,
       kol: typeof (t as any).kol === 'number' ? (t as any).kol : undefined,
+      vol24hUsd: typeof (t as any).vol24hUsd === 'number' ? (t as any).vol24hUsd : undefined,
+      netBuy24hUsd: typeof (t as any).netBuy24hUsd === 'number' ? (t as any).netBuy24hUsd : undefined,
+      buyTx24h: typeof (t as any).buyTx24h === 'number' ? (t as any).buyTx24h : undefined,
+      sellTx24h: typeof (t as any).sellTx24h === 'number' ? (t as any).sellTx24h : undefined,
+      smartMoney: typeof (t as any).smartMoney === 'number' ? (t as any).smartMoney : undefined,
       createdAtMs,
       firstSeenAtMs,
+      updatedAtMs: typeof (t as any).updatedAtMs === 'number' && (t as any).updatedAtMs > 0 ? (t as any).updatedAtMs : undefined,
       devAddress: normalizeAddress((t as any).devAddress) ?? undefined,
       devHoldPercent,
       devHasSold: typeof (t as any).devHasSold === 'boolean'
@@ -695,8 +966,20 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     }
 
     const candidates = unique
-      .map((t) => ({ t, m: metricsFromUnifiedToken(t) }))
-      .filter((x) => x.m && x.m.tokenAddress && shouldBuyByConfig(x.m, strategy, signalAtMs, now));
+      .map((t) => {
+        const m = metricsFromUnifiedToken(t);
+        if (m?.tokenAddress) {
+          pushWsSnapshot(m.tokenAddress, m);
+          void maybeUpdateEvaluationsFromSnapshot(m.tokenAddress, now);
+        }
+        return { t, m };
+      })
+      .filter((x) => {
+        if (!x.m?.tokenAddress) return false;
+        if (!shouldBuyByConfig(x.m, strategy, signalAtMs, now)) return false;
+        const confirm = computeWsConfirm(x.m.tokenAddress, now, strategy);
+        return confirm.pass;
+      });
 
     candidates.sort((a, b) => {
       const ma = typeof a.m?.marketCapUsd === 'number' ? a.m.marketCapUsd : 0;

@@ -245,6 +245,16 @@ export function validateSettings(input: Settings): Settings | null {
     blockIfDevSell: typeof inputTwitterSnipe.blockIfDevSell === 'boolean'
       ? inputTwitterSnipe.blockIfDevSell
       : defaultTwitterSnipe.blockIfDevSell,
+    wsConfirmEnabled: typeof (inputTwitterSnipe as any).wsConfirmEnabled === 'boolean'
+      ? (inputTwitterSnipe as any).wsConfirmEnabled
+      : !!(defaultTwitterSnipe as any).wsConfirmEnabled,
+    wsConfirmWindowMs: clampStringNumber((inputTwitterSnipe as any).wsConfirmWindowMs, (defaultTwitterSnipe as any).wsConfirmWindowMs),
+    wsConfirmMinMcapChangePct: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinMcapChangePct, (defaultTwitterSnipe as any).wsConfirmMinMcapChangePct),
+    wsConfirmMinHoldersDelta: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinHoldersDelta, (defaultTwitterSnipe as any).wsConfirmMinHoldersDelta),
+    wsConfirmMinBuySellRatio: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinBuySellRatio, (defaultTwitterSnipe as any).wsConfirmMinBuySellRatio),
+    wsConfirmMinNetBuy24hUsd: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinNetBuy24hUsd, (defaultTwitterSnipe as any).wsConfirmMinNetBuy24hUsd),
+    wsConfirmMinVol24hUsd: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinVol24hUsd, (defaultTwitterSnipe as any).wsConfirmMinVol24hUsd),
+    wsConfirmMinSmartMoney: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinSmartMoney, (defaultTwitterSnipe as any).wsConfirmMinSmartMoney),
     deleteTweetSellPercent: clampStringNumber(inputTwitterSnipe.deleteTweetSellPercent, defaultTwitterSnipe.deleteTweetSellPercent),
     targetUsers: parseListInput(inputTwitterSnipe.targetUsers, defaultTwitterSnipe.targetUsers),
     interactionTypes: interactionTypes.length ? (interactionTypes as any) : defaultTwitterSnipe.interactionTypes,

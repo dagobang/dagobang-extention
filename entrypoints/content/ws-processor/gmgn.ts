@@ -133,6 +133,11 @@ const normalizeTrenchesTokenData = (item: any) => {
   const liquidityUsd = extractNumber(item, ['lq', 'lqdt']);
   const holders = extractNumber(item, ['hd']);
   const kol = extractNumber(item, ['kol']);
+  const vol24hUsd = extractNumber(item, ['v24h']);
+  const netBuy24hUsd = extractNumber(item, ['nba_24h']);
+  const buyTx24h = extractNumber(item, ['b24h']);
+  const sellTx24h = extractNumber(item, ['s24h']);
+  const smartMoney = extractNumber(item, ['smt']);
   const priceUsd = extractNumber(item, ['p']);
   const devHoldRatio = extractNumber(item, ['d_br']);
   const top10HoldRatio = extractNumber(item, ['t10']);
@@ -144,6 +149,11 @@ const normalizeTrenchesTokenData = (item: any) => {
     liquidityUsd: liquidityUsd ?? undefined,
     holders: holders ?? undefined,
     kol: kol ?? undefined,
+    vol24hUsd: vol24hUsd ?? undefined,
+    netBuy24hUsd: netBuy24hUsd ?? undefined,
+    buyTx24h: buyTx24h ?? undefined,
+    sellTx24h: sellTx24h ?? undefined,
+    smartMoney: smartMoney ?? undefined,
     priceUsd: priceUsd ?? undefined,
     createdAtMs: createdAtMs ?? undefined,
     devAddress: asAddress(item?.d_ct) ?? undefined,
@@ -343,6 +353,11 @@ type TokenSnapshot = {
   liquidityUsd?: number;
   holders?: number;
   kol?: number;
+  vol24hUsd?: number;
+  netBuy24hUsd?: number;
+  buyTx24h?: number;
+  sellTx24h?: number;
+  smartMoney?: number;
   devAddress?: string;
   devHoldPercent?: number;
   devHasSold?: boolean;
@@ -386,6 +401,11 @@ const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken
       liquidityUsd: t.liquidityUsd,
       holders: t.holders,
       kol: (t as any).kol,
+      vol24hUsd: (t as any).vol24hUsd,
+      netBuy24hUsd: (t as any).netBuy24hUsd,
+      buyTx24h: (t as any).buyTx24h,
+      sellTx24h: (t as any).sellTx24h,
+      smartMoney: (t as any).smartMoney,
       devAddress: (t as any).devAddress,
       devHoldPercent: (t as any).devHoldPercent,
       devHasSold: (t as any).devHasSold,
@@ -412,6 +432,11 @@ const mergeTokenFields = (prev: UnifiedSignalToken, next: Partial<UnifiedSignalT
     liquidityUsd: pickFiniteNumber(next.liquidityUsd, prev.liquidityUsd),
     holders: pickFiniteNumber(next.holders, prev.holders),
     kol: pickFiniteNumber((next as any).kol, (prev as any).kol),
+    vol24hUsd: pickFiniteNumber((next as any).vol24hUsd, (prev as any).vol24hUsd),
+    netBuy24hUsd: pickFiniteNumber((next as any).netBuy24hUsd, (prev as any).netBuy24hUsd),
+    buyTx24h: pickFiniteNumber((next as any).buyTx24h, (prev as any).buyTx24h),
+    sellTx24h: pickFiniteNumber((next as any).sellTx24h, (prev as any).sellTx24h),
+    smartMoney: pickFiniteNumber((next as any).smartMoney, (prev as any).smartMoney),
     devAddress: pickNonEmptyString(next.devAddress, prev.devAddress),
     devHoldPercent: pickFiniteNumber(next.devHoldPercent, prev.devHoldPercent),
     devHasSold: typeof next.devHasSold === 'boolean' ? next.devHasSold : prev.devHasSold,
@@ -456,6 +481,11 @@ const upsertSignalToken = (
     mergedWithTimes.liquidityUsd === prev.liquidityUsd &&
     mergedWithTimes.holders === prev.holders &&
     (mergedWithTimes as any).kol === (prev as any).kol &&
+    (mergedWithTimes as any).vol24hUsd === (prev as any).vol24hUsd &&
+    (mergedWithTimes as any).netBuy24hUsd === (prev as any).netBuy24hUsd &&
+    (mergedWithTimes as any).buyTx24h === (prev as any).buyTx24h &&
+    (mergedWithTimes as any).sellTx24h === (prev as any).sellTx24h &&
+    (mergedWithTimes as any).smartMoney === (prev as any).smartMoney &&
     mergedWithTimes.devAddress === (prev as any).devAddress &&
     mergedWithTimes.devHoldPercent === (prev as any).devHoldPercent &&
     mergedWithTimes.devHasSold === (prev as any).devHasSold &&
@@ -484,6 +514,11 @@ const applySnapshotToSignal = (signal: UnifiedTwitterSignal, snapshot: TokenSnap
     liquidityUsd: snapshot.liquidityUsd,
     holders: snapshot.holders,
     kol: snapshot.kol,
+    vol24hUsd: snapshot.vol24hUsd,
+    netBuy24hUsd: snapshot.netBuy24hUsd,
+    buyTx24h: snapshot.buyTx24h,
+    sellTx24h: snapshot.sellTx24h,
+    smartMoney: snapshot.smartMoney,
     devAddress: snapshot.devAddress,
     devHoldPercent: snapshot.devHoldPercent,
     devHasSold: snapshot.devHasSold,
@@ -949,6 +984,46 @@ export function initGmgnWsMonitor(options: {
           : undefined,
       prev?.top10HoldRatio,
     );
+    const vol24hUsd = pickFiniteNumber(
+      typeof tokenData?.vol24hUsd === 'number'
+        ? tokenData.vol24hUsd
+        : preferDevMetrics
+          ? extractNumber(tokenData, ['v24h'])
+          : undefined,
+      prev?.vol24hUsd,
+    );
+    const netBuy24hUsd = pickFiniteNumber(
+      typeof tokenData?.netBuy24hUsd === 'number'
+        ? tokenData.netBuy24hUsd
+        : preferDevMetrics
+          ? extractNumber(tokenData, ['nba_24h'])
+          : undefined,
+      prev?.netBuy24hUsd,
+    );
+    const buyTx24h = pickFiniteNumber(
+      typeof tokenData?.buyTx24h === 'number'
+        ? tokenData.buyTx24h
+        : preferDevMetrics
+          ? extractNumber(tokenData, ['b24h'])
+          : undefined,
+      prev?.buyTx24h,
+    );
+    const sellTx24h = pickFiniteNumber(
+      typeof tokenData?.sellTx24h === 'number'
+        ? tokenData.sellTx24h
+        : preferDevMetrics
+          ? extractNumber(tokenData, ['s24h'])
+          : undefined,
+      prev?.sellTx24h,
+    );
+    const smartMoney = pickFiniteNumber(
+      typeof tokenData?.smartMoney === 'number'
+        ? tokenData.smartMoney
+        : preferDevMetrics
+          ? extractNumber(tokenData, ['smt'])
+          : undefined,
+      prev?.smartMoney,
+    );
     const devHasSold =
       typeof tokenData?.devHasSold === 'boolean'
         ? tokenData.devHasSold
@@ -996,6 +1071,11 @@ export function initGmgnWsMonitor(options: {
         const prevK = typeof prev?.kol === 'number' ? prev.kol : null;
         return next === 0 && prevK != null && prevK > 0 ? prevK : next;
       })(),
+      vol24hUsd,
+      netBuy24hUsd,
+      buyTx24h,
+      sellTx24h,
+      smartMoney,
       devAddress: pickNonEmptyString(tokenData?.devAddress ?? tokenData?.d_ct, prev?.devAddress),
       devHoldPercent,
       devHasSold,

@@ -62,6 +62,14 @@ export type AutoTradeStrategyBase = {
 export type AutoTradeTwitterSnipeStrategy = AutoTradeStrategyBase & {
   dryRun?: boolean;
   deleteTweetSellPercent?: string;
+  wsConfirmEnabled?: boolean;
+  wsConfirmWindowMs?: string;
+  wsConfirmMinMcapChangePct?: string;
+  wsConfirmMinHoldersDelta?: string;
+  wsConfirmMinBuySellRatio?: string;
+  wsConfirmMinNetBuy24hUsd?: string;
+  wsConfirmMinVol24hUsd?: string;
+  wsConfirmMinSmartMoney?: string;
   targetUsers: string[];
   interactionTypes: AutoTradeInteractionType[];
 };
@@ -292,6 +300,11 @@ export type UnifiedSignalToken = {
   liquidityUsd?: number;
   holders?: number;
   kol?: number;
+  vol24hUsd?: number;
+  netBuy24hUsd?: number;
+  buyTx24h?: number;
+  sellTx24h?: number;
+  smartMoney?: number;
   devAddress?: string;
   devHoldPercent?: number;
   devHasSold?: boolean;
