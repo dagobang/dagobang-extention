@@ -223,6 +223,7 @@
           "tickerLenTooLong": "Ticker長度{0} > Max {1}",
           "createdAtMissing": "缺少建立時間",
           "tokenCreatedAfterTweet": "代幣建立時間晚於推文時間",
+          "tokenCreatedBeforeTweet": "代幣建立時間早於推文時間",
           "ageTooYoung": "年齡{0}s < Min {1}s",
           "ageTooOld": "年齡{0}s > Max {1}s",
           "orderWindowTooEarly": "下單{0}s < Min {1}s",

@@ -164,8 +164,9 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any, signalAtMs?: numb
     if (maxTickerLen != null && len > maxTickerLen) return false;
   }
 
-  const minAgeSec = parseNumber(config.minTokenAgeSeconds);
+  const minAgeSecRaw = parseNumber(config.minTokenAgeSeconds);
   const maxAgeSec = parseNumber(config.maxTokenAgeSeconds);
+  const minAgeSec = minAgeSecRaw ?? (maxAgeSec != null ? 0 : null);
   const firstSeenAtMs = typeof metrics.firstSeenAtMs === 'number' && metrics.firstSeenAtMs > 0 ? metrics.firstSeenAtMs : null;
   const createdAtMs = typeof metrics.createdAtMs === 'number' && metrics.createdAtMs > 0 ? metrics.createdAtMs : null;
   const tokenAtMs = createdAtMs ?? firstSeenAtMs;
@@ -173,10 +174,9 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any, signalAtMs?: numb
   if (tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
     const ref = typeof signalAtMs === 'number' && Number.isFinite(signalAtMs) ? signalAtMs : null;
     if (ref == null) return false;
-    const tokenAgeAtSignalSec = (ref - tokenAtMs) / 1000;
-    if (tokenAgeAtSignalSec < 0) return false;
-    if (minAgeSec != null && tokenAgeAtSignalSec < minAgeSec) return false;
-    if (maxAgeSec != null && tokenAgeAtSignalSec > maxAgeSec) return false;
+    const tokenDelayFromTweetMs = tokenAtMs - ref;
+    if (minAgeSec != null && tokenDelayFromTweetMs < minAgeSec * 1000) return false;
+    if (maxAgeSec != null && tokenDelayFromTweetMs > maxAgeSec * 1000) return false;
   }
 
   const minOrderDelaySec = minAgeSec;
@@ -185,10 +185,10 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any, signalAtMs?: numb
     const ref = typeof signalAtMs === 'number' && Number.isFinite(signalAtMs) ? signalAtMs : null;
     const now = typeof orderAtMs === 'number' && Number.isFinite(orderAtMs) ? orderAtMs : Date.now();
     if (ref == null) return false;
-    const orderDelaySec = (now - ref) / 1000;
-    if (orderDelaySec < 0) return false;
-    if (minOrderDelaySec != null && orderDelaySec < minOrderDelaySec) return false;
-    if (maxOrderDelaySec != null && orderDelaySec > maxOrderDelaySec) return false;
+    const orderDelayMs = now - ref;
+    if (orderDelayMs < 0) return false;
+    if (minOrderDelaySec != null && orderDelayMs < minOrderDelaySec * 1000) return false;
+    if (maxOrderDelaySec != null && orderDelayMs > maxOrderDelaySec * 1000) return false;
   }
 
   const minDevPct = parseNumber(config.minDevHoldPercent);
@@ -641,13 +641,22 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   const metricsFromUnifiedToken = (t: UnifiedSignalToken): TokenMetrics | null => {
     const tokenAddress = normalizeAddress(t.tokenAddress);
     if (!tokenAddress) return null;
+    const now = Date.now();
+    const createdAtMsRaw = typeof (t as any).createdAtMs === 'number' ? (t as any).createdAtMs : undefined;
+    const firstSeenAtMsRaw = typeof (t as any).firstSeenAtMs === 'number' ? (t as any).firstSeenAtMs : undefined;
+    const createdAtMs = typeof createdAtMsRaw === 'number' && createdAtMsRaw > 0 ? createdAtMsRaw : undefined;
+    const firstSeenAtMs = typeof firstSeenAtMsRaw === 'number' && firstSeenAtMsRaw > 0 ? firstSeenAtMsRaw : undefined;
+    const tokenAtMs = firstSeenAtMs ?? createdAtMs;
+    const tokenAgeMsForDev = tokenAtMs != null ? now - tokenAtMs : null;
+
     const devHoldPercentRaw = typeof (t as any).devHoldPercent === 'number' ? (t as any).devHoldPercent : undefined;
-    const devHoldPercent =
+    let devHoldPercent =
       typeof devHoldPercentRaw === 'number' && Number.isFinite(devHoldPercentRaw)
         ? devHoldPercentRaw >= 0 && devHoldPercentRaw <= 1
           ? devHoldPercentRaw * 100
           : devHoldPercentRaw
         : undefined;
+    if (devHoldPercent == null && tokenAgeMsForDev != null && tokenAgeMsForDev > 3000) devHoldPercent = 0;
     return {
       tokenAddress,
       tokenSymbol: typeof (t as any).tokenSymbol === 'string' ? String((t as any).tokenSymbol) : undefined,
@@ -655,8 +664,8 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       liquidityUsd: typeof (t as any).liquidityUsd === 'number' ? (t as any).liquidityUsd : undefined,
       holders: typeof (t as any).holders === 'number' ? (t as any).holders : undefined,
       kol: typeof (t as any).kol === 'number' ? (t as any).kol : undefined,
-      createdAtMs: typeof (t as any).createdAtMs === 'number' ? (t as any).createdAtMs : undefined,
-    firstSeenAtMs: typeof (t as any).firstSeenAtMs === 'number' ? (t as any).firstSeenAtMs : undefined,
+      createdAtMs,
+      firstSeenAtMs,
       devAddress: normalizeAddress((t as any).devAddress) ?? undefined,
       devHoldPercent,
       devHasSold: typeof (t as any).devHasSold === 'boolean'

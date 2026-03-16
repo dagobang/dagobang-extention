@@ -106,7 +106,10 @@ const buildNotBoughtReason = (input: {
       : typeof (input.signal as any).ts === 'number'
         ? (input.signal as any).ts
         : Date.now();
-  const devHold = typeof token.devHoldPercent === 'number' && Number.isFinite(token.devHoldPercent) ? token.devHoldPercent : null;
+  const now = Date.now();
+  const devHoldPctRaw = typeof token.devHoldPercent === 'number' && Number.isFinite(token.devHoldPercent) ? token.devHoldPercent : null;
+  const tokenAgeMsForDev = now - (firstSeenAtMs ?? createdAtMs ?? signalAtMs);
+  const devHoldPct = devHoldPctRaw == null && tokenAgeMsForDev > 3000 ? 0 : devHoldPctRaw;
   const devHasSold = getDevHasSold(input.token);
 
   const minMcap = parseKNumber(input.strategy?.minMarketCapUsd);
@@ -135,32 +138,37 @@ const buildNotBoughtReason = (input: {
     if (maxTickerLen != null && len > maxTickerLen) return input.tt('contentUi.xMonitor.notBought.reason.tickerLenTooLong', [len, maxTickerLen]);
   }
 
-  const minAgeSec = parseNumber(input.strategy?.minTokenAgeSeconds);
+  const minAgeSecRaw = parseNumber(input.strategy?.minTokenAgeSeconds);
   const maxAgeSec = parseNumber(input.strategy?.maxTokenAgeSeconds);
+  const minAgeSec = minAgeSecRaw ?? (maxAgeSec != null ? 0 : null);
   const tokenAtMs = createdAtMs ?? firstSeenAtMs;
   if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return input.tt('contentUi.xMonitor.notBought.reason.createdAtMissing');
   if (tokenAtMs != null) {
-    const tokenAgeAtSignalSec = (signalAtMs - tokenAtMs) / 1000;
-    if (tokenAgeAtSignalSec < 0) return input.tt('contentUi.xMonitor.notBought.reason.tokenCreatedAfterTweet');
-    if (minAgeSec != null && tokenAgeAtSignalSec < minAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(tokenAgeAtSignalSec), Math.floor(minAgeSec)]);
-    if (maxAgeSec != null && tokenAgeAtSignalSec > maxAgeSec) return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(tokenAgeAtSignalSec), Math.floor(maxAgeSec)]);
+    const tokenDelayFromTweetMs = tokenAtMs - signalAtMs;
+    if (tokenDelayFromTweetMs < 0) return input.tt('contentUi.xMonitor.notBought.reason.tokenCreatedBeforeTweet');
+    if (minAgeSec != null && tokenDelayFromTweetMs < minAgeSec * 1000)
+      return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(tokenDelayFromTweetMs / 1000), Math.floor(minAgeSec)]);
+    if (maxAgeSec != null && tokenDelayFromTweetMs > maxAgeSec * 1000)
+      return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(tokenDelayFromTweetMs / 1000), Math.floor(maxAgeSec)]);
   }
 
   const minOrderDelaySec = minAgeSec;
   const maxOrderDelaySec = maxAgeSec;
   if (minOrderDelaySec != null || maxOrderDelaySec != null) {
-    const orderDelaySec = (Date.now() - signalAtMs) / 1000;
-    if (orderDelaySec < 0) return input.tt('contentUi.xMonitor.notBought.reason.orderWindowExpired', ['0', String(Math.floor(maxOrderDelaySec ?? 0))]);
-    if (minOrderDelaySec != null && orderDelaySec < minOrderDelaySec) return input.tt('contentUi.xMonitor.notBought.reason.orderWindowTooEarly', [Math.floor(orderDelaySec), Math.floor(minOrderDelaySec)]);
-    if (maxOrderDelaySec != null && orderDelaySec > maxOrderDelaySec) return input.tt('contentUi.xMonitor.notBought.reason.orderWindowExpired', [Math.floor(orderDelaySec), Math.floor(maxOrderDelaySec)]);
+    const orderDelayMs = now - signalAtMs;
+    if (orderDelayMs < 0) return input.tt('contentUi.xMonitor.notBought.reason.orderWindowExpired', ['0', String(Math.floor(maxOrderDelaySec ?? 0))]);
+    if (minOrderDelaySec != null && orderDelayMs < minOrderDelaySec * 1000)
+      return input.tt('contentUi.xMonitor.notBought.reason.orderWindowTooEarly', [Math.floor(orderDelayMs / 1000), Math.floor(minOrderDelaySec)]);
+    if (maxOrderDelaySec != null && orderDelayMs > maxOrderDelaySec * 1000)
+      return input.tt('contentUi.xMonitor.notBought.reason.orderWindowExpired', [Math.floor(orderDelayMs / 1000), Math.floor(maxOrderDelaySec)]);
   }
 
   const minDevPct = parseNumber(input.strategy?.minDevHoldPercent);
   const maxDevPct = parseNumber(input.strategy?.maxDevHoldPercent);
-  if (minDevPct != null && devHold == null) return input.tt('contentUi.xMonitor.notBought.reason.devHoldMissing');
-  if (maxDevPct != null && devHold == null) return input.tt('contentUi.xMonitor.notBought.reason.devHoldMissing');
-  if (minDevPct != null && devHold < minDevPct) return input.tt('contentUi.xMonitor.notBought.reason.devHoldTooLow', [devHold.toFixed(2), minDevPct]);
-  if (maxDevPct != null && devHold > maxDevPct) return input.tt('contentUi.xMonitor.notBought.reason.devHoldTooHigh', [devHold.toFixed(2), maxDevPct]);
+  if (minDevPct != null && devHoldPct == null) return input.tt('contentUi.xMonitor.notBought.reason.devHoldMissing');
+  if (maxDevPct != null && devHoldPct == null) return input.tt('contentUi.xMonitor.notBought.reason.devHoldMissing');
+  if (minDevPct != null && devHoldPct < minDevPct) return input.tt('contentUi.xMonitor.notBought.reason.devHoldTooLow', [devHoldPct.toFixed(2), minDevPct]);
+  if (maxDevPct != null && devHoldPct > maxDevPct) return input.tt('contentUi.xMonitor.notBought.reason.devHoldTooHigh', [devHoldPct.toFixed(2), maxDevPct]);
   if (input.strategy?.blockIfDevSell && devHasSold === true) return input.tt('contentUi.xMonitor.notBought.reason.devHasSold');
 
   if (input.strategy?.dryRun === true) return input.tt('contentUi.xMonitor.notBought.reason.dryRun');
@@ -188,7 +196,9 @@ const buildNotBoughtReason = (input: {
       const symbol = typeof token.tokenSymbol === 'string' ? token.tokenSymbol.trim() : '';
       const createdAtMs = typeof token.createdAtMs === 'number' && token.createdAtMs > 0 ? token.createdAtMs : null;
       const firstSeenAtMs = typeof token.firstSeenAtMs === 'number' && token.firstSeenAtMs > 0 ? token.firstSeenAtMs : null;
-      const devHold = typeof token.devHoldPercent === 'number' && Number.isFinite(token.devHoldPercent) ? token.devHoldPercent : null;
+      const devHoldPctRaw = typeof token.devHoldPercent === 'number' && Number.isFinite(token.devHoldPercent) ? token.devHoldPercent : null;
+      const tokenAgeMsForDev = now - (firstSeenAtMs ?? createdAtMs ?? signalAtMs);
+      const devHoldPct = devHoldPctRaw == null && tokenAgeMsForDev > 3000 ? 0 : devHoldPctRaw;
       const devHasSold = getDevHasSold(t);
 
       if ((minMcap != null || maxMcap != null) && mcRaw != null && mc == null) return false;
@@ -212,25 +222,25 @@ const buildNotBoughtReason = (input: {
       const tokenAtMs = createdAtMs ?? firstSeenAtMs;
       if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
       if (tokenAtMs != null) {
-        const tokenAgeAtSignalSec = (signalAtMs - tokenAtMs) / 1000;
-        if (tokenAgeAtSignalSec < 0) return false;
-        if (minAgeSec != null && tokenAgeAtSignalSec < minAgeSec) return false;
-        if (maxAgeSec != null && tokenAgeAtSignalSec > maxAgeSec) return false;
+        const tokenDelayFromTweetMs = tokenAtMs - signalAtMs;
+        if (tokenDelayFromTweetMs < 0) return false;
+        if (minAgeSec != null && tokenDelayFromTweetMs < minAgeSec * 1000) return false;
+        if (maxAgeSec != null && tokenDelayFromTweetMs > maxAgeSec * 1000) return false;
       }
 
       const minOrderDelaySec = minAgeSec;
       const maxOrderDelaySec = maxAgeSec;
       if (minOrderDelaySec != null || maxOrderDelaySec != null) {
-        const orderDelaySec = (Date.now() - signalAtMs) / 1000;
-        if (orderDelaySec < 0) return false;
-        if (minOrderDelaySec != null && orderDelaySec < minOrderDelaySec) return false;
-        if (maxOrderDelaySec != null && orderDelaySec > maxOrderDelaySec) return false;
+        const orderDelayMs = Date.now() - signalAtMs;
+        if (orderDelayMs < 0) return false;
+        if (minOrderDelaySec != null && orderDelayMs < minOrderDelaySec * 1000) return false;
+        if (maxOrderDelaySec != null && orderDelayMs > maxOrderDelaySec * 1000) return false;
       }
 
-      if (minDevPct != null && devHold == null) return false;
-      if (maxDevPct != null && devHold == null) return false;
-      if (minDevPct != null && devHold < minDevPct) return false;
-      if (maxDevPct != null && devHold > maxDevPct) return false;
+      if (minDevPct != null && devHoldPct == null) return false;
+      if (maxDevPct != null && devHoldPct == null) return false;
+      if (minDevPct != null && devHoldPct < minDevPct) return false;
+      if (maxDevPct != null && devHoldPct > maxDevPct) return false;
       if (input.strategy?.blockIfDevSell && devHasSold === true) return false;
 
       return true;

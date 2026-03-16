@@ -249,7 +249,20 @@ export function XSniperContent({
         }
       }
       setLatestTokenByAddr(next);
-      setAthMcapByAddr(ath);
+      setAthMcapByAddr((prev) => {
+        let changed = false;
+        const merged: Record<string, number> = { ...prev };
+        for (const [k, v] of Object.entries(ath)) {
+          if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+          const cur = merged[k];
+          const nextV = cur != null && Number.isFinite(cur) ? Math.max(cur, v) : v;
+          if (nextV !== cur) {
+            merged[k] = nextV;
+            changed = true;
+          }
+        }
+        return changed ? merged : prev;
+      });
     };
 
     readLatestFromCache();

@@ -223,6 +223,7 @@
           "tickerLenTooLong": "Ticker length {0} > Max {1}",
           "createdAtMissing": "Missing created time",
           "tokenCreatedAfterTweet": "Token created after the tweet",
+          "tokenCreatedBeforeTweet": "Token created before the tweet",
           "ageTooYoung": "Age {0}s < Min {1}s",
           "ageTooOld": "Age {0}s > Max {1}s",
           "orderWindowTooEarly": "Order {0}s < Min {1}s",
