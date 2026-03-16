@@ -106,6 +106,9 @@ export function defaultSettings(): Settings {
     tradeSuccessSoundPresetSell: 'Coins',
     tradeSuccessSoundVolume: 60,
     limitOrderScanIntervalMs: 3000,
+    ui: {
+      showToolbar: true,
+    },
     autoTrade: DEFAULT_AUTOTRADE,
     advancedAutoSell: DEFAULT_ADVANCED_AUTO_SELL,
   };

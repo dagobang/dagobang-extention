@@ -1,4 +1,4 @@
-import type { PointerEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { Settings } from '@/types/extention';
 import type { SiteInfo } from '@/utils/sites';
 import type { Locale } from '@/utils/i18n';
@@ -11,9 +11,9 @@ import { Logo } from '@/components/Logo';
 type QuickTradePanelProps = {
   minimized: boolean;
   pos: { x: number; y: number };
-  onMinimizedDragStart: (e: PointerEvent) => void;
+  onMinimizedDragStart: (e: ReactPointerEvent) => void;
   onMinimizedClick: () => void;
-  onDragStart: (e: PointerEvent) => void;
+  onDragStart: (e: ReactPointerEvent) => void;
   onMinimize: () => void;
   isEditing: boolean;
   onEditToggle: () => void;
@@ -120,7 +120,7 @@ export function QuickTradePanel({
 
   return (
     <div
-      className={`fixed z-[2147483647] w-[320px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col ${siteInfo.showBar == true && 'opacity-85'}`}
+      className="fixed z-[2147483647] w-[320px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col"
       style={{ left: pos.x, top: pos.y }}
     >
       <Header

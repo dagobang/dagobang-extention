@@ -11,6 +11,7 @@ import { TradeSettings } from './Settings/TradeSettings';
 import { GasSettings } from './Settings/GasSettings';
 import { Notification } from './Settings/Notification';
 import { SecuritySettings } from './Settings/SecuritySettings';
+import { UiSettings } from './Settings/UiSettings';
 import type { SettingsSectionId } from './Settings/types';
 
 type SettingsViewProps = {
@@ -61,6 +62,7 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
     gas: tt('popup.settings.gasPreset'),
     notification: tt('popup.settings.notification'),
     security: tt('popup.settings.security'),
+    ui: tt('popup.settings.ui'),
   };
 
   return (
@@ -94,6 +96,7 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
             onLocaleChange={onLocaleChange}
           />
         )}
+        {section === 'ui' && <UiSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'security' && <SecuritySettings tt={tt} busy={busy} withBusy={withBusy} onBackup={onBackup} onRefresh={onRefresh} />}
 
         {section !== 'root' && section !== 'security' && (

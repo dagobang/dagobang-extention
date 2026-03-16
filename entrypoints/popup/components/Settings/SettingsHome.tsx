@@ -39,6 +39,7 @@ export function SettingsHome({ tt, busy, onOpenSection }: SettingsHomeProps) {
       <Item title={tt('popup.settings.trade')} onClick={() => onOpenSection('trade')} />
       <Item title={tt('popup.settings.gasPreset')} onClick={() => onOpenSection('gas')} />
       <Item title={tt('popup.settings.notification')} onClick={() => onOpenSection('notification')} />
+      <Item title={tt('popup.settings.ui')} onClick={() => onOpenSection('ui')} />
       <Item title={tt('popup.settings.security')} onClick={() => onOpenSection('security')} />
 
       <button

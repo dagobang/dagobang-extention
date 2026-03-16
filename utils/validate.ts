@@ -97,6 +97,9 @@ export function validateSettings(input: Settings): Settings | null {
   const keyboardShortcutsEnabled = typeof (input as any).keyboardShortcutsEnabled === 'boolean'
     ? (input as any).keyboardShortcutsEnabled
     : ((defaults as any).keyboardShortcutsEnabled ?? false);
+  const showToolbar = typeof (input as any)?.ui?.showToolbar === 'boolean'
+    ? (input as any).ui.showToolbar
+    : ((defaults as any)?.ui?.showToolbar ?? true);
   const tradeSuccessSoundEnabled = typeof (input as any).tradeSuccessSoundEnabled === 'boolean'
     ? (input as any).tradeSuccessSoundEnabled
     : ((defaults as any).tradeSuccessSoundEnabled ?? false);
@@ -324,6 +327,9 @@ export function validateSettings(input: Settings): Settings | null {
     quickBuy1Bnb,
     quickBuy2Bnb,
     keyboardShortcutsEnabled,
+    ui: {
+      showToolbar,
+    },
     tradeSuccessSoundEnabled,
     tradeSuccessSoundPresetBuy,
     tradeSuccessSoundPresetSell,

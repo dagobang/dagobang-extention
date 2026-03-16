@@ -121,6 +121,10 @@ export const TRADE_SUCCESS_SOUND_PRESETS = [
 
 export type TradeSuccessSoundPreset = (typeof TRADE_SUCCESS_SOUND_PRESETS)[number];
 
+export type UiSettings = {
+  showToolbar: boolean;
+};
+
 export type Settings = {
   chainId: 56;
   chains: Record<number, ChainSettings>;
@@ -139,6 +143,7 @@ export type Settings = {
   tradeSuccessSoundPresetSell?: TradeSuccessSoundPreset;
   tradeSuccessSoundVolume?: number;
   limitOrderScanIntervalMs?: number;
+  ui?: UiSettings;
   autoTrade: AutoTradeConfig;
   advancedAutoSell: AdvancedAutoSellConfig;
 };

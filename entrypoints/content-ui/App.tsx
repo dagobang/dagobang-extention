@@ -18,6 +18,7 @@ import { XTradePanel } from './components/XTradePanel';
 import { RpcPanel } from './components/RpcPanel';
 import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
 import { QuickTradePanel } from './components/QuickTradePanel';
+import { FloatingToolbar } from './components/FloatingToolbar';
 
 export default function App() {
   const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(() => parseCurrentUrl(window.location.href));
@@ -1136,72 +1137,87 @@ export default function App() {
 
       {siteInfo && (
         <>
-          <QuickTradePanel
-            minimized={minimized}
-            pos={pos}
-            onMinimizedDragStart={(e) => {
-              dragging.current = {
-                target: 'main',
-                startX: e.clientX,
-                startY: e.clientY,
-                baseX: posRef.current.x,
-                baseY: posRef.current.y,
-              };
-            }}
-            onMinimizedClick={() => {
-              if (!dragging.current) setMinimized(false);
-            }}
-            onDragStart={(e) => {
-              dragging.current = {
-                target: 'main',
-                startX: e.clientX,
-                startY: e.clientY,
-                baseX: posRef.current.x,
-                baseY: posRef.current.y,
-              };
-            }}
-            onMinimize={() => setMinimized(true)}
-            isEditing={isEditing}
-            onEditToggle={handleEditToggle}
-            onToggleXTrade={handleToggleXTradePanel}
-            xTradeActive={showXTradePanel}
-            onToggleLimitTrade={handleToggleLimitTradePanel}
-            autotradeActive={showLimitTradePanel}
-            onToggleRpc={handleToggleRpcPanel}
-            rpcActive={showRpcPanel}
-            onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
-            dailyAnalysisActive={showDailyAnalysisPanel}
-            keyboardShortcutsEnabled={keyboardShortcutsEnabled}
-            onToggleKeyboardShortcuts={handleToggleKeyboardShortcuts}
-            formattedNativeBalance={formattedNativeBalance}
-            busy={busy}
-            isUnlocked={isUnlocked}
-            onBuy={handleBuy}
-            settings={settings}
-            onToggleMode={handleToggleMode}
-            onToggleBuyGas={handleToggleBuyGas}
-            onToggleSellGas={handleToggleSellGas}
-            onToggleSlippage={handleToggleSlippage}
-            onUpdateBuyPreset={handleUpdateBuyPreset}
-            draftBuyPresets={draftBuyPresets}
-            onUpdateSellPreset={handleUpdateSellPreset}
-            draftSellPresets={draftSellPresets}
-            locale={locale}
-            showBuyHotkeys={keyboardShortcutsEnabled && spaceHeld && !isEditing}
-            showSellHotkeys={keyboardShortcutsEnabled && spaceHeld && !isEditing}
-            gmgnBuyEnabled={gmgnBuyEnabled}
-            gmgnSellEnabled={gmgnSellEnabled}
-            onToggleGmgnBuy={handleToggleGmgnBuy}
-            onToggleGmgnSell={handleToggleGmgnSell}
-            advancedAutoSell={settings?.advancedAutoSell ?? null}
-            onUpdateAdvancedAutoSell={handleUpdateAdvancedAutoSell}
-            formattedTokenBalance={formattedTokenBalance}
-            tokenSymbol={tokenSymbol}
-            onSell={handleSell}
-            onApprove={handleApprove}
-            siteInfo={siteInfo}
-            onUnlock={handleUnlock}
-          />
+          {siteInfo.showBar ? (
+            <FloatingToolbar
+              siteInfo={siteInfo}
+              settings={settings}
+              onToggleXTrade={handleToggleXTradePanel}
+              xTradeActive={showXTradePanel}
+              onToggleLimitTrade={handleToggleLimitTradePanel}
+              autotradeActive={showLimitTradePanel}
+              onToggleRpc={handleToggleRpcPanel}
+              rpcActive={showRpcPanel}
+              onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
+              dailyAnalysisActive={showDailyAnalysisPanel}
+            />
+          ) : (
+            <QuickTradePanel
+              minimized={minimized}
+              pos={pos}
+              onMinimizedDragStart={(e) => {
+                dragging.current = {
+                  target: 'main',
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  baseX: posRef.current.x,
+                  baseY: posRef.current.y,
+                };
+              }}
+              onMinimizedClick={() => {
+                if (!dragging.current) setMinimized(false);
+              }}
+              onDragStart={(e) => {
+                dragging.current = {
+                  target: 'main',
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  baseX: posRef.current.x,
+                  baseY: posRef.current.y,
+                };
+              }}
+              onMinimize={() => setMinimized(true)}
+              isEditing={isEditing}
+              onEditToggle={handleEditToggle}
+              onToggleXTrade={handleToggleXTradePanel}
+              xTradeActive={showXTradePanel}
+              onToggleLimitTrade={handleToggleLimitTradePanel}
+              autotradeActive={showLimitTradePanel}
+              onToggleRpc={handleToggleRpcPanel}
+              rpcActive={showRpcPanel}
+              onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
+              dailyAnalysisActive={showDailyAnalysisPanel}
+              keyboardShortcutsEnabled={keyboardShortcutsEnabled}
+              onToggleKeyboardShortcuts={handleToggleKeyboardShortcuts}
+              formattedNativeBalance={formattedNativeBalance}
+              busy={busy}
+              isUnlocked={isUnlocked}
+              onBuy={handleBuy}
+              settings={settings}
+              onToggleMode={handleToggleMode}
+              onToggleBuyGas={handleToggleBuyGas}
+              onToggleSellGas={handleToggleSellGas}
+              onToggleSlippage={handleToggleSlippage}
+              onUpdateBuyPreset={handleUpdateBuyPreset}
+              draftBuyPresets={draftBuyPresets}
+              onUpdateSellPreset={handleUpdateSellPreset}
+              draftSellPresets={draftSellPresets}
+              locale={locale}
+              showBuyHotkeys={keyboardShortcutsEnabled && spaceHeld && !isEditing}
+              showSellHotkeys={keyboardShortcutsEnabled && spaceHeld && !isEditing}
+              gmgnBuyEnabled={gmgnBuyEnabled}
+              gmgnSellEnabled={gmgnSellEnabled}
+              onToggleGmgnBuy={handleToggleGmgnBuy}
+              onToggleGmgnSell={handleToggleGmgnSell}
+              advancedAutoSell={settings?.advancedAutoSell ?? null}
+              onUpdateAdvancedAutoSell={handleUpdateAdvancedAutoSell}
+              formattedTokenBalance={formattedTokenBalance}
+              tokenSymbol={tokenSymbol}
+              onSell={handleSell}
+              onApprove={handleApprove}
+              siteInfo={siteInfo}
+              onUnlock={handleUnlock}
+            />
+          )}
 
           <LimitTradePanel
             siteInfo={siteInfo}
