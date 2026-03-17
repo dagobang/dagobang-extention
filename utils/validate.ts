@@ -255,6 +255,19 @@ export function validateSettings(input: Settings): Settings | null {
     wsConfirmMinNetBuy24hUsd: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinNetBuy24hUsd, (defaultTwitterSnipe as any).wsConfirmMinNetBuy24hUsd),
     wsConfirmMinVol24hUsd: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinVol24hUsd, (defaultTwitterSnipe as any).wsConfirmMinVol24hUsd),
     wsConfirmMinSmartMoney: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinSmartMoney, (defaultTwitterSnipe as any).wsConfirmMinSmartMoney),
+    stagedEntryEnabled: typeof (inputTwitterSnipe as any).stagedEntryEnabled === 'boolean'
+      ? (inputTwitterSnipe as any).stagedEntryEnabled
+      : !!(defaultTwitterSnipe as any).stagedEntryEnabled,
+    stagedEntryScoutPercent: clampStringNumber((inputTwitterSnipe as any).stagedEntryScoutPercent, (defaultTwitterSnipe as any).stagedEntryScoutPercent),
+    stagedEntryMinDelayMs: clampStringNumber((inputTwitterSnipe as any).stagedEntryMinDelayMs, (defaultTwitterSnipe as any).stagedEntryMinDelayMs),
+    stagedEntryMaxDelayMs: clampStringNumber((inputTwitterSnipe as any).stagedEntryMaxDelayMs, (defaultTwitterSnipe as any).stagedEntryMaxDelayMs),
+    stagedEntryMaxDrawdownPct: clampStringNumber((inputTwitterSnipe as any).stagedEntryMaxDrawdownPct, (defaultTwitterSnipe as any).stagedEntryMaxDrawdownPct),
+    timeStopEnabled: typeof (inputTwitterSnipe as any).timeStopEnabled === 'boolean'
+      ? (inputTwitterSnipe as any).timeStopEnabled
+      : !!(defaultTwitterSnipe as any).timeStopEnabled,
+    timeStopSeconds: clampStringNumber((inputTwitterSnipe as any).timeStopSeconds, (defaultTwitterSnipe as any).timeStopSeconds),
+    timeStopMinPnlPct: clampStringNumber((inputTwitterSnipe as any).timeStopMinPnlPct, (defaultTwitterSnipe as any).timeStopMinPnlPct),
+    timeStopSellPercent: clampStringNumber((inputTwitterSnipe as any).timeStopSellPercent, (defaultTwitterSnipe as any).timeStopSellPercent),
     deleteTweetSellPercent: clampStringNumber(inputTwitterSnipe.deleteTweetSellPercent, defaultTwitterSnipe.deleteTweetSellPercent),
     targetUsers: parseListInput(inputTwitterSnipe.targetUsers, defaultTwitterSnipe.targetUsers),
     interactionTypes: interactionTypes.length ? (interactionTypes as any) : defaultTwitterSnipe.interactionTypes,

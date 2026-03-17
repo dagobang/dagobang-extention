@@ -70,6 +70,15 @@ export type AutoTradeTwitterSnipeStrategy = AutoTradeStrategyBase & {
   wsConfirmMinNetBuy24hUsd?: string;
   wsConfirmMinVol24hUsd?: string;
   wsConfirmMinSmartMoney?: string;
+  stagedEntryEnabled?: boolean;
+  stagedEntryScoutPercent?: string;
+  stagedEntryMinDelayMs?: string;
+  stagedEntryMaxDelayMs?: string;
+  stagedEntryMaxDrawdownPct?: string;
+  timeStopEnabled?: boolean;
+  timeStopSeconds?: string;
+  timeStopMinPnlPct?: string;
+  timeStopSellPercent?: string;
   targetUsers: string[];
   interactionTypes: AutoTradeInteractionType[];
 };

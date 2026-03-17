@@ -244,6 +244,25 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     sellTx24h?: number;
     smartMoney?: number;
   }>>();
+  const stagedPositions = new Map<string, {
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    dryRun: boolean;
+    openedAtMs: number;
+    scoutAmountBnb: number;
+    addAmountBnb: number;
+    lastMetrics?: TokenMetrics;
+    entryMcapUsd?: number;
+    tweetAtMs?: number;
+    tweetUrl?: string;
+    tweetType?: string;
+    channel?: string;
+    signalId?: string;
+    signalEventId?: string;
+    signalTweetId?: string;
+  }>();
+  const stagedAddTimers = new Map<string, number>();
+  const timeStopTimers = new Map<string, number>();
 
   const shouldLogWsConfirmFail = (key: string, nowMs: number) => {
     const last = wsConfirmFailDedupe.get(key);
@@ -326,6 +345,118 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       marketCapUsd: cur.marketCapUsd,
       holders: cur.holders,
     };
+  };
+
+  const getWsDrawdownPctSince = (tokenAddress: `0x${string}`, sinceMs: number) => {
+    const list = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+    if (!list.length) return null;
+    const cur = list[list.length - 1];
+    const curMcap = typeof cur.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
+    if (curMcap == null || curMcap <= 0) return null;
+    let ath = 0;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const s = list[i];
+      if (s.atMs < sinceMs) break;
+      const m = typeof s.marketCapUsd === 'number' && Number.isFinite(s.marketCapUsd) ? s.marketCapUsd : 0;
+      if (m > ath) ath = m;
+    }
+    if (!(ath > 0)) return null;
+    return ((curMcap - ath) / ath) * 100;
+  };
+
+  const scheduleTimeStopIfEnabled = (posKey: string, strategy: any) => {
+    if (strategy?.timeStopEnabled !== true) return;
+    if (timeStopTimers.has(posKey)) return;
+    const seconds = Math.max(1, Math.min(3600, Math.floor(parseNumber(strategy?.timeStopSeconds) ?? 0)));
+    if (!(seconds > 0)) return;
+    const timer = setTimeout(async () => {
+      timeStopTimers.delete(posKey);
+      const pos = stagedPositions.get(posKey);
+      if (!pos) return;
+      const minPnlPct = parseNumber(strategy?.timeStopMinPnlPct) ?? 0;
+      const sellPct = Math.max(0, Math.min(100, parseNumber(strategy?.timeStopSellPercent) ?? 100));
+      const snaps = wsSnapshotsByAddr.get(pos.tokenAddress) ?? [];
+      const cur = snaps.length ? snaps[snaps.length - 1] : null;
+      const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
+      const entryMcap = typeof pos.entryMcapUsd === 'number' && Number.isFinite(pos.entryMcapUsd) ? pos.entryMcapUsd : null;
+      if (curMcap == null || entryMcap == null || entryMcap <= 0) return;
+      const pnlPct = ((curMcap - entryMcap) / entryMcap) * 100;
+      if (!(pnlPct <= minPnlPct)) {
+        stagedPositions.delete(posKey);
+        return;
+      }
+      stagedPositions.delete(posKey);
+      await tryTimeStopSellOnce({ chainId: pos.chainId, tokenAddress: pos.tokenAddress, percent: sellPct, pos, reason: 'time_stop' });
+    }, seconds * 1000) as any;
+    timeStopTimers.set(posKey, timer as any);
+  };
+
+  const scheduleStagedAddIfEnabled = (posKey: string, strategy: any) => {
+    if (strategy?.stagedEntryEnabled !== true) return;
+    if (stagedAddTimers.has(posKey)) return;
+    const minDelayMs = Math.max(0, Math.min(60_000, Math.floor(parseNumber(strategy?.stagedEntryMinDelayMs) ?? 0)));
+    const maxDelayMs = Math.max(500, Math.min(120_000, Math.floor(parseNumber(strategy?.stagedEntryMaxDelayMs) ?? 0)));
+    const maxDrawdownPct = Math.max(0, Math.min(99.9, Math.abs(parseNumber(strategy?.stagedEntryMaxDrawdownPct) ?? 0)));
+    const tickMs = 500;
+    const timer = setInterval(async () => {
+      const pos = stagedPositions.get(posKey);
+      if (!pos) {
+        const id = stagedAddTimers.get(posKey);
+        if (id) clearInterval(id as any);
+        stagedAddTimers.delete(posKey);
+        return;
+      }
+      const now = Date.now();
+      const ageMs = now - pos.openedAtMs;
+      if (ageMs < minDelayMs) return;
+      if (ageMs > maxDelayMs) {
+        const id = stagedAddTimers.get(posKey);
+        if (id) clearInterval(id as any);
+        stagedAddTimers.delete(posKey);
+        return;
+      }
+
+      if (maxDrawdownPct > 0) {
+        const dd = getWsDrawdownPctSince(pos.tokenAddress, pos.openedAtMs);
+        if (typeof dd === 'number' && Number.isFinite(dd) && dd <= -maxDrawdownPct) {
+          const id = stagedAddTimers.get(posKey);
+          if (id) clearInterval(id as any);
+          stagedAddTimers.delete(posKey);
+          stagedPositions.delete(posKey);
+          await tryTimeStopSellOnce({ chainId: pos.chainId, tokenAddress: pos.tokenAddress, percent: 100, pos, reason: 'staged_abort' });
+          return;
+        }
+      }
+
+      const confirm = computeWsConfirm(pos.tokenAddress, now, strategy);
+      if (!confirm.pass) return;
+
+      const id = stagedAddTimers.get(posKey);
+      if (id) clearInterval(id as any);
+      stagedAddTimers.delete(posKey);
+
+      const ok = await tryAutoBuyOnce({
+        chainId: pos.chainId,
+        tokenAddress: pos.tokenAddress,
+        metrics: (pos.lastMetrics ?? { tokenAddress: pos.tokenAddress }) as any,
+        strategy,
+        signal: {
+          ts: typeof pos.tweetAtMs === 'number' ? pos.tweetAtMs : pos.openedAtMs,
+          receivedAtMs: typeof pos.tweetAtMs === 'number' ? pos.tweetAtMs : pos.openedAtMs,
+          tweetType: pos.tweetType,
+          channel: pos.channel,
+          id: pos.signalId,
+          eventId: pos.signalEventId,
+          tweetId: pos.signalTweetId,
+        } as any,
+        stage: 'add',
+        amountBnbOverride: pos.addAmountBnb,
+      });
+      if (ok) {
+        stagedPositions.set(posKey, { ...pos, addAmountBnb: 0 });
+      }
+    }, tickMs) as any;
+    stagedAddTimers.set(posKey, timer as any);
   };
 
   const loadBoughtOnceIfNeeded = async () => {
@@ -502,8 +633,11 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     };
   };
 
-  const getKey = (chainId: number, tokenAddress: `0x${string}`, type?: 'dry') =>
-    `${type === 'dry' ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}`;
+  const getKey = (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean; stage?: 'full' | 'scout' | 'add' }) => {
+    const dry = opts?.dry === true;
+    const stage = opts?.stage ?? 'full';
+    return `${dry ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}:${stage}`;
+  };
 
   const isFlapAddress = (addr: string) => {
     const low = addr.toLowerCase();
@@ -656,16 +790,22 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     metrics: TokenMetrics;
     strategy: any;
     signal?: UnifiedTwitterSignal;
+    stage?: 'full' | 'scout' | 'add';
+    amountBnbOverride?: number;
+    stagedPlan?: { scoutAmountBnb: number; addAmountBnb: number; openedAtMs: number };
   }) => {
     await loadBoughtOnceIfNeeded();
     const dryRun = input.strategy?.dryRun === true;
-    const key = getKey(input.chainId, input.tokenAddress, dryRun ? 'dry' : undefined);
-    if (boughtOnceAtMs.has(key)) return;
-    if (buyInFlight.has(key)) return;
+    const stage = input.stage ?? 'full';
+    const key = getKey(input.chainId, input.tokenAddress, { dry: dryRun, stage });
+    if (boughtOnceAtMs.has(key)) return false;
+    if (buyInFlight.has(key)) return false;
     buyInFlight.add(key);
     try {
-      const amountNumber = parseNumber(input.strategy.buyAmountBnb) ?? 0;
-      if (amountNumber <= 0) return;
+      const amountNumber = (typeof input.amountBnbOverride === 'number' && Number.isFinite(input.amountBnbOverride)
+        ? input.amountBnbOverride
+        : (parseNumber(input.strategy.buyAmountBnb) ?? 0));
+      if (amountNumber <= 0) return false;
 
       const confirmNowMs = Date.now();
       const confirm = computeWsConfirm(input.tokenAddress, confirmNowMs, input.strategy);
@@ -717,14 +857,14 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
             void broadcastToTabs({ type: 'bg:xsniper:buy', record });
           }
         }
-        return;
+        return false;
       }
 
       const status = await WalletService.getStatus();
-      if (!dryRun && (status.locked || !status.address)) return;
+      if (!dryRun && (status.locked || !status.address)) return false;
 
       const tokenInfo = (await fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ?? (await buildGenericTokenInfo(input.chainId, input.tokenAddress));
-      if (!tokenInfo) return;
+      if (!tokenInfo) return false;
 
       const refreshedMcap = Number(tokenInfo?.tokenPrice?.marketCap ?? 0);
       const sanitizedRefreshedMcap = sanitizeMarketCapUsd(refreshedMcap);
@@ -736,7 +876,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         priceUsd: input.metrics.priceUsd,
       };
       const signalAtMs = getSignalTimeMs(input.signal);
-      if (!shouldBuyByConfig(refreshedMetrics, input.strategy, signalAtMs, Date.now())) return;
+      if (!shouldBuyByConfig(refreshedMetrics, input.strategy, signalAtMs, Date.now())) return false;
 
       if (dryRun) {
         const entryPriceUsd = await getEntryPriceUsd(
@@ -749,6 +889,49 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         boughtOnceAtMs.set(key, Date.now());
         void persistBoughtOnce();
         deps.onStateChanged();
+
+        if (stage === 'scout' && input.stagedPlan) {
+          const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+          stagedPositions.set(posKey, {
+            chainId: input.chainId,
+            tokenAddress: input.tokenAddress,
+            dryRun: true,
+            openedAtMs: input.stagedPlan.openedAtMs,
+            scoutAmountBnb: input.stagedPlan.scoutAmountBnb,
+            addAmountBnb: input.stagedPlan.addAmountBnb,
+            lastMetrics: refreshedMetrics,
+            entryMcapUsd: refreshedMetrics.marketCapUsd,
+            tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
+            tweetUrl: buildTweetUrl(input.signal),
+            tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
+            channel: input.signal?.channel ? String(input.signal.channel) : undefined,
+            signalId: input.signal?.id ? String(input.signal.id) : undefined,
+            signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+            signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+          });
+          scheduleStagedAddIfEnabled(posKey, input.strategy);
+          scheduleTimeStopIfEnabled(posKey, input.strategy);
+        } else if (stage === 'full' && input.strategy?.timeStopEnabled === true) {
+          const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+          stagedPositions.set(posKey, {
+            chainId: input.chainId,
+            tokenAddress: input.tokenAddress,
+            dryRun: true,
+            openedAtMs: Date.now(),
+            scoutAmountBnb: amountNumber,
+            addAmountBnb: 0,
+            lastMetrics: refreshedMetrics,
+            entryMcapUsd: refreshedMetrics.marketCapUsd,
+            tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
+            tweetUrl: buildTweetUrl(input.signal),
+            tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
+            channel: input.signal?.channel ? String(input.signal.channel) : undefined,
+            signalId: input.signal?.id ? String(input.signal.id) : undefined,
+            signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+            signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+          });
+          scheduleTimeStopIfEnabled(posKey, input.strategy);
+        }
 
         const now = Date.now();
         const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
@@ -791,10 +974,11 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           signalId: input.signal?.id ? String(input.signal.id) : undefined,
           signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
           signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+          reason: stage === 'scout' ? 'staged_scout' : (stage === 'add' ? 'staged_add' : undefined),
         };
         void pushHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
-        return;
+        return true;
       }
 
       const amountWei = parseEther(String(amountNumber));
@@ -823,6 +1007,49 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       boughtOnceAtMs.set(key, Date.now());
       void persistBoughtOnce();
       deps.onStateChanged();
+
+      if (stage === 'scout' && input.stagedPlan) {
+        const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+        stagedPositions.set(posKey, {
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          dryRun: false,
+          openedAtMs: input.stagedPlan.openedAtMs,
+          scoutAmountBnb: input.stagedPlan.scoutAmountBnb,
+          addAmountBnb: input.stagedPlan.addAmountBnb,
+          lastMetrics: refreshedMetrics,
+          entryMcapUsd: refreshedMetrics.marketCapUsd,
+          tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
+          tweetUrl: buildTweetUrl(input.signal),
+          tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
+          channel: input.signal?.channel ? String(input.signal.channel) : undefined,
+          signalId: input.signal?.id ? String(input.signal.id) : undefined,
+          signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+          signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+        });
+        scheduleStagedAddIfEnabled(posKey, input.strategy);
+        scheduleTimeStopIfEnabled(posKey, input.strategy);
+      } else if (stage === 'full' && input.strategy?.timeStopEnabled === true) {
+        const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+        stagedPositions.set(posKey, {
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          dryRun: false,
+          openedAtMs: Date.now(),
+          scoutAmountBnb: amountNumber,
+          addAmountBnb: 0,
+          lastMetrics: refreshedMetrics,
+          entryMcapUsd: refreshedMetrics.marketCapUsd,
+          tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
+          tweetUrl: buildTweetUrl(input.signal),
+          tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
+          channel: input.signal?.channel ? String(input.signal.channel) : undefined,
+          signalId: input.signal?.id ? String(input.signal.id) : undefined,
+          signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+          signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+        });
+        scheduleTimeStopIfEnabled(posKey, input.strategy);
+      }
 
       const now = Date.now();
       const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
@@ -865,11 +1092,12 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         signalId: input.signal?.id ? String(input.signal.id) : undefined,
         signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
         signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+        reason: stage === 'scout' ? 'staged_scout' : (stage === 'add' ? 'staged_add' : undefined),
       };
       void pushHistory(record);
       void broadcastToTabs({ type: 'bg:xsniper:buy', record });
 
-      if (input.strategy?.autoSellEnabled && entryPriceUsd != null && entryPriceUsd > 0) {
+      if (stage !== 'scout' && input.strategy?.autoSellEnabled && entryPriceUsd != null && entryPriceUsd > 0) {
         try {
           await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
           await placeAutoSellOrdersIfEnabled(input.chainId, input.tokenAddress, tokenInfo, entryPriceUsd);
@@ -877,6 +1105,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       }
 
       console.log('XSniperTrade buy tx', (rsp as any)?.txHash ?? '');
+      return true;
     } finally {
       buyInFlight.delete(key);
     }
@@ -1029,6 +1258,133 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   };
 
   const deleteSellInFlight = new Set<string>();
+  const timeStopSellInFlight = new Set<string>();
+
+  const tryTimeStopSellOnce = async (input: {
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    percent: number;
+    pos: (typeof stagedPositions extends Map<any, infer V> ? V : never);
+    reason: 'time_stop' | 'staged_abort';
+  }) => {
+    const percent = Math.max(0, Math.min(100, Number(input.percent)));
+    if (!Number.isFinite(percent) || percent <= 0) return;
+    const bps = Math.floor(percent * 100);
+    if (!(bps > 0)) return;
+
+    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${bps}:${input.reason}`;
+    if (timeStopSellInFlight.has(dedupeKey)) return;
+    timeStopSellInFlight.add(dedupeKey);
+    try {
+      const now = Date.now();
+      const baseRecord: XSniperBuyRecord = {
+        id: `${now}-${Math.random().toString(16).slice(2)}`,
+        side: 'sell',
+        tsMs: now,
+        tweetAtMs: input.pos.tweetAtMs,
+        tweetUrl: input.pos.tweetUrl,
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        sellPercent: percent,
+        sellTokenAmountWei: undefined,
+        txHash: undefined,
+        dryRun: input.pos.dryRun,
+        tweetType: input.pos.tweetType,
+        channel: input.pos.channel,
+        signalId: input.pos.signalId,
+        signalEventId: input.pos.signalEventId,
+        signalTweetId: input.pos.signalTweetId,
+        reason: input.reason,
+      };
+
+      if (input.pos.dryRun) {
+        void pushHistory(baseRecord);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record: baseRecord });
+        return;
+      }
+
+      const status = await WalletService.getStatus();
+      if (status.locked || !status.address) {
+        const record = { ...baseRecord, dryRun: false, reason: 'wallet_locked' };
+        void pushHistory(record);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+        return;
+      }
+
+      const tokenInfo =
+        (await fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ??
+        (await buildGenericTokenInfo(input.chainId, input.tokenAddress));
+      if (!tokenInfo) {
+        const record = { ...baseRecord, dryRun: false, reason: 'token_info_missing' };
+        void pushHistory(record);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+        return;
+      }
+
+      const settings = await SettingsService.get();
+      const isTurbo = (settings as any).chains?.[input.chainId]?.executionMode === 'turbo';
+      let balanceWei = 0n;
+      try {
+        balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, status.address));
+      } catch {
+        balanceWei = 0n;
+      }
+
+      if (balanceWei <= 0n) {
+        const record = { ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' };
+        void pushHistory(record);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+        return;
+      }
+
+      let amountWei = (balanceWei * BigInt(bps)) / 10000n;
+      if (amountWei > balanceWei) amountWei = balanceWei;
+      const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
+      const isInnerFourMeme = !!(tokenInfo as any)?.launchpad && platform.includes('fourmeme') && (tokenInfo as any).launchpad_status !== 1;
+      if (!isTurbo && isInnerFourMeme && amountWei > 0n) {
+        amountWei = (amountWei / 1000000000n) * 1000000000n;
+      }
+      if (!isTurbo && amountWei <= 0n) {
+        const record = { ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'invalid_amount' };
+        void pushHistory(record);
+        void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+        return;
+      }
+
+      try {
+        await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
+      } catch {}
+      try {
+        await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
+      } catch {}
+      const rsp = await TradeService.sell({
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        tokenAmountWei: amountWei.toString(),
+        tokenInfo,
+        sellPercentBps: bps,
+      } as any);
+      void broadcastToActiveTabs({
+        type: 'bg:tradeSuccess',
+        source: 'xsniper',
+        side: 'sell',
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        txHash: (rsp as any)?.txHash,
+      });
+
+      const record: XSniperBuyRecord = {
+        ...baseRecord,
+        dryRun: false,
+        sellTokenAmountWei: amountWei.toString(),
+        txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
+      };
+      void pushHistory(record);
+      void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+    } finally {
+      timeStopSellInFlight.delete(dedupeKey);
+    }
+  };
 
   const tryDeleteTweetSellOnce = async (input: {
     chainId: number;
@@ -1208,7 +1564,29 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       const picked = pickTokensToBuyFromSignal(signal, strategy);
       for (const { m } of picked) {
         if (!m?.tokenAddress) continue;
-        await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
+        if (strategy?.stagedEntryEnabled === true) {
+          const total = parseNumber(strategy?.buyAmountBnb) ?? 0;
+          const scoutPct = Math.max(1, Math.min(99, parseNumber(strategy?.stagedEntryScoutPercent) ?? 25));
+          const scoutAmount = total > 0 ? (total * scoutPct) / 100 : 0;
+          const addAmount = total > 0 ? Math.max(0, total - scoutAmount) : 0;
+          const openedAtMs = Date.now();
+          if (scoutAmount > 0 && addAmount > 0) {
+            await tryAutoBuyOnce({
+              chainId: settings.chainId,
+              tokenAddress: m.tokenAddress,
+              metrics: m,
+              strategy,
+              signal,
+              stage: 'scout',
+              amountBnbOverride: scoutAmount,
+              stagedPlan: { scoutAmountBnb: scoutAmount, addAmountBnb: addAmount, openedAtMs },
+            });
+          } else {
+            await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
+          }
+        } else {
+          await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
+        }
       }
     } catch (e) {
       console.error('XSniperTrade twitter signal handler error', e);
