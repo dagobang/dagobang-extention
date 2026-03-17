@@ -1,8 +1,8 @@
 import { SettingsService } from '@/services/settings';
-import type { TokenMetrics } from '@/services/xSniper/xSniperTradeUtils';
-import { parseNumber } from '@/services/xSniper/xSniperTradeUtils';
+import type { TokenMetrics } from '@/services/xSniper/engine/metrics';
+import { parseNumber } from '@/services/xSniper/engine/metrics';
 import type { XSniperBuyRecord } from '@/types/extention';
-import type { WsSnapshot } from '@/services/xSniper/xSniperTradeWs';
+import type { WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
 
 export type StagedPosition = {
   chainId: number;

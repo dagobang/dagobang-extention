@@ -83,6 +83,12 @@ export const getSignalTimeMs = (signal?: UnifiedTwitterSignal): number | null =>
   return null;
 };
 
+export const isRepostOrQuoteSignal = (signal?: UnifiedTwitterSignal | null) => {
+  if (!signal) return false;
+  const rawType = signal.tweetType === 'delete_post' ? (signal.sourceTweetType ?? signal.tweetType) : signal.tweetType;
+  return rawType === 'repost' || rawType === 'quote';
+};
+
 export const buildTweetUrl = (signal?: UnifiedTwitterSignal): string | undefined => {
   if (!signal) return undefined;
   const id = String(signal.tweetId ?? '').trim();
@@ -94,7 +100,13 @@ export const buildTweetUrl = (signal?: UnifiedTwitterSignal): string | undefined
   return `https://x.com/i/web/status/${id}`;
 };
 
-export const shouldBuyByConfig = (metrics: TokenMetrics, config: any, signalAtMs?: number | null, orderAtMs?: number | null) => {
+export const shouldBuyByConfig = (
+  metrics: TokenMetrics,
+  config: any,
+  signalAtMs?: number | null,
+  orderAtMs?: number | null,
+  options?: { skipTokenCreatedAtWindowCheck?: boolean },
+) => {
   if (!metrics || !config) return false;
   const marketCapUsd = sanitizeMarketCapUsd(metrics.marketCapUsd);
   const minMcap = parseKNumber(config.minMarketCapUsd);
@@ -136,14 +148,15 @@ export const shouldBuyByConfig = (metrics: TokenMetrics, config: any, signalAtMs
   const firstSeenAtMs = normalizeEpochMs(metrics.firstSeenAtMs);
   const createdAtMs = normalizeEpochMs(metrics.createdAtMs);
   const tokenAtMs = createdAtMs ?? firstSeenAtMs;
-  if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
-  if (tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
+  const shouldCheckTokenCreatedAtWindow = options?.skipTokenCreatedAtWindowCheck !== true;
+  if (shouldCheckTokenCreatedAtWindow && (minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
+  if (shouldCheckTokenCreatedAtWindow && tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
     const ref = normalizeEpochMs(signalAtMs);
     if (ref == null) return false;
-    const tokenAgeAtSignalMs = ref - tokenAtMs;
-    if (tokenAgeAtSignalMs < -10_000) return false;
-    if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000) return false;
-    if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000) return false;
+    const tokenCreatedDelayMs = tokenAtMs - ref;
+    if (tokenCreatedDelayMs < -10_000) return false;
+    if (minAgeSec != null && tokenCreatedDelayMs < minAgeSec * 1000) return false;
+    if (maxAgeSec != null && tokenCreatedDelayMs > maxAgeSec * 1000) return false;
   }
 
   const minOrderDelaySec = minAgeSec;

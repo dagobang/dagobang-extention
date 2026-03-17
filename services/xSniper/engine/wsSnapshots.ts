@@ -1,5 +1,5 @@
-import type { TokenMetrics } from '@/services/xSniper/xSniperTradeUtils';
-import { parseNumber } from '@/services/xSniper/xSniperTradeUtils';
+import type { TokenMetrics } from '@/services/xSniper/engine/metrics';
+import { parseNumber } from '@/services/xSniper/engine/metrics';
 
 export type WsSnapshot = {
   atMs: number;
@@ -170,4 +170,3 @@ export const computeWsConfirm = (
 
   return { pass, stats, windowMs };
 };
-

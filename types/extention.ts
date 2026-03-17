@@ -62,6 +62,8 @@ export type AutoTradeStrategyBase = {
 export type AutoTradeTwitterSnipeStrategy = AutoTradeStrategyBase & {
   dryRun?: boolean;
   deleteTweetSellPercent?: string;
+  deleteTweetPlaySound?: boolean;
+  deleteTweetSoundPreset?: TradeSuccessSoundPreset;
   wsConfirmEnabled?: boolean;
   wsConfirmWindowMs?: string;
   wsConfirmMinMcapChangePct?: string;

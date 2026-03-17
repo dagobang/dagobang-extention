@@ -395,6 +395,7 @@ export function XSniperContent({
   };
   const soundSelectValue =
     draft?.triggerSound.enabled === false ? SOUND_OFF : (draft?.triggerSound.preset ?? 'Boom');
+  const deleteTweetSoundPreset = (twitterSnipe?.deleteTweetSoundPreset ?? 'Handgun') as TradeSuccessSoundPreset;
 
   const sellByPercent = async (record: XSniperBuyRecord, pct: number) => {
     if (!settings) return;
@@ -815,6 +816,42 @@ export function XSniperContent({
                 />
                 <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">%</div>
               </div>
+            </div>
+            <label className="flex items-center gap-2 text-[12px] text-zinc-300">
+              <input
+                type="checkbox"
+                className="h-3 w-3 accent-amber-500"
+                checked={twitterSnipe?.deleteTweetPlaySound !== false}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ deleteTweetPlaySound: e.target.checked } as any)}
+              />
+              {tt('contentUi.autoTradeStrategy.deleteTweetPlaySound')}
+            </label>
+            <div className="flex items-center gap-2 text-[12px] text-zinc-300">
+              <div className="text-zinc-400">{tt('contentUi.autoTradeStrategy.deleteTweetSoundPreset')}</div>
+              <select
+                className="min-w-[130px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                value={deleteTweetSoundPreset}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ deleteTweetSoundPreset: e.target.value as TradeSuccessSoundPreset } as any)}
+              >
+                {presetOptions.map((preset) => (
+                  <option key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
+                onClick={() => {
+                  previewSound.ensureReady();
+                  previewSound.playPreset(deleteTweetSoundPreset);
+                }}
+                title={tt('contentUi.autoTradeStrategy.soundPreview')}
+              >
+                <Play size={14} />
+              </button>
             </div>
           </div>
         </div>

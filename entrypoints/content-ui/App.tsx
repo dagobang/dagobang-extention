@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { parseEther, zeroAddress } from 'viem';
-import type { BgGetStateResponse, Settings } from '@/types/extention';
+import type { BgGetStateResponse, Settings, TradeSuccessSoundPreset } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatBroadcastProvider } from '@/utils/format';
@@ -91,6 +91,13 @@ export default function App() {
     volume: settings?.tradeSuccessSoundVolume,
     buyPreset: autoTradeSoundPreset,
     sellPreset: autoTradeSoundPreset,
+  });
+  const deleteTweetSoundPreset = (settings?.autoTrade?.twitterSnipe?.deleteTweetSoundPreset ?? 'Handgun') as TradeSuccessSoundPreset;
+  const { ensureReady: ensureDeleteTweetAudioReady, playPreset: playDeleteTweetPreset } = useTradeSuccessSound({
+    enabled: true,
+    volume: settings?.tradeSuccessSoundVolume,
+    buyPreset: deleteTweetSoundPreset,
+    sellPreset: deleteTweetSoundPreset,
   });
 
   useEffect(() => {
@@ -602,6 +609,9 @@ export default function App() {
         return;
       }
       if (message.type === 'bg:xsniper:buy') {
+        const record = message?.record as any;
+        const isDeleteTweetSell = record?.side === 'sell' && record?.tweetType === 'delete_post';
+        if (isDeleteTweetSell) return;
         ensureAutoTradeAudioReady();
         playAutoTradePreset(autoTradeSoundPreset);
         return;
@@ -615,6 +625,22 @@ export default function App() {
     browser.runtime.onMessage.addListener(listener);
     return () => browser.runtime.onMessage.removeListener(listener);
   }, [siteInfo, address, ensureAutoTradeAudioReady, playAutoTradePreset, autoTradeSoundPreset, ensureTradeSuccessAudioReady, playTradeBuySound, playTradeSellSound]);
+
+  useEffect(() => {
+    const onTwitterSignal = (e: Event) => {
+      const signal = (e as CustomEvent<any>).detail as any;
+      if (!signal || signal.tweetType !== 'delete_post' && signal.tweetType !== 'unfollow') return;
+      const tokens = Array.isArray(signal.tokens) ? signal.tokens : [];
+      if (!tokens.length) return;
+      const deleteTweetPlaySound = settingsRef.current?.autoTrade?.twitterSnipe?.deleteTweetPlaySound !== false;
+      if (!deleteTweetPlaySound) return;
+      const preset = (settingsRef.current?.autoTrade?.twitterSnipe?.deleteTweetSoundPreset ?? 'Handgun') as TradeSuccessSoundPreset;
+      ensureDeleteTweetAudioReady();
+      playDeleteTweetPreset(preset);
+    };
+    window.addEventListener('dagobang-twitter-signal' as any, onTwitterSignal as any);
+    return () => window.removeEventListener('dagobang-twitter-signal' as any, onTwitterSignal as any);
+  }, [ensureDeleteTweetAudioReady, playDeleteTweetPreset]);
 
   useEffect(() => {
     refreshToken(true);

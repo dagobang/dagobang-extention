@@ -1,5 +1,5 @@
 import type { XSniperBuyRecord } from '@/types/extention';
-import type { WsSnapshot } from '@/services/xSniper/xSniperTradeWs';
+import type { WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
 
 export type DryRunAutoSellPos = {
   chainId: number;

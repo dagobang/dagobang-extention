@@ -269,6 +269,12 @@ export function validateSettings(input: Settings): Settings | null {
     timeStopMinPnlPct: clampStringNumber((inputTwitterSnipe as any).timeStopMinPnlPct, (defaultTwitterSnipe as any).timeStopMinPnlPct),
     timeStopSellPercent: clampStringNumber((inputTwitterSnipe as any).timeStopSellPercent, (defaultTwitterSnipe as any).timeStopSellPercent),
     deleteTweetSellPercent: clampStringNumber(inputTwitterSnipe.deleteTweetSellPercent, defaultTwitterSnipe.deleteTweetSellPercent),
+    deleteTweetPlaySound: typeof inputTwitterSnipe.deleteTweetPlaySound === 'boolean'
+      ? inputTwitterSnipe.deleteTweetPlaySound
+      : ((defaultTwitterSnipe as any).deleteTweetPlaySound ?? true),
+    deleteTweetSoundPreset: TRADE_SUCCESS_SOUND_PRESETS.includes((inputTwitterSnipe as any).deleteTweetSoundPreset)
+      ? (inputTwitterSnipe as any).deleteTweetSoundPreset
+      : (((defaultTwitterSnipe as any).deleteTweetSoundPreset ?? 'Handgun') as any),
     targetUsers: parseListInput(inputTwitterSnipe.targetUsers, defaultTwitterSnipe.targetUsers),
     interactionTypes: interactionTypes.length ? (interactionTypes as any) : defaultTwitterSnipe.interactionTypes,
   };

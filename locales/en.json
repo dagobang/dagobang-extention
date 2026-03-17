@@ -312,6 +312,8 @@
       "maxDevHold": "Max dev holding (%)",
       "blockIfDevSell": "Dev exit",
       "deleteTweetSellPercent": "Sell on delete",
+      "deleteTweetPlaySound": "Delete sell sound",
+      "deleteTweetSoundPreset": "Delete sound preset",
       "sectionAutoSell": "Auto Sell",
       "globalAutoSell": "Enable global auto sell",
       "globalAutoSellSimple": "Enable auto sell (uses AutoSell settings)",

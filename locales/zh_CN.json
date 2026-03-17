@@ -312,6 +312,8 @@
       "maxDevHold": "开发者最大持币占比（%）",
       "blockIfDevSell": "Dev清仓",
       "deleteTweetSellPercent": "删推卖出",
+      "deleteTweetPlaySound": "删推卖出音效",
+      "deleteTweetSoundPreset": "删推音色",
       "sectionAutoSell": "自动卖出",
       "globalAutoSell": "启用全局自动卖出",
       "globalAutoSellSimple": "启用自动卖出（策略沿用 AutoSell 设置）",

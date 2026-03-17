@@ -84,6 +84,8 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
     timeStopMinPnlPct: '-3',
     timeStopSellPercent: '100',
     deleteTweetSellPercent: '',
+    deleteTweetPlaySound: true,
+    deleteTweetSoundPreset: 'Handgun',
     targetUsers: [],
     interactionTypes: ['tweet', 'reply', 'quote', 'retweet', 'follow'],
   },
