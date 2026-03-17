@@ -52,6 +52,7 @@ type XSniperBuyRecord = {
   entryPriceUsd?: number;
   dryRun?: boolean;
   marketCapUsd?: number;
+  athMarketCapUsd?: number;
   liquidityUsd?: number;
   holders?: number;
   kol?: number;
@@ -244,6 +245,32 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     sellTx24h?: number;
     smartMoney?: number;
   }>>();
+  const dryRunAutoSellByPosKey = new Map<string, {
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    openedAtMs: number;
+    entryMcapUsd: number;
+    remainingBps: number;
+    takeProfits: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }>;
+    stopLosses: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }>;
+    trailing: null | {
+      enabled: boolean;
+      callbackPercent: number;
+      activationMode: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit';
+      active: boolean;
+      peakMcapUsd: number;
+    };
+    takeProfitTotal: number;
+    takeProfitExecuted: number;
+    executedIds: Set<string>;
+    tweetAtMs?: number;
+    tweetUrl?: string;
+    tweetType?: string;
+    channel?: string;
+    signalId?: string;
+    signalEventId?: string;
+    signalTweetId?: string;
+  }>();
   const stagedPositions = new Map<string, {
     chainId: number;
     tokenAddress: `0x${string}`;
@@ -263,6 +290,126 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   }>();
   const stagedAddTimers = new Map<string, number>();
   const timeStopTimers = new Map<string, number>();
+
+  const cleanupPosKey = (posKey: string) => {
+    stagedPositions.delete(posKey);
+    const tid = stagedAddTimers.get(posKey);
+    if (tid) clearInterval(tid as any);
+    stagedAddTimers.delete(posKey);
+    const t2 = timeStopTimers.get(posKey);
+    if (t2) clearTimeout(t2 as any);
+    timeStopTimers.delete(posKey);
+    dryRunAutoSellByPosKey.delete(posKey);
+  };
+
+  const tryPushDryRunSellRecord = async (input: {
+    posKey: string;
+    pos: (typeof dryRunAutoSellByPosKey extends Map<any, infer V> ? V : never);
+    sellPercentBps: number;
+    reason: 'dry_run_take_profit' | 'dry_run_stop_loss' | 'dry_run_trailing_stop';
+    marketCapUsd?: number;
+  }) => {
+    const sellPercentBps = Math.max(1, Math.min(10000, Math.floor(Number(input.sellPercentBps))));
+    const sellPercent = sellPercentBps / 100;
+    const now = Date.now();
+    const record: XSniperBuyRecord = {
+      id: `${now}-${Math.random().toString(16).slice(2)}`,
+      side: 'sell',
+      tsMs: now,
+      tweetAtMs: input.pos.tweetAtMs,
+      tweetUrl: input.pos.tweetUrl,
+      chainId: input.pos.chainId,
+      tokenAddress: input.pos.tokenAddress,
+      sellPercent,
+      dryRun: true,
+      marketCapUsd: input.marketCapUsd,
+      reason: input.reason,
+      tweetType: input.pos.tweetType,
+      channel: input.pos.channel,
+      signalId: input.pos.signalId,
+      signalEventId: input.pos.signalEventId,
+      signalTweetId: input.pos.signalTweetId,
+    };
+    void pushHistory(record);
+    void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+  };
+
+  const maybeEvaluateDryRunAutoSell = async (tokenAddress: `0x${string}`, nowMs: number) => {
+    const snapshots = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+    const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
+    const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
+    if (curMcap == null || curMcap <= 0) return;
+
+    const keys = Array.from(dryRunAutoSellByPosKey.keys()).filter((k) => k.endsWith(`:${tokenAddress.toLowerCase()}`));
+    for (const posKey of keys) {
+      const pos = dryRunAutoSellByPosKey.get(posKey);
+      if (!pos) continue;
+      if (!(pos.remainingBps > 0)) {
+        cleanupPosKey(posKey);
+        continue;
+      }
+
+      if (curMcap > pos.entryMcapUsd && pos.trailing?.enabled) {
+        const mode = pos.trailing.activationMode;
+        const active =
+          mode === 'immediate'
+            ? true
+            : mode === 'after_first_take_profit'
+              ? pos.takeProfitExecuted >= 1
+              : pos.takeProfitTotal > 0 && pos.takeProfitExecuted >= pos.takeProfitTotal;
+        pos.trailing.active = active;
+      }
+
+      if (pos.trailing?.enabled && pos.trailing.active) {
+        if (!(pos.trailing.peakMcapUsd > 0)) pos.trailing.peakMcapUsd = pos.entryMcapUsd;
+        if (curMcap > pos.trailing.peakMcapUsd) pos.trailing.peakMcapUsd = curMcap;
+        const trigger = pos.trailing.peakMcapUsd * (1 - pos.trailing.callbackPercent / 100);
+        if (Number.isFinite(trigger) && trigger > 0 && curMcap <= trigger) {
+          const sellBps = pos.remainingBps;
+          pos.remainingBps = 0;
+          await tryPushDryRunSellRecord({ posKey, pos, sellPercentBps: sellBps, reason: 'dry_run_trailing_stop', marketCapUsd: curMcap });
+          cleanupPosKey(posKey);
+          continue;
+        }
+      }
+
+      for (const r of pos.stopLosses) {
+        if (pos.executedIds.has(r.id)) continue;
+        if (!(curMcap <= r.triggerMcapUsd)) continue;
+        pos.executedIds.add(r.id);
+        const sellBps = Math.floor((pos.remainingBps * r.sellPercentBps) / 10000);
+        if (!(sellBps > 0)) continue;
+        pos.remainingBps = Math.max(0, pos.remainingBps - sellBps);
+        await tryPushDryRunSellRecord({ posKey, pos, sellPercentBps: sellBps, reason: 'dry_run_stop_loss', marketCapUsd: curMcap });
+        if (!(pos.remainingBps > 0)) {
+          cleanupPosKey(posKey);
+        }
+        break;
+      }
+      if (!dryRunAutoSellByPosKey.has(posKey)) continue;
+
+      const tps = pos.takeProfits.slice().sort((a, b) => a.triggerMcapUsd - b.triggerMcapUsd);
+      for (const r of tps) {
+        if (!(pos.remainingBps > 0)) break;
+        if (pos.executedIds.has(r.id)) continue;
+        if (!(curMcap >= r.triggerMcapUsd)) continue;
+        pos.executedIds.add(r.id);
+        pos.takeProfitExecuted += 1;
+        const sellBps = Math.floor((pos.remainingBps * r.sellPercentBps) / 10000);
+        if (!(sellBps > 0)) continue;
+        pos.remainingBps = Math.max(0, pos.remainingBps - sellBps);
+        await tryPushDryRunSellRecord({ posKey, pos, sellPercentBps: sellBps, reason: 'dry_run_take_profit', marketCapUsd: curMcap });
+      }
+      if (!(pos.remainingBps > 0)) {
+        cleanupPosKey(posKey);
+      }
+    }
+  };
+
+  async function onWsSnapshotUpdated(tokenAddress: `0x${string}`, nowMs: number) {
+    void maybeUpdateEvaluationsFromSnapshot(tokenAddress, nowMs);
+    void maybeEvaluateDryRunAutoSell(tokenAddress, nowMs);
+  }
 
   const shouldLogWsConfirmFail = (key: string, nowMs: number) => {
     const last = wsConfirmFailDedupe.get(key);
@@ -294,6 +441,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     const cutoff = atMsRaw - keepMs;
     const trimmed = next.filter((x) => x.atMs >= cutoff).slice(-80);
     wsSnapshotsByAddr.set(tokenAddress, trimmed);
+    void onWsSnapshotUpdated(tokenAddress, atMsRaw);
   };
 
   const getWsWindowStats = (tokenAddress: `0x${string}`, nowMs: number, windowMs: number) => {
@@ -453,7 +601,8 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         amountBnbOverride: pos.addAmountBnb,
       });
       if (ok) {
-        stagedPositions.set(posKey, { ...pos, addAmountBnb: 0 });
+        const latest = stagedPositions.get(posKey) ?? pos;
+        stagedPositions.set(posKey, { ...latest, addAmountBnb: 0 });
       }
     }, tickMs) as any;
     stagedAddTimers.set(posKey, timer as any);
@@ -529,8 +678,16 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       if (r.tokenAddress !== tokenAddress) continue;
       if (typeof r.tsMs !== 'number' || r.tsMs <= 0) continue;
       const ageMs = nowMs - r.tsMs;
-      if (ageMs < 10_000) continue;
       const entryMcap = typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) ? r.marketCapUsd : null;
+      if (curMcap != null) {
+        const prevAth = typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) ? r.athMarketCapUsd : entryMcap;
+        const nextAth = prevAth != null && Number.isFinite(prevAth) ? Math.max(prevAth, curMcap) : curMcap;
+        if (r.athMarketCapUsd !== nextAth) {
+          r.athMarketCapUsd = nextAth;
+          changed = true;
+        }
+      }
+      if (ageMs < 10_000) continue;
       const buildEval = () => {
         const pnlMcapPct = (() => {
           if (entryMcap == null || curMcap == null || entryMcap <= 0) return undefined;
@@ -890,8 +1047,9 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         void persistBoughtOnce();
         deps.onStateChanged();
 
+        const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+
         if (stage === 'scout' && input.stagedPlan) {
-          const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
           stagedPositions.set(posKey, {
             chainId: input.chainId,
             tokenAddress: input.tokenAddress,
@@ -912,7 +1070,6 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           scheduleStagedAddIfEnabled(posKey, input.strategy);
           scheduleTimeStopIfEnabled(posKey, input.strategy);
         } else if (stage === 'full' && input.strategy?.timeStopEnabled === true) {
-          const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
           stagedPositions.set(posKey, {
             chainId: input.chainId,
             tokenAddress: input.tokenAddress,
@@ -933,6 +1090,111 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           scheduleTimeStopIfEnabled(posKey, input.strategy);
         }
 
+        if (input.strategy?.autoSellEnabled === true && stage !== 'scout') {
+          try {
+            const settings = await SettingsService.get();
+            const cfg = (settings as any).advancedAutoSell as any;
+            if (cfg?.enabled) {
+              const rawEntryMcap = refreshedMetrics.marketCapUsd;
+              let entryMcapUsd =
+                typeof rawEntryMcap === 'number' && Number.isFinite(rawEntryMcap) && rawEntryMcap > 0 ? rawEntryMcap : null;
+
+              if (stage === 'add') {
+                const existing = stagedPositions.get(posKey);
+                const scoutAmt = existing?.dryRun === true ? Number(existing.scoutAmountBnb) : null;
+                const scoutMcap = existing?.dryRun === true ? Number(existing.entryMcapUsd) : null;
+                const addAmt = amountNumber;
+                const addMcap = entryMcapUsd;
+                if (
+                  scoutAmt != null &&
+                  scoutMcap != null &&
+                  addAmt > 0 &&
+                  addMcap != null &&
+                  Number.isFinite(scoutAmt) &&
+                  Number.isFinite(scoutMcap) &&
+                  scoutAmt > 0 &&
+                  scoutMcap > 0
+                ) {
+                  const denom = scoutAmt / scoutMcap + addAmt / addMcap;
+                  if (Number.isFinite(denom) && denom > 0) {
+                    entryMcapUsd = (scoutAmt + addAmt) / denom;
+                    if (existing) {
+                      stagedPositions.set(posKey, {
+                        ...existing,
+                        scoutAmountBnb: scoutAmt + addAmt,
+                        entryMcapUsd,
+                      });
+                    }
+                  }
+                }
+              }
+
+              if (entryMcapUsd != null && entryMcapUsd > 0) {
+                const rules = Array.isArray(cfg.rules) ? (cfg.rules as any[]) : [];
+                const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+                const takeProfits: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }> = [];
+                const stopLosses: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }> = [];
+                for (const r of rules) {
+                  const id = typeof r?.id === 'string' && r.id.trim() ? String(r.id).trim() : '';
+                  if (!id) continue;
+                  const rawTrigger = Number(r?.triggerPercent);
+                  const rawSell = Number(r?.sellPercent);
+                  if (!Number.isFinite(rawTrigger) || !Number.isFinite(rawSell)) continue;
+                  const baseTrigger = clamp(rawTrigger, -99.9, 100000);
+                  const triggerPercent = r?.type === 'stop_loss' ? -Math.abs(baseTrigger) : Math.abs(baseTrigger);
+                  const sellPercent = clamp(rawSell, 0, 100);
+                  const sellPercentBps = Math.round(sellPercent * 100);
+                  if (!(sellPercentBps > 0 && sellPercentBps <= 10000)) continue;
+                  const triggerMcapUsd = entryMcapUsd * (1 + triggerPercent / 100);
+                  if (!Number.isFinite(triggerMcapUsd) || triggerMcapUsd <= 0) continue;
+                  if (r?.type === 'stop_loss') stopLosses.push({ id, triggerMcapUsd, sellPercentBps, triggerPercent });
+                  else takeProfits.push({ id, triggerMcapUsd, sellPercentBps, triggerPercent });
+                }
+
+                const trailingRaw = cfg?.trailingStop as any;
+                const trailing =
+                  trailingRaw?.enabled === true
+                    ? {
+                        enabled: true,
+                        callbackPercent: Number.isFinite(Number(trailingRaw?.callbackPercent))
+                          ? clamp(Number(trailingRaw?.callbackPercent), 0.1, 99.9)
+                          : 15,
+                        activationMode:
+                          trailingRaw?.activationMode === 'after_first_take_profit' || trailingRaw?.activationMode === 'after_last_take_profit'
+                            ? trailingRaw.activationMode
+                            : 'immediate',
+                        active: false,
+                        peakMcapUsd: entryMcapUsd,
+                      }
+                    : null;
+
+                const meta = stagedPositions.get(posKey);
+                dryRunAutoSellByPosKey.set(posKey, {
+                  chainId: input.chainId,
+                  tokenAddress: input.tokenAddress,
+                  openedAtMs: meta?.openedAtMs ?? Date.now(),
+                  entryMcapUsd,
+                  remainingBps: 10000,
+                  takeProfits,
+                  stopLosses,
+                  trailing,
+                  takeProfitTotal: takeProfits.length,
+                  takeProfitExecuted: 0,
+                  executedIds: new Set<string>(),
+                  tweetAtMs: meta?.tweetAtMs ?? (getSignalTimeMs(input.signal) ?? undefined),
+                  tweetUrl: meta?.tweetUrl ?? buildTweetUrl(input.signal),
+                  tweetType: meta?.tweetType ?? (input.signal?.tweetType ? String(input.signal.tweetType) : undefined),
+                  channel: meta?.channel ?? (input.signal?.channel ? String(input.signal.channel) : undefined),
+                  signalId: meta?.signalId ?? (input.signal?.id ? String(input.signal.id) : undefined),
+                  signalEventId: meta?.signalEventId ?? (input.signal?.eventId ? String(input.signal.eventId) : undefined),
+                  signalTweetId: meta?.signalTweetId ?? (input.signal?.tweetId ? String(input.signal.tweetId) : undefined),
+                });
+              }
+            }
+          } catch {
+          }
+        }
+
         const now = Date.now();
         const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
         const tweetUrl = buildTweetUrl(input.signal);
@@ -951,6 +1213,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           entryPriceUsd: entryPriceUsd ?? undefined,
           dryRun: true,
           marketCapUsd: refreshedMetrics.marketCapUsd,
+          athMarketCapUsd: refreshedMetrics.marketCapUsd,
           liquidityUsd: refreshedMetrics.liquidityUsd,
           holders: refreshedMetrics.holders,
           kol: refreshedMetrics.kol,
@@ -1069,6 +1332,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         entryPriceUsd: entryPriceUsd ?? undefined,
         dryRun: false,
         marketCapUsd: refreshedMetrics.marketCapUsd,
+        athMarketCapUsd: refreshedMetrics.marketCapUsd,
         liquidityUsd: refreshedMetrics.liquidityUsd,
         holders: refreshedMetrics.holders,
         kol: refreshedMetrics.kol,
@@ -1199,7 +1463,6 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         const m = metricsFromUnifiedToken(t);
         if (m?.tokenAddress) {
           pushWsSnapshot(m.tokenAddress, m);
-          void maybeUpdateEvaluationsFromSnapshot(m.tokenAddress, now);
         }
         return { t, m };
       })
@@ -1300,6 +1563,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       if (input.pos.dryRun) {
         void pushHistory(baseRecord);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record: baseRecord });
+        cleanupPosKey(`${input.chainId}:${input.tokenAddress.toLowerCase()}`);
         return;
       }
 

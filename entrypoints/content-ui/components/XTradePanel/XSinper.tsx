@@ -54,6 +54,7 @@ type XSniperBuyRecord = {
   entryPriceUsd?: number;
   dryRun?: boolean;
   marketCapUsd?: number;
+  athMarketCapUsd?: number;
   liquidityUsd?: number;
   holders?: number;
   kol?: number;
@@ -203,6 +204,20 @@ export function XSniperContent({
     return () => {
       cancelled = true;
     };
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    const handler = (changes: Record<string, any>, areaName: string) => {
+      if (areaName !== 'local') return;
+      const change = changes?.[HISTORY_STORAGE_KEY];
+      if (!change) return;
+      const next = change.newValue;
+      if (!Array.isArray(next)) return;
+      setBuyHistory(next as XSniperBuyRecord[]);
+    };
+    browser.storage.onChanged.addListener(handler as any);
+    return () => browser.storage.onChanged.removeListener(handler as any);
   }, [active]);
 
   useEffect(() => {
@@ -1179,7 +1194,8 @@ export function XSniperContent({
                     const isSell = r.side === 'sell';
                     const orderMcap = typeof r.marketCapUsd === 'number' ? r.marketCapUsd : null;
                     const latestMcap = latest && typeof latest.marketCapUsd === 'number' ? (latest.marketCapUsd as number) : null;
-                    const athMcap = athMcapByAddr[String(r.tokenAddress).toLowerCase()] ?? null;
+                    const recordAthMcap = typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) ? r.athMarketCapUsd : null;
+                    const athMcap = recordAthMcap ?? (athMcapByAddr[String(r.tokenAddress).toLowerCase()] ?? null);
                     const pnlPct =
                       orderMcap != null && latestMcap != null && orderMcap > 0
                         ? ((latestMcap / orderMcap) - 1) * 100
