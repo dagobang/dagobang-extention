@@ -46,6 +46,22 @@ const parseKNumber = (v: any) => {
   return n * 1000;
 };
 
+const normalizeEpochMs = (v: unknown) => {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n >= 1e14) return Math.floor(n / 1000);
+  if (n < 1e11) return Math.floor(n * 1000);
+  return Math.floor(n);
+};
+
+const getSignalAtMs = (signal: UnifiedTwitterSignal) => {
+  const received = normalizeEpochMs((signal as any).receivedAtMs);
+  if (received != null) return received;
+  const ts = normalizeEpochMs((signal as any).ts);
+  if (ts != null) return ts;
+  return Date.now();
+};
+
 const getSignalInteraction = (signal: UnifiedTwitterSignal) => {
   const type = signal.tweetType === 'delete_post' ? ((signal as any).sourceTweetType ?? null) : signal.tweetType;
   if (type === 'repost') return 'retweet';
@@ -98,14 +114,9 @@ const buildNotBoughtReason = (input: {
   const mc = mcRaw != null && Number.isFinite(mcRaw) && mcRaw >= 3000 ? mcRaw : null;
   const holders = typeof token.holders === 'number' ? token.holders : null;
   const symbol = typeof token.tokenSymbol === 'string' ? token.tokenSymbol.trim() : '';
-  const createdAtMs = typeof token.createdAtMs === 'number' && token.createdAtMs > 0 ? token.createdAtMs : null;
-  const firstSeenAtMs = typeof token.firstSeenAtMs === 'number' && token.firstSeenAtMs > 0 ? token.firstSeenAtMs : null;
-  const signalAtMs =
-    typeof (input.signal as any).receivedAtMs === 'number'
-      ? (input.signal as any).receivedAtMs
-      : typeof (input.signal as any).ts === 'number'
-        ? (input.signal as any).ts
-        : Date.now();
+  const createdAtMs = normalizeEpochMs(token.createdAtMs);
+  const firstSeenAtMs = normalizeEpochMs(token.firstSeenAtMs);
+  const signalAtMs = getSignalAtMs(input.signal);
   const now = Date.now();
   const devHoldPctRaw = typeof token.devHoldPercent === 'number' && Number.isFinite(token.devHoldPercent) ? token.devHoldPercent : null;
   const tokenAgeMsForDev = now - (firstSeenAtMs ?? createdAtMs ?? signalAtMs);
@@ -145,7 +156,7 @@ const buildNotBoughtReason = (input: {
   if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return input.tt('contentUi.xMonitor.notBought.reason.createdAtMissing');
   if (tokenAtMs != null) {
     const tokenAgeAtSignalMs = signalAtMs - tokenAtMs;
-    if (tokenAgeAtSignalMs < 0) return input.tt('contentUi.xMonitor.notBought.reason.tokenCreatedAfterTweet');
+    if (tokenAgeAtSignalMs < -10_000) return input.tt('contentUi.xMonitor.notBought.reason.tokenCreatedAfterTweet');
     if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000)
       return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(tokenAgeAtSignalMs / 1000), Math.floor(minAgeSec)]);
     if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000)
@@ -194,8 +205,8 @@ const buildNotBoughtReason = (input: {
       const mc = mcRaw != null && Number.isFinite(mcRaw) && mcRaw >= 3000 ? mcRaw : null;
       const holders = typeof token.holders === 'number' ? token.holders : null;
       const symbol = typeof token.tokenSymbol === 'string' ? token.tokenSymbol.trim() : '';
-      const createdAtMs = typeof token.createdAtMs === 'number' && token.createdAtMs > 0 ? token.createdAtMs : null;
-      const firstSeenAtMs = typeof token.firstSeenAtMs === 'number' && token.firstSeenAtMs > 0 ? token.firstSeenAtMs : null;
+      const createdAtMs = normalizeEpochMs(token.createdAtMs);
+      const firstSeenAtMs = normalizeEpochMs(token.firstSeenAtMs);
       const devHoldPctRaw = typeof token.devHoldPercent === 'number' && Number.isFinite(token.devHoldPercent) ? token.devHoldPercent : null;
       const tokenAgeMsForDev = now - (firstSeenAtMs ?? createdAtMs ?? signalAtMs);
       const devHoldPct = devHoldPctRaw == null && tokenAgeMsForDev > 3000 ? 0 : devHoldPctRaw;
@@ -223,7 +234,7 @@ const buildNotBoughtReason = (input: {
       if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
       if (tokenAtMs != null) {
         const tokenAgeAtSignalMs = signalAtMs - tokenAtMs;
-        if (tokenAgeAtSignalMs < 0) return false;
+        if (tokenAgeAtSignalMs < -10_000) return false;
         if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000) return false;
         if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000) return false;
       }
@@ -435,9 +446,9 @@ const normalizeSignalTokensForDisplay = (signal: UnifiedTwitterSignal): UnifiedS
       devBuyRatio: t.devBuyRatio,
       top10HoldRatio: t.top10HoldRatio,
       devTokenStatus: t.devTokenStatus,
-      createdAtMs: t.createdAtMs,
-      firstSeenAtMs: typeof (t as any).firstSeenAtMs === 'number' && (t as any).firstSeenAtMs > 0 ? (t as any).firstSeenAtMs : 0,
-      updatedAtMs: typeof (t as any).updatedAtMs === 'number' ? (t as any).updatedAtMs : signal.ts,
+      createdAtMs: normalizeEpochMs(t.createdAtMs) ?? 0,
+      firstSeenAtMs: normalizeEpochMs((t as any).firstSeenAtMs) ?? 0,
+      updatedAtMs: normalizeEpochMs((t as any).updatedAtMs) ?? getSignalAtMs(signal),
     }));
   return cleaned;
 };
@@ -610,7 +621,7 @@ export function XMonitorContent({
       map.set(id, entry as UnifiedTwitterSignal);
     }
     const nextIds = Array.from(map.values())
-      .sort((a, b) => (b.receivedAtMs ?? b.ts) - (a.receivedAtMs ?? a.ts))
+      .sort((a, b) => getSignalAtMs(b) - getSignalAtMs(a))
       .slice(0, 50)
       .map((x) => x.id);
     setSignalIds(nextIds);
@@ -624,7 +635,7 @@ export function XMonitorContent({
       const map = signalsRef.current;
       map.set(signal.id, signal);
       const nextIds = Array.from(map.values())
-        .sort((a, b) => (b.receivedAtMs ?? b.ts) - (a.receivedAtMs ?? a.ts))
+        .sort((a, b) => getSignalAtMs(b) - getSignalAtMs(a))
         .slice(0, 50)
         .map((x) => x.id);
       setSignalIds(nextIds);
@@ -772,7 +783,7 @@ export function XMonitorContent({
           <div>
             {virtualRange.top > 0 ? <div style={{ height: virtualRange.top }} /> : null}
             {visibleSignals.slice(virtualRange.start, virtualRange.end).map((signal) => {
-              const timeText = formatAgeShort(signal.receivedAtMs ?? signal.ts);
+              const timeText = formatAgeShort(getSignalAtMs(signal));
               const displayName = signal.userName || signal.userScreen || tt('contentUi.xMonitor.unknownUser');
               const handle = signal.userScreen ? `@${signal.userScreen}` : null;
               const followerText = formatCountShort(signal.userFollowers);

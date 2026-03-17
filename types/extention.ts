@@ -357,6 +357,53 @@ export type UnifiedTwitterSignal = {
   ts: number;
 };
 
+export type XSniperBuyRecord = {
+  id: string;
+  side?: 'buy' | 'sell';
+  tsMs: number;
+  tweetAtMs?: number;
+  tweetUrl?: string;
+  chainId: number;
+  tokenAddress: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  buyAmountBnb?: number;
+  sellPercent?: number;
+  sellTokenAmountWei?: string;
+  txHash?: string;
+  entryPriceUsd?: number;
+  dryRun?: boolean;
+  marketCapUsd?: number;
+  athMarketCapUsd?: number;
+  liquidityUsd?: number;
+  holders?: number;
+  kol?: number;
+  vol24hUsd?: number;
+  netBuy24hUsd?: number;
+  buyTx24h?: number;
+  sellTx24h?: number;
+  smartMoney?: number;
+  createdAtMs?: number;
+  devAddress?: string;
+  devHoldPercent?: number;
+  devHasSold?: boolean;
+  confirmWindowMs?: number;
+  confirmMcapChangePct?: number;
+  confirmHoldersDelta?: number;
+  confirmBuySellRatio?: number;
+  eval10s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
+  eval30s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
+  eval60s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
+  userScreen?: string;
+  userName?: string;
+  tweetType?: string;
+  channel?: string;
+  signalId?: string;
+  signalEventId?: string;
+  signalTweetId?: string;
+  reason?: string;
+};
+
 export type BgRequest =
   | { type: 'bg:ping' }
   | { type: 'bg:openPopup' }

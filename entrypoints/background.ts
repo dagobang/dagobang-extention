@@ -11,7 +11,7 @@ import {
 } from '@/services/limitOrders/store';
 import { debugLogTxError, extractRevertReasonFromError, serializeTxError, tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { createLimitOrderScanner } from './background/limitOrderScanner';
-import { createXSniperTrade } from '@/services/xSniperTrade';
+import { createXSniperTrade } from '@/services/xSniper/xSniperTrade';
 import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/limitOrders/executor';
 import type { BgRequest, LimitOrderScanStatus } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';

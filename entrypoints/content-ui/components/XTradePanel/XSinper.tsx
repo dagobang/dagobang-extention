@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, X } from 'lucide-react';
-import { TRADE_SUCCESS_SOUND_PRESETS, type AutoTradeConfig, type AutoTradeInteractionType, type Settings, type TradeSuccessSoundPreset } from '@/types/extention';
+import { TRADE_SUCCESS_SOUND_PRESETS, type AutoTradeConfig, type AutoTradeInteractionType, type Settings, type TradeSuccessSoundPreset, type XSniperBuyRecord } from '@/types/extention';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { defaultSettings } from '@/utils/defaults';
 import { call } from '@/utils/messaging';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import { browser } from 'wxt/browser';
-import { navigateToUrl, SiteInfo, parsePlatformTokenLink } from '@/utils/sites';
+import { SiteInfo } from '@/utils/sites';
 import { chainNames } from '@/constants/chains/chainName';
 import type { TokenInfo } from '@/types/token';
+import { clearXSniperHistory, XSNIPER_HISTORY_STORAGE_KEY } from '@/services/xSniper/xSniperHistory';
+import { XSniperHistoryView } from './XSniperHistoryView';
 
 type XSniperPanelProps = {
   siteInfo: SiteInfo
@@ -35,54 +37,6 @@ const interactionOptions: Array<{ value: AutoTradeInteractionType; labelKey: str
 ];
 
 const SOUND_OFF = '__off__';
-const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
-
-type XSniperBuyRecord = {
-  id: string;
-  side?: 'buy' | 'sell';
-  tsMs: number;
-  tweetAtMs?: number;
-  tweetUrl?: string;
-  chainId: number;
-  tokenAddress: string;
-  tokenSymbol?: string;
-  tokenName?: string;
-  buyAmountBnb?: number;
-  sellPercent?: number;
-  sellTokenAmountWei?: string;
-  txHash?: string;
-  entryPriceUsd?: number;
-  dryRun?: boolean;
-  marketCapUsd?: number;
-  athMarketCapUsd?: number;
-  liquidityUsd?: number;
-  holders?: number;
-  kol?: number;
-  vol24hUsd?: number;
-  netBuy24hUsd?: number;
-  buyTx24h?: number;
-  sellTx24h?: number;
-  smartMoney?: number;
-  createdAtMs?: number;
-  devAddress?: string;
-  devHoldPercent?: number;
-  devHasSold?: boolean;
-  confirmWindowMs?: number;
-  confirmMcapChangePct?: number;
-  confirmHoldersDelta?: number;
-  confirmBuySellRatio?: number;
-  eval10s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
-  eval30s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
-  eval60s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
-  userScreen?: string;
-  userName?: string;
-  tweetType?: string;
-  channel?: string;
-  signalId?: string;
-  signalEventId?: string;
-  signalTweetId?: string;
-  reason?: string;
-};
 
 const cloneAutoTrade = (value: AutoTradeConfig | null) => {
   if (!value) return null;
@@ -112,16 +66,6 @@ const parseList = (value: string) =>
     .flatMap((x) => x.split(/\s+/))
     .map((x) => x.trim())
     .filter(Boolean);
-
-const buildTweetUrlFallback = (record: XSniperBuyRecord): string => {
-  const id = String(record.signalTweetId ?? '').trim();
-  if (!/^\d{6,}$/.test(id)) return '';
-  const user = String(record.userScreen ?? '')
-    .trim()
-    .replace(/^@/, '');
-  if (user) return `https://x.com/${encodeURIComponent(user)}/status/${id}`;
-  return `https://x.com/i/web/status/${id}`;
-};
 
 export function XSniperContent({
   siteInfo,
@@ -163,6 +107,38 @@ export function XSniperContent({
   const [athMcapByAddr, setAthMcapByAddr] = useState<Record<string, number>>({});
   const [sellingKey, setSellingKey] = useState<string | null>(null);
 
+  const historyGroups = useMemo(() => {
+    const normalizeAddr = (addr: string) => String(addr || '').trim().toLowerCase();
+    const groups = new Map<string, { key: string; latestTsMs: number; records: XSniperBuyRecord[] }>();
+    for (const r of buyHistory) {
+      if (!r || typeof r.chainId !== 'number' || !r.tokenAddress) continue;
+      const addr = normalizeAddr(r.tokenAddress);
+      if (!addr) continue;
+      const dryRun = r.dryRun === true;
+      const key = `${dryRun ? 'dry:' : ''}${r.chainId}:${addr}`;
+      const ts = typeof r.tsMs === 'number' && Number.isFinite(r.tsMs) ? r.tsMs : 0;
+      const existing = groups.get(key);
+      if (!existing) {
+        groups.set(key, { key, latestTsMs: ts, records: [r] });
+      } else {
+        existing.records.push(r);
+        if (ts > existing.latestTsMs) existing.latestTsMs = ts;
+      }
+    }
+    const list = Array.from(groups.values()).sort((a, b) => b.latestTsMs - a.latestTsMs);
+    return list
+      .map((g) => {
+        const sorted = g.records.slice().sort((a, b) => (Number(b.tsMs) || 0) - (Number(a.tsMs) || 0));
+        const parent =
+          sorted.find((x) => x && x.side !== 'sell' && x.reason !== 'staged_scout' && x.reason !== 'staged_add' && x.reason !== 'ws_confirm_failed') ??
+          sorted.find((x) => x && x.side !== 'sell' && x.reason !== 'ws_confirm_failed') ??
+          sorted[0];
+        if (!parent) return null;
+        return { key: g.key, parent, children: sorted.filter((x) => x !== parent) };
+      })
+      .filter(Boolean) as Array<{ key: string; parent: XSniperBuyRecord; children: XSniperBuyRecord[] }>;
+  }, [buyHistory]);
+
   useEffect(() => {
     if (!active) return;
     if (isDirty) return;
@@ -193,8 +169,8 @@ export function XSniperContent({
     let cancelled = false;
     void (async () => {
       try {
-        const res = await browser.storage.local.get(HISTORY_STORAGE_KEY);
-        const raw = (res as any)?.[HISTORY_STORAGE_KEY];
+        const res = await browser.storage.local.get(XSNIPER_HISTORY_STORAGE_KEY);
+        const raw = (res as any)?.[XSNIPER_HISTORY_STORAGE_KEY];
         const list = Array.isArray(raw) ? (raw as XSniperBuyRecord[]) : [];
         if (!cancelled) setBuyHistory(list);
       } catch {
@@ -210,7 +186,7 @@ export function XSniperContent({
     if (!active) return;
     const handler = (changes: Record<string, any>, areaName: string) => {
       if (areaName !== 'local') return;
-      const change = changes?.[HISTORY_STORAGE_KEY];
+      const change = changes?.[XSNIPER_HISTORY_STORAGE_KEY];
       if (!change) return;
       const next = change.newValue;
       if (!Array.isArray(next)) return;
@@ -1134,271 +1110,30 @@ export function XSniperContent({
           </div>
         ) : null}
         {view === 'history' ? (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.snipeHistoryTitle')}</div>
-            <button
-              type="button"
-              className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-              disabled={!canEdit || buyHistory.length === 0}
-              onClick={async () => {
+          <XSniperHistoryView
+            siteInfo={siteInfo}
+            settings={settings}
+            isUnlocked={isUnlocked}
+            canEdit={canEdit}
+            tt={tt}
+            buyHistory={buyHistory}
+            historyGroups={historyGroups}
+            latestTokenByAddr={latestTokenByAddr}
+            athMcapByAddr={athMcapByAddr}
+            sellingKey={sellingKey}
+            onSellByPercent={(record, pct) => {
+              void sellByPercent(record, pct);
+            }}
+            onClearHistory={() => {
+              void (async () => {
                 try {
-                  await browser.storage.local.set({ [HISTORY_STORAGE_KEY]: [] } as any);
+                  await clearXSniperHistory();
                 } finally {
                   setBuyHistory([]);
                 }
-              }}
-            >
-              {tt('contentUi.autoTradeStrategy.snipeHistoryClear')}
-            </button>
-          </div>
-          {buyHistory.length ? (
-            <div className="rounded-md border border-zinc-800 bg-zinc-900/30 px-3 py-2 text-[11px] text-zinc-400">
-              {(() => {
-                const list = buyHistory.filter((x) => x && x.side !== 'sell');
-                const total = list.length;
-                const dry = list.filter((x) => x.dryRun === true).length;
-                const confirmFail = list.filter((x) => x.reason === 'ws_confirm_failed').length;
-                const collect = (key: 'eval10s' | 'eval30s' | 'eval60s') =>
-                  list
-                    .map((x) => (x as any)[key]?.pnlMcapPct)
-                    .filter((v) => typeof v === 'number' && Number.isFinite(v)) as number[];
-                const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
-                const winRate = (arr: number[]) => (arr.length ? arr.filter((x) => x > 0).length / arr.length : null);
-                const a10 = collect('eval10s');
-                const a30 = collect('eval30s');
-                const a60 = collect('eval60s');
-                const fmtPct = (v: number | null) => (v == null ? '-' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`);
-                const fmtRate = (v: number | null) => (v == null ? '-' : `${(v * 100).toFixed(1)}%`);
-                return (
-                  <div className="flex flex-wrap gap-x-3 gap-y-1">
-                    <span>记录 {total}</span>
-                    <span>Dry {dry}</span>
-                    <span>WS拒绝 {confirmFail}</span>
-                    <span>10s 平均 {fmtPct(avg(a10))} 胜率 {fmtRate(winRate(a10))}</span>
-                    <span>30s 平均 {fmtPct(avg(a30))} 胜率 {fmtRate(winRate(a30))}</span>
-                    <span>60s 平均 {fmtPct(avg(a60))} 胜率 {fmtRate(winRate(a60))}</span>
-                  </div>
-                );
-              })()}
-            </div>
-          ) : null}
-          {buyHistory.length === 0 ? (
-            <div className="text-[12px] text-zinc-500">{tt('contentUi.autoTradeStrategy.snipeHistoryEmpty')}</div>
-          ) : (
-            <div className="space-y-2">
-              {buyHistory.slice(0, 20).map((r) => (
-                <div key={r.id} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-                  {(() => {
-                    const latest = latestTokenByAddr[String(r.tokenAddress).toLowerCase()] ?? null;
-                    const isSell = r.side === 'sell';
-                    const orderMcap = typeof r.marketCapUsd === 'number' ? r.marketCapUsd : null;
-                    const latestMcap = latest && typeof latest.marketCapUsd === 'number' ? (latest.marketCapUsd as number) : null;
-                    const recordAthMcap = typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) ? r.athMarketCapUsd : null;
-                    const athMcap = recordAthMcap ?? (athMcapByAddr[String(r.tokenAddress).toLowerCase()] ?? null);
-                    const pnlPct =
-                      orderMcap != null && latestMcap != null && orderMcap > 0
-                        ? ((latestMcap / orderMcap) - 1) * 100
-                        : null;
-                    const pnlText = pnlPct == null || !Number.isFinite(pnlPct) ? '-' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
-                    const pnlClass =
-                      pnlPct == null || !Number.isFinite(pnlPct)
-                        ? 'text-zinc-400'
-                        : pnlPct >= 0
-                          ? 'text-emerald-300'
-                          : 'text-rose-300';
-                    const pnlAthPct =
-                      orderMcap != null && athMcap != null && Number.isFinite(athMcap) && orderMcap > 0
-                        ? ((athMcap / orderMcap) - 1) * 100
-                        : null;
-                    const pnlAthText =
-                      pnlAthPct == null || !Number.isFinite(pnlAthPct) ? '-' : `${pnlAthPct >= 0 ? '+' : ''}${pnlAthPct.toFixed(2)}%`;
-                    const pnlAthClass =
-                      pnlAthPct == null || !Number.isFinite(pnlAthPct)
-                        ? 'text-zinc-400'
-                        : pnlAthPct >= 0
-                          ? 'text-emerald-300'
-                          : 'text-rose-300';
-                    const tokenLabel =
-                      (() => {
-                        const sym = r.tokenSymbol ? String(r.tokenSymbol).trim() : '';
-                        const name = r.tokenName ? String(r.tokenName).trim() : '';
-                        if (sym && name && sym !== name) return `${sym} (${name})`;
-                        return sym || name || shortAddr(r.tokenAddress);
-                      })();
-                    const tokenLink = siteInfo ? parsePlatformTokenLink(siteInfo, r.tokenAddress) : '';
-                    const entryPriceUsd = typeof r.entryPriceUsd === 'number' ? r.entryPriceUsd : null;
-                    const latestPriceUsd = latest && typeof latest.priceUsd === 'number' ? (latest.priceUsd as number) : null;
-                    const sellDisabledBase = !settings || !isUnlocked || r.dryRun === true;
-                    const sellingForRecord = sellingKey != null && sellingKey.startsWith(`${r.id}:`);
-                    const tweetAtMs = typeof r.tweetAtMs === 'number' && Number.isFinite(r.tweetAtMs) ? r.tweetAtMs : null;
-                    const tweetUrl = typeof r.tweetUrl === 'string' && r.tweetUrl.trim() ? r.tweetUrl.trim() : buildTweetUrlFallback(r);
-
-                    return (
-                      <div>
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-[12px] text-zinc-200">
-                            {r.dryRun ? (
-                              <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-200">
-                                {tt('contentUi.autoTradeStrategy.snipeHistoryDry')}
-                              </span>
-                            ) : null}
-                            <a
-                              href={tokenLink || '#'}
-                              className="hover:underline"
-                              onClick={(e) => {
-                                if (!tokenLink) return;
-                                e.preventDefault();
-                                e.stopPropagation();
-                                navigateToUrl(tokenLink);
-                              }}
-                            >
-                              {tokenLabel}
-                            </a>{' '}
-                            <span className="text-zinc-500">{shortAddr(r.tokenAddress)}</span>
-                          </div>
-                          <div className="text-right text-[11px] text-zinc-500">
-                            <div>{formatTs(r.tsMs)}</div>
-                            {tweetAtMs != null ? (
-                              <div>
-                                {tt('contentUi.autoTradeStrategy.snipeHistoryTweet')}: {' '}
-                                {tweetUrl ? (
-                                  <a
-                                    href={tweetUrl}
-                                    className="text-zinc-400 hover:underline"
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      navigateToUrl(tweetUrl);
-                                    }}
-                                  >
-                                    {formatTs(tweetAtMs)}
-                                  </a>
-                                ) : (
-                                  <span className="text-zinc-400">{formatTs(tweetAtMs)}</span>
-                                )}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                        <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-zinc-400">
-                          <div>
-                            {isSell
-                              ? `${tt('contentUi.autoTradeStrategy.snipeHistorySellPercent')}: ${r.sellPercent == null ? '-' : `${r.sellPercent.toFixed(2)}%`}` 
-                              : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnb(r.buyAmountBnb)}`}
-                          </div>
-                          <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryPrice')}: {formatUsd(entryPriceUsd)}
-                            {latestPriceUsd != null ? <span className="text-zinc-500"> → {formatUsd(latestPriceUsd)}</span> : null}
-                          </div>
-                          <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')}: {formatCompact(r.marketCapUsd)}
-                            {latestMcap != null ? <span className="text-zinc-500"> → {formatCompact(latestMcap)}</span> : null}
-                          </div>
-                          <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')} ATH: {athMcap == null ? '-' : formatCompact(athMcap)}
-                          </div>
-                          <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryHolders')}: {formatCompact(r.holders)}
-                            {latest && typeof latest.holders === 'number' ? (
-                              <span className="text-zinc-500"> → {formatCompact(latest.holders)}</span>
-                            ) : null}
-                          </div>
-                          <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryDevHold')}:{' '}
-                            {r.devHoldPercent == null ? '-' : `${r.devHoldPercent.toFixed(2)}%`}
-                            {latest && typeof latest.devHoldPercent === 'number' ? (
-                              <span className="text-zinc-500"> → {latest.devHoldPercent.toFixed(2)}%</span>
-                            ) : null}
-                          </div>
-                          <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryDevSold')}:{' '}
-                            {r.devHasSold === true ? 'Y' : r.devHasSold === false ? 'N' : '-'}
-                          </div>
-                          <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryKol')}: {formatCompact(r.kol)}
-                            {latest && typeof latest.kol === 'number' ? (
-                              <span className="text-zinc-500"> → {formatCompact(latest.kol)}</span>
-                            ) : null}
-                          </div>
-                          <div>
-                            24h 成交额: {formatCompact((r as any).vol24hUsd)}
-                          </div>
-                          <div>
-                            24h 净买入: {formatCompact((r as any).netBuy24hUsd)}
-                          </div>
-                          <div>
-                            24h 买卖: {typeof (r as any).buyTx24h === 'number' ? (r as any).buyTx24h : '-'} / {typeof (r as any).sellTx24h === 'number' ? (r as any).sellTx24h : '-'}
-                            {typeof (r as any).buyTx24h === 'number' && typeof (r as any).sellTx24h === 'number' && (r as any).sellTx24h > 0 ? (
-                              <span className="text-zinc-500"> (b/s {((r as any).buyTx24h / (r as any).sellTx24h).toFixed(2)})</span>
-                            ) : null}
-                          </div>
-                          <div>
-                            聪明钱: {typeof (r as any).smartMoney === 'number' ? (r as any).smartMoney : '-'}
-                          </div>
-                          <div className={pnlClass}>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryPnlMcap')}: {pnlText}
-                          </div>
-                          <div className={pnlAthClass}>
-                            PNL(ATH): {pnlAthText}
-                          </div>
-                          <div>
-                            {tt('contentUi.autoTradeStrategy.snipeHistoryUser')}: {r.userScreen ? String(r.userScreen) : '-'}
-                          </div>
-                          <div>
-                            WS确认: {typeof (r as any).confirmWindowMs === 'number' && (r as any).confirmWindowMs > 0 ? `${(r as any).confirmWindowMs}ms` : '-'}{' '}
-                            {typeof (r as any).confirmMcapChangePct === 'number' ? (
-                              <span className="text-zinc-500">ΔMC {(r as any).confirmMcapChangePct >= 0 ? '+' : ''}{(r as any).confirmMcapChangePct.toFixed(2)}%</span>
-                            ) : null}
-                            {typeof (r as any).confirmHoldersDelta === 'number' ? (
-                              <span className="text-zinc-500"> ΔHD {(r as any).confirmHoldersDelta >= 0 ? '+' : ''}{(r as any).confirmHoldersDelta.toFixed(0)}</span>
-                            ) : null}
-                            {typeof (r as any).confirmBuySellRatio === 'number' ? (
-                              <span className="text-zinc-500"> b/s {(r as any).confirmBuySellRatio.toFixed(2)}</span>
-                            ) : null}
-                          </div>
-                          <div>
-                            10/30/60s: {(r as any).eval10s?.pnlMcapPct == null ? '-' : `${(r as any).eval10s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval10s.pnlMcapPct.toFixed(2)}%`}{' '}
-                            / {(r as any).eval30s?.pnlMcapPct == null ? '-' : `${(r as any).eval30s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval30s.pnlMcapPct.toFixed(2)}%`}{' '}
-                            / {(r as any).eval60s?.pnlMcapPct == null ? '-' : `${(r as any).eval60s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval60s.pnlMcapPct.toFixed(2)}%`}
-                          </div>
-                          {r.reason ? (
-                            <div className="col-span-2 text-[11px] text-amber-200/90">
-                              reason: {String(r.reason)}
-                            </div>
-                          ) : null}
-                        </div>
-                        {!isSell ? (
-                          <div className="mt-2 grid grid-cols-4 gap-2">
-                            {[10, 25, 50, 100].map((pct) => {
-                              const key = `${r.id}:${pct}`;
-                              const busy = sellingKey === key || sellingForRecord;
-                              return (
-                                <button
-                                  key={pct}
-                                  type="button"
-                                  className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-200 hover:border-zinc-500 disabled:opacity-50"
-                                  disabled={sellDisabledBase || busy}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    void sellByPercent(r, pct);
-                                  }}
-                                >
-                                  {pct}%
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })()}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+              })();
+            }}
+          />
         ) : null}
       </div>
 

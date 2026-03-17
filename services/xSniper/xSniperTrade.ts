@@ -5,7 +5,7 @@ import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
 import { defaultSettings } from '@/utils/defaults';
 import { chainNames } from '@/constants/chains/chainName';
-import type { UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
+import type { UnifiedSignalToken, UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { FourmemeAPI } from '@/services/api/fourmeme';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
@@ -13,282 +13,24 @@ import { TokenFlapService } from '@/services/token/flap';
 import { TokenService } from '@/services/token';
 import { buildStrategySellOrderInputs, buildStrategyTrailingSellOrderInputs } from '@/services/limitOrders/advancedAutoSell';
 import { cancelAllSellLimitOrdersForToken, createLimitOrder } from '@/services/limitOrders/store';
-
-type TokenMetrics = {
-  tokenAddress?: `0x${string}`;
-  tokenSymbol?: string;
-  marketCapUsd?: number;
-  liquidityUsd?: number;
-  holders?: number;
-  kol?: number;
-  vol24hUsd?: number;
-  netBuy24hUsd?: number;
-  buyTx24h?: number;
-  sellTx24h?: number;
-  smartMoney?: number;
-  createdAtMs?: number;
-  firstSeenAtMs?: number;
-  updatedAtMs?: number;
-  devAddress?: `0x${string}`;
-  devHoldPercent?: number;
-  devHasSold?: boolean;
-  priceUsd?: number;
-};
-
-type XSniperBuyRecord = {
-  id: string;
-  side?: 'buy' | 'sell';
-  tsMs: number;
-  tweetAtMs?: number;
-  tweetUrl?: string;
-  chainId: number;
-  tokenAddress: `0x${string}`;
-  tokenSymbol?: string;
-  tokenName?: string;
-  buyAmountBnb?: number;
-  sellPercent?: number;
-  sellTokenAmountWei?: string;
-  txHash?: `0x${string}`;
-  entryPriceUsd?: number;
-  dryRun?: boolean;
-  marketCapUsd?: number;
-  athMarketCapUsd?: number;
-  liquidityUsd?: number;
-  holders?: number;
-  kol?: number;
-  vol24hUsd?: number;
-  netBuy24hUsd?: number;
-  buyTx24h?: number;
-  sellTx24h?: number;
-  smartMoney?: number;
-  createdAtMs?: number;
-  devAddress?: `0x${string}`;
-  devHoldPercent?: number;
-  devHasSold?: boolean;
-  confirmWindowMs?: number;
-  confirmMcapChangePct?: number;
-  confirmHoldersDelta?: number;
-  confirmBuySellRatio?: number;
-  eval10s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
-  eval30s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
-  eval60s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
-  userScreen?: string;
-  userName?: string;
-  tweetType?: string;
-  channel?: string;
-  signalId?: string;
-  signalEventId?: string;
-  signalTweetId?: string;
-  reason?: string;
-};
-
-const parseNumber = (v: string | null | undefined) => {
-  if (!v) return null;
-  const n = Number(v.trim());
-  if (!Number.isFinite(n)) return null;
-  return n;
-};
-
-const parseKNumber = (v: string | null | undefined) => {
-  const n = parseNumber(v);
-  if (n == null) return null;
-  return n * 1000;
-};
-
-const sanitizeMarketCapUsd = (v: unknown) => {
-  if (typeof v !== 'number') return null;
-  if (!Number.isFinite(v)) return null;
-  return v >= 3000 ? v : null;
-};
-
-const computeTickerLen = (symbol: string) => {
-  let total = 0;
-  for (const ch of symbol) {
-    const cp = ch.codePointAt(0) ?? 0;
-    const isCjk =
-      (cp >= 0x3400 && cp <= 0x4dbf) ||
-      (cp >= 0x4e00 && cp <= 0x9fff) ||
-      (cp >= 0xf900 && cp <= 0xfaff) ||
-      (cp >= 0x20000 && cp <= 0x2a6df) ||
-      (cp >= 0x2a700 && cp <= 0x2b73f) ||
-      (cp >= 0x2b740 && cp <= 0x2b81f) ||
-      (cp >= 0x2b820 && cp <= 0x2ceaf) ||
-      (cp >= 0x2ceb0 && cp <= 0x2ebef) ||
-      (cp >= 0x2f800 && cp <= 0x2fa1f);
-    total += isCjk ? 2 : 1;
-  }
-  return total;
-};
-
-const normalizeAddress = (addr: string | null | undefined): `0x${string}` | null => {
-  if (!addr) return null;
-  const trimmed = addr.trim();
-  if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return null;
-  return trimmed as `0x${string}`;
-};
-
-const getSignalTimeMs = (signal?: UnifiedTwitterSignal): number | null => {
-  if (!signal) return null;
-  const received = typeof (signal as any).receivedAtMs === 'number' ? (signal as any).receivedAtMs : null;
-  if (received != null && Number.isFinite(received)) return received;
-  const ts = typeof (signal as any).ts === 'number' ? (signal as any).ts : null;
-  if (ts != null && Number.isFinite(ts)) return ts;
-  return null;
-};
-
-const buildTweetUrl = (signal?: UnifiedTwitterSignal): string | undefined => {
-  if (!signal) return undefined;
-  const id = String(signal.tweetId ?? '').trim();
-  if (!/^\d{6,}$/.test(id)) return undefined;
-  const user = String(signal.userScreen ?? '')
-    .trim()
-    .replace(/^@/, '');
-  if (user) return `https://x.com/${encodeURIComponent(user)}/status/${id}`;
-  return `https://x.com/i/web/status/${id}`;
-};
-
-const shouldBuyByConfig = (metrics: TokenMetrics, config: any, signalAtMs?: number | null, orderAtMs?: number | null) => {
-  if (!metrics || !config) return false;
-  const marketCapUsd = sanitizeMarketCapUsd(metrics.marketCapUsd);
-  const minMcap = parseKNumber(config.minMarketCapUsd);
-  const maxMcap = parseKNumber(config.maxMarketCapUsd);
-  if (minMcap != null && marketCapUsd == null) return false;
-  if (maxMcap != null && marketCapUsd == null) return false;
-  if (minMcap != null && marketCapUsd != null && marketCapUsd < minMcap) return false;
-  if (maxMcap != null && marketCapUsd != null && marketCapUsd > maxMcap) return false;
-
-  const minHolders = parseNumber(config.minHolders);
-  const maxHolders = parseNumber(config.maxHolders);
-  if (minHolders != null && metrics.holders == null) return false;
-  if (maxHolders != null && metrics.holders == null) return false;
-  if (minHolders != null && metrics.holders != null && metrics.holders < minHolders) return false;
-  if (maxHolders != null && metrics.holders != null && metrics.holders > maxHolders) return false;
-
-  const minKol = parseNumber(config.minKol);
-  const maxKol = parseNumber(config.maxKol);
-  if (minKol != null && metrics.kol == null) return false;
-  if (maxKol != null && metrics.kol == null) return false;
-  if (minKol != null && metrics.kol != null && metrics.kol < minKol) return false;
-  if (maxKol != null && metrics.kol != null && metrics.kol > maxKol) return false;
-
-  const minTickerLenRaw = parseNumber(config.minTickerLen);
-  const maxTickerLenRaw = parseNumber(config.maxTickerLen);
-  const minTickerLen = minTickerLenRaw != null ? Math.max(0, Math.floor(minTickerLenRaw)) : null;
-  const maxTickerLen = maxTickerLenRaw != null ? Math.max(0, Math.floor(maxTickerLenRaw)) : null;
-  if (minTickerLen != null || maxTickerLen != null) {
-    const symbol = typeof metrics.tokenSymbol === 'string' ? metrics.tokenSymbol.trim() : '';
-    if (!symbol) return false;
-    const len = computeTickerLen(symbol);
-    if (minTickerLen != null && len < minTickerLen) return false;
-    if (maxTickerLen != null && len > maxTickerLen) return false;
-  }
-
-  const minAgeSecRaw = parseNumber(config.minTokenAgeSeconds);
-  const maxAgeSec = parseNumber(config.maxTokenAgeSeconds);
-  const minAgeSec = minAgeSecRaw ?? (maxAgeSec != null ? 0 : null);
-  const firstSeenAtMs = typeof metrics.firstSeenAtMs === 'number' && metrics.firstSeenAtMs > 0 ? metrics.firstSeenAtMs : null;
-  const createdAtMs = typeof metrics.createdAtMs === 'number' && metrics.createdAtMs > 0 ? metrics.createdAtMs : null;
-  const tokenAtMs = createdAtMs ?? firstSeenAtMs;
-  if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
-  if (tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
-    const ref = typeof signalAtMs === 'number' && Number.isFinite(signalAtMs) ? signalAtMs : null;
-    if (ref == null) return false;
-    const tokenAgeAtSignalMs = ref - tokenAtMs;
-    if (tokenAgeAtSignalMs < 0) return false;
-    if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000) return false;
-    if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000) return false;
-  }
-
-  const minOrderDelaySec = minAgeSec;
-  const maxOrderDelaySec = maxAgeSec;
-  if (minOrderDelaySec != null || maxOrderDelaySec != null) {
-    const ref = typeof signalAtMs === 'number' && Number.isFinite(signalAtMs) ? signalAtMs : null;
-    const now = typeof orderAtMs === 'number' && Number.isFinite(orderAtMs) ? orderAtMs : Date.now();
-    if (ref == null) return false;
-    const orderDelayMs = now - ref;
-    if (orderDelayMs < 0) return false;
-    if (minOrderDelaySec != null && orderDelayMs < minOrderDelaySec * 1000) return false;
-    if (maxOrderDelaySec != null && orderDelayMs > maxOrderDelaySec * 1000) return false;
-  }
-
-  const minDevPct = parseNumber(config.minDevHoldPercent);
-  const maxDevPct = parseNumber(config.maxDevHoldPercent);
-  const devHoldPct = typeof metrics.devHoldPercent === 'number' && Number.isFinite(metrics.devHoldPercent) ? metrics.devHoldPercent : null;
-  if (minDevPct != null) {
-    if (devHoldPct == null) return false;
-    if (devHoldPct < minDevPct) return false;
-  }
-  if (maxDevPct != null) {
-    if (devHoldPct == null) return false;
-    if (devHoldPct > maxDevPct) return false;
-  }
-  if (config.blockIfDevSell && metrics.devHasSold === true) return false;
-  return true;
-};
+import { loadXSniperHistory, pushXSniperHistory, XSNIPER_HISTORY_LIMIT, XSNIPER_HISTORY_STORAGE_KEY } from '@/services/xSniper/xSniperHistory';
+import { type TokenMetrics, buildTweetUrl, getSignalTimeMs, normalizeAddress, normalizeEpochMs, parseKNumber, parseNumber, sanitizeMarketCapUsd, shouldBuyByConfig } from '@/services/xSniper/xSniperTradeUtils';
+import { computeWsConfirm as computeWsConfirmFromWs, getWsDrawdownPctSince as getWsDrawdownPctSinceFromWs, pushWsSnapshot as pushWsSnapshotFromWs, shouldLogWsConfirmFail as shouldLogWsConfirmFailFromWs, type WsSnapshot } from '@/services/xSniper/xSniperTradeWs';
+import { maybeEvaluateDryRunAutoSell as maybeEvaluateDryRunAutoSellFromMod, type DryRunAutoSellPos } from '@/services/xSniper/xSniperTradeDryRun';
+import { scheduleStagedAddIfEnabled as scheduleStagedAddIfEnabledFromMod, scheduleTimeStopIfEnabled as scheduleTimeStopIfEnabledFromMod, type StagedPosition } from '@/services/xSniper/xSniperTradeSchedulers';
+import { maybeUpdateXSniperHistoryEvaluations } from '@/services/xSniper/xSniperHistory';
 
 export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
   const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
-  const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
-  const HISTORY_LIMIT = 200;
 
   let boughtOnceLoaded = false;
   const boughtOnceAtMs = new Map<string, number>();
   const buyInFlight = new Set<string>();
   const wsConfirmFailDedupe = new Map<string, number>();
-  const wsSnapshotsByAddr = new Map<string, Array<{
-    atMs: number;
-    marketCapUsd?: number;
-    holders?: number;
-    vol24hUsd?: number;
-    netBuy24hUsd?: number;
-    buyTx24h?: number;
-    sellTx24h?: number;
-    smartMoney?: number;
-  }>>();
-  const dryRunAutoSellByPosKey = new Map<string, {
-    chainId: number;
-    tokenAddress: `0x${string}`;
-    openedAtMs: number;
-    entryMcapUsd: number;
-    remainingBps: number;
-    takeProfits: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }>;
-    stopLosses: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }>;
-    trailing: null | {
-      enabled: boolean;
-      callbackPercent: number;
-      activationMode: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit';
-      active: boolean;
-      peakMcapUsd: number;
-    };
-    takeProfitTotal: number;
-    takeProfitExecuted: number;
-    executedIds: Set<string>;
-    tweetAtMs?: number;
-    tweetUrl?: string;
-    tweetType?: string;
-    channel?: string;
-    signalId?: string;
-    signalEventId?: string;
-    signalTweetId?: string;
-  }>();
-  const stagedPositions = new Map<string, {
-    chainId: number;
-    tokenAddress: `0x${string}`;
-    dryRun: boolean;
-    openedAtMs: number;
-    scoutAmountBnb: number;
-    addAmountBnb: number;
-    lastMetrics?: TokenMetrics;
-    entryMcapUsd?: number;
-    tweetAtMs?: number;
-    tweetUrl?: string;
-    tweetType?: string;
-    channel?: string;
-    signalId?: string;
-    signalEventId?: string;
-    signalTweetId?: string;
-  }>();
+  const wsSnapshotsByAddr = new Map<string, WsSnapshot[]>();
+  const dryRunAutoSellByPosKey = new Map<string, DryRunAutoSellPos>();
+  const stagedPositions = new Map<string, StagedPosition>();
   const stagedAddTimers = new Map<string, number>();
   const timeStopTimers = new Map<string, number>();
 
@@ -303,310 +45,72 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     dryRunAutoSellByPosKey.delete(posKey);
   };
 
-  const tryPushDryRunSellRecord = async (input: {
-    posKey: string;
-    pos: (typeof dryRunAutoSellByPosKey extends Map<any, infer V> ? V : never);
-    sellPercentBps: number;
-    reason: 'dry_run_take_profit' | 'dry_run_stop_loss' | 'dry_run_trailing_stop';
-    marketCapUsd?: number;
-  }) => {
-    const sellPercentBps = Math.max(1, Math.min(10000, Math.floor(Number(input.sellPercentBps))));
-    const sellPercent = sellPercentBps / 100;
-    const now = Date.now();
-    const record: XSniperBuyRecord = {
-      id: `${now}-${Math.random().toString(16).slice(2)}`,
-      side: 'sell',
-      tsMs: now,
-      tweetAtMs: input.pos.tweetAtMs,
-      tweetUrl: input.pos.tweetUrl,
-      chainId: input.pos.chainId,
-      tokenAddress: input.pos.tokenAddress,
-      sellPercent,
-      dryRun: true,
-      marketCapUsd: input.marketCapUsd,
-      reason: input.reason,
-      tweetType: input.pos.tweetType,
-      channel: input.pos.channel,
-      signalId: input.pos.signalId,
-      signalEventId: input.pos.signalEventId,
-      signalTweetId: input.pos.signalTweetId,
-    };
-    void pushHistory(record);
+  const shouldLogWsConfirmFail = (key: string, nowMs: number) => shouldLogWsConfirmFailFromWs(wsConfirmFailDedupe, key, nowMs);
+
+  const emitRecord = (record: XSniperBuyRecord) => {
+    void pushXSniperHistory(record);
     void broadcastToTabs({ type: 'bg:xsniper:buy', record });
   };
 
-  const maybeEvaluateDryRunAutoSell = async (tokenAddress: `0x${string}`, nowMs: number) => {
-    const snapshots = wsSnapshotsByAddr.get(tokenAddress) ?? [];
-    const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
-    const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
-    if (curMcap == null || curMcap <= 0) return;
+  const computeWsConfirm = (tokenAddress: `0x${string}`, nowMs: number, strategy: any) =>
+    computeWsConfirmFromWs(wsSnapshotsByAddr, tokenAddress, nowMs, strategy);
 
-    const keys = Array.from(dryRunAutoSellByPosKey.keys()).filter((k) => k.endsWith(`:${tokenAddress.toLowerCase()}`));
-    for (const posKey of keys) {
-      const pos = dryRunAutoSellByPosKey.get(posKey);
-      if (!pos) continue;
-      if (!(pos.remainingBps > 0)) {
-        cleanupPosKey(posKey);
-        continue;
-      }
-
-      if (curMcap > pos.entryMcapUsd && pos.trailing?.enabled) {
-        const mode = pos.trailing.activationMode;
-        const active =
-          mode === 'immediate'
-            ? true
-            : mode === 'after_first_take_profit'
-              ? pos.takeProfitExecuted >= 1
-              : pos.takeProfitTotal > 0 && pos.takeProfitExecuted >= pos.takeProfitTotal;
-        pos.trailing.active = active;
-      }
-
-      if (pos.trailing?.enabled && pos.trailing.active) {
-        if (!(pos.trailing.peakMcapUsd > 0)) pos.trailing.peakMcapUsd = pos.entryMcapUsd;
-        if (curMcap > pos.trailing.peakMcapUsd) pos.trailing.peakMcapUsd = curMcap;
-        const trigger = pos.trailing.peakMcapUsd * (1 - pos.trailing.callbackPercent / 100);
-        if (Number.isFinite(trigger) && trigger > 0 && curMcap <= trigger) {
-          const sellBps = pos.remainingBps;
-          pos.remainingBps = 0;
-          await tryPushDryRunSellRecord({ posKey, pos, sellPercentBps: sellBps, reason: 'dry_run_trailing_stop', marketCapUsd: curMcap });
-          cleanupPosKey(posKey);
-          continue;
-        }
-      }
-
-      for (const r of pos.stopLosses) {
-        if (pos.executedIds.has(r.id)) continue;
-        if (!(curMcap <= r.triggerMcapUsd)) continue;
-        pos.executedIds.add(r.id);
-        const sellBps = Math.floor((pos.remainingBps * r.sellPercentBps) / 10000);
-        if (!(sellBps > 0)) continue;
-        pos.remainingBps = Math.max(0, pos.remainingBps - sellBps);
-        await tryPushDryRunSellRecord({ posKey, pos, sellPercentBps: sellBps, reason: 'dry_run_stop_loss', marketCapUsd: curMcap });
-        if (!(pos.remainingBps > 0)) {
-          cleanupPosKey(posKey);
-        }
-        break;
-      }
-      if (!dryRunAutoSellByPosKey.has(posKey)) continue;
-
-      const tps = pos.takeProfits.slice().sort((a, b) => a.triggerMcapUsd - b.triggerMcapUsd);
-      for (const r of tps) {
-        if (!(pos.remainingBps > 0)) break;
-        if (pos.executedIds.has(r.id)) continue;
-        if (!(curMcap >= r.triggerMcapUsd)) continue;
-        pos.executedIds.add(r.id);
-        pos.takeProfitExecuted += 1;
-        const sellBps = Math.floor((pos.remainingBps * r.sellPercentBps) / 10000);
-        if (!(sellBps > 0)) continue;
-        pos.remainingBps = Math.max(0, pos.remainingBps - sellBps);
-        await tryPushDryRunSellRecord({ posKey, pos, sellPercentBps: sellBps, reason: 'dry_run_take_profit', marketCapUsd: curMcap });
-      }
-      if (!(pos.remainingBps > 0)) {
-        cleanupPosKey(posKey);
-      }
-    }
-  };
+  const getWsDrawdownPctSince = (tokenAddress: `0x${string}`, sinceMs: number) =>
+    getWsDrawdownPctSinceFromWs(wsSnapshotsByAddr, tokenAddress, sinceMs);
 
   async function onWsSnapshotUpdated(tokenAddress: `0x${string}`, nowMs: number) {
-    void maybeUpdateEvaluationsFromSnapshot(tokenAddress, nowMs);
-    void maybeEvaluateDryRunAutoSell(tokenAddress, nowMs);
+    const snapshots = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+    const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
+    if (cur) {
+      void maybeUpdateXSniperHistoryEvaluations({
+        tokenAddress,
+        nowMs,
+        marketCapUsd: cur.marketCapUsd,
+        holders: cur.holders,
+      });
+    }
+    void maybeEvaluateDryRunAutoSellFromMod({
+      tokenAddress,
+      nowMs,
+      wsSnapshotsByAddr,
+      dryRunAutoSellByPosKey,
+      cleanupPosKey,
+      emitRecord,
+    });
   }
 
-  const shouldLogWsConfirmFail = (key: string, nowMs: number) => {
-    const last = wsConfirmFailDedupe.get(key);
-    if (typeof last === 'number' && Number.isFinite(last) && nowMs - last < 20_000) return false;
-    wsConfirmFailDedupe.set(key, nowMs);
-    if (wsConfirmFailDedupe.size > 800) {
-      const entries = Array.from(wsConfirmFailDedupe.entries()).sort((a, b) => a[1] - b[1]);
-      for (let i = 0; i < Math.min(200, entries.length); i++) wsConfirmFailDedupe.delete(entries[i][0]);
-    }
-    return true;
-  };
-
   const pushWsSnapshot = (tokenAddress: `0x${string}`, metrics: TokenMetrics) => {
-    const atMsRaw = typeof metrics.updatedAtMs === 'number' && metrics.updatedAtMs > 0 ? metrics.updatedAtMs : Date.now();
-    const list = wsSnapshotsByAddr.get(tokenAddress) ?? [];
-    const last = list.length ? list[list.length - 1] : null;
-    if (last && Math.abs(last.atMs - atMsRaw) < 200) return;
-    const next = list.concat({
-      atMs: atMsRaw,
-      marketCapUsd: metrics.marketCapUsd,
-      holders: metrics.holders,
-      vol24hUsd: metrics.vol24hUsd,
-      netBuy24hUsd: metrics.netBuy24hUsd,
-      buyTx24h: metrics.buyTx24h,
-      sellTx24h: metrics.sellTx24h,
-      smartMoney: metrics.smartMoney,
+    pushWsSnapshotFromWs({
+      tokenAddress,
+      metrics,
+      wsSnapshotsByAddr,
+      onUpdated: onWsSnapshotUpdated,
     });
-    const keepMs = 2 * 60 * 1000;
-    const cutoff = atMsRaw - keepMs;
-    const trimmed = next.filter((x) => x.atMs >= cutoff).slice(-80);
-    wsSnapshotsByAddr.set(tokenAddress, trimmed);
-    void onWsSnapshotUpdated(tokenAddress, atMsRaw);
-  };
-
-  const getWsWindowStats = (tokenAddress: `0x${string}`, nowMs: number, windowMs: number) => {
-    const list = wsSnapshotsByAddr.get(tokenAddress) ?? [];
-    if (!list.length) return null;
-    const cutoff = nowMs - windowMs;
-    const cur = list[list.length - 1];
-    let base: (typeof cur) | null = null;
-    let hasCoverage = false;
-    for (let i = list.length - 1; i >= 0; i--) {
-      const s = list[i];
-      if (s.atMs <= cutoff) {
-        base = s;
-        hasCoverage = true;
-        break;
-      }
-    }
-    if (!base) base = list[0] ?? null;
-    const mcapChangePct = (() => {
-      const c = Number(cur.marketCapUsd);
-      const b = Number(base?.marketCapUsd);
-      if (!Number.isFinite(c) || !Number.isFinite(b) || b <= 0) return null;
-      return ((c - b) / b) * 100;
-    })();
-    const holdersDelta = (() => {
-      const c = Number(cur.holders);
-      const b = Number(base?.holders);
-      if (!Number.isFinite(c) || !Number.isFinite(b)) return null;
-      return c - b;
-    })();
-    const buySellRatio = (() => {
-      const b = Number(cur.buyTx24h);
-      const s = Number(cur.sellTx24h);
-      if (!Number.isFinite(b) || !Number.isFinite(s)) return null;
-      if (s <= 0) return b > 0 ? 999 : null;
-      return b / s;
-    })();
-    return {
-      windowMs,
-      hasCoverage,
-      mcapChangePct,
-      holdersDelta,
-      buySellRatio,
-      vol24hUsd: typeof cur.vol24hUsd === 'number' && Number.isFinite(cur.vol24hUsd) ? cur.vol24hUsd : null,
-      netBuy24hUsd: typeof cur.netBuy24hUsd === 'number' && Number.isFinite(cur.netBuy24hUsd) ? cur.netBuy24hUsd : null,
-      smartMoney: typeof cur.smartMoney === 'number' && Number.isFinite(cur.smartMoney) ? cur.smartMoney : null,
-      snapshotAtMs: cur.atMs,
-      baseAtMs: base?.atMs ?? null,
-      marketCapUsd: cur.marketCapUsd,
-      holders: cur.holders,
-    };
-  };
-
-  const getWsDrawdownPctSince = (tokenAddress: `0x${string}`, sinceMs: number) => {
-    const list = wsSnapshotsByAddr.get(tokenAddress) ?? [];
-    if (!list.length) return null;
-    const cur = list[list.length - 1];
-    const curMcap = typeof cur.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
-    if (curMcap == null || curMcap <= 0) return null;
-    let ath = 0;
-    for (let i = list.length - 1; i >= 0; i--) {
-      const s = list[i];
-      if (s.atMs < sinceMs) break;
-      const m = typeof s.marketCapUsd === 'number' && Number.isFinite(s.marketCapUsd) ? s.marketCapUsd : 0;
-      if (m > ath) ath = m;
-    }
-    if (!(ath > 0)) return null;
-    return ((curMcap - ath) / ath) * 100;
   };
 
   const scheduleTimeStopIfEnabled = (posKey: string, strategy: any) => {
-    if (strategy?.timeStopEnabled !== true) return;
-    if (timeStopTimers.has(posKey)) return;
-    const seconds = Math.max(1, Math.min(3600, Math.floor(parseNumber(strategy?.timeStopSeconds) ?? 0)));
-    if (!(seconds > 0)) return;
-    const timer = setTimeout(async () => {
-      timeStopTimers.delete(posKey);
-      const pos = stagedPositions.get(posKey);
-      if (!pos) return;
-      const minPnlPct = parseNumber(strategy?.timeStopMinPnlPct) ?? 0;
-      const sellPct = Math.max(0, Math.min(100, parseNumber(strategy?.timeStopSellPercent) ?? 100));
-      const snaps = wsSnapshotsByAddr.get(pos.tokenAddress) ?? [];
-      const cur = snaps.length ? snaps[snaps.length - 1] : null;
-      const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
-      const entryMcap = typeof pos.entryMcapUsd === 'number' && Number.isFinite(pos.entryMcapUsd) ? pos.entryMcapUsd : null;
-      if (curMcap == null || entryMcap == null || entryMcap <= 0) return;
-      const pnlPct = ((curMcap - entryMcap) / entryMcap) * 100;
-      if (!(pnlPct <= minPnlPct)) {
-        stagedPositions.delete(posKey);
-        return;
-      }
-      stagedPositions.delete(posKey);
-      await tryTimeStopSellOnce({ chainId: pos.chainId, tokenAddress: pos.tokenAddress, percent: sellPct, pos, reason: 'time_stop' });
-    }, seconds * 1000) as any;
-    timeStopTimers.set(posKey, timer as any);
+    scheduleTimeStopIfEnabledFromMod({
+      posKey,
+      strategy,
+      stagedPositions,
+      timeStopTimers,
+      wsSnapshotsByAddr,
+      tryTimeStopSellOnce,
+    });
   };
 
   const scheduleStagedAddIfEnabled = (posKey: string, strategy: any) => {
-    if (strategy?.stagedEntryEnabled !== true) return;
-    if (stagedAddTimers.has(posKey)) return;
-    const minDelayMs = Math.max(0, Math.min(60_000, Math.floor(parseNumber(strategy?.stagedEntryMinDelayMs) ?? 0)));
-    const maxDelayMs = Math.max(500, Math.min(120_000, Math.floor(parseNumber(strategy?.stagedEntryMaxDelayMs) ?? 0)));
-    const maxDrawdownPct = Math.max(0, Math.min(99.9, Math.abs(parseNumber(strategy?.stagedEntryMaxDrawdownPct) ?? 0)));
-    const tickMs = 500;
-    const timer = setInterval(async () => {
-      const pos = stagedPositions.get(posKey);
-      if (!pos) {
-        const id = stagedAddTimers.get(posKey);
-        if (id) clearInterval(id as any);
-        stagedAddTimers.delete(posKey);
-        return;
-      }
-      const now = Date.now();
-      const ageMs = now - pos.openedAtMs;
-      if (ageMs < minDelayMs) return;
-      if (ageMs > maxDelayMs) {
-        const id = stagedAddTimers.get(posKey);
-        if (id) clearInterval(id as any);
-        stagedAddTimers.delete(posKey);
-        return;
-      }
-
-      if (maxDrawdownPct > 0) {
-        const dd = getWsDrawdownPctSince(pos.tokenAddress, pos.openedAtMs);
-        if (typeof dd === 'number' && Number.isFinite(dd) && dd <= -maxDrawdownPct) {
-          const id = stagedAddTimers.get(posKey);
-          if (id) clearInterval(id as any);
-          stagedAddTimers.delete(posKey);
-          stagedPositions.delete(posKey);
-          await tryTimeStopSellOnce({ chainId: pos.chainId, tokenAddress: pos.tokenAddress, percent: 100, pos, reason: 'staged_abort' });
-          return;
-        }
-      }
-
-      const confirm = computeWsConfirm(pos.tokenAddress, now, strategy);
-      if (!confirm.pass) return;
-
-      const id = stagedAddTimers.get(posKey);
-      if (id) clearInterval(id as any);
-      stagedAddTimers.delete(posKey);
-
-      const ok = await tryAutoBuyOnce({
-        chainId: pos.chainId,
-        tokenAddress: pos.tokenAddress,
-        metrics: (pos.lastMetrics ?? { tokenAddress: pos.tokenAddress }) as any,
-        strategy,
-        signal: {
-          ts: typeof pos.tweetAtMs === 'number' ? pos.tweetAtMs : pos.openedAtMs,
-          receivedAtMs: typeof pos.tweetAtMs === 'number' ? pos.tweetAtMs : pos.openedAtMs,
-          tweetType: pos.tweetType,
-          channel: pos.channel,
-          id: pos.signalId,
-          eventId: pos.signalEventId,
-          tweetId: pos.signalTweetId,
-        } as any,
-        stage: 'add',
-        amountBnbOverride: pos.addAmountBnb,
-      });
-      if (ok) {
-        const latest = stagedPositions.get(posKey) ?? pos;
-        stagedPositions.set(posKey, { ...latest, addAmountBnb: 0 });
-      }
-    }, tickMs) as any;
-    stagedAddTimers.set(posKey, timer as any);
+    scheduleStagedAddIfEnabledFromMod({
+      posKey,
+      strategy,
+      stagedPositions,
+      stagedAddTimers,
+      computeWsConfirm,
+      getWsDrawdownPctSince,
+      tryAutoBuyOnce,
+      tryTimeStopSellOnce,
+      emitRecord,
+    });
   };
 
   const loadBoughtOnceIfNeeded = async () => {
@@ -639,117 +143,6 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       await browser.storage.local.set({ [BOUGHT_ONCE_STORAGE_KEY]: obj } as any);
     } catch {
     }
-  };
-
-  const pushHistory = async (record: XSniperBuyRecord) => {
-    try {
-      const res = await browser.storage.local.get(HISTORY_STORAGE_KEY);
-      const raw = (res as any)?.[HISTORY_STORAGE_KEY];
-      const list = Array.isArray(raw) ? raw.slice() : [];
-      list.unshift(record);
-      await browser.storage.local.set({ [HISTORY_STORAGE_KEY]: list.slice(0, HISTORY_LIMIT) } as any);
-    } catch {
-    }
-  };
-
-  const loadHistory = async (): Promise<XSniperBuyRecord[]> => {
-    try {
-      const res = await browser.storage.local.get(HISTORY_STORAGE_KEY);
-      const raw = (res as any)?.[HISTORY_STORAGE_KEY];
-      return Array.isArray(raw) ? (raw as XSniperBuyRecord[]) : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const maybeUpdateEvaluationsFromSnapshot = async (tokenAddress: `0x${string}`, nowMs: number) => {
-    const snapshots = wsSnapshotsByAddr.get(tokenAddress) ?? [];
-    const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
-    if (!cur) return;
-    const curMcap = typeof cur.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
-    const curHolders = typeof cur.holders === 'number' && Number.isFinite(cur.holders) ? cur.holders : null;
-    if (curMcap == null && curHolders == null) return;
-    const res = await browser.storage.local.get(HISTORY_STORAGE_KEY);
-    const raw = (res as any)?.[HISTORY_STORAGE_KEY];
-    const historyList: XSniperBuyRecord[] = Array.isArray(raw) ? raw.slice() : [];
-    let changed = false;
-    for (let i = 0; i < historyList.length; i++) {
-      const r = historyList[i];
-      if (!r || r.side !== 'buy') continue;
-      if (r.tokenAddress !== tokenAddress) continue;
-      if (typeof r.tsMs !== 'number' || r.tsMs <= 0) continue;
-      const ageMs = nowMs - r.tsMs;
-      const entryMcap = typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) ? r.marketCapUsd : null;
-      if (curMcap != null) {
-        const prevAth = typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) ? r.athMarketCapUsd : entryMcap;
-        const nextAth = prevAth != null && Number.isFinite(prevAth) ? Math.max(prevAth, curMcap) : curMcap;
-        if (r.athMarketCapUsd !== nextAth) {
-          r.athMarketCapUsd = nextAth;
-          changed = true;
-        }
-      }
-      if (ageMs < 10_000) continue;
-      const buildEval = () => {
-        const pnlMcapPct = (() => {
-          if (entryMcap == null || curMcap == null || entryMcap <= 0) return undefined;
-          return ((curMcap - entryMcap) / entryMcap) * 100;
-        })();
-        return { atMs: nowMs, marketCapUsd: curMcap ?? undefined, holders: curHolders ?? undefined, pnlMcapPct };
-      };
-      if (ageMs >= 10_000 && !r.eval10s) {
-        r.eval10s = buildEval();
-        changed = true;
-      }
-      if (ageMs >= 30_000 && !r.eval30s) {
-        r.eval30s = buildEval();
-        changed = true;
-      }
-      if (ageMs >= 60_000 && !r.eval60s) {
-        r.eval60s = buildEval();
-        changed = true;
-      }
-    }
-    if (changed) {
-      await browser.storage.local.set({ [HISTORY_STORAGE_KEY]: historyList.slice(0, HISTORY_LIMIT) } as any);
-    }
-  };
-
-  const computeWsConfirm = (tokenAddress: `0x${string}`, nowMs: number, strategy: any) => {
-    const enabled = strategy?.wsConfirmEnabled !== false;
-    if (!enabled) return { pass: true, stats: null as any, windowMs: 0 };
-    const windowMs = Math.max(500, Math.min(60_000, parseNumber(strategy?.wsConfirmWindowMs) ?? 5000));
-    const stats = getWsWindowStats(tokenAddress, nowMs, windowMs);
-    const minMcapChangePct = parseNumber(strategy?.wsConfirmMinMcapChangePct) ?? 0;
-    const minHoldersDelta = parseNumber(strategy?.wsConfirmMinHoldersDelta) ?? 0;
-    const minBuySellRatio = parseNumber(strategy?.wsConfirmMinBuySellRatio) ?? 0;
-    const minNetBuy24hUsd = parseNumber(strategy?.wsConfirmMinNetBuy24hUsd) ?? 0;
-    const minVol24hUsd = parseNumber(strategy?.wsConfirmMinVol24hUsd) ?? 0;
-    const minSmartMoney = parseNumber(strategy?.wsConfirmMinSmartMoney) ?? 0;
-
-    const requireNumberAtLeast = (v: number | null | undefined, min: number) => {
-      if (!(min > 0)) return true;
-      if (typeof v !== 'number' || !Number.isFinite(v)) return false;
-      return v >= min;
-    };
-
-    if (!stats) {
-      const pass = !(minMcapChangePct > 0 || minHoldersDelta > 0 || minBuySellRatio > 0 || minNetBuy24hUsd > 0 || minVol24hUsd > 0 || minSmartMoney > 0);
-      return { pass, stats: null as any, windowMs };
-    }
-
-    if ((minMcapChangePct > 0 || minHoldersDelta > 0) && stats.hasCoverage !== true) {
-      return { pass: false, stats, windowMs };
-    }
-
-    const pass =
-      requireNumberAtLeast(stats.mcapChangePct, minMcapChangePct) &&
-      requireNumberAtLeast(stats.holdersDelta, minHoldersDelta) &&
-      requireNumberAtLeast(stats.buySellRatio, minBuySellRatio) &&
-      requireNumberAtLeast(stats.netBuy24hUsd, minNetBuy24hUsd) &&
-      requireNumberAtLeast(stats.vol24hUsd, minVol24hUsd) &&
-      requireNumberAtLeast(stats.smartMoney, minSmartMoney);
-
-    return { pass, stats, windowMs };
   };
 
   const broadcastToTabs = async (message: any) => {
@@ -1011,7 +404,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
               signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
               signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
             };
-            void pushHistory(record);
+            void pushXSniperHistory(record);
             void broadcastToTabs({ type: 'bg:xsniper:buy', record });
           }
         }
@@ -1240,7 +633,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
           reason: stage === 'scout' ? 'staged_scout' : (stage === 'add' ? 'staged_add' : undefined),
         };
-        void pushHistory(record);
+        void pushXSniperHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
         return true;
       }
@@ -1359,7 +752,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
         reason: stage === 'scout' ? 'staged_scout' : (stage === 'add' ? 'staged_add' : undefined),
       };
-      void pushHistory(record);
+      void pushXSniperHistory(record);
       void broadcastToTabs({ type: 'bg:xsniper:buy', record });
 
       if (stage !== 'scout' && input.strategy?.autoSellEnabled && entryPriceUsd != null && entryPriceUsd > 0) {
@@ -1401,10 +794,8 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     const tokenAddress = normalizeAddress(t.tokenAddress);
     if (!tokenAddress) return null;
     const now = Date.now();
-    const createdAtMsRaw = typeof (t as any).createdAtMs === 'number' ? (t as any).createdAtMs : undefined;
-    const firstSeenAtMsRaw = typeof (t as any).firstSeenAtMs === 'number' ? (t as any).firstSeenAtMs : undefined;
-    const createdAtMs = typeof createdAtMsRaw === 'number' && createdAtMsRaw > 0 ? createdAtMsRaw : undefined;
-    const firstSeenAtMs = typeof firstSeenAtMsRaw === 'number' && firstSeenAtMsRaw > 0 ? firstSeenAtMsRaw : undefined;
+    const createdAtMs = normalizeEpochMs((t as any).createdAtMs) ?? undefined;
+    const firstSeenAtMs = normalizeEpochMs((t as any).firstSeenAtMs) ?? undefined;
     const tokenAtMs = firstSeenAtMs ?? createdAtMs;
     const tokenAgeMsForDev = tokenAtMs != null ? now - tokenAtMs : null;
 
@@ -1430,7 +821,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       smartMoney: typeof (t as any).smartMoney === 'number' ? (t as any).smartMoney : undefined,
       createdAtMs,
       firstSeenAtMs,
-      updatedAtMs: typeof (t as any).updatedAtMs === 'number' && (t as any).updatedAtMs > 0 ? (t as any).updatedAtMs : undefined,
+      updatedAtMs: normalizeEpochMs((t as any).updatedAtMs) ?? undefined,
       devAddress: normalizeAddress((t as any).devAddress) ?? undefined,
       devHoldPercent,
       devHasSold: typeof (t as any).devHasSold === 'boolean'
@@ -1478,8 +869,8 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       const ma = typeof a.m?.marketCapUsd === 'number' ? a.m.marketCapUsd : 0;
       const mb = typeof b.m?.marketCapUsd === 'number' ? b.m.marketCapUsd : 0;
       if (mb !== ma) return mb - ma;
-      const ta = typeof (a.t as any).firstSeenAtMs === 'number' ? (a.t as any).firstSeenAtMs : 0;
-      const tb = typeof (b.t as any).firstSeenAtMs === 'number' ? (b.t as any).firstSeenAtMs : 0;
+      const ta = normalizeEpochMs((a.t as any).firstSeenAtMs) ?? 0;
+      const tb = normalizeEpochMs((b.t as any).firstSeenAtMs) ?? 0;
       return ta - tb;
     });
 
@@ -1497,7 +888,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       if (picked.length >= maxCount) break;
       const key = String(c.m!.tokenAddress).toLowerCase();
       if (pickedKey.has(key)) continue;
-      const first = typeof (c.t as any).firstSeenAtMs === 'number' ? (c.t as any).firstSeenAtMs : now;
+      const first = normalizeEpochMs((c.t as any).firstSeenAtMs) ?? now;
       const isNew = now - first <= 60_000;
       if (isNew && leftNew > 0) {
         leftNew -= 1;
@@ -1562,7 +953,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       };
 
       if (input.pos.dryRun) {
-        void pushHistory(baseRecord);
+        void pushXSniperHistory(baseRecord);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record: baseRecord });
         cleanupPosKey(`${input.chainId}:${input.tokenAddress.toLowerCase()}`);
         return;
@@ -1571,7 +962,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       const status = await WalletService.getStatus();
       if (status.locked || !status.address) {
         const record = { ...baseRecord, dryRun: false, reason: 'wallet_locked' };
-        void pushHistory(record);
+        void pushXSniperHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
         return;
       }
@@ -1581,7 +972,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         (await buildGenericTokenInfo(input.chainId, input.tokenAddress));
       if (!tokenInfo) {
         const record = { ...baseRecord, dryRun: false, reason: 'token_info_missing' };
-        void pushHistory(record);
+        void pushXSniperHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
         return;
       }
@@ -1597,7 +988,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
 
       if (balanceWei <= 0n) {
         const record = { ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' };
-        void pushHistory(record);
+        void pushXSniperHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
         return;
       }
@@ -1611,7 +1002,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       }
       if (!isTurbo && amountWei <= 0n) {
         const record = { ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'invalid_amount' };
-        void pushHistory(record);
+        void pushXSniperHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
         return;
       }
@@ -1644,7 +1035,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         sellTokenAmountWei: amountWei.toString(),
         txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
       };
-      void pushHistory(record);
+      void pushXSniperHistory(record);
       void broadcastToTabs({ type: 'bg:xsniper:buy', record });
     } finally {
       timeStopSellInFlight.delete(dedupeKey);
@@ -1694,7 +1085,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
 
       if (input.dryRun) {
         const record = { ...baseRecord, reason: 'dry_run' };
-        void pushHistory(record);
+        void pushXSniperHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
         return;
       }
@@ -1702,7 +1093,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       const status = await WalletService.getStatus();
       if (status.locked || !status.address) {
         const record = { ...baseRecord, dryRun: false, reason: 'wallet_locked' };
-        void pushHistory(record);
+        void pushXSniperHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
         return;
       }
@@ -1712,7 +1103,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         (await buildGenericTokenInfo(input.chainId, input.tokenAddress));
       if (!tokenInfo) {
         const record = { ...baseRecord, dryRun: false, reason: 'token_info_missing' };
-        void pushHistory(record);
+        void pushXSniperHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
         return;
       }
@@ -1728,7 +1119,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
 
       if (balanceWei <= 0n) {
         const record = { ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' };
-        void pushHistory(record);
+        void pushXSniperHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
         return;
       }
@@ -1742,7 +1133,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       }
       if (!isTurbo && amountWei <= 0n) {
         const record = { ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'invalid_amount' };
-        void pushHistory(record);
+        void pushXSniperHistory(record);
         void broadcastToTabs({ type: 'bg:xsniper:buy', record });
         return;
       }
@@ -1774,7 +1165,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         sellTokenAmountWei: amountWei.toString(),
         txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
       };
-      void pushHistory(record);
+      void pushXSniperHistory(record);
       void broadcastToTabs({ type: 'bg:xsniper:buy', record });
     } finally {
       deleteSellInFlight.delete(dedupeKey);
@@ -1801,7 +1192,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         const delTweetId = String(signal.tweetId ?? '').trim();
         if (!delEventId && !delTweetId) return;
 
-        const history = await loadHistory();
+        const history = await loadXSniperHistory();
         const matchedBuys = history.filter((r) => {
           if (!r) return false;
           if (r.side && r.side !== 'buy') return false;
