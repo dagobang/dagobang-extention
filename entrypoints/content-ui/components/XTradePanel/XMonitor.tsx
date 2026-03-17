@@ -144,12 +144,12 @@ const buildNotBoughtReason = (input: {
   const tokenAtMs = createdAtMs ?? firstSeenAtMs;
   if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return input.tt('contentUi.xMonitor.notBought.reason.createdAtMissing');
   if (tokenAtMs != null) {
-    const tokenDelayFromTweetMs = tokenAtMs - signalAtMs;
-    if (tokenDelayFromTweetMs < 0) return input.tt('contentUi.xMonitor.notBought.reason.tokenCreatedBeforeTweet');
-    if (minAgeSec != null && tokenDelayFromTweetMs < minAgeSec * 1000)
-      return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(tokenDelayFromTweetMs / 1000), Math.floor(minAgeSec)]);
-    if (maxAgeSec != null && tokenDelayFromTweetMs > maxAgeSec * 1000)
-      return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(tokenDelayFromTweetMs / 1000), Math.floor(maxAgeSec)]);
+    const tokenAgeAtSignalMs = signalAtMs - tokenAtMs;
+    if (tokenAgeAtSignalMs < 0) return input.tt('contentUi.xMonitor.notBought.reason.tokenCreatedAfterTweet');
+    if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000)
+      return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(tokenAgeAtSignalMs / 1000), Math.floor(minAgeSec)]);
+    if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000)
+      return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(tokenAgeAtSignalMs / 1000), Math.floor(maxAgeSec)]);
   }
 
   const minOrderDelaySec = minAgeSec;
@@ -222,10 +222,10 @@ const buildNotBoughtReason = (input: {
       const tokenAtMs = createdAtMs ?? firstSeenAtMs;
       if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
       if (tokenAtMs != null) {
-        const tokenDelayFromTweetMs = tokenAtMs - signalAtMs;
-        if (tokenDelayFromTweetMs < 0) return false;
-        if (minAgeSec != null && tokenDelayFromTweetMs < minAgeSec * 1000) return false;
-        if (maxAgeSec != null && tokenDelayFromTweetMs > maxAgeSec * 1000) return false;
+        const tokenAgeAtSignalMs = signalAtMs - tokenAtMs;
+        if (tokenAgeAtSignalMs < 0) return false;
+        if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000) return false;
+        if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000) return false;
       }
 
       const minOrderDelaySec = minAgeSec;

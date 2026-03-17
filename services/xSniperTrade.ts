@@ -193,9 +193,10 @@ const shouldBuyByConfig = (metrics: TokenMetrics, config: any, signalAtMs?: numb
   if (tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
     const ref = typeof signalAtMs === 'number' && Number.isFinite(signalAtMs) ? signalAtMs : null;
     if (ref == null) return false;
-    const tokenDelayFromTweetMs = tokenAtMs - ref;
-    if (minAgeSec != null && tokenDelayFromTweetMs < minAgeSec * 1000) return false;
-    if (maxAgeSec != null && tokenDelayFromTweetMs > maxAgeSec * 1000) return false;
+    const tokenAgeAtSignalMs = ref - tokenAtMs;
+    if (tokenAgeAtSignalMs < 0) return false;
+    if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000) return false;
+    if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000) return false;
   }
 
   const minOrderDelaySec = minAgeSec;

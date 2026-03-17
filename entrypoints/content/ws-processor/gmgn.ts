@@ -556,7 +556,12 @@ const signalHasTokens = (signal: UnifiedTwitterSignal): boolean => normalizeSign
 
 const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number): UnifiedTwitterSignal | null => {
   if (!item || typeof item !== 'object') return null;
-  const tweetAtMs = extractTimestampMs(item) ?? receivedAtMs;
+  const extractedAtMs = extractTimestampMs(item);
+  const actionAtMs = (() => {
+    if (extractedAtMs == null || !Number.isFinite(extractedAtMs)) return receivedAtMs;
+    const delta = Math.abs(receivedAtMs - extractedAtMs);
+    return delta <= 2 * 60 * 1000 ? extractedAtMs : receivedAtMs;
+  })();
   const raw = typeof (item as any).tw === 'string' ? String((item as any).tw).trim().toLowerCase() : '';
   if (!raw) return null;
 
@@ -693,12 +698,16 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
     }
   }
 
-  const idSeed =
-    eventId ??
+  const legacyIdSeed =
     tweetId ??
     quotedTweetId ??
     (typeof (item as any).ti === 'string' ? (item as any).ti : null) ??
-    String(receivedAtMs);
+    null;
+  const idSeed = (() => {
+    if (eventId) return eventId;
+    if (tweetType === 'tweet' && legacyIdSeed) return legacyIdSeed;
+    return `${legacyIdSeed ?? 'event'}:${actionAtMs}`;
+  })();
   const id = `gmgn:${channel}:${idSeed}`;
 
   return {
@@ -726,7 +735,7 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
     followedUserBio,
     followedUserFollowers,
     tokens,
-    receivedAtMs: tweetAtMs,
+    receivedAtMs: actionAtMs,
     ts: Date.now(),
   };
 };
