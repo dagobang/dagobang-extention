@@ -326,6 +326,12 @@ export function validateSettings(input: Settings): Settings | null {
     99.9,
     typeof defaultTrailingStop?.callbackPercent === 'number' ? defaultTrailingStop.callbackPercent : 15
   );
+  const trailingStopSellPercent = clampFloat(
+    inputTrailingStop?.sellPercent,
+    1,
+    100,
+    typeof defaultTrailingStop?.sellPercent === 'number' ? defaultTrailingStop.sellPercent : 100
+  );
   const activationMode = ((): 'immediate' | 'after_first_take_profit' | 'after_last_take_profit' => {
     const raw = inputTrailingStop?.activationMode;
     if (raw === 'immediate' || raw === 'after_first_take_profit' || raw === 'after_last_take_profit') return raw;
@@ -339,6 +345,7 @@ export function validateSettings(input: Settings): Settings | null {
     trailingStop: {
       enabled: trailingStopEnabled,
       callbackPercent: trailingStopCallbackPercent,
+      sellPercent: trailingStopSellPercent,
       activationMode,
     },
   };

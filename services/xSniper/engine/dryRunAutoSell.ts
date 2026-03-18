@@ -12,6 +12,7 @@ export type DryRunAutoSellPos = {
   trailing: null | {
     enabled: boolean;
     callbackPercent: number;
+    sellPercentBps: number;
     activationMode: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit';
     active: boolean;
     peakMcapUsd: number;
@@ -74,7 +75,7 @@ export const maybeEvaluateDryRunAutoSell = async (input: {
       input.emitRecord(record);
     };
 
-    if (curMcap > pos.entryMcapUsd && pos.trailing?.enabled) {
+    if (pos.trailing?.enabled) {
       const mode = pos.trailing.activationMode;
       const active =
         mode === 'immediate'
@@ -90,10 +91,13 @@ export const maybeEvaluateDryRunAutoSell = async (input: {
       if (curMcap > pos.trailing.peakMcapUsd) pos.trailing.peakMcapUsd = curMcap;
       const trigger = pos.trailing.peakMcapUsd * (1 - pos.trailing.callbackPercent / 100);
       if (Number.isFinite(trigger) && trigger > 0 && curMcap <= trigger) {
-        const sellBps = pos.remainingBps;
-        pos.remainingBps = 0;
+        const trailingBps = Math.max(1, Math.min(10000, Math.round(Number(pos.trailing.sellPercentBps) || 10000)));
+        const sellBps = Math.max(1, Math.floor((pos.remainingBps * trailingBps) / 10000));
+        pos.remainingBps = Math.max(0, pos.remainingBps - sellBps);
+        pos.trailing.active = false;
+        pos.trailing.enabled = false;
         pushSellRecord(sellBps, 'dry_run_trailing_stop');
-        input.cleanupPosKey(posKey);
+        if (!(pos.remainingBps > 0)) input.cleanupPosKey(posKey);
         continue;
       }
     }

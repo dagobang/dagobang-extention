@@ -69,9 +69,12 @@ export function buildStrategyTrailingSellOrderInputs(input: {
   const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
   const rawCallback = Number(trailing?.callbackPercent);
   const callbackPercent = Number.isFinite(rawCallback) ? clamp(rawCallback, 0.1, 99.9) : 15;
+  const rawSellPercent = Number(trailing?.sellPercent);
+  const sellPercent = Number.isFinite(rawSellPercent) ? clamp(rawSellPercent, 1, 100) : 100;
+  const sellPercentBps = Math.round(sellPercent * 100);
   const trailingStopBps = Math.round(callbackPercent * 100);
   const triggerPriceUsd = basePriceUsd * (1 - callbackPercent / 100);
-  if (!(Number.isFinite(triggerPriceUsd) && triggerPriceUsd > 0 && trailingStopBps > 0 && trailingStopBps < 10000)) return null;
+  if (!(Number.isFinite(triggerPriceUsd) && triggerPriceUsd > 0 && trailingStopBps > 0 && trailingStopBps < 10000 && sellPercentBps > 0 && sellPercentBps <= 10000)) return null;
 
   const orderType: LimitOrderType = 'trailing_stop_sell';
   return {
@@ -83,7 +86,7 @@ export function buildStrategyTrailingSellOrderInputs(input: {
     triggerPriceUsd,
     trailingStopBps,
     trailingPeakPriceUsd: basePriceUsd,
-    sellPercentBps: 10000,
+    sellPercentBps,
     tokenInfo,
   };
 }

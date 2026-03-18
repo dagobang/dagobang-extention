@@ -19,7 +19,7 @@ type DraftRule = {
 
 export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
   const defaultConfig = useMemo<AdvancedAutoSellConfig>(() => {
-    return value ?? { enabled: false, rules: [], trailingStop: { enabled: false, callbackPercent: 15, activationMode: 'after_last_take_profit' } };
+    return value ?? { enabled: false, rules: [], trailingStop: { enabled: false, callbackPercent: 15, sellPercent: 70, activationMode: 'after_last_take_profit' } };
   }, [value]);
 
   const [enabled, setEnabled] = useState<boolean>(defaultConfig.enabled);
@@ -33,6 +33,7 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
   );
   const [trailingEnabled, setTrailingEnabled] = useState<boolean>(defaultConfig.trailingStop?.enabled ?? false);
   const [trailingCallbackPercent, setTrailingCallbackPercent] = useState<string>(String(defaultConfig.trailingStop?.callbackPercent ?? 15));
+  const [trailingSellPercent, setTrailingSellPercent] = useState<string>(String(defaultConfig.trailingStop?.sellPercent ?? 70));
   const [trailingActivationMode, setTrailingActivationMode] = useState<'immediate' | 'after_first_take_profit' | 'after_last_take_profit'>(
     defaultConfig.trailingStop?.activationMode ?? 'after_last_take_profit'
   );
@@ -51,10 +52,11 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
     );
     setTrailingEnabled(defaultConfig.trailingStop?.enabled ?? false);
     setTrailingCallbackPercent(String(defaultConfig.trailingStop?.callbackPercent ?? 15));
+    setTrailingSellPercent(String(defaultConfig.trailingStop?.sellPercent ?? 70));
     setTrailingActivationMode(defaultConfig.trailingStop?.activationMode ?? 'after_last_take_profit');
   }, [open, defaultConfig]);
 
-  const commit = (next?: { enabled?: boolean; rules?: DraftRule[]; trailingEnabled?: boolean; trailingCallbackPercent?: string; trailingActivationMode?: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit' }) => {
+  const commit = (next?: { enabled?: boolean; rules?: DraftRule[]; trailingEnabled?: boolean; trailingCallbackPercent?: string; trailingSellPercent?: string; trailingActivationMode?: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit' }) => {
     const nextEnabled = next?.enabled ?? enabled;
     const rulesDraft = next?.rules ?? rules;
     const parsed = rulesDraft
@@ -75,11 +77,20 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
     const safeTrailingCallback = Number.isFinite(rawTrailingCallback)
       ? Math.round(Math.max(0.1, Math.min(99.9, rawTrailingCallback)) * 100) / 100
       : 15;
+    const rawTrailingSell = Number(next?.trailingSellPercent ?? trailingSellPercent);
+    const safeTrailingSell = Number.isFinite(rawTrailingSell)
+      ? Math.round(Math.max(1, Math.min(100, rawTrailingSell)) * 100) / 100
+      : 70;
     const nextTrailingActivationMode = next?.trailingActivationMode ?? trailingActivationMode;
     onChange({
       enabled: nextEnabled,
       rules: parsed,
-      trailingStop: { enabled: nextTrailingEnabled, callbackPercent: safeTrailingCallback, activationMode: nextTrailingActivationMode },
+      trailingStop: {
+        enabled: nextTrailingEnabled,
+        callbackPercent: safeTrailingCallback,
+        sellPercent: safeTrailingSell,
+        activationMode: nextTrailingActivationMode,
+      },
     });
   };
 
@@ -290,6 +301,24 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
                         const v = e.target.value;
                         setTrailingCallbackPercent(v);
                         commit({ trailingCallbackPercent: v });
+                      }}
+                    />
+                    <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.sell', locale)}</span>
+                  <div className="relative w-[92px]">
+                    <input
+                      type="number"
+                      className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
+                      value={trailingSellPercent}
+                      disabled={!canEdit || !trailingEnabled}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setTrailingSellPercent(v);
+                        commit({ trailingSellPercent: v });
                       }}
                     />
                     <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>

@@ -264,6 +264,9 @@ export const tryAutoBuyOnce = async (input: {
               }
 
               const trailingRaw = cfg?.trailingStop as any;
+              const trailingSellPercent = Number.isFinite(Number(trailingRaw?.sellPercent))
+                ? clamp(Number(trailingRaw?.sellPercent), 1, 100)
+                : 100;
               const trailing =
                 trailingRaw?.enabled === true
                   ? {
@@ -271,6 +274,7 @@ export const tryAutoBuyOnce = async (input: {
                       callbackPercent: Number.isFinite(Number(trailingRaw?.callbackPercent))
                         ? clamp(Number(trailingRaw?.callbackPercent), 0.1, 99.9)
                         : 15,
+                      sellPercentBps: Math.round(trailingSellPercent * 100),
                       activationMode:
                         trailingRaw?.activationMode === 'after_first_take_profit' || trailingRaw?.activationMode === 'after_last_take_profit'
                           ? trailingRaw.activationMode
@@ -511,14 +515,17 @@ export const tryAutoBuyOnce = async (input: {
             tokenInfo,
             basePriceUsd: effectiveEntryPriceUsd,
           });
-          const trailing = buildStrategyTrailingSellOrderInputs({
-            config: cfg,
-            chainId: input.chainId,
-            tokenAddress: input.tokenAddress,
-            tokenSymbol: tokenInfo.symbol,
-            tokenInfo,
-            basePriceUsd: effectiveEntryPriceUsd,
-          });
+          const trailingMode = (cfg as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
+          const trailing = trailingMode === 'immediate'
+            ? buildStrategyTrailingSellOrderInputs({
+              config: cfg,
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              tokenSymbol: tokenInfo.symbol,
+              tokenInfo,
+              basePriceUsd: effectiveEntryPriceUsd,
+            })
+            : null;
           const all = trailing ? [...orders, trailing] : orders;
           if (all.length) await Promise.all(all.map((o) => createLimitOrder(o)));
         }
