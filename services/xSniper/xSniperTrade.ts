@@ -267,14 +267,17 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           if (!addr) continue;
           const dedupe = `${r.chainId ?? settings.chainId}:${addr.toLowerCase()}`;
           if (sold.has(dedupe)) continue;
-          await tryDeleteTweetSellOnce({
-            chainId: r.chainId ?? settings.chainId,
-            tokenAddress: addr,
-            percent,
-            signal,
-            relatedBuy: r,
-            dryRun: strategy.dryRun === true,
-          });
+          try {
+            await tryDeleteTweetSellOnce({
+              chainId: r.chainId ?? settings.chainId,
+              tokenAddress: addr,
+              percent,
+              signal,
+              relatedBuy: r,
+              dryRun: r.dryRun === true,
+            });
+          } catch {
+          }
           sold.add(dedupe);
         }
         for (const p of stagedMatched) {
@@ -282,13 +285,16 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           if (!addr) continue;
           const dedupe = `${p.chainId}:${addr.toLowerCase()}`;
           if (sold.has(dedupe)) continue;
-          await tryDeleteTweetSellOnce({
-            chainId: p.chainId,
-            tokenAddress: addr,
-            percent,
-            signal,
-            dryRun: p.dryRun,
-          });
+          try {
+            await tryDeleteTweetSellOnce({
+              chainId: p.chainId,
+              tokenAddress: addr,
+              percent,
+              signal,
+              dryRun: p.dryRun,
+            });
+          } catch {
+          }
           sold.add(dedupe);
         }
         return;

@@ -125,13 +125,24 @@ export const createSellExecutors = (deps: {
       try {
         await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
       } catch {}
-      const rsp = await TradeService.sell({
-        chainId: input.chainId,
-        tokenAddress: input.tokenAddress,
-        tokenAmountWei: amountWei.toString(),
-        tokenInfo,
-        sellPercentBps: bps,
-      } as any);
+      let rsp: any;
+      try {
+        rsp = await TradeService.sell({
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          tokenAmountWei: amountWei.toString(),
+          tokenInfo,
+          sellPercentBps: bps,
+        } as any);
+      } catch {
+        deps.emitRecord({
+          ...baseRecord,
+          dryRun: false,
+          sellTokenAmountWei: amountWei.toString(),
+          reason: 'sell_submit_failed',
+        });
+        return;
+      }
       void deps.broadcastToActiveTabs({
         type: 'bg:tradeSuccess',
         source: 'xsniper',
@@ -240,13 +251,24 @@ export const createSellExecutors = (deps: {
       try {
         await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
       } catch {}
-      const rsp = await TradeService.sell({
-        chainId: input.chainId,
-        tokenAddress: input.tokenAddress,
-        tokenAmountWei: amountWei.toString(),
-        tokenInfo,
-        sellPercentBps: bps,
-      } as any);
+      let rsp: any;
+      try {
+        rsp = await TradeService.sell({
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          tokenAmountWei: amountWei.toString(),
+          tokenInfo,
+          sellPercentBps: bps,
+        } as any);
+      } catch {
+        deps.emitRecord({
+          ...baseRecord,
+          dryRun: false,
+          sellTokenAmountWei: amountWei.toString(),
+          reason: 'sell_submit_failed',
+        });
+        return;
+      }
       void deps.broadcastToActiveTabs({
         type: 'bg:tradeSuccess',
         source: 'xsniper',

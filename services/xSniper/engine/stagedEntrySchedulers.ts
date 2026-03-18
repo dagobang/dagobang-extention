@@ -13,6 +13,7 @@ export type StagedPosition = {
   addAmountBnb: number;
   lastMetrics?: TokenMetrics;
   entryMcapUsd?: number;
+  entryPriceUsd?: number;
   tweetAtMs?: number;
   tweetUrl?: string;
   tweetType?: string;
@@ -20,6 +21,7 @@ export type StagedPosition = {
   signalId?: string;
   signalEventId?: string;
   signalTweetId?: string;
+  timeStopRetryCount?: number;
 };
 
 export const scheduleTimeStopIfEnabled = (input: {
@@ -38,26 +40,43 @@ export const scheduleTimeStopIfEnabled = (input: {
 }) => {
   if (input.strategy?.timeStopEnabled !== true) return;
   if (input.timeStopTimers.has(input.posKey)) return;
-  const seconds = Math.max(1, Math.min(3600, Math.floor(parseNumber(input.strategy?.timeStopSeconds) ?? 0)));
+  const currentPos = input.stagedPositions.get(input.posKey);
+  const retryCount = Math.max(0, Math.floor(Number(currentPos?.timeStopRetryCount) || 0));
+  const configuredSeconds = Math.max(1, Math.min(3600, Math.floor(parseNumber(input.strategy?.timeStopSeconds) ?? 0)));
+  const seconds = retryCount > 0 ? Math.min(5, configuredSeconds) : configuredSeconds;
   if (!(seconds > 0)) return;
   const timer = setTimeout(async () => {
     input.timeStopTimers.delete(input.posKey);
     const pos = input.stagedPositions.get(input.posKey);
     if (!pos) return;
+    let latestStrategy = input.strategy;
     try {
       const latest = await SettingsService.get();
-      const latestStrategy = (latest as any)?.autoTrade?.twitterSnipe;
+      latestStrategy = (latest as any)?.autoTrade?.twitterSnipe ?? input.strategy;
       if (latestStrategy?.timeStopEnabled !== true) return;
     } catch {
       return;
     }
-    const minPnlPct = parseNumber(input.strategy?.timeStopMinPnlPct) ?? 0;
-    const sellPct = Math.max(0, Math.min(100, parseNumber(input.strategy?.timeStopSellPercent) ?? 100));
+    const minPnlPct = parseNumber(latestStrategy?.timeStopMinPnlPct) ?? 0;
+    const sellPct = Math.max(0, Math.min(100, parseNumber(latestStrategy?.timeStopSellPercent) ?? 100));
     const snaps = input.wsSnapshotsByAddr.get(pos.tokenAddress) ?? [];
     const cur = snaps.length ? snaps[snaps.length - 1] : null;
     const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
     const entryMcap = typeof pos.entryMcapUsd === 'number' && Number.isFinite(pos.entryMcapUsd) ? pos.entryMcapUsd : null;
-    if (curMcap == null || entryMcap == null || entryMcap <= 0) return;
+    if (curMcap == null || entryMcap == null || entryMcap <= 0) {
+      const nextRetry = retryCount + 1;
+      if (nextRetry >= 3) {
+        input.stagedPositions.delete(input.posKey);
+        await input.tryTimeStopSellOnce({ chainId: pos.chainId, tokenAddress: pos.tokenAddress, percent: sellPct, pos, reason: 'time_stop' });
+        return;
+      }
+      input.stagedPositions.set(input.posKey, { ...pos, timeStopRetryCount: nextRetry });
+      scheduleTimeStopIfEnabled(input);
+      return;
+    }
+    if (retryCount > 0) {
+      input.stagedPositions.set(input.posKey, { ...pos, timeStopRetryCount: 0 });
+    }
     const pnlPct = ((curMcap - entryMcap) / entryMcap) * 100;
     if (!(pnlPct <= minPnlPct)) {
       input.stagedPositions.delete(input.posKey);

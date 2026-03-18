@@ -154,6 +154,7 @@ export const tryAutoBuyOnce = async (input: {
           addAmountBnb: input.stagedPlan.addAmountBnb,
           lastMetrics: refreshedMetrics,
           entryMcapUsd: refreshedMetrics.marketCapUsd,
+          entryPriceUsd: entryPriceUsd ?? undefined,
           tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
           tweetUrl: buildTweetUrl(input.signal),
           tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
@@ -174,6 +175,7 @@ export const tryAutoBuyOnce = async (input: {
           addAmountBnb: 0,
           lastMetrics: refreshedMetrics,
           entryMcapUsd: refreshedMetrics.marketCapUsd,
+          entryPriceUsd: entryPriceUsd ?? undefined,
           tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
           tweetUrl: buildTweetUrl(input.signal),
           tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
@@ -213,11 +215,26 @@ export const tryAutoBuyOnce = async (input: {
                 const denom = scoutAmt / scoutMcap + addAmt / addMcap;
                 if (Number.isFinite(denom) && denom > 0) {
                   entryMcapUsd = (scoutAmt + addAmt) / denom;
+                  let entryPriceBlend = entryPriceUsd;
+                  const scoutEntryPrice = existing?.dryRun === true ? Number(existing.entryPriceUsd) : null;
+                  if (
+                    scoutEntryPrice != null &&
+                    Number.isFinite(scoutEntryPrice) &&
+                    scoutEntryPrice > 0 &&
+                    entryPriceUsd != null &&
+                    entryPriceUsd > 0
+                  ) {
+                    const priceDenom = scoutAmt / scoutEntryPrice + addAmt / entryPriceUsd;
+                    if (Number.isFinite(priceDenom) && priceDenom > 0) {
+                      entryPriceBlend = (scoutAmt + addAmt) / priceDenom;
+                    }
+                  }
                   if (existing) {
                     input.stagedPositions.set(posKey, {
                       ...existing,
                       scoutAmountBnb: scoutAmt + addAmt,
                       entryMcapUsd,
+                      entryPriceUsd: entryPriceBlend ?? undefined,
                     });
                   }
                 }
@@ -363,9 +380,9 @@ export const tryAutoBuyOnce = async (input: {
     input.boughtOnceAtMs.set(key, Date.now());
     void input.persistBoughtOnce();
     input.onStateChanged();
+    const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
 
     if (stage === 'scout' && input.stagedPlan) {
-      const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
       input.stagedPositions.set(posKey, {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
@@ -375,6 +392,7 @@ export const tryAutoBuyOnce = async (input: {
         addAmountBnb: input.stagedPlan.addAmountBnb,
         lastMetrics: refreshedMetrics,
         entryMcapUsd: refreshedMetrics.marketCapUsd,
+        entryPriceUsd: entryPriceUsd ?? undefined,
         tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
         tweetUrl: buildTweetUrl(input.signal),
         tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
@@ -386,7 +404,6 @@ export const tryAutoBuyOnce = async (input: {
       input.scheduleStagedAddIfEnabled(posKey, input.strategy);
       input.scheduleTimeStopIfEnabled(posKey, input.strategy);
     } else if (stage === 'full' && input.strategy?.timeStopEnabled === true) {
-      const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
       input.stagedPositions.set(posKey, {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
@@ -396,6 +413,7 @@ export const tryAutoBuyOnce = async (input: {
         addAmountBnb: 0,
         lastMetrics: refreshedMetrics,
         entryMcapUsd: refreshedMetrics.marketCapUsd,
+        entryPriceUsd: entryPriceUsd ?? undefined,
         tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
         tweetUrl: buildTweetUrl(input.signal),
         tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
@@ -405,6 +423,32 @@ export const tryAutoBuyOnce = async (input: {
         signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
       });
       input.scheduleTimeStopIfEnabled(posKey, input.strategy);
+    }
+    let effectiveEntryPriceUsd = entryPriceUsd;
+    if (stage === 'add') {
+      const existing = input.stagedPositions.get(posKey);
+      const scoutAmt = Number(existing?.scoutAmountBnb);
+      const scoutEntryPrice = Number(existing?.entryPriceUsd);
+      if (
+        Number.isFinite(scoutAmt) &&
+        scoutAmt > 0 &&
+        Number.isFinite(scoutEntryPrice) &&
+        scoutEntryPrice > 0 &&
+        effectiveEntryPriceUsd != null &&
+        effectiveEntryPriceUsd > 0
+      ) {
+        const denom = scoutAmt / scoutEntryPrice + amountNumber / effectiveEntryPriceUsd;
+        if (Number.isFinite(denom) && denom > 0) {
+          effectiveEntryPriceUsd = (scoutAmt + amountNumber) / denom;
+          if (existing) {
+            input.stagedPositions.set(posKey, {
+              ...existing,
+              scoutAmountBnb: scoutAmt + amountNumber,
+              entryPriceUsd: effectiveEntryPriceUsd,
+            });
+          }
+        }
+      }
     }
 
     const now = Date.now();
@@ -422,7 +466,7 @@ export const tryAutoBuyOnce = async (input: {
       tokenName: tokenInfo.name ? String(tokenInfo.name) : undefined,
       buyAmountBnb: amountNumber,
       txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
-      entryPriceUsd: entryPriceUsd ?? undefined,
+      entryPriceUsd: effectiveEntryPriceUsd ?? undefined,
       dryRun: false,
       marketCapUsd: refreshedMetrics.marketCapUsd,
       athMarketCapUsd: refreshedMetrics.marketCapUsd,
@@ -452,7 +496,7 @@ export const tryAutoBuyOnce = async (input: {
       reason: stage === 'scout' ? 'staged_scout' : (stage === 'add' ? 'staged_add' : undefined),
     });
 
-    if (stage !== 'scout' && input.strategy?.autoSellEnabled && entryPriceUsd != null && entryPriceUsd > 0) {
+    if (stage !== 'scout' && input.strategy?.autoSellEnabled && effectiveEntryPriceUsd != null && effectiveEntryPriceUsd > 0) {
       try {
         await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
         await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
@@ -465,7 +509,7 @@ export const tryAutoBuyOnce = async (input: {
             tokenAddress: input.tokenAddress,
             tokenSymbol: tokenInfo.symbol,
             tokenInfo,
-            basePriceUsd: entryPriceUsd,
+            basePriceUsd: effectiveEntryPriceUsd,
           });
           const trailing = buildStrategyTrailingSellOrderInputs({
             config: cfg,
@@ -473,7 +517,7 @@ export const tryAutoBuyOnce = async (input: {
             tokenAddress: input.tokenAddress,
             tokenSymbol: tokenInfo.symbol,
             tokenInfo,
-            basePriceUsd: entryPriceUsd,
+            basePriceUsd: effectiveEntryPriceUsd,
           });
           const all = trailing ? [...orders, trailing] : orders;
           if (all.length) await Promise.all(all.map((o) => createLimitOrder(o)));
