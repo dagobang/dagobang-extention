@@ -396,6 +396,8 @@ export function XSniperContent({
   const soundSelectValue =
     draft?.triggerSound.enabled === false ? SOUND_OFF : (draft?.triggerSound.preset ?? 'Boom');
   const deleteTweetSoundPreset = (twitterSnipe?.deleteTweetSoundPreset ?? 'Handgun') as TradeSuccessSoundPreset;
+  const deleteTweetSoundSelectValue =
+    twitterSnipe?.deleteTweetPlaySound === false ? SOUND_OFF : deleteTweetSoundPreset;
 
   const sellByPercent = async (record: XSniperBuyRecord, pct: number) => {
     if (!settings) return;
@@ -793,67 +795,16 @@ export function XSniperContent({
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-              <input
-                type="checkbox"
-                className="h-3 w-3 accent-amber-500"
-                checked={!!twitterSnipe?.blockIfDevSell}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ blockIfDevSell: e.target.checked })}
-              />
-              {tt('contentUi.autoTradeStrategy.blockIfDevSell')}
-            </label>
-            <div className="flex items-center gap-2 text-[12px] text-zinc-300">
-              <div className="text-zinc-400">{tt('contentUi.autoTradeStrategy.deleteTweetSellPercent')}</div>
-              <div className="relative w-[96px]">
-                <input
-                  type="number"
-                  className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-6 text-[13px] outline-none"
-                  value={twitterSnipe?.deleteTweetSellPercent ?? ''}
-                  disabled={!canEdit}
-                  onChange={(e) => updateTwitterSnipe({ deleteTweetSellPercent: e.target.value })}
-                />
-                <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">%</div>
-              </div>
-            </div>
-            <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-              <input
-                type="checkbox"
-                className="h-3 w-3 accent-amber-500"
-                checked={twitterSnipe?.deleteTweetPlaySound !== false}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ deleteTweetPlaySound: e.target.checked } as any)}
-              />
-              {tt('contentUi.autoTradeStrategy.deleteTweetPlaySound')}
-            </label>
-            <div className="flex items-center gap-2 text-[12px] text-zinc-300">
-              <div className="text-zinc-400">{tt('contentUi.autoTradeStrategy.deleteTweetSoundPreset')}</div>
-              <select
-                className="min-w-[130px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                value={deleteTweetSoundPreset}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ deleteTweetSoundPreset: e.target.value as TradeSuccessSoundPreset } as any)}
-              >
-                {presetOptions.map((preset) => (
-                  <option key={preset.value} value={preset.value}>
-                    {preset.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
-                onClick={() => {
-                  previewSound.ensureReady();
-                  previewSound.playPreset(deleteTweetSoundPreset);
-                }}
-                title={tt('contentUi.autoTradeStrategy.soundPreview')}
-              >
-                <Play size={14} />
-              </button>
-            </div>
-          </div>
+          <label className="flex items-center gap-2 text-[12px] text-zinc-300">
+            <input
+              type="checkbox"
+              className="h-3 w-3 accent-amber-500"
+              checked={!!twitterSnipe?.blockIfDevSell}
+              disabled={!canEdit}
+              onChange={(e) => updateTwitterSnipe({ blockIfDevSell: e.target.checked })}
+            />
+            {tt('contentUi.autoTradeStrategy.blockIfDevSell')}
+          </label>
         </div>
         <div className="space-y-2 pb-3 border-b border-zinc-800/60">
           <div className="flex items-center justify-between gap-2 text-[12px] text-zinc-300">
@@ -1041,53 +992,106 @@ export function XSniperContent({
             </label>
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.sectionSound')}</div>
-            <select
-              className="min-w-[120px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-              value={soundSelectValue}
-              disabled={!canEdit}
-              onChange={(e) => {
-                const v = e.target.value;
-                setDraft((prev) => {
-                  if (!prev) return prev;
-                  setIsDirty(true);
-                  if (v === SOUND_OFF) return { ...prev, triggerSound: { ...prev.triggerSound, enabled: false } };
-                  return { ...prev, triggerSound: { ...prev.triggerSound, enabled: true, preset: v as TradeSuccessSoundPreset } };
-                });
-              }}
-            >
-              <option value={SOUND_OFF}>{tt('contentUi.autoTradeStrategy.soundOff')}</option>
-              {presetOptions.map((preset) => (
-                <option key={preset.value} value={preset.value}>
-                  {preset.label}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
-              onClick={() => {
-                const preset = draft?.triggerSound.preset ?? 'Boom';
-                previewSound.ensureReady();
-                previewSound.playPreset(preset);
-              }}
-              title={tt('contentUi.autoTradeStrategy.soundPreview')}
-            >
-              <Play size={14} />
-            </button>
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.sectionSound')}</div>
+              <select
+                className="min-w-[120px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                value={soundSelectValue}
+                disabled={!canEdit}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setDraft((prev) => {
+                    if (!prev) return prev;
+                    setIsDirty(true);
+                    if (v === SOUND_OFF) return { ...prev, triggerSound: { ...prev.triggerSound, enabled: false } };
+                    return { ...prev, triggerSound: { ...prev.triggerSound, enabled: true, preset: v as TradeSuccessSoundPreset } };
+                  });
+                }}
+              >
+                <option value={SOUND_OFF}>{tt('contentUi.autoTradeStrategy.soundOff')}</option>
+                {presetOptions.map((preset) => (
+                  <option key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
+                onClick={() => {
+                  const preset = draft?.triggerSound.preset ?? 'Boom';
+                  previewSound.ensureReady();
+                  previewSound.playPreset(preset);
+                }}
+                title={tt('contentUi.autoTradeStrategy.soundPreview')}
+              >
+                <Play size={14} />
+              </button>
+            </div>
+            <label className="flex items-center gap-2 text-[12px] text-zinc-300">
+              <input
+                type="checkbox"
+                className="h-3 w-3 accent-emerald-500"
+                checked={!!twitterSnipe?.autoSellEnabled}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ autoSellEnabled: e.target.checked })}
+              />
+              {tt('contentUi.autoTradeStrategy.strategyAutoSell')}
+            </label>
           </div>
-          <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-            <input
-              type="checkbox"
-              className="h-3 w-3 accent-emerald-500"
-              checked={!!twitterSnipe?.autoSellEnabled}
-              disabled={!canEdit}
-              onChange={(e) => updateTwitterSnipe({ autoSellEnabled: e.target.checked })}
-            />
-            {tt('contentUi.autoTradeStrategy.strategyAutoSell')}
-          </label>
+          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800/60 pt-2">
+            <div className="flex items-center gap-2 text-[12px] text-zinc-300">
+              <div className="text-zinc-400">{tt('contentUi.autoTradeStrategy.deleteTweetSellPercent')}</div>
+              <div className="relative w-[100px]">
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-6 text-[13px] outline-none"
+                  value={twitterSnipe?.deleteTweetSellPercent ?? ''}
+                  disabled={!canEdit}
+                  onChange={(e) => updateTwitterSnipe({ deleteTweetSellPercent: e.target.value })}
+                />
+                <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">%</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-[12px] text-zinc-300">
+              <div className="text-zinc-400">{tt('contentUi.autoTradeStrategy.deleteTweetSoundPreset')}</div>
+              <select
+                className="min-w-[140px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                value={deleteTweetSoundSelectValue}
+                disabled={!canEdit}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === SOUND_OFF) {
+                    updateTwitterSnipe({ deleteTweetPlaySound: false } as any);
+                    return;
+                  }
+                  updateTwitterSnipe({ deleteTweetPlaySound: true, deleteTweetSoundPreset: value as TradeSuccessSoundPreset } as any);
+                }}
+              >
+                <option value={SOUND_OFF}>{tt('contentUi.autoTradeStrategy.soundOff')}</option>
+                {presetOptions.map((preset) => (
+                  <option key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 hover:bg-zinc-800 disabled:opacity-50"
+                disabled={!canEdit || deleteTweetSoundSelectValue === SOUND_OFF}
+                onClick={() => {
+                  if (deleteTweetSoundSelectValue === SOUND_OFF) return;
+                  previewSound.ensureReady();
+                  previewSound.playPreset(deleteTweetSoundPreset);
+                }}
+                title={tt('contentUi.autoTradeStrategy.soundPreview')}
+              >
+                <Play size={14} />
+              </button>
+            </div>
+          </div>
         </div>
           </>
         ) : null}

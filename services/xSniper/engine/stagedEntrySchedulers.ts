@@ -43,7 +43,7 @@ export const scheduleTimeStopIfEnabled = (input: {
   const currentPos = input.stagedPositions.get(input.posKey);
   const retryCount = Math.max(0, Math.floor(Number(currentPos?.timeStopRetryCount) || 0));
   const configuredSeconds = Math.max(1, Math.min(3600, Math.floor(parseNumber(input.strategy?.timeStopSeconds) ?? 0)));
-  const seconds = retryCount > 0 ? Math.min(5, configuredSeconds) : configuredSeconds;
+  const seconds = retryCount > 0 ? 1 : configuredSeconds;
   if (!(seconds > 0)) return;
   const timer = setTimeout(async () => {
     input.timeStopTimers.delete(input.posKey);
@@ -61,21 +61,21 @@ export const scheduleTimeStopIfEnabled = (input: {
     const sellPct = Math.max(0, Math.min(100, parseNumber(latestStrategy?.timeStopSellPercent) ?? 100));
     const snaps = input.wsSnapshotsByAddr.get(pos.tokenAddress) ?? [];
     const cur = snaps.length ? snaps[snaps.length - 1] : null;
+    const nowMs = Date.now();
+    const curAtMs = typeof cur?.atMs === 'number' && Number.isFinite(cur.atMs) ? cur.atMs : null;
+    const maxSnapshotStaleMs = 3000;
+    const isSnapshotStale = curAtMs == null || nowMs - curAtMs > maxSnapshotStaleMs;
     const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
     const entryMcap = typeof pos.entryMcapUsd === 'number' && Number.isFinite(pos.entryMcapUsd) ? pos.entryMcapUsd : null;
-    if (curMcap == null || entryMcap == null || entryMcap <= 0) {
+    if (isSnapshotStale || curMcap == null || entryMcap == null || entryMcap <= 0) {
       const nextRetry = retryCount + 1;
       if (nextRetry >= 3) {
         input.stagedPositions.delete(input.posKey);
-        await input.tryTimeStopSellOnce({ chainId: pos.chainId, tokenAddress: pos.tokenAddress, percent: sellPct, pos, reason: 'time_stop' });
         return;
       }
       input.stagedPositions.set(input.posKey, { ...pos, timeStopRetryCount: nextRetry });
       scheduleTimeStopIfEnabled(input);
       return;
-    }
-    if (retryCount > 0) {
-      input.stagedPositions.set(input.posKey, { ...pos, timeStopRetryCount: 0 });
     }
     const pnlPct = ((curMcap - entryMcap) / entryMcap) * 100;
     if (!(pnlPct <= minPnlPct)) {
