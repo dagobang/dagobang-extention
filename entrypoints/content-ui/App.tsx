@@ -58,6 +58,7 @@ export default function App() {
   const prewarmedTurboRef = useRef<Set<string>>(new Set());
   const fastPollingRef = useRef<any>(null);
   const tokenRefreshSeqRef = useRef(0);
+  const deleteSoundPlayedAtRef = useRef<Record<string, number>>({});
 
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
@@ -627,16 +628,71 @@ export default function App() {
   }, [siteInfo, address, ensureAutoTradeAudioReady, playAutoTradePreset, autoTradeSoundPreset, ensureTradeSuccessAudioReady, playTradeBuySound, playTradeSellSound]);
 
   useEffect(() => {
+    const dedupeStorageKey = 'dagobang_delete_tweet_sound_dedupe_v1';
+    const dedupeTtlMs = 45_000;
+    const normalizeAddr = (value: unknown) => (typeof value === 'string' ? value.trim().toLowerCase() : '');
+    const loadPlayedMap = () => {
+      try {
+        const raw = window.sessionStorage.getItem(dedupeStorageKey);
+        if (!raw) return {} as Record<string, number>;
+        const parsed = JSON.parse(raw) as Record<string, number>;
+        if (!parsed || typeof parsed !== 'object') return {} as Record<string, number>;
+        return parsed;
+      } catch {
+        return {} as Record<string, number>;
+      }
+    };
+    const persistPlayedMap = (map: Record<string, number>) => {
+      try {
+        window.sessionStorage.setItem(dedupeStorageKey, JSON.stringify(map));
+      } catch {
+      }
+    };
+    const clearExpired = (map: Record<string, number>, now: number) => {
+      const next: Record<string, number> = {};
+      for (const [k, ts] of Object.entries(map)) {
+        if (typeof ts === 'number' && Number.isFinite(ts) && now - ts <= dedupeTtlMs) {
+          next[k] = ts;
+        }
+      }
+      return next;
+    };
+    deleteSoundPlayedAtRef.current = clearExpired(loadPlayedMap(), Date.now());
+
     const onTwitterSignal = (e: Event) => {
       const signal = (e as CustomEvent<any>).detail as any;
       if (!signal || signal.tweetType !== 'delete_post' && signal.tweetType !== 'unfollow') return;
       const tokens = Array.isArray(signal.tokens) ? signal.tokens : [];
       if (!tokens.length) return;
+      const tokenAddrKey = Array.from(
+        new Set(
+          tokens
+            .map((x: any) => normalizeAddr(x?.tokenAddress))
+            .filter(Boolean),
+        ),
+      )
+        .sort()
+        .join(',');
+      if (!tokenAddrKey) return;
+      const key =
+        String(signal.eventId ?? '').trim() ||
+        `${String(signal.tweetType ?? '').trim()}:${String(signal.tweetId ?? '').trim()}:${String(signal.sourceTweetId ?? '').trim()}:${tokenAddrKey}`;
+      if (!key) return;
+      const now = Date.now();
+      const cleaned = clearExpired(deleteSoundPlayedAtRef.current, now);
+      const lastPlayedAt = cleaned[key];
+      if (typeof lastPlayedAt === 'number' && Number.isFinite(lastPlayedAt) && now - lastPlayedAt < dedupeTtlMs) {
+        deleteSoundPlayedAtRef.current = cleaned;
+        return;
+      }
       const deleteTweetPlaySound = settingsRef.current?.autoTrade?.twitterSnipe?.deleteTweetPlaySound !== false;
       if (!deleteTweetPlaySound) return;
       const preset = (settingsRef.current?.autoTrade?.twitterSnipe?.deleteTweetSoundPreset ?? 'Handgun') as TradeSuccessSoundPreset;
       ensureDeleteTweetAudioReady();
       playDeleteTweetPreset(preset);
+      cleaned[key] = now;
+      deleteSoundPlayedAtRef.current = cleaned;
+      persistPlayedMap(cleaned);
     };
     window.addEventListener('dagobang-twitter-signal' as any, onTwitterSignal as any);
     return () => window.removeEventListener('dagobang-twitter-signal' as any, onTwitterSignal as any);

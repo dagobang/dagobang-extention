@@ -31,8 +31,8 @@ export function XTradePanel({
   settings,
   isUnlocked,
 }: XTradePanelProps) {
-  const panelWidth = 360;
   const [activeTab, setActiveTab] = useState<'xmonitor' | 'xsniper' | 'xhistory'>(() => activeTabProp ?? 'xmonitor');
+  const panelWidth = activeTab === 'xhistory' ? 520 : 360;
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
     const defaultX = Math.max(0, width - panelWidth);
@@ -60,7 +60,11 @@ export function XTradePanel({
       setPos(clampPos(parsed, panelWidth));
     } catch {
     }
-  }, []);
+  }, [panelWidth]);
+
+  useEffect(() => {
+    setPos((prev) => clampPos(prev, panelWidth));
+  }, [panelWidth]);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -92,8 +96,8 @@ export function XTradePanel({
 
   return (
     <div
-      className="fixed z-[2147483647] w-[360px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/25 font-sans"
-      style={{ left: pos.x, top: pos.y }}
+      className="fixed z-[2147483647] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/25 font-sans"
+      style={{ left: pos.x, top: pos.y, width: `${panelWidth}px` }}
     >
       <div
         className="flex items-center justify-between gap-3 px-4 py-3 border-b border-zinc-800/60 cursor-grab"
