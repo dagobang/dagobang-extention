@@ -629,8 +629,9 @@ export default function App() {
 
   useEffect(() => {
     const dedupeStorageKey = 'dagobang_delete_tweet_sound_dedupe_v1';
-    const dedupeTtlMs = 45_000;
+    const dedupeTtlMs = 6 * 60 * 60 * 1000;
     const normalizeAddr = (value: unknown) => (typeof value === 'string' ? value.trim().toLowerCase() : '');
+    const normalizeText = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
     const loadPlayedMap = () => {
       try {
         const raw = window.sessionStorage.getItem(dedupeStorageKey);
@@ -674,9 +675,11 @@ export default function App() {
         .sort()
         .join(',');
       if (!tokenAddrKey) return;
-      const key =
-        String(signal.eventId ?? '').trim() ||
-        `${String(signal.tweetType ?? '').trim()}:${String(signal.tweetId ?? '').trim()}:${String(signal.sourceTweetId ?? '').trim()}:${tokenAddrKey}`;
+      const tweetType = normalizeText(signal.tweetType);
+      const tweetId = normalizeText(signal.tweetId);
+      const sourceTweetId = normalizeText(signal.sourceTweetId);
+      const eventId = normalizeText(signal.eventId);
+      const key = `${tweetType}:${tweetId || sourceTweetId || eventId}:${tokenAddrKey}`;
       if (!key) return;
       const now = Date.now();
       const cleaned = clearExpired(deleteSoundPlayedAtRef.current, now);

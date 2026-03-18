@@ -74,6 +74,15 @@ const clampPercent = (value: unknown) => {
   return Math.max(0, Math.min(100, n));
 };
 
+const resolveReasonLabel = (tt: (key: string, subs?: Array<string | number>) => string, reason: unknown) => {
+  if (reason == null) return '-';
+  const raw = String(reason).trim();
+  if (!raw) return '-';
+  const key = `contentUi.autoTradeStrategy.snipeHistoryReasonCode.${raw}`;
+  const translated = tt(key);
+  return translated === key ? raw : translated;
+};
+
 const computeWeightedPnlPct = (input: {
   entryMcap: number | null;
   latestMcap: number | null;
@@ -303,6 +312,14 @@ export function XSniperHistoryView({
                   const sellingForRecord = sellingKey != null && sellingKey.startsWith(`${r.id}:`);
                   const tweetAtMs = typeof r.tweetAtMs === 'number' && Number.isFinite(r.tweetAtMs) ? r.tweetAtMs : null;
                   const tweetUrl = typeof r.tweetUrl === 'string' && r.tweetUrl.trim() ? r.tweetUrl.trim() : buildTweetUrlFallback(r);
+                  const groupedBuys = [r, ...g.children].filter((x) => x && x.side !== 'sell');
+                  const hasStagedScout = groupedBuys.some((x) => x.reason === 'staged_scout');
+                  const hasStagedAdd = groupedBuys.some((x) => x.reason === 'staged_add');
+                  const stagedEntryStatus = hasStagedAdd
+                    ? tt('contentUi.autoTradeStrategy.snipeHistoryStagedEntryAdded')
+                    : hasStagedScout
+                      ? tt('contentUi.autoTradeStrategy.snipeHistoryStagedEntryScoutOnly')
+                      : tt('contentUi.autoTradeStrategy.snipeHistoryStagedEntrySingle');
 
                   return (
                     <div>
@@ -410,7 +427,9 @@ export function XSniperHistoryView({
                           </div>
                           <div>
                             <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryDevSold')}:</span>{' '}
-                            <span className="text-zinc-200">{r.devHasSold === true ? 'Y' : r.devHasSold === false ? 'N' : '-'}</span>
+                            <span className="text-zinc-200">
+                              {r.devHasSold === true ? tt('contentUi.autoTradeStrategy.snipeHistoryYes') : r.devHasSold === false ? tt('contentUi.autoTradeStrategy.snipeHistoryNo') : '-'}
+                            </span>
                           </div>
                           <div>
                             <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryKol')}:</span>{' '}
@@ -453,9 +472,13 @@ export function XSniperHistoryView({
                             / {(r as any).eval30s?.pnlMcapPct == null ? '-' : `${(r as any).eval30s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval30s.pnlMcapPct.toFixed(2)}%`}{' '}
                             / {(r as any).eval60s?.pnlMcapPct == null ? '-' : `${(r as any).eval60s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval60s.pnlMcapPct.toFixed(2)}%`}
                           </div>
+                          <div className="col-span-3 text-zinc-400">
+                            <span className="text-indigo-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryStagedEntry')}:</span>{' '}
+                            <span className="text-zinc-200">{stagedEntryStatus}</span>
+                          </div>
                           {r.reason ? (
                             <div className="col-span-3 text-[11px] text-amber-200/90">
-                              {tt('contentUi.autoTradeStrategy.snipeHistoryReason')}: {String(r.reason)}
+                              {tt('contentUi.autoTradeStrategy.snipeHistoryReason')}: {resolveReasonLabel(tt, r.reason)}
                             </div>
                           ) : null}
                         </div>
@@ -509,7 +532,7 @@ export function XSniperHistoryView({
                           <div className="min-w-0">
                             <span className={`mr-2 inline-flex rounded border px-1.5 py-0.5 text-[10px] ${badge.cls}`}>{badge.text}</span>
                             <span className="text-zinc-300">{primary}</span>
-                            {c.reason ? <span className="ml-2 text-amber-200/80">({String(c.reason)})</span> : null}
+                            {c.reason ? <span className="ml-2 text-amber-200/80">({resolveReasonLabel(tt, c.reason)})</span> : null}
                           </div>
                           <div className="shrink-0 text-[10px] text-zinc-500">{formatTs(c.tsMs)}</div>
                         </div>

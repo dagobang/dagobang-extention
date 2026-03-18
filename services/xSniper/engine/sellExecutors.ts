@@ -175,8 +175,12 @@ export const createSellExecutors = (deps: {
     if (!Number.isFinite(percent) || percent <= 0) return;
     const bps = Math.floor(percent * 100);
     if (!(bps > 0)) return;
-
-    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${String(input.signal.eventId ?? '')}:${String(input.signal.tweetId ?? '')}:${bps}`;
+    const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+    const signalTweetId = String(input.signal.tweetId ?? '').trim();
+    const sourceTweetId = String((input.signal as any)?.sourceTweetId ?? '').trim();
+    const signalEventId = String(input.signal.eventId ?? '').trim();
+    const signalStableId = signalTweetId || sourceTweetId || signalEventId;
+    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${signalStableId}:${bps}`;
     if (deleteSellInFlight.has(dedupeKey)) return;
     deleteSellInFlight.add(dedupeKey);
     try {
@@ -206,6 +210,7 @@ export const createSellExecutors = (deps: {
 
       if (input.dryRun) {
         deps.emitRecord({ ...baseRecord, reason: 'dry_run' });
+        deps.cleanupPosKey(posKey);
         return;
       }
 
@@ -234,6 +239,7 @@ export const createSellExecutors = (deps: {
 
       if (balanceWei <= 0n) {
         deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' });
+        deps.cleanupPosKey(posKey);
         return;
       }
 
@@ -248,6 +254,9 @@ export const createSellExecutors = (deps: {
         return;
       }
 
+      try {
+        await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
+      } catch {}
       try {
         await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
       } catch {}
@@ -286,6 +295,7 @@ export const createSellExecutors = (deps: {
         sellTokenAmountWei: amountWei.toString(),
         txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
       });
+      deps.cleanupPosKey(posKey);
     } finally {
       deleteSellInFlight.delete(dedupeKey);
     }
