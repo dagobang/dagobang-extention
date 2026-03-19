@@ -59,7 +59,7 @@ export type AutoTradeStrategyBase = {
   blockIfDevSell: boolean;
 };
 
-export type AutoTradeTwitterSnipeStrategy = AutoTradeStrategyBase & {
+export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
   dryRun?: boolean;
   deleteTweetSellPercent?: string;
   deleteTweetPlaySound?: boolean;
@@ -83,6 +83,17 @@ export type AutoTradeTwitterSnipeStrategy = AutoTradeStrategyBase & {
   timeStopSellPercent?: string;
   targetUsers: string[];
   interactionTypes: AutoTradeInteractionType[];
+};
+
+export type AutoTradeTwitterSnipePreset = {
+  id: string;
+  name: string;
+  strategy: Partial<AutoTradeTwitterSnipeRuntimeStrategy>;
+};
+
+export type AutoTradeTwitterSnipeStrategy = AutoTradeTwitterSnipeRuntimeStrategy & {
+  presets?: AutoTradeTwitterSnipePreset[];
+  activePresetId?: string;
 };
 
 export type AutoTradeConfig = {

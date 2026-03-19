@@ -215,68 +215,107 @@ export function validateSettings(input: Settings): Settings | null {
   const inputTwitterSnipe = (inputAutoTrade as any)?.twitterSnipe ?? {};
   const defaultTwitterSnipe = (defaultAutoTrade as any).twitterSnipe;
   const allowedInteractionTypes = ['tweet', 'reply', 'quote', 'retweet', 'follow'] as const;
-  const interactionTypesRaw = parseListInput(inputTwitterSnipe.interactionTypes, defaultTwitterSnipe.interactionTypes);
-  const interactionTypes = interactionTypesRaw.filter((x) => allowedInteractionTypes.includes(x as any));
+  const normalizeInteractionTypes = (value: any, fallback: any) => {
+    const raw = parseListInput(value, fallback);
+    const list = raw.filter((x) => allowedInteractionTypes.includes(x as any));
+    return list.length ? (list as any) : fallback;
+  };
+  const normalizeTwitterSnipeCore = (rawInput: any, fallbackInput: any) => ({
+    enabled: typeof rawInput?.enabled === 'boolean'
+      ? rawInput.enabled
+      : fallbackInput.enabled ?? true,
+    dryRun: typeof rawInput?.dryRun === 'boolean'
+      ? rawInput.dryRun
+      : (fallbackInput as any).dryRun ?? false,
+    autoSellEnabled: typeof rawInput?.autoSellEnabled === 'boolean'
+      ? rawInput.autoSellEnabled
+      : fallbackInput.autoSellEnabled,
+    buyAmountBnb: clampStringNumber(rawInput?.buyAmountBnb, fallbackInput.buyAmountBnb),
+    buyNewCaCount: clampStringNumber(rawInput?.buyNewCaCount, fallbackInput.buyNewCaCount),
+    buyOgCount: clampStringNumber(rawInput?.buyOgCount, fallbackInput.buyOgCount),
+    minMarketCapUsd: clampStringNumber(rawInput?.minMarketCapUsd, fallbackInput.minMarketCapUsd),
+    maxMarketCapUsd: clampStringNumber(rawInput?.maxMarketCapUsd, fallbackInput.maxMarketCapUsd),
+    minHolders: clampStringNumber(rawInput?.minHolders, fallbackInput.minHolders),
+    maxHolders: clampStringNumber(rawInput?.maxHolders, fallbackInput.maxHolders),
+    minKol: clampStringNumber((rawInput as any)?.minKol, (fallbackInput as any)?.minKol),
+    maxKol: clampStringNumber((rawInput as any)?.maxKol, (fallbackInput as any)?.maxKol),
+    minTickerLen: clampStringNumber(rawInput?.minTickerLen, fallbackInput.minTickerLen),
+    maxTickerLen: clampStringNumber(rawInput?.maxTickerLen, fallbackInput.maxTickerLen),
+    minTokenAgeSeconds: clampStringNumber(rawInput?.minTokenAgeSeconds, fallbackInput.minTokenAgeSeconds),
+    maxTokenAgeSeconds: clampStringNumber(rawInput?.maxTokenAgeSeconds, fallbackInput.maxTokenAgeSeconds),
+    minDevHoldPercent: clampStringNumber(rawInput?.minDevHoldPercent, fallbackInput.minDevHoldPercent),
+    maxDevHoldPercent: clampStringNumber(rawInput?.maxDevHoldPercent, fallbackInput.maxDevHoldPercent),
+    blockIfDevSell: typeof rawInput?.blockIfDevSell === 'boolean'
+      ? rawInput.blockIfDevSell
+      : fallbackInput.blockIfDevSell,
+    wsConfirmEnabled: typeof (rawInput as any)?.wsConfirmEnabled === 'boolean'
+      ? (rawInput as any).wsConfirmEnabled
+      : !!(fallbackInput as any).wsConfirmEnabled,
+    wsConfirmWindowMs: clampStringNumber((rawInput as any)?.wsConfirmWindowMs, (fallbackInput as any)?.wsConfirmWindowMs),
+    wsConfirmMinMcapChangePct: clampStringNumber((rawInput as any)?.wsConfirmMinMcapChangePct, (fallbackInput as any)?.wsConfirmMinMcapChangePct),
+    wsConfirmMinHoldersDelta: clampStringNumber((rawInput as any)?.wsConfirmMinHoldersDelta, (fallbackInput as any)?.wsConfirmMinHoldersDelta),
+    wsConfirmMinBuySellRatio: clampStringNumber((rawInput as any)?.wsConfirmMinBuySellRatio, (fallbackInput as any)?.wsConfirmMinBuySellRatio),
+    wsConfirmMinNetBuy24hUsd: clampStringNumber((rawInput as any)?.wsConfirmMinNetBuy24hUsd, (fallbackInput as any)?.wsConfirmMinNetBuy24hUsd),
+    wsConfirmMinVol24hUsd: clampStringNumber((rawInput as any)?.wsConfirmMinVol24hUsd, (fallbackInput as any)?.wsConfirmMinVol24hUsd),
+    wsConfirmMinSmartMoney: clampStringNumber((rawInput as any)?.wsConfirmMinSmartMoney, (fallbackInput as any)?.wsConfirmMinSmartMoney),
+    stagedEntryEnabled: typeof (rawInput as any)?.stagedEntryEnabled === 'boolean'
+      ? (rawInput as any).stagedEntryEnabled
+      : !!(fallbackInput as any).stagedEntryEnabled,
+    stagedEntryScoutPercent: clampStringNumber((rawInput as any)?.stagedEntryScoutPercent, (fallbackInput as any)?.stagedEntryScoutPercent),
+    stagedEntryMinDelayMs: clampStringNumber((rawInput as any)?.stagedEntryMinDelayMs, (fallbackInput as any)?.stagedEntryMinDelayMs),
+    stagedEntryMaxDelayMs: clampStringNumber((rawInput as any)?.stagedEntryMaxDelayMs, (fallbackInput as any)?.stagedEntryMaxDelayMs),
+    stagedEntryMaxDrawdownPct: clampStringNumber((rawInput as any)?.stagedEntryMaxDrawdownPct, (fallbackInput as any)?.stagedEntryMaxDrawdownPct),
+    timeStopEnabled: typeof (rawInput as any)?.timeStopEnabled === 'boolean'
+      ? (rawInput as any).timeStopEnabled
+      : !!(fallbackInput as any).timeStopEnabled,
+    timeStopSeconds: clampStringNumber((rawInput as any)?.timeStopSeconds, (fallbackInput as any)?.timeStopSeconds),
+    timeStopMinPnlPct: clampStringNumber((rawInput as any)?.timeStopMinPnlPct, (fallbackInput as any)?.timeStopMinPnlPct),
+    timeStopSellPercent: clampStringNumber((rawInput as any)?.timeStopSellPercent, (fallbackInput as any)?.timeStopSellPercent),
+    deleteTweetSellPercent: clampStringNumber(rawInput?.deleteTweetSellPercent, fallbackInput.deleteTweetSellPercent),
+    deleteTweetPlaySound: typeof rawInput?.deleteTweetPlaySound === 'boolean'
+      ? rawInput.deleteTweetPlaySound
+      : ((fallbackInput as any)?.deleteTweetPlaySound ?? true),
+    deleteTweetSoundPreset: TRADE_SUCCESS_SOUND_PRESETS.includes((rawInput as any)?.deleteTweetSoundPreset)
+      ? (rawInput as any).deleteTweetSoundPreset
+      : (((fallbackInput as any)?.deleteTweetSoundPreset ?? 'Handgun') as any),
+    targetUsers: parseListInput(rawInput?.targetUsers, fallbackInput.targetUsers),
+    interactionTypes: normalizeInteractionTypes(rawInput?.interactionTypes, fallbackInput.interactionTypes),
+  });
+  const twitterSnipeBase = normalizeTwitterSnipeCore(inputTwitterSnipe, defaultTwitterSnipe);
+  const rawPresets = Array.isArray((inputTwitterSnipe as any)?.presets) ? (inputTwitterSnipe as any).presets : [];
+  const defaultPresets = Array.isArray((defaultTwitterSnipe as any)?.presets) ? (defaultTwitterSnipe as any).presets : [];
+  const normalizedPresets = rawPresets
+    .map((item: any, idx: number) => {
+      const idRaw = typeof item?.id === 'string' ? item.id.trim() : '';
+      const id = idRaw || `preset-${idx + 1}`;
+      const nameRaw = typeof item?.name === 'string' ? item.name.trim() : '';
+      const name = nameRaw || `方案 ${idx + 1}`;
+      const strategy = normalizeTwitterSnipeCore(item?.strategy ?? {}, twitterSnipeBase);
+      return { id, name, strategy };
+    })
+    .filter((x: any, idx: number, arr: any[]) => arr.findIndex((v) => v.id === x.id) === idx);
+  const presets = normalizedPresets.length
+    ? normalizedPresets
+    : defaultPresets.map((item: any, idx: number) => {
+      const idRaw = typeof item?.id === 'string' ? item.id.trim() : '';
+      const id = idRaw || `preset-default-${idx + 1}`;
+      const nameRaw = typeof item?.name === 'string' ? item.name.trim() : '';
+      const name = nameRaw || `默认方案 ${idx + 1}`;
+      const strategy = normalizeTwitterSnipeCore(item?.strategy ?? {}, twitterSnipeBase);
+      return { id, name, strategy };
+    });
+  const activePresetIdRaw = typeof (inputTwitterSnipe as any)?.activePresetId === 'string'
+    ? (inputTwitterSnipe as any).activePresetId.trim()
+    : '';
+  const activePresetId = presets.some((p: any) => p.id === activePresetIdRaw)
+    ? activePresetIdRaw
+    : (presets[0]?.id ?? '');
+  const activePreset = presets.find((p: any) => p.id === activePresetId);
   const twitterSnipe = {
-    enabled: typeof inputTwitterSnipe.enabled === 'boolean'
-      ? inputTwitterSnipe.enabled
-      : defaultTwitterSnipe.enabled ?? true,
-    dryRun: typeof inputTwitterSnipe.dryRun === 'boolean'
-      ? inputTwitterSnipe.dryRun
-      : (defaultTwitterSnipe as any).dryRun ?? false,
-    autoSellEnabled: typeof inputTwitterSnipe.autoSellEnabled === 'boolean'
-      ? inputTwitterSnipe.autoSellEnabled
-      : defaultTwitterSnipe.autoSellEnabled,
-    buyAmountBnb: clampStringNumber(inputTwitterSnipe.buyAmountBnb, defaultTwitterSnipe.buyAmountBnb),
-    buyNewCaCount: clampStringNumber(inputTwitterSnipe.buyNewCaCount, defaultTwitterSnipe.buyNewCaCount),
-    buyOgCount: clampStringNumber(inputTwitterSnipe.buyOgCount, defaultTwitterSnipe.buyOgCount),
-    minMarketCapUsd: clampStringNumber(inputTwitterSnipe.minMarketCapUsd, defaultTwitterSnipe.minMarketCapUsd),
-    maxMarketCapUsd: clampStringNumber(inputTwitterSnipe.maxMarketCapUsd, defaultTwitterSnipe.maxMarketCapUsd),
-    minHolders: clampStringNumber(inputTwitterSnipe.minHolders, defaultTwitterSnipe.minHolders),
-    maxHolders: clampStringNumber(inputTwitterSnipe.maxHolders, defaultTwitterSnipe.maxHolders),
-    minKol: clampStringNumber((inputTwitterSnipe as any).minKol, (defaultTwitterSnipe as any).minKol),
-    maxKol: clampStringNumber((inputTwitterSnipe as any).maxKol, (defaultTwitterSnipe as any).maxKol),
-    minTickerLen: clampStringNumber(inputTwitterSnipe.minTickerLen, defaultTwitterSnipe.minTickerLen),
-    maxTickerLen: clampStringNumber(inputTwitterSnipe.maxTickerLen, defaultTwitterSnipe.maxTickerLen),
-    minTokenAgeSeconds: clampStringNumber(inputTwitterSnipe.minTokenAgeSeconds, defaultTwitterSnipe.minTokenAgeSeconds),
-    maxTokenAgeSeconds: clampStringNumber(inputTwitterSnipe.maxTokenAgeSeconds, defaultTwitterSnipe.maxTokenAgeSeconds),
-    minDevHoldPercent: clampStringNumber(inputTwitterSnipe.minDevHoldPercent, defaultTwitterSnipe.minDevHoldPercent),
-    maxDevHoldPercent: clampStringNumber(inputTwitterSnipe.maxDevHoldPercent, defaultTwitterSnipe.maxDevHoldPercent),
-    blockIfDevSell: typeof inputTwitterSnipe.blockIfDevSell === 'boolean'
-      ? inputTwitterSnipe.blockIfDevSell
-      : defaultTwitterSnipe.blockIfDevSell,
-    wsConfirmEnabled: typeof (inputTwitterSnipe as any).wsConfirmEnabled === 'boolean'
-      ? (inputTwitterSnipe as any).wsConfirmEnabled
-      : !!(defaultTwitterSnipe as any).wsConfirmEnabled,
-    wsConfirmWindowMs: clampStringNumber((inputTwitterSnipe as any).wsConfirmWindowMs, (defaultTwitterSnipe as any).wsConfirmWindowMs),
-    wsConfirmMinMcapChangePct: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinMcapChangePct, (defaultTwitterSnipe as any).wsConfirmMinMcapChangePct),
-    wsConfirmMinHoldersDelta: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinHoldersDelta, (defaultTwitterSnipe as any).wsConfirmMinHoldersDelta),
-    wsConfirmMinBuySellRatio: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinBuySellRatio, (defaultTwitterSnipe as any).wsConfirmMinBuySellRatio),
-    wsConfirmMinNetBuy24hUsd: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinNetBuy24hUsd, (defaultTwitterSnipe as any).wsConfirmMinNetBuy24hUsd),
-    wsConfirmMinVol24hUsd: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinVol24hUsd, (defaultTwitterSnipe as any).wsConfirmMinVol24hUsd),
-    wsConfirmMinSmartMoney: clampStringNumber((inputTwitterSnipe as any).wsConfirmMinSmartMoney, (defaultTwitterSnipe as any).wsConfirmMinSmartMoney),
-    stagedEntryEnabled: typeof (inputTwitterSnipe as any).stagedEntryEnabled === 'boolean'
-      ? (inputTwitterSnipe as any).stagedEntryEnabled
-      : !!(defaultTwitterSnipe as any).stagedEntryEnabled,
-    stagedEntryScoutPercent: clampStringNumber((inputTwitterSnipe as any).stagedEntryScoutPercent, (defaultTwitterSnipe as any).stagedEntryScoutPercent),
-    stagedEntryMinDelayMs: clampStringNumber((inputTwitterSnipe as any).stagedEntryMinDelayMs, (defaultTwitterSnipe as any).stagedEntryMinDelayMs),
-    stagedEntryMaxDelayMs: clampStringNumber((inputTwitterSnipe as any).stagedEntryMaxDelayMs, (defaultTwitterSnipe as any).stagedEntryMaxDelayMs),
-    stagedEntryMaxDrawdownPct: clampStringNumber((inputTwitterSnipe as any).stagedEntryMaxDrawdownPct, (defaultTwitterSnipe as any).stagedEntryMaxDrawdownPct),
-    timeStopEnabled: typeof (inputTwitterSnipe as any).timeStopEnabled === 'boolean'
-      ? (inputTwitterSnipe as any).timeStopEnabled
-      : !!(defaultTwitterSnipe as any).timeStopEnabled,
-    timeStopSeconds: clampStringNumber((inputTwitterSnipe as any).timeStopSeconds, (defaultTwitterSnipe as any).timeStopSeconds),
-    timeStopMinPnlPct: clampStringNumber((inputTwitterSnipe as any).timeStopMinPnlPct, (defaultTwitterSnipe as any).timeStopMinPnlPct),
-    timeStopSellPercent: clampStringNumber((inputTwitterSnipe as any).timeStopSellPercent, (defaultTwitterSnipe as any).timeStopSellPercent),
-    deleteTweetSellPercent: clampStringNumber(inputTwitterSnipe.deleteTweetSellPercent, defaultTwitterSnipe.deleteTweetSellPercent),
-    deleteTweetPlaySound: typeof inputTwitterSnipe.deleteTweetPlaySound === 'boolean'
-      ? inputTwitterSnipe.deleteTweetPlaySound
-      : ((defaultTwitterSnipe as any).deleteTweetPlaySound ?? true),
-    deleteTweetSoundPreset: TRADE_SUCCESS_SOUND_PRESETS.includes((inputTwitterSnipe as any).deleteTweetSoundPreset)
-      ? (inputTwitterSnipe as any).deleteTweetSoundPreset
-      : (((defaultTwitterSnipe as any).deleteTweetSoundPreset ?? 'Handgun') as any),
-    targetUsers: parseListInput(inputTwitterSnipe.targetUsers, defaultTwitterSnipe.targetUsers),
-    interactionTypes: interactionTypes.length ? (interactionTypes as any) : defaultTwitterSnipe.interactionTypes,
+    ...twitterSnipeBase,
+    ...(activePreset?.strategy ?? {}),
+    presets,
+    activePresetId,
   };
 
   const autoTrade: AutoTradeConfig = {

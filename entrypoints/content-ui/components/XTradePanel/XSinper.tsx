@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, X } from 'lucide-react';
-import { TRADE_SUCCESS_SOUND_PRESETS, type AutoTradeConfig, type AutoTradeInteractionType, type Settings, type TradeSuccessSoundPreset, type XSniperBuyRecord } from '@/types/extention';
+import { TRADE_SUCCESS_SOUND_PRESETS, type AutoTradeConfig, type AutoTradeInteractionType, type AutoTradeTwitterSnipePreset, type Settings, type TradeSuccessSoundPreset, type XSniperBuyRecord } from '@/types/extention';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { defaultSettings } from '@/utils/defaults';
 import { call } from '@/utils/messaging';
@@ -45,8 +45,7 @@ const cloneAutoTrade = (value: AutoTradeConfig | null) => {
 
 const normalizeAutoTrade = (input: AutoTradeConfig | null | undefined) => {
   const defaults = defaultSettings().autoTrade;
-  if (!input) return defaults;
-  return {
+  const merged = !input ? defaults : {
     ...defaults,
     ...input,
     triggerSound: {
@@ -58,6 +57,10 @@ const normalizeAutoTrade = (input: AutoTradeConfig | null | undefined) => {
       ...(input as any).twitterSnipe,
     },
   };
+  return {
+    ...merged,
+    twitterSnipe: resolveTwitterSnipeByActivePreset((merged as any).twitterSnipe),
+  };
 };
 
 const parseList = (value: string) =>
@@ -66,6 +69,43 @@ const parseList = (value: string) =>
     .flatMap((x) => x.split(/\s+/))
     .map((x) => x.trim())
     .filter(Boolean);
+
+const createPresetId = () => `preset-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+const buildNormalizedPresetStrategy = (raw: any) => {
+  const base = { ...(defaultSettings().autoTrade.twitterSnipe as any) };
+  delete (base as any).presets;
+  delete (base as any).activePresetId;
+  delete (base as any).buyOgCount;
+  const next = {
+    ...base,
+    ...(raw && typeof raw === 'object' ? raw : {}),
+  };
+  next.targetUsers = Array.isArray(next.targetUsers)
+    ? next.targetUsers.map((x: any) => String(x).trim()).filter(Boolean)
+    : [];
+  next.interactionTypes = Array.isArray(next.interactionTypes)
+    ? next.interactionTypes.map((x: any) => String(x).trim()).filter(Boolean)
+    : base.interactionTypes;
+  delete (next as any).presets;
+  delete (next as any).activePresetId;
+  delete (next as any).buyOgCount;
+  return next;
+};
+
+const resolveTwitterSnipeByActivePreset = (twitterSnipe: any) => {
+  const source = twitterSnipe ?? {};
+  const presets = Array.isArray(source.presets) ? source.presets : [];
+  const activePresetId = typeof source.activePresetId === 'string' ? source.activePresetId.trim() : '';
+  const active = presets.find((item: any) => item && typeof item.id === 'string' && item.id === activePresetId);
+  if (!active || !active.strategy || typeof active.strategy !== 'object') return source;
+  return {
+    ...source,
+    ...active.strategy,
+    presets,
+    activePresetId,
+  };
+};
 
 export function XSniperContent({
   siteInfo,
@@ -87,6 +127,7 @@ export function XSniperContent({
   const [targetUsersInput, setTargetUsersInput] = useState(
     () => normalizedAutoTrade.twitterSnipe.targetUsers.join('\n')
   );
+  const [presetJsonInput, setPresetJsonInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [wsStatus, setWsStatus] = useState(() => {
@@ -333,6 +374,13 @@ export function XSniperContent({
   );
   const previewSound = useTradeSuccessSound({ enabled: true, volume: 60 });
   const twitterSnipe = draft?.twitterSnipe;
+  const snipePresets = Array.isArray((twitterSnipe as any)?.presets)
+    ? ((twitterSnipe as any).presets as AutoTradeTwitterSnipePreset[])
+    : [];
+  const activeSnipePresetId = typeof (twitterSnipe as any)?.activePresetId === 'string'
+    ? ((twitterSnipe as any).activePresetId as string)
+    : '';
+  const activeSnipePreset = snipePresets.find((item) => item.id === activeSnipePresetId) ?? null;
   const formatTs = (tsMs: number) => {
     try {
       return new Date(tsMs).toLocaleString();
@@ -386,12 +434,163 @@ export function XSniperContent({
         ? {
           ...prev,
           twitterSnipe: {
-            ...prev.twitterSnipe,
-            ...patch,
+            ...(() => {
+              const current = prev.twitterSnipe as any;
+              const next = {
+                ...current,
+                ...patch,
+              } as any;
+              const presets = Array.isArray(next.presets) ? next.presets : [];
+              const activeId = typeof next.activePresetId === 'string' ? next.activePresetId : '';
+              if (activeId) {
+                next.presets = presets.map((item: any) => {
+                  if (!item || item.id !== activeId) return item;
+                  return {
+                    ...item,
+                    strategy: {
+                      ...(item.strategy ?? {}),
+                      ...patch,
+                    },
+                  };
+                });
+              } else {
+                next.presets = presets;
+              }
+              return next;
+            })(),
           },
         }
         : prev
     );
+  };
+  const applyActivePreset = (presetId: string) => {
+    setIsDirty(true);
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const current = prev.twitterSnipe as any;
+      const presets = Array.isArray(current.presets) ? current.presets : [];
+      const preset = presets.find((item: any) => item && item.id === presetId);
+      if (!preset || !preset.strategy || typeof preset.strategy !== 'object') return prev;
+      const nextSnipe = {
+        ...current,
+        ...preset.strategy,
+        presets,
+        activePresetId: presetId,
+      };
+      const users = Array.isArray(nextSnipe.targetUsers) ? nextSnipe.targetUsers : [];
+      setTargetUsersInput(users.join('\n'));
+      return {
+        ...prev,
+        twitterSnipe: nextSnipe,
+      };
+    });
+  };
+  const addPresetFromCurrent = () => {
+    setIsDirty(true);
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const current = prev.twitterSnipe as any;
+      const presets = Array.isArray(current.presets) ? current.presets : [];
+      const nextId = createPresetId();
+      const nextName = `方案 ${presets.length + 1}`;
+      const strategy = {
+        ...current,
+        targetUsers: parseList(targetUsersInput),
+      };
+      delete (strategy as any).presets;
+      delete (strategy as any).activePresetId;
+      const nextPresets = [...presets, { id: nextId, name: nextName, strategy }];
+      return {
+        ...prev,
+        twitterSnipe: {
+          ...current,
+          presets: nextPresets,
+          activePresetId: nextId,
+        },
+      };
+    });
+  };
+  const removeActivePreset = () => {
+    setIsDirty(true);
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const current = prev.twitterSnipe as any;
+      const presets = Array.isArray(current.presets) ? current.presets : [];
+      const activeId = typeof current.activePresetId === 'string' ? current.activePresetId : '';
+      if (!activeId) return prev;
+      const nextPresets = presets.filter((item: any) => item && item.id !== activeId);
+      const nextActiveId = nextPresets[0]?.id ?? '';
+      const nextActive = nextPresets.find((item: any) => item && item.id === nextActiveId);
+      const nextSnipe = nextActive?.strategy
+        ? {
+          ...current,
+          ...nextActive.strategy,
+          presets: nextPresets,
+          activePresetId: nextActiveId,
+        }
+        : {
+          ...current,
+          presets: nextPresets,
+          activePresetId: nextActiveId,
+        };
+      const users = Array.isArray(nextSnipe.targetUsers) ? nextSnipe.targetUsers : [];
+      setTargetUsersInput(users.join('\n'));
+      return {
+        ...prev,
+        twitterSnipe: nextSnipe,
+      };
+    });
+  };
+  const exportActivePresetAsJson = () => {
+    if (!activeSnipePreset) return;
+    const payload = {
+      id: activeSnipePreset.id,
+      name: activeSnipePreset.name,
+      strategy: buildNormalizedPresetStrategy(activeSnipePreset.strategy),
+    };
+    const text = JSON.stringify(payload, null, 2);
+    setPresetJsonInput(text);
+    void navigator.clipboard?.writeText(text).catch(() => { });
+  };
+  const importPresetFromJson = () => {
+    const text = presetJsonInput.trim();
+    if (!text) return;
+    try {
+      const parsed = JSON.parse(text);
+      const isObject = parsed && typeof parsed === 'object' && !Array.isArray(parsed);
+      if (!isObject) throw new Error('invalid_json');
+      const incomingName = typeof (parsed as any).name === 'string' ? (parsed as any).name.trim() : '';
+      const strategyRaw = (parsed as any).strategy && typeof (parsed as any).strategy === 'object'
+        ? (parsed as any).strategy
+        : parsed;
+      const strategy = buildNormalizedPresetStrategy(strategyRaw);
+      const nextId = typeof (parsed as any).id === 'string' && (parsed as any).id.trim()
+        ? (parsed as any).id.trim()
+        : createPresetId();
+      const nextName = incomingName || '导入方案';
+      setIsDirty(true);
+      setDraft((prev) => {
+        if (!prev) return prev;
+        const current = prev.twitterSnipe as any;
+        const presets = Array.isArray(current.presets) ? current.presets : [];
+        const withoutSameId = presets.filter((item: any) => item && item.id !== nextId);
+        const nextPresets = [...withoutSameId, { id: nextId, name: nextName, strategy }];
+        const nextSnipe = {
+          ...current,
+          ...strategy,
+          presets: nextPresets,
+          activePresetId: nextId,
+        };
+        const users = Array.isArray(nextSnipe.targetUsers) ? nextSnipe.targetUsers : [];
+        setTargetUsersInput(users.join('\n'));
+        return {
+          ...prev,
+          twitterSnipe: nextSnipe,
+        };
+      });
+    } catch {
+      window.alert('配置JSON格式不正确');
+    }
   };
   const soundSelectValue =
     draft?.triggerSound.enabled === false ? SOUND_OFF : (draft?.triggerSound.preset ?? 'Boom');
@@ -555,6 +754,101 @@ export function XSniperContent({
               {tt('contentUi.autoTradeStrategy.twitterSnipeDryRun')}
             </div>
           </label>
+          <div className="space-y-2 rounded-md border border-zinc-800/70 bg-zinc-900/30 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[12px] text-zinc-400">参数方案</div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+                  disabled={!canEdit}
+                  onClick={addPresetFromCurrent}
+                >
+                  新建
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-rose-200 hover:border-rose-400 disabled:opacity-50"
+                  disabled={!canEdit || !activeSnipePreset || snipePresets.length <= 1}
+                  onClick={removeActivePreset}
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-[1fr_1fr] gap-2">
+              <select
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                value={activeSnipePresetId}
+                disabled={!canEdit}
+                onChange={(e) => applyActivePreset(e.target.value)}
+              >
+                {snipePresets.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                placeholder="方案名称"
+                value={activeSnipePreset?.name ?? ''}
+                disabled={!canEdit || !activeSnipePreset}
+                onChange={(e) => {
+                  const nextName = e.target.value;
+                  setIsDirty(true);
+                  setDraft((prev) => {
+                    if (!prev) return prev;
+                    const current = prev.twitterSnipe as any;
+                    const presets = Array.isArray(current.presets) ? current.presets : [];
+                    const nextPresets = presets.map((item: any) => {
+                      if (!item || item.id !== activeSnipePresetId) return item;
+                      return { ...item, name: nextName };
+                    });
+                    return {
+                      ...prev,
+                      twitterSnipe: {
+                        ...current,
+                        presets: nextPresets,
+                      },
+                    };
+                  });
+                }}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-[11px] text-zinc-500">导入/导出JSON</div>
+              <textarea
+                className="h-16 w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[11px] outline-none"
+                value={presetJsonInput}
+                disabled={!canEdit}
+                placeholder='{"name":"趋势盘","strategy":{...}}'
+                onChange={(e) => {
+                  setPresetJsonInput(e.target.value);
+                }}
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+                  disabled={!canEdit}
+                  onClick={importPresetFromJson}
+                >
+                  导入JSON
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+                  disabled={!canEdit || !activeSnipePreset}
+                  onClick={exportActivePresetAsJson}
+                >
+                  导出JSON
+                </button>
+              </div>
+            </div>
+            <div className="text-[11px] text-zinc-500">仅运行当前选中的方案，其他方案只保存不执行</div>
+          </div>
           <label className="block space-y-1">
             <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.targetUsers')}</div>
             <textarea
@@ -583,18 +877,11 @@ export function XSniperContent({
                       disabled={!canEdit}
                       onChange={(e) => {
                         const nextChecked = e.target.checked;
-                        setDraft((prev) => {
-                          if (!prev) return prev;
-                          setIsDirty(true);
-                          const current = prev.twitterSnipe.interactionTypes;
-                          const next = nextChecked
-                            ? Array.from(new Set([...current, option.value]))
-                            : current.filter((x) => x !== option.value);
-                          return {
-                            ...prev,
-                            twitterSnipe: { ...prev.twitterSnipe, interactionTypes: next },
-                          };
-                        });
+                        const current = twitterSnipe?.interactionTypes ?? [];
+                        const next = nextChecked
+                          ? Array.from(new Set([...current, option.value]))
+                          : current.filter((x) => x !== option.value);
+                        updateTwitterSnipe({ interactionTypes: next });
                       }}
                     />
                     {tt(option.labelKey)}
@@ -603,7 +890,7 @@ export function XSniperContent({
               })}
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <label className="block space-y-1">
               <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.strategyBuyAmount')}</div>
               <input
@@ -615,23 +902,13 @@ export function XSniperContent({
               />
             </label>
             <label className="block space-y-1">
-              <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.buyNewCaCount')}</div>
+              <div className="text-[12px] text-zinc-400">买入CA数量</div>
               <input
                 type="number"
                 className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
                 value={twitterSnipe?.buyNewCaCount ?? ''}
                 disabled={!canEdit}
                 onChange={(e) => updateTwitterSnipe({ buyNewCaCount: e.target.value })}
-              />
-            </label>
-            <label className="block space-y-1">
-              <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.buyOgCount')}</div>
-              <input
-                type="number"
-                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
-                value={twitterSnipe?.buyOgCount ?? ''}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ buyOgCount: e.target.value })}
               />
             </label>
           </div>
@@ -1206,6 +1483,27 @@ export function XSniperContent({
                     ...draft.twitterSnipe,
                     targetUsers: parseList(targetUsersInput),
                   },
+                };
+                const currentSnipe = (mergedDraft as any).twitterSnipe ?? {};
+                const presets = Array.isArray(currentSnipe.presets) ? currentSnipe.presets : [];
+                const activeId = typeof currentSnipe.activePresetId === 'string' ? currentSnipe.activePresetId : '';
+                const strategyPatch = { ...currentSnipe };
+                delete (strategyPatch as any).presets;
+                delete (strategyPatch as any).activePresetId;
+                const nextPresets = presets.map((item: any) => {
+                  if (!item || item.id !== activeId) return item;
+                  return {
+                    ...item,
+                    strategy: {
+                      ...(item.strategy ?? {}),
+                      ...strategyPatch,
+                    },
+                  };
+                });
+                (mergedDraft as any).twitterSnipe = {
+                  ...currentSnipe,
+                  presets: nextPresets,
+                  activePresetId: activeId,
                 };
                 setSaving(true);
                 try {

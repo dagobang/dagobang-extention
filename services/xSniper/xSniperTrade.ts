@@ -162,8 +162,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
 
   const normalizeAutoTrade = (input: any) => {
     const defaults = defaultSettings().autoTrade;
-    if (!input) return defaults;
-    return {
+    const merged = !input ? defaults : {
       ...defaults,
       ...input,
       triggerSound: {
@@ -173,6 +172,20 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       twitterSnipe: {
         ...defaults.twitterSnipe,
         ...(input as any).twitterSnipe,
+      },
+    };
+    const s = (merged as any).twitterSnipe ?? {};
+    const presets = Array.isArray(s.presets) ? s.presets : [];
+    const activeId = typeof s.activePresetId === 'string' ? s.activePresetId.trim() : '';
+    const active = presets.find((p: any) => p && typeof p.id === 'string' && p.id === activeId);
+    if (!active || !active.strategy || typeof active.strategy !== 'object') return merged;
+    return {
+      ...merged,
+      twitterSnipe: {
+        ...s,
+        ...active.strategy,
+        presets,
+        activePresetId: activeId,
       },
     };
   };

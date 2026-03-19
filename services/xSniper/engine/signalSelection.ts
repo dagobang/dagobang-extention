@@ -116,37 +116,5 @@ export const pickTokensToBuyFromSignal = (input: {
   if (strategy?.dryRun === true) {
     return candidates;
   }
-  const ogCount = Math.max(0, Math.floor(parseNumber(strategy?.buyOgCount) ?? 0));
-  const maxCount = perTweetMax;
-  let leftNew = perTweetMax;
-  let leftOg = ogCount;
-
-  const picked: typeof candidates = [];
-  const pickedKey = new Set<string>();
-  for (const c of candidates) {
-    if (picked.length >= maxCount) break;
-    const key = String(c.m!.tokenAddress).toLowerCase();
-    if (pickedKey.has(key)) continue;
-    const first = normalizeEpochMs((c.t as any).firstSeenAtMs) ?? now;
-    const isNew = now - first <= 60_000;
-    if (isNew && leftNew > 0) {
-      leftNew -= 1;
-      picked.push(c);
-      pickedKey.add(key);
-    } else if (!isNew && leftOg > 0) {
-      leftOg -= 1;
-      picked.push(c);
-      pickedKey.add(key);
-    }
-  }
-
-  for (const c of candidates) {
-    if (picked.length >= maxCount) break;
-    const key = String(c.m!.tokenAddress).toLowerCase();
-    if (pickedKey.has(key)) continue;
-    picked.push(c);
-    pickedKey.add(key);
-  }
-
-  return picked;
+  return candidates.slice(0, perTweetMax);
 };

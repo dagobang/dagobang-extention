@@ -93,6 +93,20 @@ const getDevHasSold = (token: UnifiedSignalToken) => {
   return null;
 };
 
+const resolveTwitterSnipeByActivePreset = (twitterSnipe: any) => {
+  const source = twitterSnipe ?? {};
+  const presets = Array.isArray(source.presets) ? source.presets : [];
+  const activePresetId = typeof source.activePresetId === 'string' ? source.activePresetId.trim() : '';
+  const active = presets.find((item: any) => item && typeof item.id === 'string' && item.id === activePresetId);
+  if (!active || !active.strategy || typeof active.strategy !== 'object') return source;
+  return {
+    ...source,
+    ...active.strategy,
+    presets,
+    activePresetId,
+  };
+};
+
 const buildNotBoughtReason = (input: {
   tt: TTFunc;
   wsMonitorEnabled: boolean;
@@ -267,39 +281,12 @@ const buildNotBoughtReason = (input: {
       return ta - tb;
     });
 
-    const ogCount = Math.max(0, Math.floor(parseNumber(input.strategy?.buyOgCount) ?? 0));
-    const maxCount = perTweetMax;
-    let leftNew = perTweetMax;
-    let leftOg = ogCount;
-
-    const selected: UnifiedSignalToken[] = [];
-    const selectedKey = new Set<string>();
-    for (const t of candidates) {
-      if (selected.length >= maxCount) break;
-      const addr = typeof (t as any)?.tokenAddress === 'string' ? String((t as any).tokenAddress).trim().toLowerCase() : '';
-      if (!addr) continue;
-      if (selectedKey.has(addr)) continue;
-      const first = typeof (t as any).firstSeenAtMs === 'number' && (t as any).firstSeenAtMs > 0 ? (t as any).firstSeenAtMs : 0;
-      const isNew = first > 0 && now - first <= 60_000;
-      if (isNew && leftNew > 0) {
-        leftNew -= 1;
-        selected.push(t);
-        selectedKey.add(addr);
-      } else if (!isNew && leftOg > 0) {
-        leftOg -= 1;
-        selected.push(t);
-        selectedKey.add(addr);
-      }
-    }
-
-    for (const t of candidates) {
-      if (selected.length >= maxCount) break;
-      const addr = typeof (t as any)?.tokenAddress === 'string' ? String((t as any).tokenAddress).trim().toLowerCase() : '';
-      if (!addr) continue;
-      if (selectedKey.has(addr)) continue;
-      selected.push(t);
-      selectedKey.add(addr);
-    }
+    const selected = candidates.slice(0, perTweetMax);
+    const selectedKey = new Set<string>(
+      selected
+        .map((t) => (typeof (t as any)?.tokenAddress === 'string' ? String((t as any).tokenAddress).trim().toLowerCase() : ''))
+        .filter(Boolean)
+    );
     const curAddr = typeof (input.token as any)?.tokenAddress === 'string' ? String((input.token as any).tokenAddress).trim().toLowerCase() : '';
     return curAddr ? selectedKey.has(curAddr) : false;
   })();
@@ -489,6 +476,22 @@ export function XMonitorContent({
     setWsMonitorEnabled(resolvedSettings?.autoTrade?.wsMonitorEnabled !== false);
   }, [resolvedSettings?.autoTrade?.wsMonitorEnabled]);
 
+  const twitterSnipeSource = (resolvedSettings as any)?.autoTrade?.twitterSnipe ?? null;
+  const twitterSnipeStrategy = useMemo(
+    () => resolveTwitterSnipeByActivePreset(twitterSnipeSource),
+    [twitterSnipeSource]
+  );
+  const activeStrategyName = useMemo(() => {
+    const source = twitterSnipeSource ?? {};
+    const presets = Array.isArray(source.presets) ? source.presets : [];
+    const activePresetId = typeof source.activePresetId === 'string' ? source.activePresetId.trim() : '';
+    if (!activePresetId) return '';
+    const active = presets.find((item: any) => item && typeof item.id === 'string' && item.id === activePresetId);
+    if (!active) return '';
+    const name = typeof active.name === 'string' ? active.name.trim() : '';
+    return name || activePresetId;
+  }, [twitterSnipeSource]);
+
   const tickerLenFilter = useMemo(() => {
     const parseLen = (v: any) => {
       if (typeof v !== 'string') return null;
@@ -497,13 +500,11 @@ export function XMonitorContent({
       const i = Math.floor(n);
       return i >= 0 ? i : null;
     };
-    const snipe = (resolvedSettings as any)?.autoTrade?.twitterSnipe ?? null;
+    const snipe = twitterSnipeStrategy;
     const min = parseLen(snipe?.minTickerLen);
     const max = parseLen(snipe?.maxTickerLen);
     return { min, max };
-  }, [resolvedSettings]);
-
-  const twitterSnipeStrategy = (resolvedSettings as any)?.autoTrade?.twitterSnipe ?? null;
+  }, [twitterSnipeStrategy]);
 
   const [boughtByAddr, setBoughtByAddr] = useState<Record<string, { dryRun: boolean; tsMs: number }>>({});
   useEffect(() => {
@@ -768,6 +769,14 @@ export function XMonitorContent({
             </select>
           </div>
         </div>
+        {activeStrategyName ? (
+          <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+            <span>当前生效策略</span>
+            <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300">
+              {activeStrategyName}
+            </span>
+          </div>
+        ) : null}
 
         {!resolvedSettings ? (
           <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.statusSettingsNotLoaded')}</div>
