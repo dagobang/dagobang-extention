@@ -1045,6 +1045,33 @@ export function XSniperContent({
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <div className="w-16 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.filterTweetAge')}</div>
+              <div className="grid flex-1 grid-cols-2 gap-2">
+                <div className="relative">
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMin')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-9 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.minTweetAgeSeconds ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ minTweetAgeSeconds: e.target.value } as any)}
+                  />
+                  <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">s</div>
+                </div>
+                <div className="relative">
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMax')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-9 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.maxTweetAgeSeconds ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ maxTweetAgeSeconds: e.target.value } as any)}
+                  />
+                  <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">s</div>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
               <div className="w-16 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.filterDevHold')}</div>
               <div className="grid flex-1 grid-cols-2 gap-2">
                 <div className="relative">

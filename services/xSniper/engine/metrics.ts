@@ -153,22 +153,23 @@ export const shouldBuyByConfig = (
   if (shouldCheckTokenCreatedAtWindow && tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
     const ref = normalizeEpochMs(signalAtMs);
     if (ref == null) return false;
-    const tokenCreatedDelayMs = tokenAtMs - ref;
-    if (tokenCreatedDelayMs < -10_000) return false;
-    if (minAgeSec != null && tokenCreatedDelayMs < minAgeSec * 1000) return false;
-    if (maxAgeSec != null && tokenCreatedDelayMs > maxAgeSec * 1000) return false;
+    const tokenAgeAtSignalMs = ref - tokenAtMs;
+    if (tokenAgeAtSignalMs < -10_000) return false;
+    if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000) return false;
+    if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000) return false;
   }
 
-  const minOrderDelaySec = minAgeSec;
-  const maxOrderDelaySec = maxAgeSec;
-  if (minOrderDelaySec != null || maxOrderDelaySec != null) {
+  const minTweetAgeSecRaw = parseNumber((config as any).minTweetAgeSeconds);
+  const maxTweetAgeSec = parseNumber((config as any).maxTweetAgeSeconds);
+  const minTweetAgeSec = minTweetAgeSecRaw ?? (maxTweetAgeSec != null ? 0 : null);
+  if (minTweetAgeSec != null || maxTweetAgeSec != null) {
     const ref = normalizeEpochMs(signalAtMs);
     const now = normalizeEpochMs(orderAtMs) ?? Date.now();
     if (ref == null) return false;
-    const orderDelayMs = now - ref;
-    if (orderDelayMs < 0) return false;
-    if (minOrderDelaySec != null && orderDelayMs < minOrderDelaySec * 1000) return false;
-    if (maxOrderDelaySec != null && orderDelayMs > maxOrderDelaySec * 1000) return false;
+    const tweetAgeMs = now - ref;
+    if (tweetAgeMs < 0) return false;
+    if (minTweetAgeSec != null && tweetAgeMs < minTweetAgeSec * 1000) return false;
+    if (maxTweetAgeSec != null && tweetAgeMs > maxTweetAgeSec * 1000) return false;
   }
 
   const minDevPct = parseNumber(config.minDevHoldPercent);

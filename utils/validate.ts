@@ -243,6 +243,8 @@ export function validateSettings(input: Settings): Settings | null {
     maxTickerLen: clampStringNumber(rawInput?.maxTickerLen, fallbackInput.maxTickerLen),
     minTokenAgeSeconds: clampStringNumber(rawInput?.minTokenAgeSeconds, fallbackInput.minTokenAgeSeconds),
     maxTokenAgeSeconds: clampStringNumber(rawInput?.maxTokenAgeSeconds, fallbackInput.maxTokenAgeSeconds),
+    minTweetAgeSeconds: clampStringNumber((rawInput as any)?.minTweetAgeSeconds, (fallbackInput as any)?.minTweetAgeSeconds),
+    maxTweetAgeSeconds: clampStringNumber((rawInput as any)?.maxTweetAgeSeconds, (fallbackInput as any)?.maxTweetAgeSeconds),
     minDevHoldPercent: clampStringNumber(rawInput?.minDevHoldPercent, fallbackInput.minDevHoldPercent),
     maxDevHoldPercent: clampStringNumber(rawInput?.maxDevHoldPercent, fallbackInput.maxDevHoldPercent),
     blockIfDevSell: typeof rawInput?.blockIfDevSell === 'boolean'

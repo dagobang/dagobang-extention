@@ -177,15 +177,16 @@ const buildNotBoughtReason = (input: {
       return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(tokenAgeAtSignalMs / 1000), Math.floor(maxAgeSec)]);
   }
 
-  const minOrderDelaySec = minAgeSec;
-  const maxOrderDelaySec = maxAgeSec;
-  if (minOrderDelaySec != null || maxOrderDelaySec != null) {
-    const orderDelayMs = now - signalAtMs;
-    if (orderDelayMs < 0) return input.tt('contentUi.xMonitor.notBought.reason.orderWindowExpired', ['0', String(Math.floor(maxOrderDelaySec ?? 0))]);
-    if (minOrderDelaySec != null && orderDelayMs < minOrderDelaySec * 1000)
-      return input.tt('contentUi.xMonitor.notBought.reason.orderWindowTooEarly', [Math.floor(orderDelayMs / 1000), Math.floor(minOrderDelaySec)]);
-    if (maxOrderDelaySec != null && orderDelayMs > maxOrderDelaySec * 1000)
-      return input.tt('contentUi.xMonitor.notBought.reason.orderWindowExpired', [Math.floor(orderDelayMs / 1000), Math.floor(maxOrderDelaySec)]);
+  const minTweetAgeSecRaw = parseNumber((input.strategy as any)?.minTweetAgeSeconds);
+  const maxTweetAgeSec = parseNumber((input.strategy as any)?.maxTweetAgeSeconds);
+  const minTweetAgeSec = minTweetAgeSecRaw ?? (maxTweetAgeSec != null ? 0 : null);
+  if (minTweetAgeSec != null || maxTweetAgeSec != null) {
+    const tweetAgeMs = now - signalAtMs;
+    if (tweetAgeMs < 0) return input.tt('contentUi.xMonitor.notBought.reason.orderWindowExpired', ['0', String(Math.floor(maxTweetAgeSec ?? 0))]);
+    if (minTweetAgeSec != null && tweetAgeMs < minTweetAgeSec * 1000)
+      return input.tt('contentUi.xMonitor.notBought.reason.orderWindowTooEarly', [Math.floor(tweetAgeMs / 1000), Math.floor(minTweetAgeSec)]);
+    if (maxTweetAgeSec != null && tweetAgeMs > maxTweetAgeSec * 1000)
+      return input.tt('contentUi.xMonitor.notBought.reason.orderWindowExpired', [Math.floor(tweetAgeMs / 1000), Math.floor(maxTweetAgeSec)]);
   }
 
   const minDevPct = parseNumber(input.strategy?.minDevHoldPercent);
@@ -253,13 +254,14 @@ const buildNotBoughtReason = (input: {
         if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000) return false;
       }
 
-      const minOrderDelaySec = minAgeSec;
-      const maxOrderDelaySec = maxAgeSec;
-      if (minOrderDelaySec != null || maxOrderDelaySec != null) {
-        const orderDelayMs = Date.now() - signalAtMs;
-        if (orderDelayMs < 0) return false;
-        if (minOrderDelaySec != null && orderDelayMs < minOrderDelaySec * 1000) return false;
-        if (maxOrderDelaySec != null && orderDelayMs > maxOrderDelaySec * 1000) return false;
+      const minTweetAgeSecRaw = parseNumber((input.strategy as any)?.minTweetAgeSeconds);
+      const maxTweetAgeSec = parseNumber((input.strategy as any)?.maxTweetAgeSeconds);
+      const minTweetAgeSec = minTweetAgeSecRaw ?? (maxTweetAgeSec != null ? 0 : null);
+      if (minTweetAgeSec != null || maxTweetAgeSec != null) {
+        const tweetAgeMs = Date.now() - signalAtMs;
+        if (tweetAgeMs < 0) return false;
+        if (minTweetAgeSec != null && tweetAgeMs < minTweetAgeSec * 1000) return false;
+        if (maxTweetAgeSec != null && tweetAgeMs > maxTweetAgeSec * 1000) return false;
       }
 
       if (minDevPct != null && devHoldPct == null) return false;
