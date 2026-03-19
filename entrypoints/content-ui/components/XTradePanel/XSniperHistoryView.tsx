@@ -97,6 +97,7 @@ const computeWeightedPnlPct = (input: {
     .slice()
     .sort((a, b) => (Number(a.tsMs) || 0) - (Number(b.tsMs) || 0));
   let soldPct = 0;
+  let pricedSoldPct = 0;
   let weightedRoi = 0;
   for (const s of sortedSells) {
     const nextPct = clampPercent(s.sellPercent);
@@ -105,6 +106,7 @@ const computeWeightedPnlPct = (input: {
     const sellMcap = typeof s.marketCapUsd === 'number' && Number.isFinite(s.marketCapUsd) ? s.marketCapUsd : input.latestMcap;
     if (sellMcap != null && Number.isFinite(sellMcap) && sellMcap > 0) {
       weightedRoi += (effectivePct / 100) * ((sellMcap / entry) - 1);
+      pricedSoldPct += effectivePct;
     }
     soldPct += effectivePct;
   }
@@ -114,6 +116,9 @@ const computeWeightedPnlPct = (input: {
   }
   const mode: 'unrealized' | 'mixed' | 'realized' =
     soldPct <= 0 ? 'unrealized' : remainPct <= 0 ? 'realized' : 'mixed';
+  if (pricedSoldPct < soldPct && (remainPct <= 0 || input.latestMcap == null || !Number.isFinite(input.latestMcap) || input.latestMcap <= 0)) {
+    return { pnlPct: null as number | null, soldPct, remainPct, mode };
+  }
   return { pnlPct: weightedRoi * 100, soldPct, remainPct, mode };
 };
 

@@ -222,6 +222,12 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     broadcastToActiveTabs,
     fetchTokenInfoFresh,
     buildGenericTokenInfo,
+    getLatestMarketCapUsd: (tokenAddress) => {
+      const snaps = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+      const latest = snaps.length ? snaps[snaps.length - 1] : null;
+      const mcap = latest?.marketCapUsd;
+      return typeof mcap === 'number' && Number.isFinite(mcap) && mcap > 0 ? mcap : null;
+    },
   });
 
   const handleTwitterSignal = async (signal: UnifiedTwitterSignal) => {

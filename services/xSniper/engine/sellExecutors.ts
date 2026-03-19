@@ -33,6 +33,7 @@ export const createSellExecutors = (deps: {
   broadcastToActiveTabs: (message: any) => Promise<void>;
   fetchTokenInfoFresh: (chainId: number, tokenAddress: `0x${string}`) => Promise<TokenInfo | null>;
   buildGenericTokenInfo: (chainId: number, tokenAddress: `0x${string}`) => Promise<TokenInfo | null>;
+  getLatestMarketCapUsd: (tokenAddress: `0x${string}`) => number | null;
 }) => {
   const deleteSellInFlight = new Set<string>();
   const timeStopSellInFlight = new Set<string>();
@@ -54,6 +55,7 @@ export const createSellExecutors = (deps: {
     timeStopSellInFlight.add(dedupeKey);
     try {
       const now = Date.now();
+      const latestMarketCapUsd = deps.getLatestMarketCapUsd(input.tokenAddress);
       const baseRecord: XSniperBuyRecord = {
         id: `${now}-${Math.random().toString(16).slice(2)}`,
         side: 'sell',
@@ -71,6 +73,7 @@ export const createSellExecutors = (deps: {
         signalId: input.pos.signalId,
         signalEventId: input.pos.signalEventId,
         signalTweetId: input.pos.signalTweetId,
+        marketCapUsd: latestMarketCapUsd != null && Number.isFinite(latestMarketCapUsd) && latestMarketCapUsd > 0 ? latestMarketCapUsd : undefined,
         reason: input.reason,
       };
 
@@ -187,6 +190,7 @@ export const createSellExecutors = (deps: {
       const now = Date.now();
       const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
       const tweetUrl = buildTweetUrl(input.signal);
+      const latestMarketCapUsd = deps.getLatestMarketCapUsd(input.tokenAddress);
       const baseRecord: XSniperBuyRecord = {
         id: `${now}-${Math.random().toString(16).slice(2)}`,
         side: 'sell',
@@ -206,6 +210,7 @@ export const createSellExecutors = (deps: {
         signalId: input.signal.id,
         signalEventId: input.signal.eventId,
         signalTweetId: input.signal.tweetId,
+        marketCapUsd: latestMarketCapUsd != null && Number.isFinite(latestMarketCapUsd) && latestMarketCapUsd > 0 ? latestMarketCapUsd : undefined,
       };
 
       if (input.dryRun) {

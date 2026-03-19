@@ -628,13 +628,13 @@ export default function App() {
   }, [siteInfo, address, ensureAutoTradeAudioReady, playAutoTradePreset, autoTradeSoundPreset, ensureTradeSuccessAudioReady, playTradeBuySound, playTradeSellSound]);
 
   useEffect(() => {
-    const dedupeStorageKey = 'dagobang_delete_tweet_sound_dedupe_v1';
-    const dedupeTtlMs = 6 * 60 * 60 * 1000;
+    const dedupeStorageKey = 'dagobang_delete_tweet_sound_dedupe_v2';
+    const dedupeMaxCount = 2000;
     const normalizeAddr = (value: unknown) => (typeof value === 'string' ? value.trim().toLowerCase() : '');
     const normalizeText = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
     const loadPlayedMap = () => {
       try {
-        const raw = window.sessionStorage.getItem(dedupeStorageKey);
+        const raw = window.localStorage.getItem(dedupeStorageKey);
         if (!raw) return {} as Record<string, number>;
         const parsed = JSON.parse(raw) as Record<string, number>;
         if (!parsed || typeof parsed !== 'object') return {} as Record<string, number>;
@@ -645,20 +645,21 @@ export default function App() {
     };
     const persistPlayedMap = (map: Record<string, number>) => {
       try {
-        window.sessionStorage.setItem(dedupeStorageKey, JSON.stringify(map));
+        window.localStorage.setItem(dedupeStorageKey, JSON.stringify(map));
       } catch {
       }
     };
-    const clearExpired = (map: Record<string, number>, now: number) => {
+    const clampPlayedMap = (map: Record<string, number>) => {
+      const entries = Object.entries(map).filter(([, ts]) => typeof ts === 'number' && Number.isFinite(ts));
+      if (entries.length <= dedupeMaxCount) return map;
+      entries.sort((a, b) => a[1] - b[1]);
       const next: Record<string, number> = {};
-      for (const [k, ts] of Object.entries(map)) {
-        if (typeof ts === 'number' && Number.isFinite(ts) && now - ts <= dedupeTtlMs) {
-          next[k] = ts;
-        }
+      for (const [k, ts] of entries.slice(entries.length - dedupeMaxCount)) {
+        next[k] = ts;
       }
       return next;
     };
-    deleteSoundPlayedAtRef.current = clearExpired(loadPlayedMap(), Date.now());
+    deleteSoundPlayedAtRef.current = clampPlayedMap(loadPlayedMap());
 
     const onTwitterSignal = (e: Event) => {
       const signal = (e as CustomEvent<any>).detail as any;
@@ -679,13 +680,16 @@ export default function App() {
       const tweetId = normalizeText(signal.tweetId);
       const sourceTweetId = normalizeText(signal.sourceTweetId);
       const eventId = normalizeText(signal.eventId);
-      const key = `${tweetType}:${tweetId || sourceTweetId || eventId}:${tokenAddrKey}`;
+      const userScreen = normalizeText(signal.userScreen);
+      const ts = Number(signal.ts ?? signal.receivedAtMs);
+      const fallbackStableId = `${userScreen}:${Number.isFinite(ts) ? Math.floor(ts / 1000) : ''}`;
+      const stableId = tweetId || sourceTweetId || eventId || fallbackStableId;
+      const key = `${tweetType}:${stableId}`;
       if (!key) return;
       const now = Date.now();
-      const cleaned = clearExpired(deleteSoundPlayedAtRef.current, now);
-      const lastPlayedAt = cleaned[key];
-      if (typeof lastPlayedAt === 'number' && Number.isFinite(lastPlayedAt) && now - lastPlayedAt < dedupeTtlMs) {
-        deleteSoundPlayedAtRef.current = cleaned;
+      const map = deleteSoundPlayedAtRef.current;
+      const lastPlayedAt = map[key];
+      if (typeof lastPlayedAt === 'number' && Number.isFinite(lastPlayedAt)) {
         return;
       }
       const deleteTweetPlaySound = settingsRef.current?.autoTrade?.twitterSnipe?.deleteTweetPlaySound !== false;
@@ -693,9 +697,9 @@ export default function App() {
       const preset = (settingsRef.current?.autoTrade?.twitterSnipe?.deleteTweetSoundPreset ?? 'Handgun') as TradeSuccessSoundPreset;
       ensureDeleteTweetAudioReady();
       playDeleteTweetPreset(preset);
-      cleaned[key] = now;
-      deleteSoundPlayedAtRef.current = cleaned;
-      persistPlayedMap(cleaned);
+      const next = clampPlayedMap({ ...map, [key]: now });
+      deleteSoundPlayedAtRef.current = next;
+      persistPlayedMap(next);
     };
     window.addEventListener('dagobang-twitter-signal' as any, onTwitterSignal as any);
     return () => window.removeEventListener('dagobang-twitter-signal' as any, onTwitterSignal as any);
