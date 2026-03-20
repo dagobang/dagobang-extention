@@ -185,6 +185,8 @@
       "tokenLimit": "Token 顯示",
       "filterOnlyWithTokens": "只看有代幣",
       "empty": "暫無推文",
+      "loadMore": "載入更多（20條）",
+      "pageStatus": "已顯示 {0}/{1} 條",
       "unknownUser": "未知",
       "replyTo": "↩ 回覆 @{0}",
       "followTarget": "被關注帳號",

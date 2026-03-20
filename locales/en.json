@@ -185,6 +185,8 @@
       "tokenLimit": "Token limit",
       "filterOnlyWithTokens": "Only with tokens",
       "empty": "No posts",
+      "loadMore": "Load more (20)",
+      "pageStatus": "Showing {0}/{1}",
       "unknownUser": "Unknown",
       "replyTo": "↩ Reply @{0}",
       "followTarget": "Followed account",

@@ -185,6 +185,8 @@
       "tokenLimit": "Token 显示",
       "filterOnlyWithTokens": "只看有代币",
       "empty": "暂无推文",
+      "loadMore": "加载更多（20条）",
+      "pageStatus": "已显示 {0}/{1} 条",
       "unknownUser": "未知",
       "replyTo": "↩ 回复 @{0}",
       "followTarget": "被关注账号",

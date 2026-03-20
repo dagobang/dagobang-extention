@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlarmClockCheck, Trophy, ChefHat, Users, X, UserStar } from 'lucide-react';
 import type { Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
@@ -30,6 +30,8 @@ type XSniperBuyRecordLite = {
 };
 
 const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
+const SIGNAL_PAGE_SIZE = 20;
+const SIGNAL_CACHE_LIMIT = 200;
 
 const parseNumber = (v: any) => {
   if (v == null) return null;
@@ -577,11 +579,7 @@ export function XMonitorContent({
     return 200;
   });
 
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(520);
-  const rowHeightsRef = useRef<Map<string, number>>(new Map());
-  const [rowVersion, setRowVersion] = useState(0);
+  const [signalPage, setSignalPage] = useState(1);
 
   useEffect(() => {
     try {
@@ -625,7 +623,7 @@ export function XMonitorContent({
     }
     const nextIds = Array.from(map.values())
       .sort((a, b) => getSignalAtMs(b) - getSignalAtMs(a))
-      .slice(0, 50)
+      .slice(0, SIGNAL_CACHE_LIMIT)
       .map((x) => x.id);
     setSignalIds(nextIds);
   }, []);
@@ -639,7 +637,7 @@ export function XMonitorContent({
       map.set(signal.id, signal);
       const nextIds = Array.from(map.values())
         .sort((a, b) => getSignalAtMs(b) - getSignalAtMs(a))
-        .slice(0, 50)
+        .slice(0, SIGNAL_CACHE_LIMIT)
         .map((x) => x.id);
       setSignalIds(nextIds);
     };
@@ -657,51 +655,15 @@ export function XMonitorContent({
   }, [signalList, onlyWithTokens]);
 
   useEffect(() => {
-    if (!listRef.current) return;
-    const node = listRef.current;
-    const onScroll = () => setScrollTop(node.scrollTop);
-    onScroll();
-    node.addEventListener('scroll', onScroll, { passive: true });
-    return () => node.removeEventListener('scroll', onScroll);
-  }, []);
+    setSignalPage(1);
+  }, [onlyWithTokens, active]);
 
-  useEffect(() => {
-    if (!listRef.current) return;
-    const node = listRef.current;
-    const ro = new ResizeObserver(() => setViewportHeight(node.clientHeight));
-    ro.observe(node);
-    return () => ro.disconnect();
-  }, []);
+  const visiblePagedSignals = useMemo(() => {
+    const count = Math.max(1, signalPage) * SIGNAL_PAGE_SIZE;
+    return visibleSignals.slice(0, count);
+  }, [visibleSignals, signalPage]);
 
-  const avgRowHeight = useMemo(() => {
-    const values = Array.from(rowHeightsRef.current.values());
-    if (!values.length) return 140;
-    const sum = values.reduce((acc, v) => acc + v, 0);
-    return Math.max(90, Math.round(sum / values.length));
-  }, [rowVersion]);
-
-  const virtualRange = useMemo(() => {
-    const total = visibleSignals.length;
-    if (!total) return { start: 0, end: 0, top: 0, bottom: 0 };
-    const overscan = 6;
-    const start = Math.max(0, Math.floor(scrollTop / avgRowHeight) - overscan);
-    const end = Math.min(total, Math.ceil((scrollTop + viewportHeight) / avgRowHeight) + overscan);
-    const top = start * avgRowHeight;
-    const bottom = Math.max(0, total * avgRowHeight - end * avgRowHeight);
-    return { start, end, top, bottom };
-  }, [visibleSignals.length, scrollTop, viewportHeight, avgRowHeight]);
-
-  const setRowRef = useCallback((key: string) => {
-    return (node: HTMLDivElement | null) => {
-      if (!node) return;
-      const h = node.getBoundingClientRect().height;
-      const prev = rowHeightsRef.current.get(key);
-      if (prev !== h) {
-        rowHeightsRef.current.set(key, h);
-        setRowVersion((v) => v + 1);
-      }
-    };
-  }, []);
+  const hasMoreSignals = visiblePagedSignals.length < visibleSignals.length;
 
   if (!active) return null;
 
@@ -785,15 +747,17 @@ export function XMonitorContent({
         ) : null}
       </div>
 
-      <div ref={listRef} className="max-h-[62vh] overflow-y-auto p-3">
+      <div className="max-h-[62vh] overflow-y-auto p-3">
         {!wsMonitorEnabled ? (
           <div className="px-2 py-8 text-center text-[14px] text-zinc-500">{tt('contentUi.xMonitor.wsMonitorDisabled')}</div>
         ) : visibleSignals.length === 0 ? (
           <div className="px-2 py-8 text-center text-[14px] text-zinc-500">{tt('contentUi.xMonitor.empty')}</div>
         ) : (
           <div>
-            {virtualRange.top > 0 ? <div style={{ height: virtualRange.top }} /> : null}
-            {visibleSignals.slice(virtualRange.start, virtualRange.end).map((signal) => {
+            <div className="mb-2 px-1 text-[11px] text-zinc-500">
+              {tt('contentUi.xMonitor.pageStatus', [visiblePagedSignals.length, visibleSignals.length])}
+            </div>
+            {visiblePagedSignals.map((signal) => {
               const timeText = formatAgeShort(getSignalAtMs(signal));
               const displayName = signal.userName || signal.userScreen || tt('contentUi.xMonitor.unknownUser');
               const handle = signal.userScreen ? `@${signal.userScreen}` : null;
@@ -857,7 +821,6 @@ export function XMonitorContent({
               return (
                 <div
                   key={signal.id}
-                  ref={setRowRef(signal.id)}
                   className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-3 mb-3"
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -1251,7 +1214,17 @@ export function XMonitorContent({
                 </div>
               );
             })}
-            {virtualRange.bottom > 0 ? <div style={{ height: virtualRange.bottom }} /> : null}
+            {hasMoreSignals ? (
+              <div className="mt-2 flex justify-center">
+                <button
+                  type="button"
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-[12px] text-zinc-200 hover:bg-zinc-800"
+                  onClick={() => setSignalPage((p) => p + 1)}
+                >
+                  {tt('contentUi.xMonitor.loadMore')}
+                </button>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
