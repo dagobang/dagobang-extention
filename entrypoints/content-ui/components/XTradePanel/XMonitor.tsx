@@ -64,6 +64,23 @@ const getSignalAtMs = (signal: UnifiedTwitterSignal) => {
   return Date.now();
 };
 
+const getQuotedSignalAtMs = (signal: UnifiedTwitterSignal) => {
+  const sourceTweetAt = normalizeEpochMs((signal as any).sourceTweetAtMs);
+  if (sourceTweetAt != null) return sourceTweetAt;
+  const quotedAt = normalizeEpochMs((signal as any).quotedTweetAtMs);
+  if (quotedAt != null) return quotedAt;
+  const quotedTs = normalizeEpochMs((signal as any).quotedTs);
+  if (quotedTs != null) return quotedTs;
+  return null;
+};
+
+const formatDateTimeSec = (ts?: number | null) => {
+  if (typeof ts !== 'number' || !Number.isFinite(ts) || ts <= 0) return '';
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
+
 const getSignalInteraction = (signal: UnifiedTwitterSignal) => {
   const type = signal.tweetType === 'delete_post' ? ((signal as any).sourceTweetType ?? null) : signal.tweetType;
   if (type === 'repost') return 'retweet';
@@ -72,6 +89,11 @@ const getSignalInteraction = (signal: UnifiedTwitterSignal) => {
   if (type === 'quote') return 'quote';
   if (type === 'follow') return 'follow';
   return null;
+};
+
+const isRepostOrQuoteSignal = (signal: UnifiedTwitterSignal) => {
+  const type = signal.tweetType === 'delete_post' ? ((signal as any).sourceTweetType ?? signal.tweetType) : signal.tweetType;
+  return type === 'repost' || type === 'quote';
 };
 
 const matchesTwitterFilters = (signal: UnifiedTwitterSignal, strategy: any) => {
@@ -169,14 +191,15 @@ const buildNotBoughtReason = (input: {
   const maxAgeSec = parseNumber(input.strategy?.maxTokenAgeSeconds);
   const minAgeSec = minAgeSecRaw ?? (maxAgeSec != null ? 0 : null);
   const tokenAtMs = createdAtMs ?? firstSeenAtMs;
-  if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return input.tt('contentUi.xMonitor.notBought.reason.createdAtMissing');
-  if (tokenAtMs != null) {
-    const tokenAgeAtSignalMs = signalAtMs - tokenAtMs;
-    if (tokenAgeAtSignalMs < -10_000) return input.tt('contentUi.xMonitor.notBought.reason.tokenCreatedAfterTweet');
-    if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000)
-      return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(tokenAgeAtSignalMs / 1000), Math.floor(minAgeSec)]);
-    if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000)
-      return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(tokenAgeAtSignalMs / 1000), Math.floor(maxAgeSec)]);
+  const shouldCheckTokenCreatedAtWindow = !isRepostOrQuoteSignal(input.signal);
+  if (shouldCheckTokenCreatedAtWindow && (minAgeSec != null || maxAgeSec != null) && tokenAtMs == null)
+    return input.tt('contentUi.xMonitor.notBought.reason.createdAtMissing');
+  if (shouldCheckTokenCreatedAtWindow && tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
+    const tokenDelayFromSignalMs = tokenAtMs - signalAtMs;
+    if (minAgeSec != null && tokenDelayFromSignalMs < minAgeSec * 1000)
+      return input.tt('contentUi.xMonitor.notBought.reason.ageTooYoung', [Math.floor(tokenDelayFromSignalMs / 1000), Math.floor(minAgeSec)]);
+    if (maxAgeSec != null && tokenDelayFromSignalMs > maxAgeSec * 1000)
+      return input.tt('contentUi.xMonitor.notBought.reason.ageTooOld', [Math.floor(tokenDelayFromSignalMs / 1000), Math.floor(maxAgeSec)]);
   }
 
   const minTweetAgeSecRaw = parseNumber((input.strategy as any)?.minTweetAgeSeconds);
@@ -248,12 +271,11 @@ const buildNotBoughtReason = (input: {
       }
 
       const tokenAtMs = createdAtMs ?? firstSeenAtMs;
-      if ((minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
-      if (tokenAtMs != null) {
-        const tokenAgeAtSignalMs = signalAtMs - tokenAtMs;
-        if (tokenAgeAtSignalMs < -10_000) return false;
-        if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000) return false;
-        if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000) return false;
+      if (shouldCheckTokenCreatedAtWindow && (minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
+      if (shouldCheckTokenCreatedAtWindow && tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
+        const tokenDelayFromSignalMs = tokenAtMs - signalAtMs;
+        if (minAgeSec != null && tokenDelayFromSignalMs < minAgeSec * 1000) return false;
+        if (maxAgeSec != null && tokenDelayFromSignalMs > maxAgeSec * 1000) return false;
       }
 
       const minTweetAgeSecRaw = parseNumber((input.strategy as any)?.minTweetAgeSeconds);
@@ -758,7 +780,9 @@ export function XMonitorContent({
               {tt('contentUi.xMonitor.pageStatus', [visiblePagedSignals.length, visibleSignals.length])}
             </div>
             {visiblePagedSignals.map((signal) => {
-              const timeText = formatAgeShort(getSignalAtMs(signal));
+              const signalAtMs = getSignalAtMs(signal);
+              const quotedAtMs = getQuotedSignalAtMs(signal);
+              const timeText = formatAgeShort(signalAtMs);
               const displayName = signal.userName || signal.userScreen || tt('contentUi.xMonitor.unknownUser');
               const handle = signal.userScreen ? `@${signal.userScreen}` : null;
               const followerText = formatCountShort(signal.userFollowers);
@@ -865,6 +889,17 @@ export function XMonitorContent({
                         </button>
                       ) : null}
                     </div>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500">
+                    <span>
+                      {tt('contentUi.xMonitor.timeAction')}: <span className="text-zinc-400">{formatDateTimeSec(signalAtMs)}</span>
+                    </span>
+                    <span>
+                      {tt('contentUi.xMonitor.timeQuoted')}:{' '}
+                      <span className="text-zinc-400">
+                        {quotedAtMs != null ? formatDateTimeSec(quotedAtMs) : tt('contentUi.xMonitor.timeUnknown')}
+                      </span>
+                    </span>
                   </div>
 
                   {replyHandle ? (
@@ -1202,6 +1237,16 @@ export function XMonitorContent({
                                   </span>
                                 ) : null}
                               </div>
+                            </div>
+                            <div className="mt-1 text-[10px] text-zinc-500">
+                              <span>
+                                {tt('contentUi.xMonitor.timeTokenCreated')}:{' '}
+                                <span className="text-zinc-400">
+                                  {typeof token.createdAtMs === 'number' && Number.isFinite(token.createdAtMs)
+                                    ? formatDateTimeSec(token.createdAtMs)
+                                    : tt('contentUi.xMonitor.timeUnknown')}
+                                </span>
+                              </span>
                             </div>
                             {!bought && notBoughtReason ? (
                               <div className="mt-1 text-[10px] text-zinc-500">{tt('contentUi.xMonitor.notBought.prefix', [notBoughtReason])}</div>

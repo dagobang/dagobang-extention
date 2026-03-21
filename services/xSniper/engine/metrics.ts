@@ -153,10 +153,9 @@ export const shouldBuyByConfig = (
   if (shouldCheckTokenCreatedAtWindow && tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
     const ref = normalizeEpochMs(signalAtMs);
     if (ref == null) return false;
-    const tokenAgeAtSignalMs = ref - tokenAtMs;
-    if (tokenAgeAtSignalMs < -10_000) return false;
-    if (minAgeSec != null && tokenAgeAtSignalMs < minAgeSec * 1000) return false;
-    if (maxAgeSec != null && tokenAgeAtSignalMs > maxAgeSec * 1000) return false;
+    const tokenDelayFromSignalMs = tokenAtMs - ref;
+    if (minAgeSec != null && tokenDelayFromSignalMs < minAgeSec * 1000) return false;
+    if (maxAgeSec != null && tokenDelayFromSignalMs > maxAgeSec * 1000) return false;
   }
 
   const minTweetAgeSecRaw = parseNumber((config as any).minTweetAgeSeconds);
