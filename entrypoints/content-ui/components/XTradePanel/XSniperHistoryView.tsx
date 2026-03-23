@@ -173,7 +173,7 @@ export function XSniperHistoryView({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="dagobang-scrollbar space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.snipeHistoryTitle')}</div>
         <div className="flex items-center gap-1.5">

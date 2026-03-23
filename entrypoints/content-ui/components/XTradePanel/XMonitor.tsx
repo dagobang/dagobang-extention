@@ -769,7 +769,7 @@ export function XMonitorContent({
         ) : null}
       </div>
 
-      <div className="max-h-[62vh] overflow-y-auto p-3">
+      <div className="dagobang-scrollbar max-h-[62vh] overflow-y-auto p-3">
         {!wsMonitorEnabled ? (
           <div className="px-2 py-8 text-center text-[14px] text-zinc-500">{tt('contentUi.xMonitor.wsMonitorDisabled')}</div>
         ) : visibleSignals.length === 0 ? (
@@ -945,7 +945,7 @@ export function XMonitorContent({
                         ) : null}
                       </div>
                       {signal.followedUserBio ? (
-                        <div className="mt-2 max-h-36 overflow-y-auto pr-1 text-[14px] text-zinc-300 whitespace-pre-wrap break-words">
+                        <div className="dagobang-scrollbar mt-2 max-h-36 overflow-y-auto pr-1 text-[14px] text-zinc-300 whitespace-pre-wrap break-words">
                           {renderRichText(signal.followedUserBio, `${signal.id}:followBio`)}
                         </div>
                       ) : null}
@@ -990,7 +990,7 @@ export function XMonitorContent({
                         ) : null}
                       </div>
                       {signal.quotedText ? (
-                        <div className="mt-2 max-h-40 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
+                        <div className="dagobang-scrollbar mt-2 max-h-40 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
                           {renderRichText(signal.quotedText, `${signal.id}:quotedText:quote`)}
                         </div>
                       ) : null}
@@ -1035,14 +1035,14 @@ export function XMonitorContent({
                         ) : null}
                       </div>
                       {signal.quotedText ? (
-                        <div className="mt-2 max-h-40 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
+                        <div className="dagobang-scrollbar mt-2 max-h-40 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
                           {renderRichText(signal.quotedText, `${signal.id}:quotedText:repost`)}
                         </div>
                       ) : null}
                       {signal.translatedText ? (
                         <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
                           <div className="text-[10px] text-zinc-500">{tt('contentUi.xMonitor.translation')}</div>
-                          <div className="mt-1 max-h-40 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
+                          <div className="dagobang-scrollbar mt-1 max-h-40 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
                             {renderRichText(signal.translatedText, `${signal.id}:translated:repost`)}
                           </div>
                         </div>
@@ -1052,7 +1052,7 @@ export function XMonitorContent({
 
                   {signal.text && signal.tweetType !== 'repost' ? (
                     <div className="mt-2">
-                      <div className="mt-1 max-h-44 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-zinc-100">
+                      <div className="dagobang-scrollbar mt-1 max-h-44 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-zinc-100">
                         {renderRichText(signal.text, `${signal.id}:text`)}
                       </div>
                     </div>
@@ -1099,7 +1099,7 @@ export function XMonitorContent({
                   {signal.translatedText && signal.tweetType !== 'repost' ? (
                     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
                       <div className="text-[10px] text-zinc-500">{tt('contentUi.xMonitor.translation')}</div>
-                      <div className="mt-1 max-h-40 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
+                      <div className="dagobang-scrollbar mt-1 max-h-40 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
                         {renderRichText(signal.translatedText, `${signal.id}:translated`)}
                       </div>
                     </div>

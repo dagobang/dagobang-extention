@@ -1178,7 +1178,7 @@ export function LimitTradePanel({
               </div>
             )}
 
-            <div className="max-h-[38vh] overflow-y-auto pr-1">
+            <div className="dagobang-scrollbar max-h-[38vh] overflow-y-auto pr-1">
               {isCompactLayout ? (
                 <>
                   <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">

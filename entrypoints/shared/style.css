@@ -10,3 +10,27 @@ body {
   margin: 0;
 }
 
+.dagobang-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(113, 113, 122, 0.75) rgba(24, 24, 27, 0.8);
+}
+
+.dagobang-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.dagobang-scrollbar::-webkit-scrollbar-track {
+  background: rgba(24, 24, 27, 0.8);
+  border-radius: 9999px;
+}
+
+.dagobang-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(113, 113, 122, 0.78);
+  border-radius: 9999px;
+  border: 1px solid rgba(24, 24, 27, 0.9);
+}
+
+.dagobang-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(161, 161, 170, 0.85);
+}

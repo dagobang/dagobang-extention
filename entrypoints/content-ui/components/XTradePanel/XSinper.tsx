@@ -683,7 +683,7 @@ export function XSniperContent({
 
   return (
     <>
-      <div className="p-3 space-y-3 max-h-[64vh] overflow-y-auto">
+      <div className="dagobang-scrollbar p-3 space-y-3 max-h-[64vh] overflow-y-auto">
         {view === 'config' ? (
           <>
         <div className="space-y-2 pb-3 border-b border-zinc-800/60">
@@ -1422,7 +1422,7 @@ export function XSniperContent({
               </button>
             </div>
             {showLogs ? (
-              <div className="max-h-[180px] overflow-y-auto rounded-md border border-zinc-800 bg-zinc-900/40 p-2 text-[11px] text-zinc-300 whitespace-pre-wrap break-words">
+              <div className="dagobang-scrollbar max-h-[180px] overflow-y-auto rounded-md border border-zinc-800 bg-zinc-900/40 p-2 text-[11px] text-zinc-300 whitespace-pre-wrap break-words">
                 {(
                   Array.isArray((wsStatus as any)?.logs) ? ((wsStatus as any).logs as any[]) : []
                 )
