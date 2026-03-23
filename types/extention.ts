@@ -177,6 +177,7 @@ export type Settings = {
   tradeSuccessSoundPresetSell?: TradeSuccessSoundPreset;
   tradeSuccessSoundVolume?: number;
   limitOrderScanIntervalMs?: number;
+  tokenBalancePollIntervalMs?: number;
   ui?: UiSettings;
   autoTrade: AutoTradeConfig;
   advancedAutoSell: AdvancedAutoSellConfig;

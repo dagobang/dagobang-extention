@@ -110,6 +110,8 @@
       "approveGasGwei": "Approve gas (gwei)",
       "quickBuy1Bnb": "Quick buy 1 (BNB)",
       "quickBuy2Bnb": "Quick buy 2 (BNB)",
+      "tokenBalancePolling": "Token balance polling",
+      "tokenBalancePollIntervalMs": "Polling interval (ms)",
       "autoLockSeconds": "Auto Lock (s)",
       "showToolbar": "Show toolbar",
       "limitTradePanelOnlyOnTokenPage": "Show limit panel only on token pages",

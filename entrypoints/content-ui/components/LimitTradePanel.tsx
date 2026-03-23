@@ -236,8 +236,7 @@ export function LimitTradePanel({
     if (currentPriceUsd == null || currentPriceUsd <= 0) return 'text-zinc-500';
     if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) return 'text-zinc-500';
     if (currentPriceUsd > triggerPriceUsd) return 'text-emerald-400';
-    if (currentPriceUsd < triggerPriceUsd) return 'text-rose-400';
-    return 'text-zinc-300';
+    return 'text-zinc-400';
   };
 
   const toTokenKey = (chainId2: number, tokenAddress2: string) => `${chainId2}:${tokenAddress2.toLowerCase()}`;
@@ -1237,7 +1236,7 @@ export function LimitTradePanel({
                         <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
                           <div className="text-zinc-500">{tt('contentUi.limitTradePanel.table.triggerPrice')}</div>
                           <div className="text-zinc-500 text-right">{tt('contentUi.limitTradePanel.table.targetChange')}</div>
-                          <div className="text-zinc-200 truncate" title={formatTriggerValue(o)}>{formatTriggerValue(o)}</div>
+                          <div className="text-rose-400 text-[13px] truncate" title={formatTriggerValue(o)}>{formatTriggerValue(o)}</div>
                           <div className="text-zinc-200 text-right truncate" title={formatTargetChange(o)}>{formatTargetChange(o)}</div>
                           <div className={`truncate ${currentDisplay.colorClass}`} title={currentDisplay.text}>
                             {priceDisplayMode === 'price'
@@ -1385,11 +1384,11 @@ export function LimitTradePanel({
                             </div>
                           ) : null}
                         </div>
-                        <div className="min-w-0 text-zinc-200">
-                          <div className="truncate" title={formatTriggerValue(o)}>
+                        <div className="min-w-0 text-rose-400">
+                          <div className="text-[13px] truncate" title={formatTriggerValue(o)}>
                             {formatTriggerValue(o)}
                           </div>
-                          <div className={`text-[12px] truncate ${currentDisplay.colorClass}`} title={currentDisplay.text}>
+                          <div className={`truncate ${currentDisplay.colorClass}`} title={currentDisplay.text}>
                             {priceDisplayMode === 'price'
                               ? tt('contentUi.limitTradePanel.currentPrice', [currentDisplay.text])
                               : tt('contentUi.limitTradePanel.currentMarketCap', [currentDisplay.text])}

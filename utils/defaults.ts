@@ -229,6 +229,7 @@ export function defaultSettings(): Settings {
     tradeSuccessSoundPresetSell: 'Coins',
     tradeSuccessSoundVolume: 60,
     limitOrderScanIntervalMs: 3000,
+    tokenBalancePollIntervalMs: 2000,
     ui: {
       showToolbar: true,
       limitTradePanelOnlyOnTokenPage: false,

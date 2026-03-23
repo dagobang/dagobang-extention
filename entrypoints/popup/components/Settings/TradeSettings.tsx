@@ -3,6 +3,8 @@ import type { SettingsDraftProps } from './types';
 type TradeSettingsProps = SettingsDraftProps;
 
 export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSettingsProps) {
+  const tokenBalancePollIntervalMs = settingsDraft.tokenBalancePollIntervalMs ?? 2000;
+  const tokenBalancePollIntervalOptions = [500, 1000, 1500, 2000, 3000, 5000, 10000];
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -84,7 +86,30 @@ export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSett
           </label>
         </div>
       </div>
+
+      <div className="space-y-3 pt-4 border-t border-zinc-800">
+        <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">{tt('popup.settings.tokenBalancePolling')}</div>
+        <label className="block space-y-1">
+          <div className="text-[14px] text-zinc-400">{tt('popup.settings.tokenBalancePollIntervalMs')}</div>
+          <select
+            className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+            value={String(tokenBalancePollIntervalMs)}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setSettingsDraft((s) => ({
+                ...s,
+                tokenBalancePollIntervalMs: Number.isFinite(next) ? next : 2000,
+              }));
+            }}
+          >
+            {tokenBalancePollIntervalOptions.map((ms) => (
+              <option key={ms} value={String(ms)}>
+                {ms} ms
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
     </div>
   );
 }
-

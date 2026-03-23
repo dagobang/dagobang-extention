@@ -110,6 +110,8 @@
       "approveGasGwei": "授權 Gas（gwei）",
       "quickBuy1Bnb": "列表快捷買入 1（BNB）",
       "quickBuy2Bnb": "列表快捷買入 2（BNB）",
+      "tokenBalancePolling": "代幣餘額輪詢",
+      "tokenBalancePollIntervalMs": "輪詢間隔（毫秒）",
       "autoLockSeconds": "自動鎖定（秒）",
       "showToolbar": "顯示工具列懸浮窗",
       "limitTradePanelOnlyOnTokenPage": "僅代幣頁面顯示掛單面板",

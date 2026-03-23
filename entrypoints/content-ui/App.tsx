@@ -79,6 +79,8 @@ export default function App() {
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
   const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
+  const tokenBalancePollIntervalMs = settings?.tokenBalancePollIntervalMs ?? 2000;
+  const tokenBalanceRefreshThrottleMs = Math.max(200, tokenBalancePollIntervalMs);
   const { ensureReady: ensureTradeSuccessAudioReady, playBuy: playTradeBuySound, playSell: playTradeSellSound } = useTradeSuccessSound({
     enabled: settings?.tradeSuccessSoundEnabled,
     volume: settings?.tradeSuccessSoundVolume,
@@ -549,9 +551,9 @@ export default function App() {
       return;
     }
 
-    // Throttle: don't refresh if less than 2s passed, unless forced
+    // Throttle: don't refresh if less than configured interval passed, unless forced
     const now = Date.now();
-    if (!force && now - lastTokenRefresh.current < 2000) return;
+    if (!force && now - lastTokenRefresh.current < tokenBalanceRefreshThrottleMs) return;
     lastTokenRefresh.current = now;
 
     const reqCtxKey = `${siteInfo.platform ?? ''}:${siteInfo.chain ?? ''}:${tokenAddressNormalized ?? ''}`;
@@ -574,7 +576,9 @@ export default function App() {
       }
 
       if (isUnlocked && address) {
-        const holding = await TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, address, tokenAddressNormalized, { cacheTtlMs: 2000 });
+        const holding = await TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, address, tokenAddressNormalized, {
+          cacheTtlMs: tokenBalanceRefreshThrottleMs,
+        });
         if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
         setTokenBalanceWei(holding ?? '0');
       } else {
@@ -627,7 +631,17 @@ export default function App() {
     };
     browser.runtime.onMessage.addListener(listener);
     return () => browser.runtime.onMessage.removeListener(listener);
-  }, [siteInfo, address, ensureAutoTradeAudioReady, playAutoTradePreset, autoTradeSoundPreset, ensureTradeSuccessAudioReady, playTradeBuySound, playTradeSellSound]);
+  }, [
+    siteInfo,
+    address,
+    ensureAutoTradeAudioReady,
+    playAutoTradePreset,
+    autoTradeSoundPreset,
+    ensureTradeSuccessAudioReady,
+    playTradeBuySound,
+    playTradeSellSound,
+    tokenBalanceRefreshThrottleMs,
+  ]);
 
   useEffect(() => {
     const dedupeStorageKey = 'dagobang_delete_tweet_sound_dedupe_v2';
@@ -709,9 +723,9 @@ export default function App() {
 
   useEffect(() => {
     refreshToken(true);
-    const timer = setInterval(() => refreshToken(), 2000);
+    const timer = setInterval(() => refreshToken(), tokenBalancePollIntervalMs);
     return () => clearInterval(timer);
-  }, [tokenAddressNormalized, address, siteInfo]);
+  }, [tokenAddressNormalized, address, siteInfo, tokenBalancePollIntervalMs]);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -775,7 +789,7 @@ export default function App() {
         if (fastPollingRef.current) clearInterval(fastPollingRef.current);
         fastPollingRef.current = null;
       }
-    }, 800);
+    }, 500);
   };
 
   const handleBuy = (amountStr: string) => {
