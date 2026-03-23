@@ -104,6 +104,7 @@ export class TokenService {
     tokenAddress: `0x${string}`;
     tokenInfo?: TokenInfo | null;
     cacheTtlMs?: number;
+    allowTokenInfoPriceFallback?: boolean;
   }): Promise<number> {
     return this.getPriceUsdFromRpc(input);
   }
@@ -113,8 +114,9 @@ export class TokenService {
     tokenAddress: `0x${string}`;
     tokenInfo?: TokenInfo | null;
     cacheTtlMs?: number;
+    allowTokenInfoPriceFallback?: boolean;
   }): Promise<number> {
-    const { chainId, tokenAddress, tokenInfo, cacheTtlMs } = input;
+    const { chainId, tokenAddress, tokenInfo, cacheTtlMs, allowTokenInfoPriceFallback } = input;
     const now = Date.now();
     const ttl = typeof cacheTtlMs === 'number' && cacheTtlMs >= 0 ? cacheTtlMs : 0;
     const key = `${chainId}:${tokenAddress.toLowerCase()}`;
@@ -257,7 +259,12 @@ export class TokenService {
       }
     }
 
-    if (!(priceUsd > 0) && tokenInfo && typeof (tokenInfo as any).tokenPrice?.price === 'string') {
+    if (
+      !(priceUsd > 0) &&
+      allowTokenInfoPriceFallback !== false &&
+      tokenInfo &&
+      typeof (tokenInfo as any).tokenPrice?.price === 'string'
+    ) {
       const v = Number((tokenInfo as any).tokenPrice.price);
       if (Number.isFinite(v) && v > 0) {
         priceUsd = v;

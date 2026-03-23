@@ -10,6 +10,87 @@ import type { TokenInfo } from '@/types/token';
 import type { DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
 import type { StagedPosition } from '@/services/xSniper/engine/stagedEntrySchedulers';
 
+const buildWsAutoSellPosition = (input: {
+  cfg: any;
+  chainId: number;
+  tokenAddress: `0x${string}`;
+  openedAtMs: number;
+  entryMcapUsd: number;
+  tweetAtMs?: number;
+  tweetUrl?: string;
+  tweetType?: string;
+  channel?: string;
+  signalId?: string;
+  signalEventId?: string;
+  signalTweetId?: string;
+}): DryRunAutoSellPos | null => {
+  const entryMcapUsd = Number(input.entryMcapUsd);
+  if (!Number.isFinite(entryMcapUsd) || entryMcapUsd <= 0) return null;
+  const cfg = input.cfg as any;
+  const rules = Array.isArray(cfg?.rules) ? (cfg.rules as any[]) : [];
+  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+  const takeProfits: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }> = [];
+  const stopLosses: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }> = [];
+  for (const r of rules) {
+    const id = typeof r?.id === 'string' && r.id.trim() ? String(r.id).trim() : '';
+    if (!id) continue;
+    const rawTrigger = Number(r?.triggerPercent);
+    const rawSell = Number(r?.sellPercent);
+    if (!Number.isFinite(rawTrigger) || !Number.isFinite(rawSell)) continue;
+    const baseTrigger = clamp(rawTrigger, -99.9, 100000);
+    const triggerPercent = r?.type === 'stop_loss' ? -Math.abs(baseTrigger) : Math.abs(baseTrigger);
+    const sellPercent = clamp(rawSell, 0, 100);
+    const sellPercentBps = Math.round(sellPercent * 100);
+    if (!(sellPercentBps > 0 && sellPercentBps <= 10000)) continue;
+    const triggerMcapUsd = entryMcapUsd * (1 + triggerPercent / 100);
+    if (!Number.isFinite(triggerMcapUsd) || triggerMcapUsd <= 0) continue;
+    if (r?.type === 'stop_loss') stopLosses.push({ id, triggerMcapUsd, sellPercentBps, triggerPercent });
+    else takeProfits.push({ id, triggerMcapUsd, sellPercentBps, triggerPercent });
+  }
+  const trailingRaw = cfg?.trailingStop as any;
+  const trailingSellPercent = Number.isFinite(Number(trailingRaw?.sellPercent))
+    ? clamp(Number(trailingRaw?.sellPercent), 1, 100)
+    : 100;
+  const trailing =
+    trailingRaw?.enabled === true
+      ? {
+          enabled: true,
+          callbackPercent: Number.isFinite(Number(trailingRaw?.callbackPercent))
+            ? clamp(Number(trailingRaw?.callbackPercent), 0.1, 99.9)
+            : 15,
+          sellPercentBps: Math.round(trailingSellPercent * 100),
+          activationMode:
+            trailingRaw?.activationMode === 'after_first_take_profit' || trailingRaw?.activationMode === 'after_last_take_profit'
+              ? trailingRaw.activationMode
+              : 'immediate',
+          active: false,
+          peakMcapUsd: entryMcapUsd,
+        }
+      : null;
+  const hasRules = takeProfits.length > 0 || stopLosses.length > 0 || !!trailing;
+  if (!hasRules) return null;
+  return {
+    chainId: input.chainId,
+    tokenAddress: input.tokenAddress,
+    openedAtMs: input.openedAtMs,
+    entryMcapUsd,
+    remainingBps: 10000,
+    takeProfits,
+    stopLosses,
+    trailing,
+    takeProfitTotal: takeProfits.length,
+    takeProfitExecuted: 0,
+    executedIds: new Set<string>(),
+    tweetAtMs: input.tweetAtMs,
+    tweetUrl: input.tweetUrl,
+    tweetType: input.tweetType,
+    channel: input.channel,
+    signalId: input.signalId,
+    signalEventId: input.signalEventId,
+    signalTweetId: input.signalTweetId,
+  };
+};
+
 export const tryAutoBuyOnce = async (input: {
   chainId: number;
   tokenAddress: `0x${string}`;
@@ -193,8 +274,7 @@ export const tryAutoBuyOnce = async (input: {
           const cfg = (settings as any).advancedAutoSell as any;
           if (cfg?.enabled) {
             const rawEntryMcap = refreshedMetrics.marketCapUsd;
-            let entryMcapUsd =
-              typeof rawEntryMcap === 'number' && Number.isFinite(rawEntryMcap) && rawEntryMcap > 0 ? rawEntryMcap : null;
+            let entryMcapUsd = typeof rawEntryMcap === 'number' && Number.isFinite(rawEntryMcap) && rawEntryMcap > 0 ? rawEntryMcap : null;
 
             if (stage === 'add') {
               const existing = input.stagedPositions.get(posKey);
@@ -242,61 +322,13 @@ export const tryAutoBuyOnce = async (input: {
             }
 
             if (entryMcapUsd != null && entryMcapUsd > 0) {
-              const rules = Array.isArray(cfg.rules) ? (cfg.rules as any[]) : [];
-              const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-              const takeProfits: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }> = [];
-              const stopLosses: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }> = [];
-              for (const r of rules) {
-                const id = typeof r?.id === 'string' && r.id.trim() ? String(r.id).trim() : '';
-                if (!id) continue;
-                const rawTrigger = Number(r?.triggerPercent);
-                const rawSell = Number(r?.sellPercent);
-                if (!Number.isFinite(rawTrigger) || !Number.isFinite(rawSell)) continue;
-                const baseTrigger = clamp(rawTrigger, -99.9, 100000);
-                const triggerPercent = r?.type === 'stop_loss' ? -Math.abs(baseTrigger) : Math.abs(baseTrigger);
-                const sellPercent = clamp(rawSell, 0, 100);
-                const sellPercentBps = Math.round(sellPercent * 100);
-                if (!(sellPercentBps > 0 && sellPercentBps <= 10000)) continue;
-                const triggerMcapUsd = entryMcapUsd * (1 + triggerPercent / 100);
-                if (!Number.isFinite(triggerMcapUsd) || triggerMcapUsd <= 0) continue;
-                if (r?.type === 'stop_loss') stopLosses.push({ id, triggerMcapUsd, sellPercentBps, triggerPercent });
-                else takeProfits.push({ id, triggerMcapUsd, sellPercentBps, triggerPercent });
-              }
-
-              const trailingRaw = cfg?.trailingStop as any;
-              const trailingSellPercent = Number.isFinite(Number(trailingRaw?.sellPercent))
-                ? clamp(Number(trailingRaw?.sellPercent), 1, 100)
-                : 100;
-              const trailing =
-                trailingRaw?.enabled === true
-                  ? {
-                      enabled: true,
-                      callbackPercent: Number.isFinite(Number(trailingRaw?.callbackPercent))
-                        ? clamp(Number(trailingRaw?.callbackPercent), 0.1, 99.9)
-                        : 15,
-                      sellPercentBps: Math.round(trailingSellPercent * 100),
-                      activationMode:
-                        trailingRaw?.activationMode === 'after_first_take_profit' || trailingRaw?.activationMode === 'after_last_take_profit'
-                          ? trailingRaw.activationMode
-                          : 'immediate',
-                      active: false,
-                      peakMcapUsd: entryMcapUsd,
-                    }
-                  : null;
-
               const meta = input.stagedPositions.get(posKey);
-              input.dryRunAutoSellByPosKey.set(posKey, {
+              const wsPlan = buildWsAutoSellPosition({
+                cfg,
                 chainId: input.chainId,
                 tokenAddress: input.tokenAddress,
                 openedAtMs: meta?.openedAtMs ?? Date.now(),
                 entryMcapUsd,
-                remainingBps: 10000,
-                takeProfits,
-                stopLosses,
-                trailing,
-                takeProfitTotal: takeProfits.length,
-                takeProfitExecuted: 0,
-                executedIds: new Set<string>(),
                 tweetAtMs: meta?.tweetAtMs ?? (getSignalTimeMs(input.signal) ?? undefined),
                 tweetUrl: meta?.tweetUrl ?? buildTweetUrl(input.signal),
                 tweetType: meta?.tweetType ?? (input.signal?.tweetType ? String(input.signal.tweetType) : undefined),
@@ -305,6 +337,7 @@ export const tryAutoBuyOnce = async (input: {
                 signalEventId: meta?.signalEventId ?? (input.signal?.eventId ? String(input.signal.eventId) : undefined),
                 signalTweetId: meta?.signalTweetId ?? (input.signal?.tweetId ? String(input.signal.tweetId) : undefined),
               });
+              if (wsPlan) input.dryRunAutoSellByPosKey.set(posKey, wsPlan);
             }
           }
         } catch {

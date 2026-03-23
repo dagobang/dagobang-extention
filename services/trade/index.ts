@@ -40,6 +40,8 @@ const abiParamsFourMemeBuyTokenParams = parseAbiParameters(
 const abiParamsFourMemeBuyTokenWrapper = parseAbiParameters('bytes args, uint256 time, bytes signature');
 
 export class TradeService {
+  private static sellInFlightByToken = new Set<string>();
+
   static async quoteBestExactIn(
     chainId: number,
     tokenIn: `0x${string}`,
@@ -466,6 +468,12 @@ export class TradeService {
   }
 
   static async sell(input: TxSellInput) {
+    const sellLockKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+    if (this.sellInFlightByToken.has(sellLockKey)) {
+      throw new Error('SELL_IN_FLIGHT');
+    }
+    this.sellInFlightByToken.add(sellLockKey);
+    const run = async () => {
     const settings = await SettingsService.get();
     const routerAddress = DeployAddress[input.chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
@@ -732,6 +740,12 @@ export class TradeService {
       });
     }
     return { txHash, broadcastVia, broadcastUrl };
+    };
+    try {
+      return await run();
+    } finally {
+      this.sellInFlightByToken.delete(sellLockKey);
+    }
   }
 
   static async approve(chainId: number, tokenAddress: string, spender: string, amountWei: string) {

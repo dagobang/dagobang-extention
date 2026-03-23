@@ -77,6 +77,7 @@ export const createLimitOrderScanner = (deps: {
       if (walletStatus.locked || !walletStatus.address) return;
 
       let changed = false;
+      let softError: string | null = null;
 
       const byToken = new Map<string, LimitOrder[]>();
       for (const o of openOrders) {
@@ -88,12 +89,20 @@ export const createLimitOrderScanner = (deps: {
 
       for (const [, orders] of byToken) {
         const base = orders[0];
-        const priceUsd = await TokenService.getTokenPriceUsdFromRpc({
-          chainId: base.chainId,
-          tokenAddress: base.tokenAddress,
-          tokenInfo: base.tokenInfo ?? null,
-          cacheTtlMs: limitScanIntervalMs,
-        });
+        let priceUsd = 0;
+        try {
+          priceUsd = await TokenService.getTokenPriceUsdFromRpc({
+            chainId: base.chainId,
+            tokenAddress: base.tokenAddress,
+            tokenInfo: base.tokenInfo ?? null,
+            cacheTtlMs: limitScanIntervalMs,
+            allowTokenInfoPriceFallback: false,
+          });
+        } catch (e: any) {
+          const msg = typeof e?.message === 'string' ? e.message : String(e);
+          softError = msg;
+          continue;
+        }
         if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
 
         const scanPriceUsd = normalizePriceValue(priceUsd, 4, 6);
@@ -132,8 +141,8 @@ export const createLimitOrderScanner = (deps: {
       }
 
       if (changed) deps.onStateChanged();
-      limitScanLastOk = true;
-      limitScanLastError = null;
+      limitScanLastOk = softError == null;
+      limitScanLastError = softError;
     } catch (e: any) {
       const msg = typeof e?.message === 'string' ? e.message : String(e);
       limitScanLastOk = false;

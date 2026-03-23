@@ -42,7 +42,11 @@ export const maybeEvaluateDryRunAutoSell = async (input: {
   const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
   if (curMcap == null || curMcap <= 0) return;
 
-  const keys = Array.from(input.dryRunAutoSellByPosKey.keys()).filter((k) => k.endsWith(`:${input.tokenAddress.toLowerCase()}`));
+  const keys = Array.from(input.dryRunAutoSellByPosKey.keys()).filter((k) => {
+    const parts = k.split(':');
+    const addr = parts.length >= 2 ? parts[parts.length - 2] : '';
+    return addr.toLowerCase() === input.tokenAddress.toLowerCase();
+  });
   for (const posKey of keys) {
     const pos = input.dryRunAutoSellByPosKey.get(posKey);
     if (!pos) continue;
