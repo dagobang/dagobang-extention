@@ -1,4 +1,4 @@
-import type { AutoTradeInteractionType, BgRequest, BgResponse, Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
+import type { AutoTradeInteractionType, BgRequest, BgResponse, Settings, UnifiedSignalToken, UnifiedTokenPulse, UnifiedTwitterSignal } from '@/types/extention';
 import {
   asAddress,
   extractFirstFromObject,
@@ -348,6 +348,9 @@ type TokenSnapshot = {
   tokenSymbol?: string;
   tokenName?: string;
   tokenLogo?: string;
+  tweetUrl?: string;
+  tweetAccount?: string;
+  web_url?: string;
   marketCapUsd?: number;
   priceUsd?: number;
   liquidityUsd?: number;
@@ -751,6 +754,17 @@ const emitTrenchesTokenEvent = (tokenData: any, receivedAtMs: number) => {
   );
 };
 
+const emitTokenPulseEvent = (pulse: UnifiedTokenPulse) => {
+  const key = pulse.tokenAddress.toLowerCase();
+  const bucket = (((window as any).__DAGOBANG_TOKEN_PULSE_BY_ADDR__ ??= {}) as Record<string, UnifiedTokenPulse>);
+  bucket[key] = pulse;
+  window.dispatchEvent(
+    new CustomEvent('dagobang-token-pulse', {
+      detail: pulse,
+    }),
+  );
+};
+
 export function initGmgnWsMonitor(options: {
   call: <T extends BgRequest>(req: T) => Promise<BgResponse<T>>;
 }): WsSiteMonitor {
@@ -1039,12 +1053,35 @@ export function initGmgnWsMonitor(options: {
         : typeof devTokenStatus === 'string'
           ? devTokenStatus.toLowerCase().includes('sell') || devTokenStatus.toLowerCase().includes('close')
           : prev?.devHasSold;
+    const cacheSignals = ((window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache())?.list;
+    const signalList = Array.isArray(cacheSignals) ? (cacheSignals as UnifiedTwitterSignal[]) : [];
+    const latestSignal = [...signalList]
+      .reverse()
+      .find(
+        (s) =>
+          Array.isArray(s?.tokens) &&
+          s.tokens.some((t) => t && typeof t.tokenAddress === 'string' && normalizeTokenKey(t.tokenAddress) === addr),
+      );
+    const tweetAccountFromSignal = typeof latestSignal?.userScreen === 'string' ? latestSignal.userScreen.trim().replace(/^@/, '') : '';
+    const tweetIdFromSignal = typeof latestSignal?.tweetId === 'string' ? latestSignal.tweetId.trim() : '';
+    const tweetUrlFromSignal =
+      tweetAccountFromSignal && tweetIdFromSignal
+        ? `https://x.com/${tweetAccountFromSignal}/status/${tweetIdFromSignal}`
+        : tweetIdFromSignal
+          ? `https://x.com/i/web/status/${tweetIdFromSignal}`
+          : undefined;
     const next: TokenSnapshot = {
       tokenAddress: addr,
       chain: pickNonEmptyString(tokenData?.chain, prev?.chain),
       tokenSymbol,
       tokenName,
       tokenLogo,
+      tweetUrl: pickNonEmptyString(tokenData?.tweetUrl ?? tokenData?.tweet_url, tweetUrlFromSignal ?? prev?.tweetUrl),
+      tweetAccount: pickNonEmptyString(
+        tokenData?.tweetAccount ?? tokenData?.twitterAccount ?? tokenData?.userScreen,
+        tweetAccountFromSignal || prev?.tweetAccount,
+      ),
+      web_url: pickNonEmptyString(tokenData?.web_url ?? tokenData?.webUrl ?? tokenData?.website ?? tokenData?.web, prev?.web_url),
       marketCapUsd: (() => {
         const v =
           typeof tokenData?.marketCapUsd === 'number'
@@ -1095,6 +1132,29 @@ export function initGmgnWsMonitor(options: {
       receivedAtMs,
     };
     tokenByAddress.set(addr, next);
+    const pulse: UnifiedTokenPulse = {
+      tokenAddress: next.tokenAddress,
+      chain: next.chain,
+      tokenSymbol: next.tokenSymbol,
+      tokenName: next.tokenName,
+      tokenLogo: next.tokenLogo,
+      tweetUrl: next.tweetUrl,
+      tweetAccount: next.tweetAccount,
+      web_url: next.web_url,
+      marketCapUsd: next.marketCapUsd,
+      priceUsd: next.priceUsd,
+      holders: next.holders,
+      kol: next.kol,
+      vol24hUsd: next.vol24hUsd,
+      netBuy24hUsd: next.netBuy24hUsd,
+      buyTx24h: next.buyTx24h,
+      sellTx24h: next.sellTx24h,
+      smartMoney: next.smartMoney,
+      createdAtMs: next.createdAtMs,
+      updatedAtMs: receivedAtMs,
+      source: 'ws',
+    };
+    emitTokenPulseEvent(pulse);
 
     const cache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
     const list = Array.isArray(cache?.list) ? (cache.list as UnifiedTwitterSignal[]).slice() : [];

@@ -19,6 +19,7 @@ import { RpcPanel } from './components/RpcPanel';
 import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
 import { QuickTradePanel } from './components/QuickTradePanel';
 import { FloatingToolbar } from './components/FloatingToolbar';
+import { QuickJudgePanel } from './components/QuickJudgePanel';
 
 export default function App() {
   const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(() => parseCurrentUrl(window.location.href));
@@ -71,6 +72,7 @@ export default function App() {
   const [showXTradePanel, setShowXTradePanel] = useState(false);
   const [showRpcPanel, setShowRpcPanel] = useState(false);
   const [showDailyAnalysisPanel, setShowDailyAnalysisPanel] = useState(false);
+  const [showQuickJudgePanel, setShowQuickJudgePanel] = useState(false);
   const dragging = useRef<null | { target: 'main'; startX: number; startY: number; baseX: number; baseY: number }>(null);
 
   const isUnlocked = !!state?.wallet.isUnlocked;
@@ -158,6 +160,12 @@ export default function App() {
       }
     } catch {
     }
+
+    try {
+      const stored = window.localStorage.getItem('dagobang_quick_judge_panel_visible');
+      if (stored) setShowQuickJudgePanel(stored === '1');
+    } catch {
+    }
   }, []);
 
   useEffect(() => {
@@ -172,7 +180,11 @@ export default function App() {
       );
     } catch {
     }
-  }, [showLimitTradePanel, showXTradePanel]);
+    try {
+      window.localStorage.setItem('dagobang_quick_judge_panel_visible', showQuickJudgePanel ? '1' : '0');
+    } catch {
+    }
+  }, [showLimitTradePanel, showXTradePanel, showQuickJudgePanel]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -1218,6 +1230,10 @@ export default function App() {
     setShowDailyAnalysisPanel((v) => !v);
   };
 
+  const handleToggleQuickJudgePanel = () => {
+    setShowQuickJudgePanel((v) => !v);
+  };
+
   const handleToggleXTradePanel = () => {
     if (!showXTradePanel) {
       setShowXTradePanel(true);
@@ -1252,6 +1268,8 @@ export default function App() {
               autotradeActive={limitTradePanelVisible}
               onToggleRpc={handleToggleRpcPanel}
               rpcActive={showRpcPanel}
+              onToggleQuickJudge={handleToggleQuickJudgePanel}
+              quickJudgeActive={showQuickJudgePanel}
               onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
               dailyAnalysisActive={showDailyAnalysisPanel}
             />
@@ -1289,6 +1307,8 @@ export default function App() {
               autotradeActive={limitTradePanelVisible}
               onToggleRpc={handleToggleRpcPanel}
               rpcActive={showRpcPanel}
+              onToggleQuickJudge={handleToggleQuickJudgePanel}
+              quickJudgeActive={showQuickJudgePanel}
               onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
               dailyAnalysisActive={showDailyAnalysisPanel}
               keyboardShortcutsEnabled={keyboardShortcutsEnabled}
@@ -1351,6 +1371,18 @@ export default function App() {
             onVisibleChange={setShowDailyAnalysisPanel}
             settings={settings}
             address={siteInfo?.walletAddress ?? address}
+          />
+
+          <QuickJudgePanel
+            visible={showQuickJudgePanel}
+            onVisibleChange={setShowQuickJudgePanel}
+            siteInfo={siteInfo}
+            settings={settings}
+            tokenAddress={tokenAddressNormalized}
+            tokenInfo={tokenInfo}
+            tokenPriceUsd={tokenPriceUsd}
+            marketCapDisplay={marketCapDisplay}
+            onRefreshToken={refreshToken}
           />
 
           <XTradePanel

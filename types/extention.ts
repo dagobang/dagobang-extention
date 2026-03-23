@@ -343,6 +343,29 @@ export type UnifiedSignalToken = {
   updatedAtMs: number;
 };
 
+export type UnifiedTokenPulse = {
+  tokenAddress: string;
+  chain?: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  tokenLogo?: string;
+  tweetUrl?: string;
+  tweetAccount?: string;
+  web_url?: string;
+  marketCapUsd?: number;
+  priceUsd?: number;
+  holders?: number;
+  kol?: number;
+  vol24hUsd?: number;
+  netBuy24hUsd?: number;
+  buyTx24h?: number;
+  sellTx24h?: number;
+  smartMoney?: number;
+  createdAtMs?: number;
+  updatedAtMs: number;
+  source: 'ws';
+};
+
 export type UnifiedTwitterSignal = {
   id: string;
   site: 'gmgn' | 'axiom';
