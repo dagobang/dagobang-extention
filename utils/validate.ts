@@ -100,6 +100,9 @@ export function validateSettings(input: Settings): Settings | null {
   const showToolbar = typeof (input as any)?.ui?.showToolbar === 'boolean'
     ? (input as any).ui.showToolbar
     : ((defaults as any)?.ui?.showToolbar ?? true);
+  const limitTradePanelOnlyOnTokenPage = typeof (input as any)?.ui?.limitTradePanelOnlyOnTokenPage === 'boolean'
+    ? (input as any).ui.limitTradePanelOnlyOnTokenPage
+    : ((defaults as any)?.ui?.limitTradePanelOnlyOnTokenPage ?? false);
   const tradeSuccessSoundEnabled = typeof (input as any).tradeSuccessSoundEnabled === 'boolean'
     ? (input as any).tradeSuccessSoundEnabled
     : ((defaults as any).tradeSuccessSoundEnabled ?? false);
@@ -406,6 +409,7 @@ export function validateSettings(input: Settings): Settings | null {
     keyboardShortcutsEnabled,
     ui: {
       showToolbar,
+      limitTradePanelOnlyOnTokenPage,
     },
     tradeSuccessSoundEnabled,
     tradeSuccessSoundPresetBuy,

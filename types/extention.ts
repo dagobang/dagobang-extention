@@ -156,6 +156,7 @@ export type TradeSuccessSoundPreset = (typeof TRADE_SUCCESS_SOUND_PRESETS)[numbe
 
 export type UiSettings = {
   showToolbar: boolean;
+  limitTradePanelOnlyOnTokenPage?: boolean;
 };
 
 export type Settings = {

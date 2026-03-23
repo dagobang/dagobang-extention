@@ -394,6 +394,8 @@ export default function App() {
     const t = siteInfo.tokenAddress.trim();
     return /^0x[a-fA-F0-9]{40}$/.test(t) ? (t as `0x${string}`) : null;
   }, [siteInfo]);
+  const limitTradePanelOnlyOnTokenPage = settings?.ui?.limitTradePanelOnlyOnTokenPage ?? false;
+  const limitTradePanelVisible = showLimitTradePanel && (!limitTradePanelOnlyOnTokenPage || !!tokenAddressNormalized);
 
   const tokenContextKey = `${siteInfo?.platform ?? ''}:${siteInfo?.chain ?? ''}:${tokenAddressNormalized ?? ''}`;
   const tokenContextKeyRef = useRef(tokenContextKey);
@@ -1233,7 +1235,7 @@ export default function App() {
               onToggleXTrade={handleToggleXTradePanel}
               xTradeActive={showXTradePanel}
               onToggleLimitTrade={handleToggleLimitTradePanel}
-              autotradeActive={showLimitTradePanel}
+              autotradeActive={limitTradePanelVisible}
               onToggleRpc={handleToggleRpcPanel}
               rpcActive={showRpcPanel}
               onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
@@ -1270,7 +1272,7 @@ export default function App() {
               onToggleXTrade={handleToggleXTradePanel}
               xTradeActive={showXTradePanel}
               onToggleLimitTrade={handleToggleLimitTradePanel}
-              autotradeActive={showLimitTradePanel}
+              autotradeActive={limitTradePanelVisible}
               onToggleRpc={handleToggleRpcPanel}
               rpcActive={showRpcPanel}
               onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
@@ -1310,7 +1312,7 @@ export default function App() {
 
           <LimitTradePanel
             siteInfo={siteInfo}
-            visible={showLimitTradePanel}
+            visible={limitTradePanelVisible}
             onVisibleChange={setShowLimitTradePanel}
             settings={settings}
             isUnlocked={isUnlocked}

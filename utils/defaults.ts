@@ -231,6 +231,7 @@ export function defaultSettings(): Settings {
     limitOrderScanIntervalMs: 3000,
     ui: {
       showToolbar: true,
+      limitTradePanelOnlyOnTokenPage: false,
     },
     autoTrade: DEFAULT_AUTOTRADE,
     advancedAutoSell: DEFAULT_ADVANCED_AUTO_SELL,

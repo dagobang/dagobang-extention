@@ -112,6 +112,7 @@
       "quickBuy2Bnb": "列表快捷買入 2（BNB）",
       "autoLockSeconds": "自動鎖定（秒）",
       "showToolbar": "顯示工具列懸浮窗",
+      "limitTradePanelOnlyOnTokenPage": "僅代幣頁面顯示掛單面板",
       "notification": "通知",
       "language": "語言",
       "toastPosition": "Toast 彈出位置",

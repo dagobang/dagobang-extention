@@ -112,6 +112,7 @@
       "quickBuy2Bnb": "Quick buy 2 (BNB)",
       "autoLockSeconds": "Auto Lock (s)",
       "showToolbar": "Show toolbar",
+      "limitTradePanelOnlyOnTokenPage": "Show limit panel only on token pages",
       "notification": "Notification",
       "language": "Language",
       "toastPosition": "Toast position",
