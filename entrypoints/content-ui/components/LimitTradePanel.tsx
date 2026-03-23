@@ -40,7 +40,15 @@ export function LimitTradePanel({
   tokenAddress,
   tokenInfo,
 }: LimitTradePanelProps) {
-  const panelWidth = 680;
+  const [panelLayout, setPanelLayout] = useState<'wide' | 'compact'>(() => {
+    try {
+      const raw = window.localStorage.getItem('dagobang_limit_trade_panel_layout_v1');
+      return raw === 'compact' ? 'compact' : 'wide';
+    } catch {
+      return 'wide';
+    }
+  });
+  const panelWidth = panelLayout === 'compact' ? 340 : 680;
   const { ensureReady: ensureTradeSuccessAudioReady } = useTradeSuccessSound({
     enabled: settings?.tradeSuccessSoundEnabled,
     volume: settings?.tradeSuccessSoundVolume,
@@ -107,6 +115,15 @@ export function LimitTradePanel({
   const [buyAmount, setBuyAmount] = useState('');
   const [sellPercent, setSellPercent] = useState('');
   const [showActions, setShowActions] = useState(true);
+  const [actionTab, setActionTab] = useState<'buy' | 'sell'>('buy');
+  const [priceDisplayMode, setPriceDisplayMode] = useState<'price' | 'marketCap'>(() => {
+    try {
+      const raw = window.localStorage.getItem('dagobang_limit_order_price_display_mode_v1');
+      return raw === 'marketCap' ? 'marketCap' : 'price';
+    } catch {
+      return 'price';
+    }
+  });
   const [buyOrderType, setBuyOrderType] = useState<LimitOrderType>('low_buy');
   const [sellOrderType, setSellOrderType] = useState<LimitOrderType>('take_profit_sell');
   const [onlyCurrentToken, setOnlyCurrentToken] = useState(false);
@@ -175,6 +192,54 @@ export function LimitTradePanel({
     return String(Number(value.toFixed(6)));
   };
 
+  const formatCompactValue = (value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return '-';
+    const units = [
+      { v: 1e12, s: 'T' },
+      { v: 1e9, s: 'B' },
+      { v: 1e6, s: 'M' },
+      { v: 1e3, s: 'K' },
+    ];
+    for (const unit of units) {
+      if (value >= unit.v) {
+        return `${Number((value / unit.v).toFixed(2))}${unit.s}`;
+      }
+    }
+    return String(Number(value.toFixed(2)));
+  };
+
+  const DEFAULT_TOKEN_SUPPLY = 1_000_000_000;
+
+  const getMarketCapByPrice = (priceUsd: number): number | null => {
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return null;
+    const marketCap = priceUsd * DEFAULT_TOKEN_SUPPLY;
+    if (!Number.isFinite(marketCap) || marketCap <= 0) return null;
+    return marketCap;
+  };
+
+  const formatTriggerValue = (o: LimitOrder) => {
+    if (priceDisplayMode === 'price') return formatPrice4(o.triggerPriceUsd);
+    const triggerMarketCap = getMarketCapByPrice(o.triggerPriceUsd);
+    return triggerMarketCap != null ? formatCompactValue(triggerMarketCap) : '-';
+  };
+
+  const formatCurrentValue = (currentPriceUsd: number | null, loading: boolean) => {
+    if (loading) return '...';
+    if (currentPriceUsd == null || currentPriceUsd <= 0) return '-';
+    if (priceDisplayMode === 'price') return formatUsd(currentPriceUsd);
+    const marketCap = getMarketCapByPrice(currentPriceUsd);
+    return marketCap != null ? formatCompactValue(marketCap) : '-';
+  };
+
+  const currentPriceColorClass = (currentPriceUsd: number | null, triggerPriceUsd: number, loading: boolean) => {
+    if (loading) return 'text-zinc-500';
+    if (currentPriceUsd == null || currentPriceUsd <= 0) return 'text-zinc-500';
+    if (!Number.isFinite(triggerPriceUsd) || triggerPriceUsd <= 0) return 'text-zinc-500';
+    if (currentPriceUsd > triggerPriceUsd) return 'text-emerald-400';
+    if (currentPriceUsd < triggerPriceUsd) return 'text-rose-400';
+    return 'text-zinc-300';
+  };
+
   const toTokenKey = (chainId2: number, tokenAddress2: string) => `${chainId2}:${tokenAddress2.toLowerCase()}`;
   const getWNativeAddress = (chainId2: number) => {
     if (chainId2 === 56) return bscTokens.wbnb.address;
@@ -200,6 +265,29 @@ export function LimitTradePanel({
   useEffect(() => {
     priceByTokenKeyRef.current = priceByTokenKey;
   }, [priceByTokenKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('dagobang_limit_order_price_display_mode_v1', priceDisplayMode);
+    } catch {
+    }
+  }, [priceDisplayMode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('dagobang_limit_trade_panel_layout_v1', panelLayout);
+    } catch {
+    }
+  }, [panelLayout]);
+
+  useEffect(() => {
+    const width = window.innerWidth || 0;
+    const height = window.innerHeight || 0;
+    setPos((prev) => ({
+      x: Math.min(Math.max(0, prev.x), Math.max(0, width - panelWidth)),
+      y: Math.min(Math.max(0, prev.y), Math.max(0, height - 80)),
+    }));
+  }, [panelWidth]);
 
   useEffect(() => {
     if (!visible) return;
@@ -579,13 +667,77 @@ export function LimitTradePanel({
   const buyCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || !buyAmount || buyTrigger == null;
   const sellBps = toPercentBps(sellPercent);
   const sellCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || sellBps == null || sellTrigger == null;
+  const isCompactLayout = panelLayout === 'compact';
+  const togglePriceDisplayMode = () => {
+    setPriceDisplayMode((v) => (v === 'price' ? 'marketCap' : 'price'));
+  };
+  const getCurrentDisplayForOrder = (o: LimitOrder) => {
+    const key = toTokenKey(o.chainId, o.tokenAddress);
+    const cached = priceByTokenKey[key];
+    const loading = priceFetchRef.current.inFlight.has(key);
+    const currentPriceUsd = cached?.priceUsd ?? null;
+    const text = formatCurrentValue(currentPriceUsd, loading);
+    const colorClass = currentPriceColorClass(currentPriceUsd, o.triggerPriceUsd, loading);
+    return { text, colorClass };
+  };
+  const renderOrderActions = (o: LimitOrder, compact = false) => (
+    <div className={compact ? 'flex items-center justify-end gap-1 shrink-0' : 'text-right flex items-center justify-end gap-1'}>
+      {o.status === 'failed' ? (
+        <button
+          type="button"
+          className="px-1 py-0.5 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={async () => {
+            try {
+              if (!o.tokenInfo) return;
+              const input: LimitOrderCreateInput = {
+                chainId: o.chainId,
+                tokenAddress: o.tokenAddress,
+                tokenSymbol: o.tokenSymbol ?? null,
+                side: o.side,
+                orderType: normalizeOrderType(o),
+                triggerPriceUsd: o.triggerPriceUsd,
+                targetChangePercent: o.targetChangePercent,
+                buyBnbAmountWei: o.buyBnbAmountWei,
+                sellPercentBps: o.sellPercentBps,
+                sellTokenAmountWei: o.sellTokenAmountWei,
+                trailingStopBps: o.trailingStopBps,
+                trailingPeakPriceUsd: o.trailingPeakPriceUsd,
+                tokenInfo: o.tokenInfo,
+              };
+              await call({ type: 'limitOrder:create', input } as const);
+              await call({ type: 'limitOrder:cancel', id: o.id } as const);
+            } catch {
+            } finally {
+              await refreshOrders();
+            }
+          }}
+        >
+          {tt('common.retry')}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="px-1 py-0.5 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
+        onClick={async () => {
+          try {
+            await call({ type: 'limitOrder:cancel', id: o.id });
+          } catch {
+          } finally {
+            await refreshOrders();
+          }
+        }}
+      >
+        {tt('common.cancel')}
+      </button>
+    </div>
+  );
 
   return (
     <div
       className="fixed z-[2147483647]"
       style={{ left: pos.x, top: pos.y }}
     >
-      <div className="w-[680px] max-w-[92vw] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/40 text-[12px]">
+      <div className="max-w-[92vw] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/40 text-[12px]" style={{ width: panelWidth }}>
         <div
           className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 cursor-grab"
           onPointerDown={(e) => {
@@ -602,6 +754,22 @@ export function LimitTradePanel({
             <div className="text-[10px] text-zinc-500">{statusText} · {shortAddress}</div>
           </div>
           <div className="flex items-center gap-2">
+            <div className="inline-flex rounded border border-zinc-700 overflow-hidden text-[11px]">
+              <button
+                type="button"
+                className={`px-2 py-1 ${panelLayout === 'wide' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
+                onClick={() => setPanelLayout('wide')}
+              >
+                {tt('contentUi.limitTradePanel.layout.wide')}
+              </button>
+              <button
+                type="button"
+                className={`px-2 py-1 border-l border-zinc-700 ${panelLayout === 'compact' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
+                onClick={() => setPanelLayout('compact')}
+              >
+                {tt('contentUi.limitTradePanel.layout.compact')}
+              </button>
+            </div>
             <button
               type="button"
               className="text-[11px] text-zinc-400 hover:text-zinc-200"
@@ -619,8 +787,31 @@ export function LimitTradePanel({
         </div>
         <div className="p-3 flex flex-col gap-3">
           {showActions ? (
-            <div className="flex gap-3">
-              <div className="flex-1 min-w-0 space-y-2 pr-3 border-r border-zinc-800">
+            <div className={isCompactLayout ? 'space-y-2' : 'flex gap-3'}>
+              {isCompactLayout ? (
+                <div className="inline-flex rounded border border-zinc-700 overflow-hidden text-[11px]">
+                  <button
+                    type="button"
+                    className={`px-2 py-1 ${actionTab === 'buy' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
+                    onClick={() => setActionTab('buy')}
+                  >
+                    {tt('contentUi.autotrade.buySection')}
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-2 py-1 border-l border-zinc-700 ${actionTab === 'sell' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
+                    onClick={() => setActionTab('sell')}
+                  >
+                    {tt('contentUi.autotrade.sellSection')}
+                  </button>
+                </div>
+              ) : null}
+              <div
+                className={[
+                  'min-w-0 space-y-2',
+                  isCompactLayout ? (actionTab === 'buy' ? '' : 'hidden') : 'flex-1 pr-3 border-r border-zinc-800',
+                ].join(' ')}
+              >
                 <div className="flex items-center justify-between">
                   <div className="text-[11px] font-semibold text-emerald-300">
                     {tt('contentUi.autotrade.buySection')}
@@ -716,7 +907,12 @@ export function LimitTradePanel({
                 </button>
               </div>
 
-              <div className="flex-1 min-w-0 space-y-2 pl-3">
+              <div
+                className={[
+                  'min-w-0 space-y-2',
+                  isCompactLayout ? (actionTab === 'sell' ? '' : 'hidden') : 'flex-1 pl-3',
+                ].join(' ')}
+              >
                 <div className="flex items-center justify-between">
                   <div className="text-[11px] font-semibold text-red-300">
                     {tt('contentUi.autotrade.sellSection')}
@@ -820,250 +1016,403 @@ export function LimitTradePanel({
             </div>
           ) : null}
           <div className="pt-1">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="text-[11px] font-semibold text-zinc-200">
-                  {tt('contentUi.limitTradePanel.orderListTitle')}
-                </div>
-                {scanStatus ? (
-                  <div className="flex items-center gap-1 text-[10px] text-zinc-500 min-w-0">
-                    <span
-                      className={[
-                        'h-2 w-2 rounded-full shrink-0 animate-pulse',
-                        scanStatus.running ? 'bg-emerald-400 animate-pulse' : scanStatus.lastScanOk ? 'bg-emerald-400/70' : 'bg-rose-400/80',
-                      ].join(' ')}
-                    />
-                    <span className="truncate" title={scanStatus.lastScanAtMs ? formatTime(scanStatus.lastScanAtMs, locale) : ''}>
-                      {scanStatus.lastScanAtMs
-                        ? tt('contentUi.limitTradePanel.lastScanAt', [formatTime(scanStatus.lastScanAtMs, locale)])
-                        : tt('contentUi.limitTradePanel.lastScanAtEmpty')}
-                    </span>
+            {isCompactLayout ? (
+              <div className="mb-2 space-y-1.5">
+                <div className="flex items-center justify-between gap-2 min-w-0">
+                  <div className="text-[11px] font-semibold text-zinc-200 shrink-0">
+                    {tt('contentUi.limitTradePanel.orderListTitle')}
                   </div>
-                ) : null}
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-1 cursor-pointer select-none text-[11px] text-zinc-300">
+                  {scanStatus ? (
+                    <div className="flex items-center gap-1 text-[10px] text-zinc-500 min-w-0 justify-end">
+                      <span
+                        className={[
+                          'h-2 w-2 rounded-full shrink-0 animate-pulse',
+                          scanStatus.running ? 'bg-emerald-400 animate-pulse' : scanStatus.lastScanOk ? 'bg-emerald-400/70' : 'bg-rose-400/80',
+                        ].join(' ')}
+                      />
+                      <span className="truncate" title={scanStatus.lastScanAtMs ? formatTime(scanStatus.lastScanAtMs, locale) : ''}>
+                        {scanStatus.lastScanAtMs
+                          ? tt('contentUi.limitTradePanel.lastScanAt', [formatTime(scanStatus.lastScanAtMs, locale)])
+                          : tt('contentUi.limitTradePanel.lastScanAtEmpty')}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="flex items-center gap-1 select-none text-[10px] text-zinc-300 shrink-0">
+                    <span>{tt('contentUi.limitTradePanel.scanInterval')}</span>
+                    <select
+                      className="rounded border border-zinc-800 bg-zinc-950 px-1 py-1 text-[10px] text-zinc-200 outline-none"
+                      value={String(limitOrderScanIntervalMs)}
+                      disabled={!settings}
+                      onChange={(e) => {
+                        if (!settings) return;
+                        const next = Number(e.target.value);
+                        call({
+                          type: 'settings:set',
+                          settings: { ...settings, limitOrderScanIntervalMs: next },
+                        }).finally(() => {
+                          requestRefreshScanStatus(0);
+                        });
+                      }}
+                    >
+                      {limitOrderScanIntervalOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!orders.length}
+                    className="px-1.5 py-1 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={async () => {
+                      if (!settings) return;
+                      const req = onlyCurrentToken && tokenAddress
+                        ? ({ type: 'limitOrder:cancelAll', chainId, tokenAddress } as const)
+                        : ({ type: 'limitOrder:cancelAll', chainId } as const);
+                      try {
+                        await call(req);
+                      } catch {
+                      } finally {
+                        await refreshOrders();
+                      }
+                    }}
+                  >
+                    {tt('contentUi.limitTradePanel.cancelAll')}
+                  </button>
+                </div>
+                <label className="flex items-center gap-1 cursor-pointer select-none text-[10px] text-zinc-300 min-w-0">
                   <input
                     type="checkbox"
-                    className="h-3 w-3 accent-emerald-500"
+                    className="h-3 w-3 accent-emerald-500 shrink-0"
                     checked={onlyCurrentToken}
                     disabled={!tokenAddress}
                     onChange={(e) => setOnlyCurrentToken(e.target.checked)}
                   />
-                  <span>
+                  <span className="truncate">
                     {tokenSymbol ? tt('contentUi.limitTradePanel.onlyCurrentTokenWithSymbol', [tokenSymbol]) : tt('contentUi.limitTradePanel.onlyCurrentToken')}
                   </span>
                 </label>
-                <label className="flex items-center gap-1 select-none text-[11px] text-zinc-300">
-                  <span>{tt('contentUi.limitTradePanel.scanInterval')}</span>
-                  <select
-                    className="rounded border border-zinc-800 bg-zinc-950 px-1 py-1 text-[11px] text-zinc-200 outline-none"
-                    value={String(limitOrderScanIntervalMs)}
-                    disabled={!settings}
-                    onChange={(e) => {
-                      if (!settings) return;
-                      const next = Number(e.target.value);
-                      call({
-                        type: 'settings:set',
-                        settings: { ...settings, limitOrderScanIntervalMs: next },
-                      }).finally(() => {
-                        requestRefreshScanStatus(0);
-                      });
-                    }}
-                  >
-                    {limitOrderScanIntervalOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  disabled={!orders.length}
-                  className="px-2 py-1 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={async () => {
-                    if (!settings) return;
-                    const req = onlyCurrentToken && tokenAddress
-                      ? ({ type: 'limitOrder:cancelAll', chainId, tokenAddress } as const)
-                      : ({ type: 'limitOrder:cancelAll', chainId } as const);
-                    try {
-                      await call(req);
-                    } catch {
-                    } finally {
-                      await refreshOrders();
-                    }
-                  }}
-                >
-                  {tt('contentUi.limitTradePanel.cancelAll')}
-                </button>
               </div>
-            </div>
-
-            <div className="max-h-[38vh] overflow-y-auto pr-1">
-              <div className="grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
-                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.token')}</div>
-                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.type')}</div>
-                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.triggerPrice')}</div>
-                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.targetChange')}</div>
-                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.payAmount')}</div>
-                <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.createdAt')}</div>
-                <div className="font-medium text-right truncate">{tt('contentUi.limitTradePanel.table.action')}</div>
-              </div>
-
-              {filteredOrders.length ? filteredOrders.map((o) => (
-                <div
-                  key={o.id}
-                  className={[
-                    'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
-                    o.status === 'executed' ? 'bg-emerald-500/5' : '',
-                    o.status === 'failed' ? 'bg-rose-500/5' : '',
-                  ].join(' ')}
-                >
-                  <div className="min-w-0 text-zinc-200">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <button
-                        type="button"
-                        className="font-semibold break-all hover:underline"
-                        onClick={() => switchTokenInCurrentUrl(o.tokenAddress)}
-                        title={o.tokenAddress}
-                      >
-                        {o.tokenSymbol || tt('contentUi.common.token')}
-                      </button>
-                      <span className="text-[10px] text-zinc-500 truncate">
-                        {o.tokenAddress.slice(0, 6)}...{o.tokenAddress.slice(-4)}
+            ) : (
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="text-[11px] font-semibold text-zinc-200">
+                    {tt('contentUi.limitTradePanel.orderListTitle')}
+                  </div>
+                  {scanStatus ? (
+                    <div className="flex items-center gap-1 text-[10px] text-zinc-500 min-w-0">
+                      <span
+                        className={[
+                          'h-2 w-2 rounded-full shrink-0 animate-pulse',
+                          scanStatus.running ? 'bg-emerald-400 animate-pulse' : scanStatus.lastScanOk ? 'bg-emerald-400/70' : 'bg-rose-400/80',
+                        ].join(' ')}
+                      />
+                      <span className="truncate" title={scanStatus.lastScanAtMs ? formatTime(scanStatus.lastScanAtMs, locale) : ''}>
+                        {scanStatus.lastScanAtMs
+                          ? tt('contentUi.limitTradePanel.lastScanAt', [formatTime(scanStatus.lastScanAtMs, locale)])
+                          : tt('contentUi.limitTradePanel.lastScanAtEmpty')}
                       </span>
                     </div>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-start justify-start gap-1 min-w-0">
-                      <div className="min-w-0 leading-tight">
-                        <div className={`${orderTypeColorClass(o)} whitespace-normal break-words`}>
-                          {formatOrderTypeLines(o)[0]}
-                        </div>
-                        <div className="text-[10px] text-zinc-500 whitespace-normal break-words">
-                          {formatOrderTypeLines(o)[1]}
-                        </div>
-                      </div>
-                      <span className={`shrink-0 inline-flex items-center rounded border px-1 py-0.5 text-[9px] leading-none ${statusBadgeClass(o)}`}>
-                        {formatStatus(o)}
-                      </span>
-                    </div>
-                    {o.txHash && (o.status === 'executed' || o.status === 'triggered' || o.status === 'failed') ? (
-                      <div className="flex items-center gap-2 text-[10px] text-zinc-600 min-w-0">
-                        <a
-                          href={explorerTxUrl(o.txHash)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="truncate hover:underline"
-                          title={o.txHash}
-                        >
-                          {tt('contentUi.limitTradePanel.txPrefix', [`${o.txHash.slice(0, 10)}...${o.txHash.slice(-8)}`])}
-                        </a>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded border border-zinc-700 px-1 py-0.5 text-[9px] text-zinc-300 hover:border-emerald-400"
-                          onClick={() => copyToClipboard(o.txHash!)}
-                        >
-                          {copiedValue === o.txHash ? tt('contentUi.limitTradePanel.copied') : tt('contentUi.limitTradePanel.copy')}
-                        </button>
-                      </div>
-                    ) : null}
-                    {o.status === 'failed' && o.lastError ? (
-                      <div className="flex items-center gap-2 text-[10px] text-rose-400/80 min-w-0">
-                        <div className="truncate" title={o.lastError}>
-                          {tt('contentUi.limitTradePanel.errPrefix', [o.lastError])}
-                        </div>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded border border-zinc-700 px-1 py-0.5 text-[9px] text-zinc-300 hover:border-rose-400"
-                          onClick={() => copyToClipboard(o.lastError!)}
-                        >
-                          {copiedValue === o.lastError ? tt('contentUi.limitTradePanel.copied') : tt('contentUi.limitTradePanel.copy')}
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="min-w-0 text-zinc-200">
-                    <div className="truncate" title={formatPrice4(o.triggerPriceUsd)}>
-                      {formatPrice4(o.triggerPriceUsd)}
-                    </div>
-                    {(() => {
-                      const key = toTokenKey(o.chainId, o.tokenAddress);
-                      const cached = priceByTokenKey[key];
-                      const loading = priceFetchRef.current.inFlight.has(key);
-                      const v = cached?.priceUsd;
-                      const text = loading ? '...' : v != null && v > 0 ? formatUsd(v) : '-';
-                      return (
-                        <div className="text-[12px] text-zinc-500 truncate" title={text}>
-                          {tt('contentUi.limitTradePanel.currentPrice', [text])}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                  <div className="min-w-0 text-zinc-200">
-                    <div className="truncate" title={formatTargetChange(o)}>
-                      {formatTargetChange(o)}
-                    </div>
-                  </div>
-                  <div className="min-w-0 text-zinc-200">{formatPay(o)}</div>
-                  <div className="min-w-0 text-zinc-400 text-[10px]" title={formatTime(o.createdAtMs, locale)}>
-                    {formatTime(o.createdAtMs, locale)}
-                  </div>
-                  <div className="text-right flex items-center justify-end gap-1">
-                    {o.status === 'failed' ? (
-                      <button
-                        type="button"
-                        className="px-1 py-0.5 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                        onClick={async () => {
-                          try {
-                            if (!o.tokenInfo) return;
-                            const input: LimitOrderCreateInput = {
-                              chainId: o.chainId,
-                              tokenAddress: o.tokenAddress,
-                              tokenSymbol: o.tokenSymbol ?? null,
-                              side: o.side,
-                              orderType: normalizeOrderType(o),
-                              triggerPriceUsd: o.triggerPriceUsd,
-                              targetChangePercent: o.targetChangePercent,
-                              buyBnbAmountWei: o.buyBnbAmountWei,
-                              sellPercentBps: o.sellPercentBps,
-                              sellTokenAmountWei: o.sellTokenAmountWei,
-                              trailingStopBps: o.trailingStopBps,
-                              trailingPeakPriceUsd: o.trailingPeakPriceUsd,
-                              tokenInfo: o.tokenInfo,
-                            };
-                            await call({ type: 'limitOrder:create', input } as const);
-                            await call({ type: 'limitOrder:cancel', id: o.id } as const);
-                          } catch {
-                          } finally {
-                            await refreshOrders();
-                          }
-                        }}
-                      >
-                        {tt('common.retry')}
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="px-1 py-0.5 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                      onClick={async () => {
-                        try {
-                          await call({ type: 'limitOrder:cancel', id: o.id });
-                        } catch {
-                        } finally {
-                          await refreshOrders();
-                        }
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  <label className="flex items-center gap-1 cursor-pointer select-none text-[11px] text-zinc-300">
+                    <input
+                      type="checkbox"
+                      className="h-3 w-3 accent-emerald-500"
+                      checked={onlyCurrentToken}
+                      disabled={!tokenAddress}
+                      onChange={(e) => setOnlyCurrentToken(e.target.checked)}
+                    />
+                    <span>
+                      {tokenSymbol ? tt('contentUi.limitTradePanel.onlyCurrentTokenWithSymbol', [tokenSymbol]) : tt('contentUi.limitTradePanel.onlyCurrentToken')}
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-1 select-none text-[11px] text-zinc-300">
+                    <span>{tt('contentUi.limitTradePanel.scanInterval')}</span>
+                    <select
+                      className="rounded border border-zinc-800 bg-zinc-950 px-1 py-1 text-[11px] text-zinc-200 outline-none"
+                      value={String(limitOrderScanIntervalMs)}
+                      disabled={!settings}
+                      onChange={(e) => {
+                        if (!settings) return;
+                        const next = Number(e.target.value);
+                        call({
+                          type: 'settings:set',
+                          settings: { ...settings, limitOrderScanIntervalMs: next },
+                        }).finally(() => {
+                          requestRefreshScanStatus(0);
+                        });
                       }}
                     >
-                      {tt('common.cancel')}
+                      {limitOrderScanIntervalOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!orders.length}
+                    className="px-2 py-1 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={async () => {
+                      if (!settings) return;
+                      const req = onlyCurrentToken && tokenAddress
+                        ? ({ type: 'limitOrder:cancelAll', chainId, tokenAddress } as const)
+                        : ({ type: 'limitOrder:cancelAll', chainId } as const);
+                      try {
+                        await call(req);
+                      } catch {
+                      } finally {
+                        await refreshOrders();
+                      }
+                    }}
+                  >
+                    {tt('contentUi.limitTradePanel.cancelAll')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="max-h-[38vh] overflow-y-auto pr-1">
+              {isCompactLayout ? (
+                <>
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
+                    <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.token')}</div>
+                    <button
+                      type="button"
+                      className="font-medium text-zinc-300 hover:text-zinc-100 inline-flex items-center gap-1"
+                      onClick={togglePriceDisplayMode}
+                    >
+                      <span aria-hidden className="text-[10px] text-zinc-500">⇄</span>
+                      <span className="truncate">
+                      {priceDisplayMode === 'price' ? tt('contentUi.limitTradePanel.table.triggerPrice') : tt('contentUi.limitTradePanel.table.triggerMarketCap')}
+                      </span>
                     </button>
                   </div>
-                </div>
-              )) : (
-                <div className="py-6 text-center text-zinc-500">
-                  {tt('contentUi.limitTradePanel.empty')}
-                </div>
+                  {filteredOrders.length ? filteredOrders.map((o) => {
+                    const currentDisplay = getCurrentDisplayForOrder(o);
+                    return (
+                      <div
+                        key={o.id}
+                        className={[
+                          'rounded border border-zinc-800 p-1.5 space-y-1',
+                          o.status === 'executed' ? 'bg-emerald-500/5' : '',
+                          o.status === 'failed' ? 'bg-rose-500/5' : '',
+                        ].join(' ')}
+                      >
+                        <div className="flex items-center justify-between gap-2 min-w-0">
+                          <div className="min-w-0 flex items-center gap-1">
+                            <button
+                              type="button"
+                              className="font-semibold truncate hover:underline text-zinc-100"
+                              onClick={() => switchTokenInCurrentUrl(o.tokenAddress)}
+                              title={o.tokenAddress}
+                            >
+                              {o.tokenSymbol || tt('contentUi.common.token')}
+                            </button>
+                            <span className="text-[10px] text-zinc-500 truncate">
+                              {o.tokenAddress.slice(0, 6)}...{o.tokenAddress.slice(-4)}
+                            </span>
+                          </div>
+                          {renderOrderActions(o, true)}
+                        </div>
+                        <div className="flex items-start justify-between gap-2 min-w-0">
+                          <div className="min-w-0 leading-tight">
+                            <div className={`${orderTypeColorClass(o)} text-[11px] truncate`}>
+                              {formatOrderTypeLines(o)[0]}
+                            </div>
+                            <div className="text-[10px] text-zinc-500 truncate">
+                              {formatOrderTypeLines(o)[1]}
+                            </div>
+                          </div>
+                          <span className={`shrink-0 inline-flex items-center rounded border px-1 py-0.5 text-[9px] leading-none ${statusBadgeClass(o)}`}>
+                            {formatStatus(o)}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
+                          <div className="text-zinc-500">{tt('contentUi.limitTradePanel.table.triggerPrice')}</div>
+                          <div className="text-zinc-500 text-right">{tt('contentUi.limitTradePanel.table.targetChange')}</div>
+                          <div className="text-zinc-200 truncate" title={formatTriggerValue(o)}>{formatTriggerValue(o)}</div>
+                          <div className="text-zinc-200 text-right truncate" title={formatTargetChange(o)}>{formatTargetChange(o)}</div>
+                          <div className={`truncate ${currentDisplay.colorClass}`} title={currentDisplay.text}>
+                            {priceDisplayMode === 'price'
+                              ? tt('contentUi.limitTradePanel.currentPrice', [currentDisplay.text])
+                              : tt('contentUi.limitTradePanel.currentMarketCap', [currentDisplay.text])}
+                          </div>
+                          <div className="text-zinc-200 text-right truncate">{formatPay(o)}</div>
+                          <div className="text-zinc-500">{tt('contentUi.limitTradePanel.table.createdAt')}</div>
+                          <div className="text-zinc-400 text-right truncate" title={formatTime(o.createdAtMs, locale)}>{formatTime(o.createdAtMs, locale)}</div>
+                        </div>
+                        {o.txHash && (o.status === 'executed' || o.status === 'triggered' || o.status === 'failed') ? (
+                          <div className="flex items-center gap-2 text-[10px] text-zinc-600 min-w-0">
+                            <a
+                              href={explorerTxUrl(o.txHash)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="truncate hover:underline"
+                              title={o.txHash}
+                            >
+                              {tt('contentUi.limitTradePanel.txPrefix', [`${o.txHash.slice(0, 10)}...${o.txHash.slice(-8)}`])}
+                            </a>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded border border-zinc-700 px-1 py-0.5 text-[9px] text-zinc-300 hover:border-emerald-400"
+                              onClick={() => copyToClipboard(o.txHash!)}
+                            >
+                              {copiedValue === o.txHash ? tt('contentUi.limitTradePanel.copied') : tt('contentUi.limitTradePanel.copy')}
+                            </button>
+                          </div>
+                        ) : null}
+                        {o.status === 'failed' && o.lastError ? (
+                          <div className="flex items-center gap-2 text-[10px] text-rose-400/80 min-w-0">
+                            <div className="truncate" title={o.lastError}>
+                              {tt('contentUi.limitTradePanel.errPrefix', [o.lastError])}
+                            </div>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded border border-zinc-700 px-1 py-0.5 text-[9px] text-zinc-300 hover:border-rose-400"
+                              onClick={() => copyToClipboard(o.lastError!)}
+                            >
+                              {copiedValue === o.lastError ? tt('contentUi.limitTradePanel.copied') : tt('contentUi.limitTradePanel.copy')}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  }) : (
+                    <div className="py-6 text-center text-zinc-500">
+                      {tt('contentUi.limitTradePanel.empty')}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
+                    <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.token')}</div>
+                    <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.type')}</div>
+                    <button
+                      type="button"
+                      className="font-medium text-left text-zinc-300 hover:text-zinc-100 inline-flex items-center gap-1"
+                      onClick={togglePriceDisplayMode}
+                    >
+                      <span aria-hidden className="text-[10px] text-zinc-500">⇄</span>
+                      <span className="truncate">
+                      {priceDisplayMode === 'price' ? tt('contentUi.limitTradePanel.table.triggerPrice') : tt('contentUi.limitTradePanel.table.triggerMarketCap')}
+                      </span>
+                    </button>
+                    <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.targetChange')}</div>
+                    <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.payAmount')}</div>
+                    <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.createdAt')}</div>
+                    <div className="font-medium text-right truncate">{tt('contentUi.limitTradePanel.table.action')}</div>
+                  </div>
+                  {filteredOrders.length ? filteredOrders.map((o) => {
+                    const currentDisplay = getCurrentDisplayForOrder(o);
+                    return (
+                      <div
+                        key={o.id}
+                        className={[
+                          'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
+                          o.status === 'executed' ? 'bg-emerald-500/5' : '',
+                          o.status === 'failed' ? 'bg-rose-500/5' : '',
+                        ].join(' ')}
+                      >
+                        <div className="min-w-0 text-zinc-200">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <button
+                              type="button"
+                              className="font-semibold break-all hover:underline"
+                              onClick={() => switchTokenInCurrentUrl(o.tokenAddress)}
+                              title={o.tokenAddress}
+                            >
+                              {o.tokenSymbol || tt('contentUi.common.token')}
+                            </button>
+                            <span className="text-[10px] text-zinc-500 truncate">
+                              {o.tokenAddress.slice(0, 6)}...{o.tokenAddress.slice(-4)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-start justify-start gap-1 min-w-0">
+                            <div className="min-w-0 leading-tight">
+                              <div className={`${orderTypeColorClass(o)} whitespace-normal break-words`}>
+                                {formatOrderTypeLines(o)[0]}
+                              </div>
+                              <div className="text-[10px] text-zinc-500 whitespace-normal break-words">
+                                {formatOrderTypeLines(o)[1]}
+                              </div>
+                            </div>
+                            <span className={`shrink-0 inline-flex items-center rounded border px-1 py-0.5 text-[9px] leading-none ${statusBadgeClass(o)}`}>
+                              {formatStatus(o)}
+                            </span>
+                          </div>
+                          {o.txHash && (o.status === 'executed' || o.status === 'triggered' || o.status === 'failed') ? (
+                            <div className="flex items-center gap-2 text-[10px] text-zinc-600 min-w-0">
+                              <a
+                                href={explorerTxUrl(o.txHash)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="truncate hover:underline"
+                                title={o.txHash}
+                              >
+                                {tt('contentUi.limitTradePanel.txPrefix', [`${o.txHash.slice(0, 10)}...${o.txHash.slice(-8)}`])}
+                              </a>
+                              <button
+                                type="button"
+                                className="shrink-0 rounded border border-zinc-700 px-1 py-0.5 text-[9px] text-zinc-300 hover:border-emerald-400"
+                                onClick={() => copyToClipboard(o.txHash!)}
+                              >
+                                {copiedValue === o.txHash ? tt('contentUi.limitTradePanel.copied') : tt('contentUi.limitTradePanel.copy')}
+                              </button>
+                            </div>
+                          ) : null}
+                          {o.status === 'failed' && o.lastError ? (
+                            <div className="flex items-center gap-2 text-[10px] text-rose-400/80 min-w-0">
+                              <div className="truncate" title={o.lastError}>
+                                {tt('contentUi.limitTradePanel.errPrefix', [o.lastError])}
+                              </div>
+                              <button
+                                type="button"
+                                className="shrink-0 rounded border border-zinc-700 px-1 py-0.5 text-[9px] text-zinc-300 hover:border-rose-400"
+                                onClick={() => copyToClipboard(o.lastError!)}
+                              >
+                                {copiedValue === o.lastError ? tt('contentUi.limitTradePanel.copied') : tt('contentUi.limitTradePanel.copy')}
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="min-w-0 text-zinc-200">
+                          <div className="truncate" title={formatTriggerValue(o)}>
+                            {formatTriggerValue(o)}
+                          </div>
+                          <div className={`text-[12px] truncate ${currentDisplay.colorClass}`} title={currentDisplay.text}>
+                            {priceDisplayMode === 'price'
+                              ? tt('contentUi.limitTradePanel.currentPrice', [currentDisplay.text])
+                              : tt('contentUi.limitTradePanel.currentMarketCap', [currentDisplay.text])}
+                          </div>
+                        </div>
+                        <div className="min-w-0 text-zinc-200">
+                          <div className="truncate" title={formatTargetChange(o)}>
+                            {formatTargetChange(o)}
+                          </div>
+                        </div>
+                        <div className="min-w-0 text-zinc-200">{formatPay(o)}</div>
+                        <div className="min-w-0 text-zinc-400 text-[10px]" title={formatTime(o.createdAtMs, locale)}>
+                          {formatTime(o.createdAtMs, locale)}
+                        </div>
+                        {renderOrderActions(o)}
+                      </div>
+                    );
+                  }) : (
+                    <div className="py-6 text-center text-zinc-500">
+                      {tt('contentUi.limitTradePanel.empty')}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

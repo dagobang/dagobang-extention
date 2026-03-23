@@ -484,10 +484,19 @@
       "onlyCurrentTokenWithSymbol": "Only current token ({0})",
       "scanInterval": "Scan interval",
       "cancelAll": "Cancel all",
+      "layout": {
+        "wide": "Wide",
+        "compact": "Narrow"
+      },
+      "displayMode": {
+        "price": "Price",
+        "marketCap": "MCap"
+      },
       "table": {
         "token": "Token",
         "type": "Type",
         "triggerPrice": "Trigger",
+        "triggerMarketCap": "Trigger MCap",
         "targetChange": "Target Change",
         "payAmount": "Pay",
         "estimateReceive": "Est. receive",
@@ -499,6 +508,7 @@
       "txPrefix": "Tx: {0}",
       "errPrefix": "Err: {0}",
       "currentPrice": "Price: {0}",
+      "currentMarketCap": "MCap: {0}",
       "empty": "No orders"
     },
     "autoSell": {

@@ -484,10 +484,19 @@
       "onlyCurrentTokenWithSymbol": "只看当前代币（{0}）",
       "scanInterval": "扫描间隔",
       "cancelAll": "全部取消",
+      "layout": {
+        "wide": "宽版",
+        "compact": "窄版"
+      },
+      "displayMode": {
+        "price": "价格",
+        "marketCap": "市值"
+      },
       "table": {
         "token": "代币",
         "type": "类型",
         "triggerPrice": "触发价格",
+        "triggerMarketCap": "触发市值",
         "targetChange": "目标涨幅",
         "payAmount": "支付数量",
         "estimateReceive": "预计获得",
@@ -499,6 +508,7 @@
       "txPrefix": "Tx: {0}",
       "errPrefix": "Err: {0}",
       "currentPrice": "现价: {0}",
+      "currentMarketCap": "现市值: {0}",
       "empty": "暂无委托订单"
     },
     "autoSell": {
