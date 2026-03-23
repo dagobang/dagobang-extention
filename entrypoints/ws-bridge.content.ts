@@ -379,6 +379,34 @@ export default defineContentScript({
         if (g.__DAGOBANG_WORKER_WS_HOOKED__) return;
         g.__DAGOBANG_WORKER_WS_HOOKED__ = true;
 
+        const resolveUrlLike = (value: any): any => {
+          if (typeof value !== 'string' && !(value instanceof URL)) return value;
+          try {
+            return new URL(String(value), originUrl).toString();
+          } catch {
+            return value;
+          }
+        };
+
+        const rawFetch = (self as any).fetch as undefined | ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>);
+        if (typeof rawFetch === 'function') {
+          (self as any).fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+            const resolvedInput = resolveUrlLike(input);
+            return rawFetch.call(self, resolvedInput, init);
+          };
+        }
+
+        const rawXhr = (self as any).XMLHttpRequest as undefined | { prototype?: any };
+        const rawXhrOpen = rawXhr?.prototype?.open as undefined | ((...args: any[]) => any);
+        if (rawXhr?.prototype && typeof rawXhrOpen === 'function') {
+          rawXhr.prototype.open = function (...args: any[]) {
+            if (args.length >= 2) {
+              args[1] = resolveUrlLike(args[1]);
+            }
+            return rawXhrOpen.apply(this, args);
+          };
+        }
+
         const rawImportScripts = (self as any).importScripts as undefined | ((...urls: string[]) => void);
         if (typeof rawImportScripts === 'function') {
           (self as any).importScripts = (...urls: string[]) => {
