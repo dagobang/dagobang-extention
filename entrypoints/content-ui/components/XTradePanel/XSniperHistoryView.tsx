@@ -317,14 +317,6 @@ export function XSniperHistoryView({
                   const sellingForRecord = sellingKey != null && sellingKey.startsWith(`${r.id}:`);
                   const tweetAtMs = typeof r.tweetAtMs === 'number' && Number.isFinite(r.tweetAtMs) ? r.tweetAtMs : null;
                   const tweetUrl = typeof r.tweetUrl === 'string' && r.tweetUrl.trim() ? r.tweetUrl.trim() : buildTweetUrlFallback(r);
-                  const groupedBuys = [r, ...g.children].filter((x) => x && x.side !== 'sell');
-                  const hasStagedScout = groupedBuys.some((x) => x.reason === 'staged_scout');
-                  const hasStagedAdd = groupedBuys.some((x) => x.reason === 'staged_add');
-                  const stagedEntryStatus = hasStagedAdd
-                    ? tt('contentUi.autoTradeStrategy.snipeHistoryStagedEntryAdded')
-                    : hasStagedScout
-                      ? tt('contentUi.autoTradeStrategy.snipeHistoryStagedEntryScoutOnly')
-                      : tt('contentUi.autoTradeStrategy.snipeHistoryStagedEntrySingle');
 
                   return (
                     <div>
@@ -477,10 +469,6 @@ export function XSniperHistoryView({
                             / {(r as any).eval30s?.pnlMcapPct == null ? '-' : `${(r as any).eval30s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval30s.pnlMcapPct.toFixed(2)}%`}{' '}
                             / {(r as any).eval60s?.pnlMcapPct == null ? '-' : `${(r as any).eval60s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval60s.pnlMcapPct.toFixed(2)}%`}
                           </div>
-                          <div className="col-span-3 text-zinc-400">
-                            <span className="text-indigo-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryStagedEntry')}:</span>{' '}
-                            <span className="text-zinc-200">{stagedEntryStatus}</span>
-                          </div>
                           {r.reason ? (
                             <div className="col-span-3 text-[11px] text-amber-200/90">
                               {tt('contentUi.autoTradeStrategy.snipeHistoryReason')}: {resolveReasonLabel(tt, r.reason)}
@@ -519,12 +507,8 @@ export function XSniperHistoryView({
                     {g.children.slice(0, 12).map((c) => {
                       const badge = (() => {
                         if (c.side === 'sell') {
-                          if (c.reason === 'time_stop') return { text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeTpSl'), cls: 'bg-rose-500/15 text-rose-200 border-rose-500/30' };
-                          if (c.reason === 'staged_abort') return { text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeAbort'), cls: 'bg-rose-500/15 text-rose-200 border-rose-500/30' };
                           return { text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeSell'), cls: 'bg-rose-500/15 text-rose-200 border-rose-500/30' };
                         }
-                        if (c.reason === 'staged_scout') return { text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeScout'), cls: 'bg-violet-500/15 text-violet-200 border-violet-500/30' };
-                        if (c.reason === 'staged_add') return { text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeAdd'), cls: 'bg-sky-500/15 text-sky-200 border-sky-500/30' };
                         if (c.reason === 'ws_confirm_failed') return { text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeWs'), cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30' };
                         return { text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeSub'), cls: 'bg-zinc-500/15 text-zinc-200 border-zinc-500/30' };
                       })();

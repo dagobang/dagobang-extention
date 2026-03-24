@@ -25,7 +25,6 @@ type RapidExitConfig = {
   enabled: boolean;
   takeProfitPct: number;
   stopLossPct: number;
-  maxHoldMs: number;
   trailActivatePct: number;
   trailDropPct: number;
   minHoldMsForTakeProfit: number;
@@ -138,7 +137,6 @@ export const readRapidExitConfig = (strategy: any, tweetType?: unknown): RapidEx
   const enabled = o?.enabled != null ? o.enabled !== false : strategy?.rapidExitEnabled !== false;
   const takeProfitPct = clamp(parseUnknownNumber(o?.takeProfitPct) ?? parseNumber(strategy?.rapidTakeProfitPct) ?? 12, 1, 300);
   const stopLossPct = -Math.abs(clamp(parseUnknownNumber(o?.stopLossPct) ?? parseNumber(strategy?.rapidStopLossPct) ?? -7, -90, -0.3));
-  const maxHoldMs = clamp(Math.floor(parseUnknownNumber(o?.maxHoldSeconds) ?? parseNumber(strategy?.rapidMaxHoldSeconds) ?? 20), 3, 300) * 1000;
   const trailActivatePct = clamp(parseUnknownNumber(o?.trailActivatePct) ?? parseNumber(strategy?.rapidTrailActivatePct) ?? 8, 0.3, 300);
   const trailDropPct = clamp(parseUnknownNumber(o?.trailDropPct) ?? parseNumber(strategy?.rapidTrailDropPct) ?? 4, 0.2, 99);
   const minHoldMsForTakeProfit = clamp(Math.floor(parseUnknownNumber(o?.minHoldMsForTakeProfit) ?? parseNumber(strategy?.rapidMinHoldMsForTakeProfit) ?? 1200), 0, 15000);
@@ -149,7 +147,6 @@ export const readRapidExitConfig = (strategy: any, tweetType?: unknown): RapidEx
     enabled,
     takeProfitPct,
     stopLossPct,
-    maxHoldMs,
     trailActivatePct,
     trailDropPct,
     minHoldMsForTakeProfit,
@@ -166,7 +163,6 @@ export const registerRapidExitPosition = (input: {
   chainId: number;
   tokenAddress: `0x${string}`;
   dryRun: boolean;
-  stage: 'full' | 'add';
   entryMcapUsd: number | null;
   buyAmountBnb: number;
   openedAtMs: number;
@@ -183,26 +179,6 @@ export const registerRapidExitPosition = (input: {
   if (!(input.entryMcapUsd != null && Number.isFinite(input.entryMcapUsd) && input.entryMcapUsd > 0)) return;
   const sizeBnb = Number(input.buyAmountBnb);
   if (!(Number.isFinite(sizeBnb) && sizeBnb > 0)) return;
-  if (input.stage === 'add') {
-    const prev = input.rapidExitByPosKey.get(input.posKey);
-    if (prev && prev.dryRun === input.dryRun) {
-      const prevSize = Number(prev.sizeBnb);
-      if (Number.isFinite(prevSize) && prevSize > 0) {
-        const denom = prevSize / prev.entryMcapUsd + sizeBnb / input.entryMcapUsd;
-        if (Number.isFinite(denom) && denom > 0) {
-          const blendedEntry = (prevSize + sizeBnb) / denom;
-          input.rapidExitByPosKey.set(input.posKey, {
-            ...prev,
-            openedAtMs: Math.min(prev.openedAtMs, input.openedAtMs),
-            entryMcapUsd: blendedEntry,
-            peakMcapUsd: Math.max(prev.peakMcapUsd, blendedEntry),
-            sizeBnb: prevSize + sizeBnb,
-          });
-          return;
-        }
-      }
-    }
-  }
   input.rapidExitByPosKey.set(input.posKey, {
     chainId: input.chainId,
     tokenAddress: input.tokenAddress,
@@ -233,7 +209,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
     tokenAddress: `0x${string}`;
     percent: number;
     dryRun: boolean;
-    reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop' | 'rapid_time_stop';
+    reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
     meta: {
       tweetAtMs?: number;
       tweetUrl?: string;
@@ -286,9 +262,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
     const runnerMode = pos.runnerMode === true;
     const adaptiveTrailActivatePct = runnerMode ? Math.max(cfg.trailActivatePct, 12) : cfg.trailActivatePct;
     const adaptiveTrailDropPct = runnerMode ? Math.max(2.8, cfg.trailDropPct * 0.85) : cfg.trailDropPct;
-    const adaptiveMaxHoldMs = runnerMode ? Math.min(120000, Math.max(cfg.maxHoldMs + 25000, Math.floor(cfg.maxHoldMs * 2.2))) : cfg.maxHoldMs;
-
-    let reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop' | 'rapid_time_stop' | null = null;
+    let reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop' | null = null;
     let sellPercent = cfg.sellPercent;
     let keepAfterSell = false;
     if (
@@ -305,17 +279,17 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
         const momentumPct = getWindowMcapChangePct(snapshots, input.nowMs, curMcap, GOLD_DOG_SHORT_WINDOW_MS) ?? 0;
         const momentumLongPct = getWindowMcapChangePct(snapshots, input.nowMs, curMcap, GOLD_DOG_LONG_WINDOW_MS) ?? momentumPct;
         const strongMomentum = momentumPct >= 3.8;
-        const tpSkipMaxMs = Math.min(9000, Math.floor(cfg.maxHoldMs * 0.55));
+        const tpSkipMaxMs = 9000;
         const tpSeenMs = input.nowMs - (pos.firstTakeProfitSeenAtMs ?? input.nowMs);
         const goldDogMode = (momentumPct >= GOLD_DOG_SHORT_MOMENTUM_PCT
           && momentumLongPct >= GOLD_DOG_LONG_MOMENTUM_PCT
           && pnlPct >= cfg.takeProfitPct + GOLD_DOG_MIN_EXTRA_PNL_PCT)
           || windowGoldConfirmed;
-        if (goldDogMode && tpSeenMs <= Math.min(12000, Math.floor(cfg.maxHoldMs * 0.75))) {
+        if (goldDogMode && tpSeenMs <= 12000) {
           reason = 'rapid_take_profit';
           sellPercent = Math.max(1, Math.min(cfg.sellPercent, GOLD_DOG_INITIAL_SELL_PERCENT));
           keepAfterSell = sellPercent < 100;
-        } else if (!strongMomentum || tpSeenMs >= tpSkipMaxMs || ageMs >= cfg.maxHoldMs - 1000) {
+        } else if (!strongMomentum || tpSeenMs >= tpSkipMaxMs) {
           reason = 'rapid_take_profit';
         }
       } else {
@@ -329,9 +303,6 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       }
       if (!reason && ageMs >= cfg.minHoldMsForTrail && peakPnlPct >= adaptiveTrailActivatePct && dropFromPeakPct >= adaptiveTrailDropPct) {
         reason = 'rapid_trailing_stop';
-      }
-      if (!reason && ageMs >= adaptiveMaxHoldMs) {
-        reason = 'rapid_time_stop';
       }
     }
     if (!reason) continue;

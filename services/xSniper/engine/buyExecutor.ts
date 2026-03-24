@@ -8,7 +8,6 @@ import { buildTweetUrl, getSignalTimeMs, isRepostOrQuoteSignal, parseNumber, san
 import type { UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import type { DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
-import type { StagedPosition } from '@/services/xSniper/engine/stagedEntrySchedulers';
 
 const buildWsAutoSellPosition = (input: {
   cfg: any;
@@ -97,13 +96,11 @@ export const tryAutoBuyOnce = async (input: {
   metrics: TokenMetrics;
   strategy: any;
   signal?: UnifiedTwitterSignal;
-  stage?: 'full' | 'scout' | 'add';
   amountBnbOverride?: number;
-  stagedPlan?: { scoutAmountBnb: number; addAmountBnb: number; openedAtMs: number };
   onStateChanged: () => void;
   loadBoughtOnceIfNeeded: () => Promise<void>;
   persistBoughtOnce: () => Promise<void>;
-  getKey: (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean; stage?: 'full' | 'scout' | 'add' }) => string;
+  getKey: (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean }) => string;
   boughtOnceAtMs: Map<string, number>;
   buyInFlight: Set<string>;
   computeWsConfirm: (tokenAddress: `0x${string}`, nowMs: number, strategy: any) => {
@@ -123,15 +120,12 @@ export const tryAutoBuyOnce = async (input: {
     fallback: number | null,
     fallbackMcapUsd: number | null,
   ) => Promise<number | null>;
-  scheduleStagedAddIfEnabled: (posKey: string, strategy: any) => void;
-  scheduleTimeStopIfEnabled: (posKey: string, strategy: any, positionMode: 'full' | 'staged') => void;
   registerRapidExitPosition: (input: {
     strategy: any;
     posKey: string;
     chainId: number;
     tokenAddress: `0x${string}`;
     dryRun: boolean;
-    stage: 'full' | 'add';
     entryMcapUsd: number | null;
     buyAmountBnb: number;
     openedAtMs: number;
@@ -143,13 +137,11 @@ export const tryAutoBuyOnce = async (input: {
     signalEventId?: string;
     signalTweetId?: string;
   }) => void;
-  stagedPositions: Map<string, StagedPosition>;
   dryRunAutoSellByPosKey: Map<string, DryRunAutoSellPos>;
 }) => {
   await input.loadBoughtOnceIfNeeded();
   const dryRun = input.strategy?.dryRun === true;
-  const stage = input.stage ?? 'full';
-  const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun, stage });
+  const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun });
   if (input.boughtOnceAtMs.has(key)) return false;
   if (input.buyInFlight.has(key)) return false;
   input.buyInFlight.add(key);
@@ -242,9 +234,7 @@ export const tryAutoBuyOnce = async (input: {
       input.onStateChanged();
 
       const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
-      const openedAtMs = stage === 'add'
-        ? (input.stagedPositions.get(posKey)?.openedAtMs ?? Date.now())
-        : (stage === 'scout' && input.stagedPlan ? input.stagedPlan.openedAtMs : Date.now());
+      const openedAtMs = Date.now();
       const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
       const tweetUrl = buildTweetUrl(input.signal);
       const tweetType = input.signal?.tweetType ? String(input.signal.tweetType) : undefined;
@@ -252,138 +242,45 @@ export const tryAutoBuyOnce = async (input: {
       const signalId = input.signal?.id ? String(input.signal.id) : undefined;
       const signalEventId = input.signal?.eventId ? String(input.signal.eventId) : undefined;
       const signalTweetId = input.signal?.tweetId ? String(input.signal.tweetId) : undefined;
+      input.registerRapidExitPosition({
+        strategy: input.strategy,
+        posKey,
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        dryRun: true,
+        entryMcapUsd: refreshedMetrics.marketCapUsd ?? null,
+        buyAmountBnb: amountNumber,
+        openedAtMs,
+        tweetAtMs,
+        tweetUrl,
+        tweetType,
+        channel,
+        signalId,
+        signalEventId,
+        signalTweetId,
+      });
 
-      if (stage === 'scout' && input.stagedPlan) {
-        input.stagedPositions.set(posKey, {
-          chainId: input.chainId,
-          tokenAddress: input.tokenAddress,
-          dryRun: true,
-          openedAtMs: openedAtMs,
-          scoutAmountBnb: input.stagedPlan.scoutAmountBnb,
-          addAmountBnb: input.stagedPlan.addAmountBnb,
-          lastMetrics: refreshedMetrics,
-          entryMcapUsd: refreshedMetrics.marketCapUsd,
-          entryPriceUsd: entryPriceUsd ?? undefined,
-          tweetAtMs,
-          tweetUrl,
-          tweetType,
-          channel,
-          signalId,
-          signalEventId,
-          signalTweetId,
-        });
-        input.scheduleStagedAddIfEnabled(posKey, input.strategy);
-        input.scheduleTimeStopIfEnabled(posKey, input.strategy, 'staged');
-      } else if (stage === 'full' && input.strategy?.timeStopEnabled === true) {
-        input.stagedPositions.set(posKey, {
-          chainId: input.chainId,
-          tokenAddress: input.tokenAddress,
-          dryRun: true,
-          openedAtMs: Date.now(),
-          scoutAmountBnb: amountNumber,
-          addAmountBnb: 0,
-          lastMetrics: refreshedMetrics,
-          entryMcapUsd: refreshedMetrics.marketCapUsd,
-          entryPriceUsd: entryPriceUsd ?? undefined,
-          tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
-          tweetUrl: buildTweetUrl(input.signal),
-          tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
-          channel: input.signal?.channel ? String(input.signal.channel) : undefined,
-          signalId: input.signal?.id ? String(input.signal.id) : undefined,
-          signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
-          signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
-        });
-        input.scheduleTimeStopIfEnabled(posKey, input.strategy, 'full');
-      }
-      if (stage !== 'scout') {
-        input.registerRapidExitPosition({
-          strategy: input.strategy,
-          posKey,
-          chainId: input.chainId,
-          tokenAddress: input.tokenAddress,
-          dryRun: true,
-          stage: stage === 'add' ? 'add' : 'full',
-          entryMcapUsd: refreshedMetrics.marketCapUsd ?? null,
-          buyAmountBnb: amountNumber,
-          openedAtMs,
-          tweetAtMs,
-          tweetUrl,
-          tweetType,
-          channel,
-          signalId,
-          signalEventId,
-          signalTweetId,
-        });
-      }
-
-      if (input.strategy?.autoSellEnabled === true && stage !== 'scout') {
+      if (input.strategy?.autoSellEnabled === true) {
         try {
           const settings = await SettingsService.get();
           const cfg = (settings as any).advancedAutoSell as any;
           if (cfg?.enabled) {
             const rawEntryMcap = refreshedMetrics.marketCapUsd;
-            let entryMcapUsd = typeof rawEntryMcap === 'number' && Number.isFinite(rawEntryMcap) && rawEntryMcap > 0 ? rawEntryMcap : null;
-
-            if (stage === 'add') {
-              const existing = input.stagedPositions.get(posKey);
-              const scoutAmt = existing?.dryRun === true ? Number(existing.scoutAmountBnb) : null;
-              const scoutMcap = existing?.dryRun === true ? Number(existing.entryMcapUsd) : null;
-              const addAmt = amountNumber;
-              const addMcap = entryMcapUsd;
-              if (
-                scoutAmt != null &&
-                scoutMcap != null &&
-                addAmt > 0 &&
-                addMcap != null &&
-                Number.isFinite(scoutAmt) &&
-                Number.isFinite(scoutMcap) &&
-                scoutAmt > 0 &&
-                scoutMcap > 0
-              ) {
-                const denom = scoutAmt / scoutMcap + addAmt / addMcap;
-                if (Number.isFinite(denom) && denom > 0) {
-                  entryMcapUsd = (scoutAmt + addAmt) / denom;
-                  let entryPriceBlend = entryPriceUsd;
-                  const scoutEntryPrice = existing?.dryRun === true ? Number(existing.entryPriceUsd) : null;
-                  if (
-                    scoutEntryPrice != null &&
-                    Number.isFinite(scoutEntryPrice) &&
-                    scoutEntryPrice > 0 &&
-                    entryPriceUsd != null &&
-                    entryPriceUsd > 0
-                  ) {
-                    const priceDenom = scoutAmt / scoutEntryPrice + addAmt / entryPriceUsd;
-                    if (Number.isFinite(priceDenom) && priceDenom > 0) {
-                      entryPriceBlend = (scoutAmt + addAmt) / priceDenom;
-                    }
-                  }
-                  if (existing) {
-                    input.stagedPositions.set(posKey, {
-                      ...existing,
-                      scoutAmountBnb: scoutAmt + addAmt,
-                      entryMcapUsd,
-                      entryPriceUsd: entryPriceBlend ?? undefined,
-                    });
-                  }
-                }
-              }
-            }
-
+            const entryMcapUsd = typeof rawEntryMcap === 'number' && Number.isFinite(rawEntryMcap) && rawEntryMcap > 0 ? rawEntryMcap : null;
             if (entryMcapUsd != null && entryMcapUsd > 0) {
-              const meta = input.stagedPositions.get(posKey);
               const wsPlan = buildWsAutoSellPosition({
                 cfg,
                 chainId: input.chainId,
                 tokenAddress: input.tokenAddress,
-                openedAtMs: meta?.openedAtMs ?? Date.now(),
+                openedAtMs,
                 entryMcapUsd,
-                tweetAtMs: meta?.tweetAtMs ?? (getSignalTimeMs(input.signal) ?? undefined),
-                tweetUrl: meta?.tweetUrl ?? buildTweetUrl(input.signal),
-                tweetType: meta?.tweetType ?? (input.signal?.tweetType ? String(input.signal.tweetType) : undefined),
-                channel: meta?.channel ?? (input.signal?.channel ? String(input.signal.channel) : undefined),
-                signalId: meta?.signalId ?? (input.signal?.id ? String(input.signal.id) : undefined),
-                signalEventId: meta?.signalEventId ?? (input.signal?.eventId ? String(input.signal.eventId) : undefined),
-                signalTweetId: meta?.signalTweetId ?? (input.signal?.tweetId ? String(input.signal.tweetId) : undefined),
+                tweetAtMs,
+                tweetUrl,
+                tweetType,
+                channel,
+                signalId,
+                signalEventId,
+                signalTweetId,
               });
               if (wsPlan) input.dryRunAutoSellByPosKey.set(posKey, wsPlan);
             }
@@ -432,7 +329,6 @@ export const tryAutoBuyOnce = async (input: {
         signalId: input.signal?.id ? String(input.signal.id) : undefined,
         signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
         signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
-        reason: stage === 'scout' ? 'staged_scout' : (stage === 'add' ? 'staged_add' : undefined),
       });
       return true;
     }
@@ -464,9 +360,7 @@ export const tryAutoBuyOnce = async (input: {
     void input.persistBoughtOnce();
     input.onStateChanged();
     const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
-    const openedAtMs = stage === 'add'
-      ? (input.stagedPositions.get(posKey)?.openedAtMs ?? Date.now())
-      : (stage === 'scout' && input.stagedPlan ? input.stagedPlan.openedAtMs : Date.now());
+    const openedAtMs = Date.now();
     const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
     const tweetUrl = buildTweetUrl(input.signal);
     const tweetType = input.signal?.tweetType ? String(input.signal.tweetType) : undefined;
@@ -475,94 +369,24 @@ export const tryAutoBuyOnce = async (input: {
     const signalEventId = input.signal?.eventId ? String(input.signal.eventId) : undefined;
     const signalTweetId = input.signal?.tweetId ? String(input.signal.tweetId) : undefined;
 
-    if (stage === 'scout' && input.stagedPlan) {
-      input.stagedPositions.set(posKey, {
-        chainId: input.chainId,
-        tokenAddress: input.tokenAddress,
-        dryRun: false,
-        openedAtMs: openedAtMs,
-        scoutAmountBnb: input.stagedPlan.scoutAmountBnb,
-        addAmountBnb: input.stagedPlan.addAmountBnb,
-        lastMetrics: refreshedMetrics,
-        entryMcapUsd: refreshedMetrics.marketCapUsd,
-        entryPriceUsd: entryPriceUsd ?? undefined,
-        tweetAtMs,
-        tweetUrl,
-        tweetType,
-        channel,
-        signalId,
-        signalEventId,
-        signalTweetId,
-      });
-      input.scheduleStagedAddIfEnabled(posKey, input.strategy);
-      input.scheduleTimeStopIfEnabled(posKey, input.strategy, 'staged');
-    } else if (stage === 'full' && input.strategy?.timeStopEnabled === true) {
-      input.stagedPositions.set(posKey, {
-        chainId: input.chainId,
-        tokenAddress: input.tokenAddress,
-        dryRun: false,
-        openedAtMs: openedAtMs,
-        scoutAmountBnb: amountNumber,
-        addAmountBnb: 0,
-        lastMetrics: refreshedMetrics,
-        entryMcapUsd: refreshedMetrics.marketCapUsd,
-        entryPriceUsd: entryPriceUsd ?? undefined,
-        tweetAtMs,
-        tweetUrl,
-        tweetType,
-        channel,
-        signalId,
-        signalEventId,
-        signalTweetId,
-      });
-      input.scheduleTimeStopIfEnabled(posKey, input.strategy, 'full');
-    }
-    if (stage !== 'scout') {
-      input.registerRapidExitPosition({
-        strategy: input.strategy,
-        posKey,
-        chainId: input.chainId,
-        tokenAddress: input.tokenAddress,
-        dryRun: false,
-        stage: stage === 'add' ? 'add' : 'full',
-        entryMcapUsd: refreshedMetrics.marketCapUsd ?? null,
-        buyAmountBnb: amountNumber,
-        openedAtMs,
-        tweetAtMs,
-        tweetUrl,
-        tweetType,
-        channel,
-        signalId,
-        signalEventId,
-        signalTweetId,
-      });
-    }
-    let effectiveEntryPriceUsd = entryPriceUsd;
-    if (stage === 'add') {
-      const existing = input.stagedPositions.get(posKey);
-      const scoutAmt = Number(existing?.scoutAmountBnb);
-      const scoutEntryPrice = Number(existing?.entryPriceUsd);
-      if (
-        Number.isFinite(scoutAmt) &&
-        scoutAmt > 0 &&
-        Number.isFinite(scoutEntryPrice) &&
-        scoutEntryPrice > 0 &&
-        effectiveEntryPriceUsd != null &&
-        effectiveEntryPriceUsd > 0
-      ) {
-        const denom = scoutAmt / scoutEntryPrice + amountNumber / effectiveEntryPriceUsd;
-        if (Number.isFinite(denom) && denom > 0) {
-          effectiveEntryPriceUsd = (scoutAmt + amountNumber) / denom;
-          if (existing) {
-            input.stagedPositions.set(posKey, {
-              ...existing,
-              scoutAmountBnb: scoutAmt + amountNumber,
-              entryPriceUsd: effectiveEntryPriceUsd,
-            });
-          }
-        }
-      }
-    }
+    input.registerRapidExitPosition({
+      strategy: input.strategy,
+      posKey,
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      dryRun: false,
+      entryMcapUsd: refreshedMetrics.marketCapUsd ?? null,
+      buyAmountBnb: amountNumber,
+      openedAtMs,
+      tweetAtMs,
+      tweetUrl,
+      tweetType,
+      channel,
+      signalId,
+      signalEventId,
+      signalTweetId,
+    });
+    const effectiveEntryPriceUsd = entryPriceUsd;
 
     const now = Date.now();
     input.emitRecord({
@@ -604,10 +428,9 @@ export const tryAutoBuyOnce = async (input: {
       signalId,
       signalEventId,
       signalTweetId,
-      reason: stage === 'scout' ? 'staged_scout' : (stage === 'add' ? 'staged_add' : undefined),
     });
 
-    if (stage !== 'scout' && input.strategy?.autoSellEnabled && effectiveEntryPriceUsd != null && effectiveEntryPriceUsd > 0) {
+    if (input.strategy?.autoSellEnabled && effectiveEntryPriceUsd != null && effectiveEntryPriceUsd > 0) {
       try {
         await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
         await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);

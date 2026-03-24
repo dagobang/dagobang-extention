@@ -229,6 +229,32 @@ export function validateSettings(input: Settings): Settings | null {
     const list = raw.filter((x) => allowedInteractionTypes.includes(x as any));
     return list.length ? (list as any) : fallback;
   };
+  const normalizeRapidByType = (value: any, fallback: any) => {
+    const inputMap = value && typeof value === 'object' ? value : {};
+    const fallbackMap = fallback && typeof fallback === 'object' ? fallback : {};
+    const nextMap: Record<string, any> = {};
+    for (const key of allowedInteractionTypes) {
+      const rawNode = (inputMap as any)[key];
+      const fallbackNode = (fallbackMap as any)[key];
+      const source = rawNode && typeof rawNode === 'object' ? rawNode : {};
+      const base = fallbackNode && typeof fallbackNode === 'object' ? fallbackNode : {};
+      nextMap[key] = {
+        enabled: typeof source.enabled === 'boolean'
+          ? source.enabled
+          : (typeof base.enabled === 'boolean' ? base.enabled : true),
+        takeProfitPct: clampStringNumber(source.takeProfitPct, base.takeProfitPct ?? ''),
+        stopLossPct: clampStringNumber(source.stopLossPct, base.stopLossPct ?? ''),
+        maxHoldSeconds: clampStringNumber(source.maxHoldSeconds, base.maxHoldSeconds ?? ''),
+        trailActivatePct: clampStringNumber(source.trailActivatePct, base.trailActivatePct ?? ''),
+        trailDropPct: clampStringNumber(source.trailDropPct, base.trailDropPct ?? ''),
+        minHoldMsForTakeProfit: clampStringNumber(source.minHoldMsForTakeProfit, base.minHoldMsForTakeProfit ?? ''),
+        minHoldMsForStopLoss: clampStringNumber(source.minHoldMsForStopLoss, base.minHoldMsForStopLoss ?? ''),
+        minHoldMsForTrail: clampStringNumber(source.minHoldMsForTrail, base.minHoldMsForTrail ?? ''),
+        sellPercent: clampStringNumber(source.sellPercent, base.sellPercent ?? ''),
+      };
+    }
+    return nextMap;
+  };
   const normalizeTwitterSnipeCore = (rawInput: any, fallbackInput: any) => ({
     enabled: typeof rawInput?.enabled === 'boolean'
       ? rawInput.enabled
@@ -269,19 +295,22 @@ export function validateSettings(input: Settings): Settings | null {
     wsConfirmMinNetBuy24hUsd: clampStringNumber((rawInput as any)?.wsConfirmMinNetBuy24hUsd, (fallbackInput as any)?.wsConfirmMinNetBuy24hUsd),
     wsConfirmMinVol24hUsd: clampStringNumber((rawInput as any)?.wsConfirmMinVol24hUsd, (fallbackInput as any)?.wsConfirmMinVol24hUsd),
     wsConfirmMinSmartMoney: clampStringNumber((rawInput as any)?.wsConfirmMinSmartMoney, (fallbackInput as any)?.wsConfirmMinSmartMoney),
-    stagedEntryEnabled: typeof (rawInput as any)?.stagedEntryEnabled === 'boolean'
-      ? (rawInput as any).stagedEntryEnabled
-      : !!(fallbackInput as any).stagedEntryEnabled,
-    stagedEntryScoutPercent: clampStringNumber((rawInput as any)?.stagedEntryScoutPercent, (fallbackInput as any)?.stagedEntryScoutPercent),
-    stagedEntryMinDelayMs: clampStringNumber((rawInput as any)?.stagedEntryMinDelayMs, (fallbackInput as any)?.stagedEntryMinDelayMs),
-    stagedEntryMaxDelayMs: clampStringNumber((rawInput as any)?.stagedEntryMaxDelayMs, (fallbackInput as any)?.stagedEntryMaxDelayMs),
-    stagedEntryMaxDrawdownPct: clampStringNumber((rawInput as any)?.stagedEntryMaxDrawdownPct, (fallbackInput as any)?.stagedEntryMaxDrawdownPct),
-    timeStopEnabled: typeof (rawInput as any)?.timeStopEnabled === 'boolean'
-      ? (rawInput as any).timeStopEnabled
-      : !!(fallbackInput as any).timeStopEnabled,
-    timeStopSeconds: clampStringNumber((rawInput as any)?.timeStopSeconds, (fallbackInput as any)?.timeStopSeconds),
-    timeStopMinPnlPct: clampStringNumber((rawInput as any)?.timeStopMinPnlPct, (fallbackInput as any)?.timeStopMinPnlPct),
-    timeStopSellPercent: clampStringNumber((rawInput as any)?.timeStopSellPercent, (fallbackInput as any)?.timeStopSellPercent),
+    rapidExitEnabled: typeof (rawInput as any)?.rapidExitEnabled === 'boolean'
+      ? (rawInput as any).rapidExitEnabled
+      : !!(fallbackInput as any)?.rapidExitEnabled,
+    rapidTakeProfitPct: clampStringNumber((rawInput as any)?.rapidTakeProfitPct, (fallbackInput as any)?.rapidTakeProfitPct),
+    rapidStopLossPct: clampStringNumber((rawInput as any)?.rapidStopLossPct, (fallbackInput as any)?.rapidStopLossPct),
+    rapidMaxHoldSeconds: clampStringNumber((rawInput as any)?.rapidMaxHoldSeconds, (fallbackInput as any)?.rapidMaxHoldSeconds),
+    rapidTrailActivatePct: clampStringNumber((rawInput as any)?.rapidTrailActivatePct, (fallbackInput as any)?.rapidTrailActivatePct),
+    rapidTrailDropPct: clampStringNumber((rawInput as any)?.rapidTrailDropPct, (fallbackInput as any)?.rapidTrailDropPct),
+    rapidMinHoldMsForTakeProfit: clampStringNumber((rawInput as any)?.rapidMinHoldMsForTakeProfit, (fallbackInput as any)?.rapidMinHoldMsForTakeProfit),
+    rapidMinHoldMsForStopLoss: clampStringNumber((rawInput as any)?.rapidMinHoldMsForStopLoss, (fallbackInput as any)?.rapidMinHoldMsForStopLoss),
+    rapidMinHoldMsForTrail: clampStringNumber((rawInput as any)?.rapidMinHoldMsForTrail, (fallbackInput as any)?.rapidMinHoldMsForTrail),
+    rapidSellPercent: clampStringNumber((rawInput as any)?.rapidSellPercent, (fallbackInput as any)?.rapidSellPercent),
+    rapidByTweetTypeEnabled: typeof (rawInput as any)?.rapidByTweetTypeEnabled === 'boolean'
+      ? (rawInput as any).rapidByTweetTypeEnabled
+      : ((fallbackInput as any)?.rapidByTweetTypeEnabled !== false),
+    rapidByType: normalizeRapidByType((rawInput as any)?.rapidByType, (fallbackInput as any)?.rapidByType),
     deleteTweetSellPercent: clampStringNumber(rawInput?.deleteTweetSellPercent, fallbackInput.deleteTweetSellPercent),
     deleteTweetPlaySound: typeof rawInput?.deleteTweetPlaySound === 'boolean'
       ? rawInput.deleteTweetPlaySound

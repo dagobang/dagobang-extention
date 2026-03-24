@@ -7,7 +7,6 @@ import { type TokenMetrics, normalizeAddress, parseNumber } from '@/services/xSn
 import { computeWsConfirm as computeWsConfirmFromWs, getWsDrawdownPctSince as getWsDrawdownPctSinceFromWs, pushWsSnapshot as pushWsSnapshotFromWs, shouldLogWsConfirmFail as shouldLogWsConfirmFailFromWs, type WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
 import { maybeEvaluateDryRunAutoSell as maybeEvaluateDryRunAutoSellFromMod, type DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
 import { maybeEvaluateRapidExitAutoSell as maybeEvaluateRapidExitAutoSellFromMod, registerRapidExitPosition as registerRapidExitPositionFromMod, type RapidExitPosition } from '@/services/xSniper/engine/rapidExitAutoSell';
-import { scheduleStagedAddIfEnabled as scheduleStagedAddIfEnabledFromMod, scheduleTimeStopIfEnabled as scheduleTimeStopIfEnabledFromMod, type StagedPosition } from '@/services/xSniper/engine/stagedEntrySchedulers';
 import { matchesTwitterFilters, pickTokensToBuyFromSignal } from '@/services/xSniper/engine/signalSelection';
 import { createSellExecutors } from '@/services/xSniper/engine/sellExecutors';
 import { tryAutoBuyOnce as tryAutoBuyOnceFromMod } from '@/services/xSniper/engine/buyExecutor';
@@ -25,19 +24,9 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   const wsSnapshotsByAddr = new Map<string, WsSnapshot[]>();
   const dryRunAutoSellByPosKey = new Map<string, DryRunAutoSellPos>();
   const rapidExitByPosKey = new Map<string, RapidExitPosition>();
-  const stagedPositions = new Map<string, StagedPosition>();
-  const stagedAddTimers = new Map<string, number>();
-  const timeStopTimers = new Map<string, number>();
   let latestTwitterSnipeStrategy: any = null;
 
   const cleanupPosKey = (posKey: string) => {
-    stagedPositions.delete(posKey);
-    const tid = stagedAddTimers.get(posKey);
-    if (tid) clearInterval(tid as any);
-    stagedAddTimers.delete(posKey);
-    const t2 = timeStopTimers.get(posKey);
-    if (t2) clearTimeout(t2 as any);
-    timeStopTimers.delete(posKey);
     dryRunAutoSellByPosKey.delete(posKey);
     rapidExitByPosKey.delete(posKey);
   };
@@ -91,32 +80,6 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       metrics,
       wsSnapshotsByAddr,
       onUpdated: onWsSnapshotUpdated,
-    });
-  };
-
-  const scheduleTimeStopIfEnabled = (posKey: string, strategy: any, positionMode: 'full' | 'staged') => {
-    scheduleTimeStopIfEnabledFromMod({
-      posKey,
-      strategy,
-      positionMode,
-      stagedPositions,
-      timeStopTimers,
-      wsSnapshotsByAddr,
-      tryTimeStopSellOnce,
-    });
-  };
-
-  const scheduleStagedAddIfEnabled = (posKey: string, strategy: any) => {
-    scheduleStagedAddIfEnabledFromMod({
-      posKey,
-      strategy,
-      stagedPositions,
-      stagedAddTimers,
-      computeWsConfirm,
-      getWsDrawdownPctSince,
-      tryAutoBuyOnce,
-      tryTimeStopSellOnce,
-      emitRecord,
     });
   };
 
@@ -204,10 +167,9 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     };
   };
 
-  const getKey = (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean; stage?: 'full' | 'scout' | 'add' }) => {
+  const getKey = (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean }) => {
     const dry = opts?.dry === true;
-    const stage = opts?.stage ?? 'full';
-    return `${dry ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}:${stage}`;
+    return `${dry ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}:full`;
   };
 
   const { fetchTokenInfoFresh, buildGenericTokenInfo, getEntryPriceUsd } = createTokenInfoResolvers();
@@ -218,9 +180,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     metrics: TokenMetrics;
     strategy: any;
     signal?: UnifiedTwitterSignal;
-    stage?: 'full' | 'scout' | 'add';
     amountBnbOverride?: number;
-    stagedPlan?: { scoutAmountBnb: number; addAmountBnb: number; openedAtMs: number };
   }) =>
     tryAutoBuyOnceFromMod({
       ...input,
@@ -237,14 +197,11 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       fetchTokenInfoFresh,
       buildGenericTokenInfo,
       getEntryPriceUsd,
-      scheduleStagedAddIfEnabled,
-      scheduleTimeStopIfEnabled,
       registerRapidExitPosition,
-      stagedPositions,
       dryRunAutoSellByPosKey,
     });
 
-  const { tryTimeStopSellOnce, tryDeleteTweetSellOnce, tryRapidExitSellOnce } = createSellExecutors({
+  const { tryDeleteTweetSellOnce, tryRapidExitSellOnce } = createSellExecutors({
     cleanupPosKey,
     emitRecord,
     broadcastToActiveTabs,
@@ -264,7 +221,6 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
     chainId: number;
     tokenAddress: `0x${string}`;
     dryRun: boolean;
-    stage: 'full' | 'add';
     entryMcapUsd: number | null;
     buyAmountBnb: number;
     openedAtMs: number;
@@ -311,7 +267,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           if (delTweetId && tw && tw === delTweetId) return true;
           return false;
         });
-        const stagedMatched = Array.from(stagedPositions.values()).filter((p) => {
+        const rapidMatched = Array.from(rapidExitByPosKey.values()).filter((p) => {
           if (!p) return false;
           const ev = typeof p.signalEventId === 'string' ? p.signalEventId.trim() : '';
           const tw = typeof p.signalTweetId === 'string' ? p.signalTweetId.trim() : '';
@@ -338,7 +294,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
           }
           sold.add(dedupe);
         }
-        for (const p of stagedMatched) {
+        for (const p of rapidMatched) {
           const addr = normalizeAddress(p.tokenAddress);
           if (!addr) continue;
           const dedupe = `${p.chainId}:${addr.toLowerCase()}`;
@@ -365,33 +321,9 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         pushWsSnapshot,
         computeWsConfirm,
       });
-      const rapidEnabled = strategy?.rapidExitEnabled !== false;
-      const stagedEntryActive = strategy?.stagedEntryEnabled === true && !rapidEnabled;
       for (const { m } of picked) {
         if (!m?.tokenAddress) continue;
-        if (stagedEntryActive) {
-          const total = parseNumber(strategy?.buyAmountBnb) ?? 0;
-          const scoutPct = Math.max(1, Math.min(99, parseNumber(strategy?.stagedEntryScoutPercent) ?? 25));
-          const scoutAmount = total > 0 ? (total * scoutPct) / 100 : 0;
-          const addAmount = total > 0 ? Math.max(0, total - scoutAmount) : 0;
-          const openedAtMs = Date.now();
-          if (scoutAmount > 0 && addAmount > 0) {
-            await tryAutoBuyOnce({
-              chainId: settings.chainId,
-              tokenAddress: m.tokenAddress,
-              metrics: m,
-              strategy,
-              signal,
-              stage: 'scout',
-              amountBnbOverride: scoutAmount,
-              stagedPlan: { scoutAmountBnb: scoutAmount, addAmountBnb: addAmount, openedAtMs },
-            });
-          } else {
-            await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
-          }
-        } else {
-          await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
-        }
+        await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
       }
     } catch (e) {
       console.error('XSniperTrade twitter signal handler error', e);
