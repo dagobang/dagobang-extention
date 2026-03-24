@@ -1199,13 +1199,19 @@ export function XMonitorContent({
                                   </span>
                                 ) : null}
                                 {token.holders != null ? (
-                                  <span className="inline-flex items-center gap-1" title={tt('contentUi.xMonitor.tooltip.holders')}>
+                                  <span
+                                    className={`inline-flex items-center gap-1 ${token.holders > 10 ? 'rounded border border-sky-500/40 bg-sky-500/10 px-1 text-sky-200' : ''}`}
+                                    title={tt('contentUi.xMonitor.tooltip.holders')}
+                                  >
                                     <Users size={12} />
                                     {formatCompactNumber(token.holders)}
                                   </span>
                                 ) : null}
                                 {token.kol != null ? (
-                                  <span className="inline-flex items-center gap-1" title={tt('contentUi.xMonitor.tooltip.kol')}>
+                                  <span
+                                    className={`inline-flex items-center gap-1 ${token.kol > 0 ? 'rounded border border-amber-500/40 bg-amber-500/10 px-1 text-amber-200' : ''}`}
+                                    title={tt('contentUi.xMonitor.tooltip.kol')}
+                                  >
                                     <Trophy size={12} />
                                     {formatCompactNumber(token.kol)}
                                   </span>

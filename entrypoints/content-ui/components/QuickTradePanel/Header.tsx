@@ -8,7 +8,6 @@ import {
   AlarmClockCheck,
   Keyboard,
   Crosshair,
-  Star,
 } from 'lucide-react';
 import type { PointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
@@ -28,8 +27,6 @@ type HeaderProps = {
   rpcActive: boolean;
   onToggleDailyAnalysis: () => void;
   dailyAnalysisActive: boolean;
-  onToggleQuickJudge: () => void;
-  quickJudgeActive: boolean;
   keyboardShortcutsEnabled: boolean;
   onToggleKeyboardShortcuts: () => void;
 };
@@ -48,8 +45,6 @@ export function Header({
   rpcActive,
   onToggleDailyAnalysis,
   dailyAnalysisActive,
-  onToggleQuickJudge,
-  quickJudgeActive,
   keyboardShortcutsEnabled,
   onToggleKeyboardShortcuts,
 }: HeaderProps) {
@@ -138,25 +133,6 @@ export function Header({
           title='RPC'
         >
           <SatelliteDish size={14} />
-        </button>
-
-        <button
-          type="button"
-          className={
-            quickJudgeActive
-              ? 'flex items-center justify-center rounded-full bg-cyan-500/20 text-cyan-300 p-1'
-              : 'flex items-center justify-center rounded-full border border-zinc-700 text-cyan-300 p-1 hover:border-cyan-400'
-          }
-          onPointerDown={(e) => {
-            e.stopPropagation();
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleQuickJudge();
-          }}
-          title='Quick Judge'
-        >
-          <Star size={14} />
         </button>
 
         <button

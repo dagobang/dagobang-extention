@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AlarmClockCheck, Crosshair, GripHorizontal, LineChart, SatelliteDish, Star } from 'lucide-react';
+import { AlarmClockCheck, Crosshair, GripHorizontal, LineChart, SatelliteDish } from 'lucide-react';
 import type { Settings } from '@/types/extention';
 import type { SiteInfo } from '@/utils/sites';
 import { Logo } from '@/components/Logo';
@@ -15,8 +15,6 @@ export type FloatingToolbarProps = {
   rpcActive: boolean;
   onToggleDailyAnalysis: () => void;
   dailyAnalysisActive: boolean;
-  onToggleQuickJudge: () => void;
-  quickJudgeActive: boolean;
 };
 
 function clampToolbarPos(pos: { x: number; y: number }, toolbarWidth: number) {
@@ -38,8 +36,6 @@ export function FloatingToolbar({
   rpcActive,
   onToggleDailyAnalysis,
   dailyAnalysisActive,
-  onToggleQuickJudge,
-  quickJudgeActive,
 }: FloatingToolbarProps) {
   const showToolbar = settings?.ui?.showToolbar ?? true;
   const toolbarWidth = 294;
@@ -153,10 +149,6 @@ export function FloatingToolbar({
 
       <ToolBtn active={rpcActive} title="RPC" onClick={onToggleRpc}>
         <SatelliteDish size={14} />
-      </ToolBtn>
-
-      <ToolBtn active={quickJudgeActive} title="Quick Judge" onClick={onToggleQuickJudge}>
-        <Star size={14} />
       </ToolBtn>
 
       <ToolBtn active={dailyAnalysisActive} title="Daily Analysis" onClick={onToggleDailyAnalysis}>
