@@ -27,6 +27,7 @@ export type StagedPosition = {
 export const scheduleTimeStopIfEnabled = (input: {
   posKey: string;
   strategy: any;
+  positionMode: 'full' | 'staged';
   stagedPositions: Map<string, StagedPosition>;
   timeStopTimers: Map<string, number>;
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>;
@@ -39,6 +40,7 @@ export const scheduleTimeStopIfEnabled = (input: {
   }) => Promise<void>;
 }) => {
   if (input.strategy?.timeStopEnabled !== true) return;
+  if (input.positionMode === 'full' && input.strategy?.rapidExitEnabled !== false) return;
   if (input.timeStopTimers.has(input.posKey)) return;
   const currentPos = input.stagedPositions.get(input.posKey);
   const retryCount = Math.max(0, Math.floor(Number(currentPos?.timeStopRetryCount) || 0));
@@ -54,6 +56,7 @@ export const scheduleTimeStopIfEnabled = (input: {
       const latest = await SettingsService.get();
       latestStrategy = (latest as any)?.autoTrade?.twitterSnipe ?? input.strategy;
       if (latestStrategy?.timeStopEnabled !== true) return;
+      if (input.positionMode === 'full' && latestStrategy?.rapidExitEnabled !== false) return;
     } catch {
       return;
     }

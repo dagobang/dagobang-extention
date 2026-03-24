@@ -37,6 +37,7 @@ export const createSellExecutors = (deps: {
 }) => {
   const deleteSellInFlight = new Set<string>();
   const timeStopSellInFlight = new Set<string>();
+  const rapidSellInFlight = new Set<string>();
 
   const tryTimeStopSellOnce = async (input: {
     chainId: number;
@@ -306,8 +307,146 @@ export const createSellExecutors = (deps: {
     }
   };
 
+  const tryRapidExitSellOnce = async (input: {
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    percent: number;
+    dryRun: boolean;
+    reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop' | 'rapid_time_stop';
+    meta: {
+      tweetAtMs?: number;
+      tweetUrl?: string;
+      tweetType?: string;
+      channel?: string;
+      signalId?: string;
+      signalEventId?: string;
+      signalTweetId?: string;
+    };
+  }) => {
+    const percent = Math.max(0, Math.min(100, Number(input.percent)));
+    if (!Number.isFinite(percent) || percent <= 0) return;
+    const bps = Math.floor(percent * 100);
+    if (!(bps > 0)) return;
+    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${input.reason}:${bps}`;
+    if (rapidSellInFlight.has(dedupeKey)) return;
+    rapidSellInFlight.add(dedupeKey);
+    try {
+      const now = Date.now();
+      const latestMarketCapUsd = deps.getLatestMarketCapUsd(input.tokenAddress);
+      const baseRecord: XSniperBuyRecord = {
+        id: `${now}-${Math.random().toString(16).slice(2)}`,
+        side: 'sell',
+        tsMs: now,
+        tweetAtMs: input.meta.tweetAtMs,
+        tweetUrl: input.meta.tweetUrl,
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        sellPercent: percent,
+        sellTokenAmountWei: undefined,
+        txHash: undefined,
+        dryRun: input.dryRun,
+        tweetType: input.meta.tweetType,
+        channel: input.meta.channel,
+        signalId: input.meta.signalId,
+        signalEventId: input.meta.signalEventId,
+        signalTweetId: input.meta.signalTweetId,
+        marketCapUsd: latestMarketCapUsd != null && Number.isFinite(latestMarketCapUsd) && latestMarketCapUsd > 0 ? latestMarketCapUsd : undefined,
+        reason: input.reason,
+      };
+
+      if (input.dryRun) {
+        deps.emitRecord(baseRecord);
+        return;
+      }
+
+      const status = await WalletService.getStatus();
+      if (status.locked || !status.address) {
+        deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'wallet_locked' });
+        return;
+      }
+
+      const tokenInfo =
+        (await deps.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ??
+        (await deps.buildGenericTokenInfo(input.chainId, input.tokenAddress));
+      if (!tokenInfo) {
+        deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'token_info_missing' });
+        return;
+      }
+
+      const settings = await SettingsService.get();
+      const isTurbo = (settings as any).chains?.[input.chainId]?.executionMode === 'turbo';
+      let balanceWei = 0n;
+      try {
+        balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, status.address));
+      } catch {
+        balanceWei = 0n;
+      }
+
+      if (balanceWei <= 0n) {
+        deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' });
+        return;
+      }
+
+      const amountWei = calcSellAmountWei({
+        balanceWei,
+        sellPercentBps: bps,
+        isTurbo,
+        tokenInfo,
+      });
+      if (!isTurbo && amountWei <= 0n) {
+        deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'invalid_amount' });
+        return;
+      }
+
+      try {
+        await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
+      } catch {}
+      try {
+        await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
+      } catch {}
+      let rsp: any;
+      try {
+        rsp = await TradeService.sell({
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          tokenAmountWei: amountWei.toString(),
+          tokenInfo,
+          sellPercentBps: bps,
+        } as any);
+      } catch {
+        deps.emitRecord({
+          ...baseRecord,
+          dryRun: false,
+          sellTokenAmountWei: amountWei.toString(),
+          reason: 'sell_submit_failed',
+        });
+        return;
+      }
+      void deps.broadcastToActiveTabs({
+        type: 'bg:tradeSuccess',
+        source: 'xsniper',
+        side: 'sell',
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        txHash: (rsp as any)?.txHash,
+      });
+
+      deps.emitRecord({
+        ...baseRecord,
+        dryRun: false,
+        tokenSymbol: tokenInfo.symbol ? String(tokenInfo.symbol) : baseRecord.tokenSymbol,
+        tokenName: tokenInfo.name ? String(tokenInfo.name) : baseRecord.tokenName,
+        sellTokenAmountWei: amountWei.toString(),
+        txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
+      });
+    } finally {
+      rapidSellInFlight.delete(dedupeKey);
+    }
+  };
+
   return {
     tryTimeStopSellOnce,
     tryDeleteTweetSellOnce,
+    tryRapidExitSellOnce,
   };
 };

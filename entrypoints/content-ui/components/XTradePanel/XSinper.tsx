@@ -35,6 +35,13 @@ const interactionOptions: Array<{ value: AutoTradeInteractionType; labelKey: str
   { value: 'retweet', labelKey: 'contentUi.autoTradeStrategy.interaction.retweet' },
   { value: 'follow', labelKey: 'contentUi.autoTradeStrategy.interaction.follow' },
 ];
+const rapidTypeOptions: Array<{ value: AutoTradeInteractionType; label: string }> = [
+  { value: 'tweet', label: '原推' },
+  { value: 'reply', label: '回复' },
+  { value: 'quote', label: '引用' },
+  { value: 'retweet', label: '转推' },
+  { value: 'follow', label: '关注' },
+];
 
 const SOUND_OFF = '__off__';
 
@@ -55,6 +62,10 @@ const normalizeAutoTrade = (input: AutoTradeConfig | null | undefined) => {
     twitterSnipe: {
       ...defaults.twitterSnipe,
       ...(input as any).twitterSnipe,
+      rapidByType: {
+        ...((defaults.twitterSnipe as any)?.rapidByType ?? {}),
+        ...(((input as any).twitterSnipe as any)?.rapidByType ?? {}),
+      },
     },
   };
   return {
@@ -80,6 +91,10 @@ const buildNormalizedPresetStrategy = (raw: any) => {
   const next = {
     ...base,
     ...(raw && typeof raw === 'object' ? raw : {}),
+    rapidByType: {
+      ...((base as any).rapidByType ?? {}),
+      ...(((raw && typeof raw === 'object' ? raw : {}) as any).rapidByType ?? {}),
+    },
   };
   next.targetUsers = Array.isArray(next.targetUsers)
     ? next.targetUsers.map((x: any) => String(x).trim()).filter(Boolean)
@@ -597,6 +612,32 @@ export function XSniperContent({
   const deleteTweetSoundPreset = (twitterSnipe?.deleteTweetSoundPreset ?? 'Handgun') as TradeSuccessSoundPreset;
   const deleteTweetSoundSelectValue =
     twitterSnipe?.deleteTweetPlaySound === false ? SOUND_OFF : deleteTweetSoundPreset;
+  const rapidExitEnabled = (twitterSnipe as any)?.rapidExitEnabled !== false;
+  const stagedEntryEnabled = !!(twitterSnipe as any)?.stagedEntryEnabled;
+  const stagedEntryActive = stagedEntryEnabled && !rapidExitEnabled;
+  const timeStopEnabled = !!(twitterSnipe as any)?.timeStopEnabled;
+  const timeStopBlockedByRapid = rapidExitEnabled && !stagedEntryActive;
+  const getRapidTypeValue = (tweetType: AutoTradeInteractionType, field: string) => {
+    const map = ((twitterSnipe as any)?.rapidByType ?? {}) as Record<string, any>;
+    const node = map[tweetType];
+    const value = node && typeof node === 'object' ? node[field] : undefined;
+    return value == null ? '' : String(value);
+  };
+  const updateRapidTypeValue = (tweetType: AutoTradeInteractionType, field: string, value: string) => {
+    const currentMap = (((twitterSnipe as any)?.rapidByType ?? {}) as Record<string, any>);
+    const currentNode = currentMap[tweetType] && typeof currentMap[tweetType] === 'object'
+      ? currentMap[tweetType]
+      : {};
+    updateTwitterSnipe({
+      rapidByType: {
+        ...currentMap,
+        [tweetType]: {
+          ...currentNode,
+          [field]: value,
+        },
+      },
+    } as any);
+  };
 
   const sellByPercent = async (record: XSniperBuyRecord, pct: number) => {
     if (!settings) return;
@@ -1196,104 +1237,220 @@ export function XSniperContent({
             </label>
           </div>
         </div>
-        <div className="space-y-2 pb-3 border-b border-zinc-800/60">
-          <div className="flex items-center justify-between gap-2 text-[12px] text-zinc-300">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5 accent-emerald-500"
-                checked={!!(twitterSnipe as any)?.stagedEntryEnabled}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ stagedEntryEnabled: e.target.checked } as any)}
-              />
-              <span>两段式入场(侦察仓/加仓)</span>
+        <div className="space-y-3 pb-3 border-b border-zinc-800/60">
+          <div className="space-y-3 rounded-md border border-cyan-900/40 bg-cyan-950/10 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-zinc-300">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 accent-cyan-500"
+                  checked={rapidExitEnabled}
+                  disabled={!canEdit}
+                  onChange={(e) =>
+                    updateTwitterSnipe({
+                      rapidExitEnabled: e.target.checked,
+                      ...(e.target.checked ? { stagedEntryEnabled: false } : {}),
+                    } as any)
+                  }
+                />
+                <span>主策略：快速止盈止损</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 accent-violet-500"
+                  checked={(twitterSnipe as any)?.rapidByTweetTypeEnabled !== false}
+                  disabled={!canEdit}
+                  onChange={(e) => updateTwitterSnipe({ rapidByTweetTypeEnabled: e.target.checked } as any)}
+                />
+                <span>按推文类型分档</span>
+              </label>
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="block space-y-1">
-              <div className="text-[12px] text-zinc-400">侦察仓占比(%)</div>
-              <input
-                type="number"
-                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
-                value={(twitterSnipe as any)?.stagedEntryScoutPercent ?? ''}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ stagedEntryScoutPercent: e.target.value } as any)}
-              />
-            </label>
-            <label className="block space-y-1">
-              <div className="text-[12px] text-zinc-400">最小等待(ms)</div>
-              <input
-                type="number"
-                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
-                value={(twitterSnipe as any)?.stagedEntryMinDelayMs ?? ''}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ stagedEntryMinDelayMs: e.target.value } as any)}
-              />
-            </label>
-            <label className="block space-y-1">
-              <div className="text-[12px] text-zinc-400">最长窗口(ms)</div>
-              <input
-                type="number"
-                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
-                value={(twitterSnipe as any)?.stagedEntryMaxDelayMs ?? ''}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ stagedEntryMaxDelayMs: e.target.value } as any)}
-              />
-            </label>
-            <label className="block space-y-1">
-              <div className="text-[12px] text-zinc-400">最大回撤(%)</div>
-              <input
-                type="number"
-                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
-                value={(twitterSnipe as any)?.stagedEntryMaxDrawdownPct ?? ''}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ stagedEntryMaxDrawdownPct: e.target.value } as any)}
-              />
-            </label>
-          </div>
-          <div className="flex items-center justify-between gap-2 text-[12px] text-zinc-300 pt-1">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5 accent-amber-500"
-                checked={!!(twitterSnipe as any)?.timeStopEnabled}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ timeStopEnabled: e.target.checked } as any)}
-              />
-              <span>时间止损</span>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <label className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-950/40 p-2">
+                <div className="text-[11px] text-zinc-500">统一止盈(%)</div>
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                  value={(twitterSnipe as any)?.rapidTakeProfitPct ?? ''}
+                  disabled={!canEdit}
+                  onChange={(e) => updateTwitterSnipe({ rapidTakeProfitPct: e.target.value } as any)}
+                />
+              </label>
+              <label className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-950/40 p-2">
+                <div className="text-[11px] text-zinc-500">统一止损(%)</div>
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                  value={(twitterSnipe as any)?.rapidStopLossPct ?? ''}
+                  disabled={!canEdit}
+                  onChange={(e) => updateTwitterSnipe({ rapidStopLossPct: e.target.value } as any)}
+                />
+              </label>
+              <label className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-950/40 p-2">
+                <div className="text-[11px] text-zinc-500">最长持仓(s)</div>
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                  value={(twitterSnipe as any)?.rapidMaxHoldSeconds ?? ''}
+                  disabled={!canEdit}
+                  onChange={(e) => updateTwitterSnipe({ rapidMaxHoldSeconds: e.target.value } as any)}
+                />
+              </label>
             </div>
+            {(twitterSnipe as any)?.rapidByTweetTypeEnabled !== false ? (
+              <div className="space-y-2 rounded-md border border-zinc-800/80 bg-zinc-950/30 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[12px] text-zinc-300">分档参数</div>
+                  <div className="text-[11px] text-zinc-500">空值回退到统一参数</div>
+                </div>
+                <div className="grid grid-cols-[84px_1fr_1fr_1fr] gap-2 text-[11px] text-zinc-500">
+                  <div>类型</div>
+                  <div>止盈%</div>
+                  <div>止损%</div>
+                  <div>时长s</div>
+                </div>
+                {rapidTypeOptions.map((item) => (
+                  <div key={item.value} className="grid grid-cols-[84px_1fr_1fr_1fr] gap-2">
+                    <div className="flex items-center rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300">
+                      {item.label}
+                    </div>
+                    <input
+                      type="number"
+                      className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                      value={getRapidTypeValue(item.value, 'takeProfitPct')}
+                      disabled={!canEdit}
+                      onChange={(e) => updateRapidTypeValue(item.value, 'takeProfitPct', e.target.value)}
+                    />
+                    <input
+                      type="number"
+                      className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                      value={getRapidTypeValue(item.value, 'stopLossPct')}
+                      disabled={!canEdit}
+                      onChange={(e) => updateRapidTypeValue(item.value, 'stopLossPct', e.target.value)}
+                    />
+                    <input
+                      type="number"
+                      className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                      value={getRapidTypeValue(item.value, 'maxHoldSeconds')}
+                      disabled={!canEdit}
+                      onChange={(e) => updateRapidTypeValue(item.value, 'maxHoldSeconds', e.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="block space-y-1">
-              <div className="text-[12px] text-zinc-400">触发时间(s)</div>
-              <input
-                type="number"
-                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
-                value={(twitterSnipe as any)?.timeStopSeconds ?? ''}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ timeStopSeconds: e.target.value } as any)}
-              />
-            </label>
-            <label className="block space-y-1">
-              <div className="text-[12px] text-zinc-400">最低PNL(%)</div>
-              <input
-                type="number"
-                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
-                value={(twitterSnipe as any)?.timeStopMinPnlPct ?? ''}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ timeStopMinPnlPct: e.target.value } as any)}
-              />
-            </label>
-            <label className="block space-y-1">
-              <div className="text-[12px] text-zinc-400">卖出比例(%)</div>
-              <input
-                type="number"
-                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
-                value={(twitterSnipe as any)?.timeStopSellPercent ?? ''}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ timeStopSellPercent: e.target.value } as any)}
-              />
-            </label>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="space-y-2 rounded-md border border-zinc-800/70 bg-zinc-900/30 p-3">
+              <div className="flex items-center justify-between gap-2 text-[12px] text-zinc-300">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-amber-500"
+                    checked={timeStopEnabled}
+                    disabled={!canEdit || timeStopBlockedByRapid}
+                    onChange={(e) => updateTwitterSnipe({ timeStopEnabled: e.target.checked } as any)}
+                  />
+                  <span>补充策略：时间止损</span>
+                </label>
+                {timeStopBlockedByRapid ? <span className="text-[11px] text-zinc-500">快速策略开启时不生效</span> : null}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block space-y-1">
+                  <div className="text-[12px] text-zinc-400">触发时间(s)</div>
+                  <input
+                    type="number"
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.timeStopSeconds ?? ''}
+                    disabled={!canEdit || timeStopBlockedByRapid}
+                    onChange={(e) => updateTwitterSnipe({ timeStopSeconds: e.target.value } as any)}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <div className="text-[12px] text-zinc-400">最低PNL(%)</div>
+                  <input
+                    type="number"
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.timeStopMinPnlPct ?? ''}
+                    disabled={!canEdit || timeStopBlockedByRapid}
+                    onChange={(e) => updateTwitterSnipe({ timeStopMinPnlPct: e.target.value } as any)}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <div className="text-[12px] text-zinc-400">卖出比例(%)</div>
+                  <input
+                    type="number"
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.timeStopSellPercent ?? ''}
+                    disabled={!canEdit || timeStopBlockedByRapid}
+                    onChange={(e) => updateTwitterSnipe({ timeStopSellPercent: e.target.value } as any)}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="space-y-2 rounded-md border border-zinc-800/70 bg-zinc-900/30 p-3">
+              <div className="flex items-center justify-between gap-2 text-[12px] text-zinc-300">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-emerald-500"
+                    checked={stagedEntryEnabled}
+                    disabled={!canEdit || rapidExitEnabled}
+                    onChange={(e) =>
+                      updateTwitterSnipe({
+                        stagedEntryEnabled: e.target.checked,
+                        ...(e.target.checked ? { rapidExitEnabled: false } : {}),
+                      } as any)
+                    }
+                  />
+                  <span>实验策略：两段式入场</span>
+                </label>
+                {rapidExitEnabled ? <span className="text-[11px] text-zinc-500">需先关闭快速策略</span> : null}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block space-y-1">
+                  <div className="text-[12px] text-zinc-400">侦察仓占比(%)</div>
+                  <input
+                    type="number"
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.stagedEntryScoutPercent ?? ''}
+                    disabled={!canEdit || !stagedEntryActive}
+                    onChange={(e) => updateTwitterSnipe({ stagedEntryScoutPercent: e.target.value } as any)}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <div className="text-[12px] text-zinc-400">最小等待(ms)</div>
+                  <input
+                    type="number"
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.stagedEntryMinDelayMs ?? ''}
+                    disabled={!canEdit || !stagedEntryActive}
+                    onChange={(e) => updateTwitterSnipe({ stagedEntryMinDelayMs: e.target.value } as any)}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <div className="text-[12px] text-zinc-400">最长窗口(ms)</div>
+                  <input
+                    type="number"
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.stagedEntryMaxDelayMs ?? ''}
+                    disabled={!canEdit || !stagedEntryActive}
+                    onChange={(e) => updateTwitterSnipe({ stagedEntryMaxDelayMs: e.target.value } as any)}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <div className="text-[12px] text-zinc-400">最大回撤(%)</div>
+                  <input
+                    type="number"
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.stagedEntryMaxDrawdownPct ?? ''}
+                    disabled={!canEdit || !stagedEntryActive}
+                    onChange={(e) => updateTwitterSnipe({ stagedEntryMaxDrawdownPct: e.target.value } as any)}
+                  />
+                </label>
+              </div>
+            </div>
           </div>
         </div>
         <div className="space-y-2">
@@ -1335,13 +1492,13 @@ export function XSniperContent({
               </button>
             </div>
             <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-              <input
-                type="checkbox"
-                className="h-3 w-3 accent-emerald-500"
-                checked={!!twitterSnipe?.autoSellEnabled}
-                disabled={!canEdit}
-                onChange={(e) => updateTwitterSnipe({ autoSellEnabled: e.target.checked })}
-              />
+                <input
+                  type="checkbox"
+                  className="h-3 w-3 accent-emerald-500"
+                  checked={!!twitterSnipe?.autoSellEnabled}
+                  disabled={!canEdit}
+                  onChange={(e) => updateTwitterSnipe({ autoSellEnabled: e.target.checked })}
+                />
               {tt('contentUi.autoTradeStrategy.strategyAutoSell')}
             </label>
           </div>

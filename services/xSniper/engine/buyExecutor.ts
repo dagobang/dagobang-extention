@@ -124,7 +124,25 @@ export const tryAutoBuyOnce = async (input: {
     fallbackMcapUsd: number | null,
   ) => Promise<number | null>;
   scheduleStagedAddIfEnabled: (posKey: string, strategy: any) => void;
-  scheduleTimeStopIfEnabled: (posKey: string, strategy: any) => void;
+  scheduleTimeStopIfEnabled: (posKey: string, strategy: any, positionMode: 'full' | 'staged') => void;
+  registerRapidExitPosition: (input: {
+    strategy: any;
+    posKey: string;
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    dryRun: boolean;
+    stage: 'full' | 'add';
+    entryMcapUsd: number | null;
+    buyAmountBnb: number;
+    openedAtMs: number;
+    tweetAtMs?: number;
+    tweetUrl?: string;
+    tweetType?: string;
+    channel?: string;
+    signalId?: string;
+    signalEventId?: string;
+    signalTweetId?: string;
+  }) => void;
   stagedPositions: Map<string, StagedPosition>;
   dryRunAutoSellByPosKey: Map<string, DryRunAutoSellPos>;
 }) => {
@@ -224,28 +242,38 @@ export const tryAutoBuyOnce = async (input: {
       input.onStateChanged();
 
       const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+      const openedAtMs = stage === 'add'
+        ? (input.stagedPositions.get(posKey)?.openedAtMs ?? Date.now())
+        : (stage === 'scout' && input.stagedPlan ? input.stagedPlan.openedAtMs : Date.now());
+      const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
+      const tweetUrl = buildTweetUrl(input.signal);
+      const tweetType = input.signal?.tweetType ? String(input.signal.tweetType) : undefined;
+      const channel = input.signal?.channel ? String(input.signal.channel) : undefined;
+      const signalId = input.signal?.id ? String(input.signal.id) : undefined;
+      const signalEventId = input.signal?.eventId ? String(input.signal.eventId) : undefined;
+      const signalTweetId = input.signal?.tweetId ? String(input.signal.tweetId) : undefined;
 
       if (stage === 'scout' && input.stagedPlan) {
         input.stagedPositions.set(posKey, {
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
           dryRun: true,
-          openedAtMs: input.stagedPlan.openedAtMs,
+          openedAtMs: openedAtMs,
           scoutAmountBnb: input.stagedPlan.scoutAmountBnb,
           addAmountBnb: input.stagedPlan.addAmountBnb,
           lastMetrics: refreshedMetrics,
           entryMcapUsd: refreshedMetrics.marketCapUsd,
           entryPriceUsd: entryPriceUsd ?? undefined,
-          tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
-          tweetUrl: buildTweetUrl(input.signal),
-          tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
-          channel: input.signal?.channel ? String(input.signal.channel) : undefined,
-          signalId: input.signal?.id ? String(input.signal.id) : undefined,
-          signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
-          signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+          tweetAtMs,
+          tweetUrl,
+          tweetType,
+          channel,
+          signalId,
+          signalEventId,
+          signalTweetId,
         });
         input.scheduleStagedAddIfEnabled(posKey, input.strategy);
-        input.scheduleTimeStopIfEnabled(posKey, input.strategy);
+        input.scheduleTimeStopIfEnabled(posKey, input.strategy, 'staged');
       } else if (stage === 'full' && input.strategy?.timeStopEnabled === true) {
         input.stagedPositions.set(posKey, {
           chainId: input.chainId,
@@ -265,7 +293,27 @@ export const tryAutoBuyOnce = async (input: {
           signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
           signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
         });
-        input.scheduleTimeStopIfEnabled(posKey, input.strategy);
+        input.scheduleTimeStopIfEnabled(posKey, input.strategy, 'full');
+      }
+      if (stage !== 'scout') {
+        input.registerRapidExitPosition({
+          strategy: input.strategy,
+          posKey,
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          dryRun: true,
+          stage: stage === 'add' ? 'add' : 'full',
+          entryMcapUsd: refreshedMetrics.marketCapUsd ?? null,
+          buyAmountBnb: amountNumber,
+          openedAtMs,
+          tweetAtMs,
+          tweetUrl,
+          tweetType,
+          channel,
+          signalId,
+          signalEventId,
+          signalTweetId,
+        });
       }
 
       if (input.strategy?.autoSellEnabled === true && stage !== 'scout') {
@@ -345,8 +393,6 @@ export const tryAutoBuyOnce = async (input: {
       }
 
       const now = Date.now();
-      const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
-      const tweetUrl = buildTweetUrl(input.signal);
       input.emitRecord({
         id: `${now}-${Math.random().toString(16).slice(2)}`,
         side: 'buy',
@@ -418,48 +464,78 @@ export const tryAutoBuyOnce = async (input: {
     void input.persistBoughtOnce();
     input.onStateChanged();
     const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+    const openedAtMs = stage === 'add'
+      ? (input.stagedPositions.get(posKey)?.openedAtMs ?? Date.now())
+      : (stage === 'scout' && input.stagedPlan ? input.stagedPlan.openedAtMs : Date.now());
+    const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
+    const tweetUrl = buildTweetUrl(input.signal);
+    const tweetType = input.signal?.tweetType ? String(input.signal.tweetType) : undefined;
+    const channel = input.signal?.channel ? String(input.signal.channel) : undefined;
+    const signalId = input.signal?.id ? String(input.signal.id) : undefined;
+    const signalEventId = input.signal?.eventId ? String(input.signal.eventId) : undefined;
+    const signalTweetId = input.signal?.tweetId ? String(input.signal.tweetId) : undefined;
 
     if (stage === 'scout' && input.stagedPlan) {
       input.stagedPositions.set(posKey, {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         dryRun: false,
-        openedAtMs: input.stagedPlan.openedAtMs,
+        openedAtMs: openedAtMs,
         scoutAmountBnb: input.stagedPlan.scoutAmountBnb,
         addAmountBnb: input.stagedPlan.addAmountBnb,
         lastMetrics: refreshedMetrics,
         entryMcapUsd: refreshedMetrics.marketCapUsd,
         entryPriceUsd: entryPriceUsd ?? undefined,
-        tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
-        tweetUrl: buildTweetUrl(input.signal),
-        tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
-        channel: input.signal?.channel ? String(input.signal.channel) : undefined,
-        signalId: input.signal?.id ? String(input.signal.id) : undefined,
-        signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
-        signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+        tweetAtMs,
+        tweetUrl,
+        tweetType,
+        channel,
+        signalId,
+        signalEventId,
+        signalTweetId,
       });
       input.scheduleStagedAddIfEnabled(posKey, input.strategy);
-      input.scheduleTimeStopIfEnabled(posKey, input.strategy);
+      input.scheduleTimeStopIfEnabled(posKey, input.strategy, 'staged');
     } else if (stage === 'full' && input.strategy?.timeStopEnabled === true) {
       input.stagedPositions.set(posKey, {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         dryRun: false,
-        openedAtMs: Date.now(),
+        openedAtMs: openedAtMs,
         scoutAmountBnb: amountNumber,
         addAmountBnb: 0,
         lastMetrics: refreshedMetrics,
         entryMcapUsd: refreshedMetrics.marketCapUsd,
         entryPriceUsd: entryPriceUsd ?? undefined,
-        tweetAtMs: getSignalTimeMs(input.signal) ?? undefined,
-        tweetUrl: buildTweetUrl(input.signal),
-        tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
-        channel: input.signal?.channel ? String(input.signal.channel) : undefined,
-        signalId: input.signal?.id ? String(input.signal.id) : undefined,
-        signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
-        signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+        tweetAtMs,
+        tweetUrl,
+        tweetType,
+        channel,
+        signalId,
+        signalEventId,
+        signalTweetId,
       });
-      input.scheduleTimeStopIfEnabled(posKey, input.strategy);
+      input.scheduleTimeStopIfEnabled(posKey, input.strategy, 'full');
+    }
+    if (stage !== 'scout') {
+      input.registerRapidExitPosition({
+        strategy: input.strategy,
+        posKey,
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        dryRun: false,
+        stage: stage === 'add' ? 'add' : 'full',
+        entryMcapUsd: refreshedMetrics.marketCapUsd ?? null,
+        buyAmountBnb: amountNumber,
+        openedAtMs,
+        tweetAtMs,
+        tweetUrl,
+        tweetType,
+        channel,
+        signalId,
+        signalEventId,
+        signalTweetId,
+      });
     }
     let effectiveEntryPriceUsd = entryPriceUsd;
     if (stage === 'add') {
@@ -489,8 +565,6 @@ export const tryAutoBuyOnce = async (input: {
     }
 
     const now = Date.now();
-    const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
-    const tweetUrl = buildTweetUrl(input.signal);
     input.emitRecord({
       id: `${now}-${Math.random().toString(16).slice(2)}`,
       side: 'buy',
@@ -525,11 +599,11 @@ export const tryAutoBuyOnce = async (input: {
       confirmBuySellRatio: confirm.stats?.buySellRatio ?? undefined,
       userScreen: input.signal?.userScreen ? String(input.signal.userScreen) : undefined,
       userName: input.signal?.userName ? String(input.signal.userName) : undefined,
-      tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
-      channel: input.signal?.channel ? String(input.signal.channel) : undefined,
-      signalId: input.signal?.id ? String(input.signal.id) : undefined,
-      signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
-      signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+      tweetType,
+      channel,
+      signalId,
+      signalEventId,
+      signalTweetId,
       reason: stage === 'scout' ? 'staged_scout' : (stage === 'add' ? 'staged_add' : undefined),
     });
 

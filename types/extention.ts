@@ -33,6 +33,19 @@ export type ChainSettings = {
 
 export type AutoTradeInteractionType = 'tweet' | 'reply' | 'quote' | 'retweet' | 'follow';
 
+export type RapidExitByTypeConfig = Partial<Record<AutoTradeInteractionType, {
+  enabled?: boolean;
+  takeProfitPct?: string;
+  stopLossPct?: string;
+  maxHoldSeconds?: string;
+  trailActivatePct?: string;
+  trailDropPct?: string;
+  minHoldMsForTakeProfit?: string;
+  minHoldMsForStopLoss?: string;
+  minHoldMsForTrail?: string;
+  sellPercent?: string;
+}>>;
+
 export type AutoTradeTriggerSound = {
   enabled: boolean;
   preset: TradeSuccessSoundPreset;
@@ -83,6 +96,18 @@ export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
   timeStopSeconds?: string;
   timeStopMinPnlPct?: string;
   timeStopSellPercent?: string;
+  rapidExitEnabled?: boolean;
+  rapidTakeProfitPct?: string;
+  rapidStopLossPct?: string;
+  rapidMaxHoldSeconds?: string;
+  rapidTrailActivatePct?: string;
+  rapidTrailDropPct?: string;
+  rapidMinHoldMsForTakeProfit?: string;
+  rapidMinHoldMsForStopLoss?: string;
+  rapidMinHoldMsForTrail?: string;
+  rapidSellPercent?: string;
+  rapidByTweetTypeEnabled?: boolean;
+  rapidByType?: RapidExitByTypeConfig;
   targetUsers: string[];
   interactionTypes: AutoTradeInteractionType[];
 };
