@@ -96,6 +96,8 @@ export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
   rapidMinHoldMsForTakeProfit?: string;
   rapidMinHoldMsForStopLoss?: string;
   rapidMinHoldMsForTrail?: string;
+  rapidAuxWindow10sMs?: string;
+  rapidAuxWindow30sMs?: string;
   rapidSellPercent?: string;
   rapidByTweetTypeEnabled?: boolean;
   rapidByType?: RapidExitByTypeConfig;

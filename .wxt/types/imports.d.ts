@@ -40,10 +40,12 @@ declare global {
   const extractUser: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractUser
   const fakeBrowser: typeof import('wxt/testing').fakeBrowser
   const formatAgeShort: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatAgeShort
+  const formatBnbAmount: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatBnbAmount
   const formatBroadcastProvider: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatBroadcastProvider
   const formatCompactNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatCompactNumber
   const formatCountShort: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatCountShort
   const formatPriceValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatPriceValue
+  const formatShortAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatShortAddress
   const formatTime: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatTime
   const getDexPoolPrefer: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/dexUtils').getDexPoolPrefer
   const injectScript: typeof import('wxt/utils/inject-script').injectScript

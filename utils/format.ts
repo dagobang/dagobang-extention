@@ -104,6 +104,19 @@ export const formatCompactNumber = (value?: number | null) => {
   return `${sign}${Math.round(abs)}`;
 };
 
+export const formatBnbAmount = (value?: number | null) => {
+  if (value == null || !Number.isFinite(value)) return '-';
+  const s = (value >= 1 ? value.toFixed(4) : value.toFixed(6)).replace(/0+$/, '').replace(/\.$/, '');
+  return s || '0';
+};
+
+export const formatShortAddress = (value: string, head = 6, tail = 4, minLength = 12) => {
+  const address = String(value || '').trim();
+  if (!address) return '';
+  if (address.length <= minLength) return address;
+  return `${address.slice(0, head)}...${address.slice(-tail)}`;
+};
+
  export const formatBroadcastProvider = (via?: string, url?: string) => {
     if (via === 'bloxroute') return 'BloxRoute';
     if (via !== 'rpc') return '-';

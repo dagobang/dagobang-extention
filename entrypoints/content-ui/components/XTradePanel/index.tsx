@@ -22,6 +22,12 @@ const clampPos = (value: { x: number; y: number }, panelWidth: number) => {
   return { x: clampedX, y: clampedY };
 };
 
+const resolvePanelWidth = (tab: 'xmonitor' | 'xsniper' | 'xhistory', viewportWidth: number) => {
+  const base = tab === 'xhistory' ? 560 : tab === 'xsniper' ? 560 : 380;
+  const maxAllowed = Math.max(320, viewportWidth - 24);
+  return Math.min(base, maxAllowed);
+};
+
 export function XTradePanel({
   siteInfo,
   visible,
@@ -32,7 +38,8 @@ export function XTradePanel({
   isUnlocked,
 }: XTradePanelProps) {
   const [activeTab, setActiveTab] = useState<'xmonitor' | 'xsniper' | 'xhistory'>(() => activeTabProp ?? 'xmonitor');
-  const panelWidth = activeTab === 'xhistory' ? 520 : 360;
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth || 0);
+  const panelWidth = resolvePanelWidth(activeTab, viewportWidth || 0);
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
     const defaultX = Math.max(0, width - panelWidth);
@@ -49,6 +56,16 @@ export function XTradePanel({
   useEffect(() => {
     posRef.current = pos;
   }, [pos]);
+
+  useEffect(() => {
+    const onResize = () => {
+      setViewportWidth(window.innerWidth || 0);
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
 
   useEffect(() => {
     try {

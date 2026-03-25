@@ -105,8 +105,8 @@ const GOLD_DOG_LONG_WINDOW_MS = 4800;
 const GOLD_DOG_SHORT_MOMENTUM_PCT = 6.2;
 const GOLD_DOG_LONG_MOMENTUM_PCT = 11.5;
 const GOLD_DOG_MIN_EXTRA_PNL_PCT = 2.5;
-const AUX_WINDOW_10S_MS = 10000;
-const AUX_WINDOW_30S_MS = 30000;
+const DEFAULT_AUX_WINDOW_10S_MS = 10000;
+const DEFAULT_AUX_WINDOW_30S_MS = 30000;
 const AUX_WINDOW_10S_TOLERANCE_MS = 3200;
 const AUX_WINDOW_30S_TOLERANCE_MS = 6000;
 
@@ -154,6 +154,21 @@ export const readRapidExitConfig = (strategy: any, tweetType?: unknown): RapidEx
     minHoldMsForTrail,
     sellPercent,
   };
+};
+
+const readRapidAuxWindows = (strategy: any) => {
+  const window10sMs = clamp(
+    Math.floor(parseUnknownNumber(strategy?.rapidAuxWindow10sMs) ?? DEFAULT_AUX_WINDOW_10S_MS),
+    3000,
+    30000,
+  );
+  const rawWindow30sMs = clamp(
+    Math.floor(parseUnknownNumber(strategy?.rapidAuxWindow30sMs) ?? DEFAULT_AUX_WINDOW_30S_MS),
+    10000,
+    90000,
+  );
+  const window30sMs = Math.max(rawWindow30sMs, window10sMs + 2000);
+  return { window10sMs, window30sMs };
 };
 
 export const registerRapidExitPosition = (input: {
@@ -225,6 +240,13 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
   const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
   const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
   if (!(curMcap != null && curMcap > 0)) return;
+  const { window10sMs, window30sMs } = readRapidAuxWindows(input.strategy);
+  const window10ToleranceMs = clamp(Math.floor(window10sMs * 0.32), 1200, AUX_WINDOW_10S_TOLERANCE_MS);
+  const window30ToleranceMs = clamp(Math.floor(window30sMs * 0.2), 2500, AUX_WINDOW_30S_TOLERANCE_MS);
+  const window10EvalAheadMs = Math.min(1200, Math.floor(window10sMs * 0.2));
+  const window30EvalAheadMs = Math.min(2200, Math.floor(window30sMs * 0.2));
+  const window10StopAheadMs = Math.min(1000, Math.floor(window10sMs * 0.18));
+  const window30TakeProfitAheadMs = Math.min(1800, Math.floor(window30sMs * 0.16));
 
   const keys = Array.from(input.rapidExitByPosKey.keys()).filter((k) => {
     const parts = k.split(':');
@@ -249,11 +271,11 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
     const pnlPct = ((curMcap - entryMcap) / entryMcap) * 100;
     const peakPnlPct = ((pos.peakMcapUsd - entryMcap) / entryMcap) * 100;
     const dropFromPeakPct = pos.peakMcapUsd > 0 ? ((pos.peakMcapUsd - curMcap) / pos.peakMcapUsd) * 100 : 0;
-    const window10Pnl = ageMs >= AUX_WINDOW_10S_MS - 1200
-      ? getPnlPctAtAge(snapshots, pos.openedAtMs, entryMcap, AUX_WINDOW_10S_MS, AUX_WINDOW_10S_TOLERANCE_MS)
+    const window10Pnl = ageMs >= window10sMs - window10EvalAheadMs
+      ? getPnlPctAtAge(snapshots, pos.openedAtMs, entryMcap, window10sMs, window10ToleranceMs)
       : null;
-    const window30Pnl = ageMs >= AUX_WINDOW_30S_MS - 2200
-      ? getPnlPctAtAge(snapshots, pos.openedAtMs, entryMcap, AUX_WINDOW_30S_MS, AUX_WINDOW_30S_TOLERANCE_MS)
+    const window30Pnl = ageMs >= window30sMs - window30EvalAheadMs
+      ? getPnlPctAtAge(snapshots, pos.openedAtMs, entryMcap, window30sMs, window30ToleranceMs)
       : null;
     const windowWeakLoss = window10Pnl != null && window10Pnl <= -1.8;
     const windowGoldCandidate = window10Pnl != null && window10Pnl >= cfg.takeProfitPct;
@@ -267,7 +289,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
     let keepAfterSell = false;
     if (
       (ageMs >= cfg.minHoldMsForStopLoss && pnlPct <= cfg.stopLossPct)
-      || (ageMs >= AUX_WINDOW_10S_MS - 1000 && windowWeakLoss && pnlPct <= -1.2)
+      || (ageMs >= window10sMs - window10StopAheadMs && windowWeakLoss && pnlPct <= -1.2)
     ) {
       reason = 'rapid_stop_loss';
     } else {
@@ -295,10 +317,10 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       } else {
         pos.firstTakeProfitSeenAtMs = undefined;
       }
-      if (!reason && !runnerMode && ageMs >= AUX_WINDOW_30S_MS - 1800 && windowGoldFailed && pnlPct > 0) {
+      if (!reason && !runnerMode && ageMs >= window30sMs - window30TakeProfitAheadMs && windowGoldFailed && pnlPct > 0) {
         reason = 'rapid_take_profit';
       }
-      if (!reason && runnerMode && ageMs >= AUX_WINDOW_30S_MS - 1800 && windowGoldFailed) {
+      if (!reason && runnerMode && ageMs >= window30sMs - window30TakeProfitAheadMs && windowGoldFailed) {
         reason = 'rapid_trailing_stop';
       }
       if (!reason && ageMs >= cfg.minHoldMsForTrail && peakPnlPct >= adaptiveTrailActivatePct && dropFromPeakPct >= adaptiveTrailDropPct) {

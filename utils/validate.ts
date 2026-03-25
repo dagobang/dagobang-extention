@@ -306,6 +306,8 @@ export function validateSettings(input: Settings): Settings | null {
     rapidMinHoldMsForTakeProfit: clampStringNumber((rawInput as any)?.rapidMinHoldMsForTakeProfit, (fallbackInput as any)?.rapidMinHoldMsForTakeProfit),
     rapidMinHoldMsForStopLoss: clampStringNumber((rawInput as any)?.rapidMinHoldMsForStopLoss, (fallbackInput as any)?.rapidMinHoldMsForStopLoss),
     rapidMinHoldMsForTrail: clampStringNumber((rawInput as any)?.rapidMinHoldMsForTrail, (fallbackInput as any)?.rapidMinHoldMsForTrail),
+    rapidAuxWindow10sMs: clampStringNumber((rawInput as any)?.rapidAuxWindow10sMs, (fallbackInput as any)?.rapidAuxWindow10sMs),
+    rapidAuxWindow30sMs: clampStringNumber((rawInput as any)?.rapidAuxWindow30sMs, (fallbackInput as any)?.rapidAuxWindow30sMs),
     rapidSellPercent: clampStringNumber((rawInput as any)?.rapidSellPercent, (fallbackInput as any)?.rapidSellPercent),
     rapidByTweetTypeEnabled: typeof (rawInput as any)?.rapidByTweetTypeEnabled === 'boolean'
       ? (rawInput as any).rapidByTweetTypeEnabled

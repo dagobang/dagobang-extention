@@ -29,7 +29,7 @@ declare module '#imports' {
   export { encryptJson, decryptJson } from '../utils/crypto';
   export { defaultSettings } from '../utils/defaults';
   export { getDexPoolPrefer } from '../utils/dexUtils';
-  export { isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime, formatAgeShort, formatCountShort, formatCompactNumber, formatBroadcastProvider } from '../utils/format';
+  export { isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime, formatAgeShort, formatCountShort, formatCompactNumber, formatBnbAmount, formatShortAddress, formatBroadcastProvider } from '../utils/format';
   export { isObject, asAddress, toArrayPayload, extractFirstFromObject, extractNumber, extractTokenAddress, extractTokenAddresses, extractTweetId, extractText, extractMedia, extractGmgnTweetText, extractGmgnUserFields, extractUser, extractTimestampMs, parseGmgnEnvelope, extractGmgnWsConnectionInfo } from '../utils/gmgnWs';
   export { t, normalizeLocale, Locale } from '../utils/i18n';
   export { call } from '../utils/messaging';

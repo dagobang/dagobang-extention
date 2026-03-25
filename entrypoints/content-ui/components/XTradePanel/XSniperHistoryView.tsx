@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Settings, XSniperBuyRecord } from '@/types/extention';
+import type { TokenInfo } from '@/types/token';
+import { chainNames } from '@/constants/chains/chainName';
+import { call } from '@/utils/messaging';
 import { navigateToUrl, type SiteInfo, parsePlatformTokenLink } from '@/utils/sites';
+import { formatBnbAmount, formatCompactNumber, formatShortAddress } from '@/utils/format';
 
 type HistoryGroup = { key: string; parent: XSniperBuyRecord; children: XSniperBuyRecord[] };
 
@@ -14,8 +18,6 @@ type XSniperHistoryViewProps = {
   historyGroups: HistoryGroup[];
   latestTokenByAddr: Record<string, any>;
   athMcapByAddr: Record<string, number>;
-  sellingKey: string | null;
-  onSellByPercent: (record: XSniperBuyRecord, pct: number) => void;
   onClearHistory: () => void;
 };
 
@@ -35,37 +37,6 @@ const formatTs = (tsMs: number) => {
   } catch {
     return String(tsMs);
   }
-};
-
-const formatCompact = (n: number | null | undefined) => {
-  if (n == null || !Number.isFinite(n)) return '-';
-  const abs = Math.abs(n);
-  const fmt = (v: number, s: string) => `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)}${s}`;
-  if (abs >= 1e9) return fmt(n / 1e9, 'B');
-  if (abs >= 1e6) return fmt(n / 1e6, 'M');
-  if (abs >= 1e3) return fmt(n / 1e3, 'K');
-  return String(Math.round(n));
-};
-
-const formatBnb = (n: number | null | undefined) => {
-  if (n == null || !Number.isFinite(n)) return '-';
-  const s = (n >= 1 ? n.toFixed(4) : n.toFixed(6)).replace(/0+$/, '').replace(/\.$/, '');
-  return s || '0';
-};
-
-const formatUsd = (n: number | null | undefined) => {
-  if (n == null || !Number.isFinite(n)) return '-';
-  const abs = Math.abs(n);
-  const raw = abs >= 1 ? n.toFixed(4) : abs >= 0.01 ? n.toFixed(6) : n.toFixed(8);
-  const s = raw.replace(/0+$/, '').replace(/\.$/, '');
-  return `$${s || '0'}`;
-};
-
-const shortAddr = (addr: string) => {
-  const a = String(addr || '').trim();
-  if (!a) return '';
-  if (a.length <= 12) return a;
-  return `${a.slice(0, 6)}...${a.slice(-4)}`;
 };
 
 const clampPercent = (value: unknown) => {
@@ -132,12 +103,11 @@ export function XSniperHistoryView({
   historyGroups,
   latestTokenByAddr,
   athMcapByAddr,
-  sellingKey,
-  onSellByPercent,
   onClearHistory,
 }: XSniperHistoryViewProps) {
   const [keyword, setKeyword] = useState('');
   const [visibleCount, setVisibleCount] = useState(20);
+  const [sellingKey, setSellingKey] = useState<string | null>(null);
   const normalizedKeyword = keyword.trim().toLowerCase();
 
   const filteredGroups = useMemo(() => {
@@ -155,6 +125,87 @@ export function XSniperHistoryView({
 
   const visibleGroups = useMemo(() => filteredGroups.slice(0, visibleCount), [filteredGroups, visibleCount]);
   const canLoadMore = visibleCount < filteredGroups.length;
+
+  const sellByPercent = async (record: XSniperBuyRecord, pct: number) => {
+    if (!settings) return;
+    if (!isUnlocked) return;
+    const chainId = typeof record.chainId === 'number' ? record.chainId : settings.chainId;
+    const tokenAddressNormalized = String(record.tokenAddress || '').toLowerCase() as `0x${string}`;
+    if (!tokenAddressNormalized || !tokenAddressNormalized.startsWith('0x')) return;
+
+    const percentBps = Math.max(1, Math.min(10000, Math.floor(pct * 100)));
+    const isTurbo = settings.chains[chainId]?.executionMode === 'turbo';
+
+    const key = `${record.id}:${pct}`;
+    setSellingKey(key);
+    try {
+      const state = await call({ type: 'bg:getState' } as const);
+      const address = state?.wallet?.address;
+      if (!address) throw new Error('Wallet not ready');
+
+      const balRes = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address } as const);
+      const balanceWei = BigInt(balRes.balanceWei || '0');
+      if (balanceWei <= 0n) throw new Error('No balance');
+
+      const meta = await call({ type: 'token:getMeta', tokenAddress: tokenAddressNormalized } as const);
+      const chain = chainNames[chainId] ?? String(chainId);
+      const httpTokenInfoRes = await call({
+        type: 'token:getTokenInfo:fourmemeHttp',
+        platform: siteInfo?.platform ?? 'gmgn',
+        chain,
+        address: tokenAddressNormalized,
+      } as const);
+
+      const tokenInfo: TokenInfo =
+        httpTokenInfoRes.tokenInfo ??
+        ({
+          chain,
+          address: tokenAddressNormalized,
+          name: record.tokenName ? String(record.tokenName) : meta.symbol,
+          symbol: record.tokenSymbol ? String(record.tokenSymbol) : meta.symbol,
+          decimals: Number(meta.decimals) || 18,
+          logo: '',
+          launchpad: '',
+          launchpad_progress: 0,
+          launchpad_platform: '',
+          launchpad_status: 1,
+          quote_token: '',
+        } as TokenInfo);
+
+      const approveRes = await call({
+        type: 'tx:approveMaxForSellIfNeeded',
+        chainId,
+        tokenAddress: tokenAddressNormalized,
+        tokenInfo,
+      } as const);
+      if (approveRes.txHash) {
+        const receipt = await call({ type: 'tx:waitForReceipt', hash: approveRes.txHash, chainId } as const);
+        if (!receipt.ok) {
+          const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
+          throw new Error(detail || 'Approve failed');
+        }
+      }
+
+      const tokenAmountWei = isTurbo ? '0' : ((balanceWei * BigInt(pct)) / 100n).toString();
+      const sellRes = await call({
+        type: 'tx:sell',
+        input: {
+          chainId,
+          tokenAddress: tokenAddressNormalized,
+          tokenAmountWei,
+          sellPercentBps: isTurbo ? percentBps : undefined,
+          expectedTokenInWei: isTurbo ? balanceWei.toString() : undefined,
+          tokenInfo,
+        },
+      } as const);
+      if (!sellRes.ok) {
+        const detail = sellRes.revertReason || sellRes.error?.shortMessage || sellRes.error?.message;
+        throw new Error(detail || 'Sell failed');
+      }
+    } finally {
+      setSellingKey((prev) => (prev === key ? null : prev));
+    }
+  };
 
   const onExportHistory = () => {
     try {
@@ -310,7 +361,7 @@ export function XSniperHistoryView({
                       const sym = r.tokenSymbol ? String(r.tokenSymbol).trim() : '';
                       const name = r.tokenName ? String(r.tokenName).trim() : '';
                       if (sym && name && sym !== name) return `${sym} (${name})`;
-                      return sym || name || shortAddr(r.tokenAddress);
+                      return sym || name || formatShortAddress(r.tokenAddress);
                     })();
                   const tokenLink = siteInfo ? parsePlatformTokenLink(siteInfo, r.tokenAddress) : '';
                   const sellDisabledBase = !settings || !isUnlocked || r.dryRun === true;
@@ -339,7 +390,7 @@ export function XSniperHistoryView({
                           >
                             {tokenLabel}
                           </a>{' '}
-                          <span className="text-zinc-500">{shortAddr(r.tokenAddress)}</span>
+                          <span className="text-zinc-500">{formatShortAddress(r.tokenAddress)}</span>
                         </div>
                         <div className="text-right text-[11px] text-zinc-500">
                           <div>{formatTs(r.tsMs)}</div>
@@ -388,17 +439,17 @@ export function XSniperHistoryView({
                             <span className="text-zinc-200">
                               {isSell
                                 ? r.sellPercent == null ? '-' : `${r.sellPercent.toFixed(2)}%`
-                                : formatBnb(r.buyAmountBnb)}
+                                : formatBnbAmount(r.buyAmountBnb)}
                             </span>
                           </div>
                           <div>
                             <span className="text-amber-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')}:</span>{' '}
-                            <span className="text-zinc-200">{formatCompact(r.marketCapUsd)}</span>
-                            {latestMcap != null ? <span className="text-zinc-500"> → {formatCompact(latestMcap)}</span> : null}
+                            <span className="text-zinc-200">{formatCompactNumber(r.marketCapUsd) ?? '-'}</span>
+                            {latestMcap != null ? <span className="text-zinc-500"> → {formatCompactNumber(latestMcap) ?? '-'}</span> : null}
                           </div>
                           <div>
                             <span className="text-amber-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')} ATH:</span>{' '}
-                            <span className="text-zinc-200">{athMcap == null ? '-' : formatCompact(athMcap)}</span>
+                            <span className="text-zinc-200">{athMcap == null ? '-' : (formatCompactNumber(athMcap) ?? '-')}</span>
                           </div>
                           <div>
                             <span className="text-zinc-500">{tt('contentUi.autoTradeStrategy.snipeHistoryUser')}:</span>{' '}
@@ -410,9 +461,9 @@ export function XSniperHistoryView({
                           </div>
                           <div>
                             <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryHolders')}:</span>{' '}
-                            <span className="text-zinc-200">{formatCompact(r.holders)}</span>
+                            <span className="text-zinc-200">{formatCompactNumber(r.holders) ?? '-'}</span>
                             {latest && typeof latest.holders === 'number' ? (
-                              <span className="text-zinc-500"> → {formatCompact(latest.holders)}</span>
+                              <span className="text-zinc-500"> → {formatCompactNumber(latest.holders) ?? '-'}</span>
                             ) : null}
                           </div>
                           <div>
@@ -430,18 +481,18 @@ export function XSniperHistoryView({
                           </div>
                           <div>
                             <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryKol')}:</span>{' '}
-                            <span className="text-zinc-200">{formatCompact(r.kol)}</span>
+                            <span className="text-zinc-200">{formatCompactNumber(r.kol) ?? '-'}</span>
                             {latest && typeof latest.kol === 'number' ? (
-                              <span className="text-zinc-500"> → {formatCompact(latest.kol)}</span>
+                              <span className="text-zinc-500"> → {formatCompactNumber(latest.kol) ?? '-'}</span>
                             ) : null}
                           </div>
                           <div>
                             <span className="text-orange-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryVolume24h')}:</span>{' '}
-                            <span className="text-zinc-200">{formatCompact((r as any).vol24hUsd)}</span>
+                            <span className="text-zinc-200">{formatCompactNumber((r as any).vol24hUsd) ?? '-'}</span>
                           </div>
                           <div>
                             <span className="text-orange-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryNetBuy24h')}:</span>{' '}
-                            <span className="text-zinc-200">{formatCompact((r as any).netBuy24hUsd)}</span>
+                            <span className="text-zinc-200">{formatCompactNumber((r as any).netBuy24hUsd) ?? '-'}</span>
                           </div>
                           <div className="col-span-3">
                             <span className="text-orange-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryBuySell24h')}:</span>{' '}
@@ -490,7 +541,7 @@ export function XSniperHistoryView({
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
-                                  onSellByPercent(r, pct);
+                                  void sellByPercent(r, pct);
                                 }}
                               >
                                 {pct}%
@@ -507,15 +558,41 @@ export function XSniperHistoryView({
                     {g.children.slice(0, 12).map((c) => {
                       const badge = (() => {
                         if (c.side === 'sell') {
-                          return { text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeSell'), cls: 'bg-rose-500/15 text-rose-200 border-rose-500/30' };
+                          if (c.reason === 'rapid_take_profit') {
+                            return {
+                              text: resolveReasonLabel(tt, c.reason),
+                              cls: 'bg-emerald-500/15 text-emerald-200 border-emerald-500/30',
+                            };
+                          }
+                          if (c.reason === 'rapid_stop_loss') {
+                            return {
+                              text: resolveReasonLabel(tt, c.reason),
+                              cls: 'bg-rose-500/15 text-rose-200 border-rose-500/30',
+                            };
+                          }
+                          if (c.reason === 'rapid_trailing_stop') {
+                            return {
+                              text: resolveReasonLabel(tt, c.reason),
+                              cls: 'bg-violet-500/15 text-violet-200 border-violet-500/30',
+                            };
+                          }
+                          return {
+                            text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeSell'),
+                            cls: 'bg-rose-500/15 text-rose-200 border-rose-500/30',
+                          };
                         }
-                        if (c.reason === 'ws_confirm_failed') return { text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeWs'), cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30' };
+                        if (c.reason === 'ws_confirm_failed') {
+                          return {
+                            text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeWs'),
+                            cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30',
+                          };
+                        }
                         return { text: tt('contentUi.autoTradeStrategy.snipeHistoryBadgeSub'), cls: 'bg-zinc-500/15 text-zinc-200 border-zinc-500/30' };
                       })();
                       const isSell = c.side === 'sell';
                       const primary = isSell
                         ? `${tt('contentUi.autoTradeStrategy.snipeHistorySellPercent')}: ${c.sellPercent == null ? '-' : `${c.sellPercent.toFixed(2)}%`}`
-                        : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnb(c.buyAmountBnb)}`;
+                        : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnbAmount(c.buyAmountBnb)}`;
                       return (
                         <div key={c.id} className="flex items-start justify-between gap-2 text-[11px] text-zinc-400">
                           <div className="min-w-0">
