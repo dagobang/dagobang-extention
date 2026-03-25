@@ -113,8 +113,5 @@ export const pickTokensToBuyFromSignal = (input: {
     return ta - tb;
   });
 
-  if (strategy?.dryRun === true) {
-    return candidates;
-  }
-  return candidates.slice(0, perTweetMax);
+  return candidates;
 };

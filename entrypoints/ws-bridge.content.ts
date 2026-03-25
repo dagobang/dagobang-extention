@@ -88,14 +88,156 @@ export default defineContentScript({
       }
     })();
 
+    const WS_MONITOR_ENABLED_KEY = 'dagobang_ws_monitor_enabled_v1';
+    const WS_BRIDGE_PROBE_ENABLED_KEY = 'dagobang_ws_bridge_probe_enabled_v1';
+    let wsCaptureEnabledCache = true;
+    let wsCaptureEnabledCacheExpireAt = 0;
+    let wsBridgeProbeEnabledCache = false;
+    let wsBridgeProbeEnabledCacheExpireAt = 0;
+    type WsBridgeProbeWindow = {
+      scope: 'main';
+      windowStartAt: number;
+      packets: number;
+      mainPackets: number;
+      workerForwardPackets: number;
+      receivePackets: number;
+      sendPackets: number;
+      parseAttempts: number;
+      parseSuccess: number;
+      parseFail: number;
+      postCount: number;
+      textBytes: number;
+      handleTotalMs: number;
+      handleMaxMs: number;
+      lastAt: number;
+      gmgnPackets: number;
+      axiomPackets: number;
+    };
+    const createWsBridgeProbeWindow = (now: number): WsBridgeProbeWindow => ({
+      scope: 'main',
+      windowStartAt: now,
+      packets: 0,
+      mainPackets: 0,
+      workerForwardPackets: 0,
+      receivePackets: 0,
+      sendPackets: 0,
+      parseAttempts: 0,
+      parseSuccess: 0,
+      parseFail: 0,
+      postCount: 0,
+      textBytes: 0,
+      handleTotalMs: 0,
+      handleMaxMs: 0,
+      lastAt: now,
+      gmgnPackets: 0,
+      axiomPackets: 0,
+    });
+    let wsBridgeProbeWindow = createWsBridgeProbeWindow(Date.now());
+
     function isWsCaptureEnabled(): boolean {
+      const now = Date.now();
+      if (now < wsCaptureEnabledCacheExpireAt) return wsCaptureEnabledCache;
       try {
-        const raw = window.localStorage.getItem('dagobang_ws_monitor_enabled_v1');
-        if (raw === '0') return false;
-        if (raw === '1') return true;
+        const raw = window.localStorage.getItem(WS_MONITOR_ENABLED_KEY);
+        if (raw === '0') {
+          wsCaptureEnabledCache = false;
+          wsCaptureEnabledCacheExpireAt = now + 3000;
+          return false;
+        }
+        if (raw === '1') {
+          wsCaptureEnabledCache = true;
+          wsCaptureEnabledCacheExpireAt = now + 3000;
+          return true;
+        }
       } catch {
       }
+      wsCaptureEnabledCache = true;
+      wsCaptureEnabledCacheExpireAt = now + 3000;
       return true;
+    }
+
+    function isWsBridgeProbeEnabled(): boolean {
+      const now = Date.now();
+      if (now < wsBridgeProbeEnabledCacheExpireAt) return wsBridgeProbeEnabledCache;
+      try {
+        const raw = window.localStorage.getItem(WS_BRIDGE_PROBE_ENABLED_KEY);
+        if (raw === '1') {
+          wsBridgeProbeEnabledCache = true;
+          wsBridgeProbeEnabledCacheExpireAt = now + 3000;
+          return true;
+        }
+      } catch {
+      }
+      wsBridgeProbeEnabledCache = false;
+      wsBridgeProbeEnabledCacheExpireAt = now + 3000;
+      return false;
+    }
+
+    function estimateTextBytes(raw: unknown): number {
+      if (typeof raw === 'string') return raw.length;
+      if (raw instanceof ArrayBuffer) return raw.byteLength;
+      if (ArrayBuffer.isView(raw)) return raw.byteLength;
+      return 0;
+    }
+
+    function flushWsBridgeProbe(now: number): void {
+      const duration = now - wsBridgeProbeWindow.windowStartAt;
+      if (duration < 3000) return;
+      const packetsPerSec = duration > 0 ? (wsBridgeProbeWindow.packets * 1000) / duration : 0;
+      const avgHandleMs = wsBridgeProbeWindow.packets > 0 ? wsBridgeProbeWindow.handleTotalMs / wsBridgeProbeWindow.packets : 0;
+      const parseFailRate = wsBridgeProbeWindow.parseAttempts > 0 ? wsBridgeProbeWindow.parseFail / wsBridgeProbeWindow.parseAttempts : 0;
+      const textKbps = duration > 0 ? (wsBridgeProbeWindow.textBytes / 1024) / (duration / 1000) : 0;
+      const localBusyScore = (avgHandleMs >= 1 ? 1 : 0) + (wsBridgeProbeWindow.handleMaxMs >= 6 ? 1 : 0) + (packetsPerSec >= 120 ? 1 : 0);
+      const remoteCongestionScore = (packetsPerSec < 20 ? 1 : 0) + (avgHandleMs < 0.8 ? 1 : 0) + (wsBridgeProbeWindow.handleMaxMs < 4 ? 1 : 0);
+      const likelyCause =
+        localBusyScore >= 2 && remoteCongestionScore <= 1
+          ? 'local_main_thread_busy'
+          : remoteCongestionScore >= 2 && localBusyScore <= 1
+            ? 'network_or_remote_congestion'
+            : 'mixed_or_uncertain';
+      const snapshot = {
+        ...wsBridgeProbeWindow,
+        durationMs: duration,
+        packetsPerSec,
+        avgHandleMs,
+        parseFailRate,
+        textKbps,
+        likelyCause,
+      };
+      (window as any).__DAGOBANG_WS_BRIDGE_PROBE__ = snapshot;
+      window.postMessage({ type: 'DAGOBANG_WS_BRIDGE_PROBE', payload: snapshot }, '*');
+      wsBridgeProbeWindow = createWsBridgeProbeWindow(now);
+    }
+
+    function recordWsBridgeProbe(entry: {
+      packetSource: 'main' | 'worker_forward';
+      site: WsSite;
+      direction: 'send' | 'receive';
+      parseAttempted: boolean;
+      parseSucceeded: boolean;
+      textBytes: number;
+      posted: boolean;
+      handleMs: number;
+    }): void {
+      if (!isWsBridgeProbeEnabled()) return;
+      const now = Date.now();
+      const next = wsBridgeProbeWindow;
+      next.packets += 1;
+      if (entry.packetSource === 'main') next.mainPackets += 1;
+      if (entry.packetSource === 'worker_forward') next.workerForwardPackets += 1;
+      if (entry.direction === 'receive') next.receivePackets += 1;
+      if (entry.direction === 'send') next.sendPackets += 1;
+      if (entry.site === 'gmgn') next.gmgnPackets += 1;
+      if (entry.site === 'axiom') next.axiomPackets += 1;
+      if (entry.parseAttempted) next.parseAttempts += 1;
+      if (entry.parseSucceeded) next.parseSuccess += 1;
+      if (entry.parseAttempted && !entry.parseSucceeded) next.parseFail += 1;
+      if (entry.posted) next.postCount += 1;
+      next.textBytes += entry.textBytes;
+      next.handleTotalMs += entry.handleMs;
+      if (entry.handleMs > next.handleMaxMs) next.handleMaxMs = entry.handleMs;
+      next.lastAt = now;
+      flushWsBridgeProbe(now);
     }
 
     function installUrlChangeEmitter() {
@@ -285,6 +427,7 @@ export default defineContentScript({
           channel: normalized.channel ?? null,
           payload: normalized.payload ?? null,
           raw,
+          fromWorker: false,
           timestamp: Date.now(),
           connectionInfo,
         },
@@ -303,23 +446,78 @@ export default defineContentScript({
         const originalSend = ws.send;
 
         ws.send = function (data: any) {
+          if (adapter.site === 'gmgn') return originalSend.call(this, data);
           if (!isWsCaptureEnabled()) return originalSend.call(this, data);
+          const shouldProbe = isWsBridgeProbeEnabled();
+          const startedAt = shouldProbe ? performance.now() : 0;
+          let parseAttempted = false;
+          let parseSucceeded = false;
+          let posted = false;
+          const textBytes = estimateTextBytes(data);
           try {
-            const parsed = JSON.parse(data);
-            postWsPacket(adapter, 'send', parsed, data, connectionInfo);
+            if (typeof data === 'string') {
+              parseAttempted = true;
+              const parsed = JSON.parse(data);
+              parseSucceeded = true;
+              postWsPacket(adapter, 'send', parsed, undefined, connectionInfo);
+              posted = true;
+            } else {
+              postWsPacket(adapter, 'send', null, data, connectionInfo);
+              posted = true;
+            }
           } catch {
             postWsPacket(adapter, 'send', null, data, connectionInfo);
+            posted = true;
+          }
+          if (shouldProbe) {
+            recordWsBridgeProbe({
+              packetSource: 'main',
+              site: adapter.site,
+              direction: 'send',
+              parseAttempted,
+              parseSucceeded,
+              textBytes,
+              posted,
+              handleMs: performance.now() - startedAt,
+            });
           }
           return originalSend.call(this, data);
         };
 
         ws.addEventListener('message', function (event: MessageEvent) {
           if (!isWsCaptureEnabled()) return;
+          const shouldProbe = isWsBridgeProbeEnabled();
+          const startedAt = shouldProbe ? performance.now() : 0;
+          let parseAttempted = false;
+          let parseSucceeded = false;
+          let posted = false;
+          const textBytes = estimateTextBytes(event.data);
           try {
-            const parsed = JSON.parse(event.data);
-            postWsPacket(adapter, 'receive', parsed, event.data, connectionInfo);
+            if (typeof event.data === 'string') {
+              parseAttempted = true;
+              const parsed = JSON.parse(event.data);
+              parseSucceeded = true;
+              postWsPacket(adapter, 'receive', parsed, undefined, connectionInfo);
+              posted = true;
+            } else {
+              postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
+              posted = true;
+            }
           } catch {
             postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
+            posted = true;
+          }
+          if (shouldProbe) {
+            recordWsBridgeProbe({
+              packetSource: 'main',
+              site: adapter.site,
+              direction: 'receive',
+              parseAttempted,
+              parseSucceeded,
+              textBytes,
+              posted,
+              handleMs: performance.now() - startedAt,
+            });
           }
         });
 
@@ -481,12 +679,31 @@ export default defineContentScript({
           }
           return { payload: data };
         };
-        const postWsPacket = (site: WsSite, direction: 'send' | 'receive', parsed: any, raw: any, connectionInfo: any): void => {
+        let wsCaptureEnabledCache = true;
+        let wsCaptureEnabledCacheExpireAt = 0;
+        const isWsCaptureEnabled = (): boolean => {
+          const now = Date.now();
+          if (now < wsCaptureEnabledCacheExpireAt) return wsCaptureEnabledCache;
           try {
             const rawEnabled = window.localStorage.getItem('dagobang_ws_monitor_enabled_v1');
-            if (rawEnabled === '0') return;
+            if (rawEnabled === '0') {
+              wsCaptureEnabledCache = false;
+              wsCaptureEnabledCacheExpireAt = now + 3000;
+              return false;
+            }
+            if (rawEnabled === '1') {
+              wsCaptureEnabledCache = true;
+              wsCaptureEnabledCacheExpireAt = now + 3000;
+              return true;
+            }
           } catch {
           }
+          wsCaptureEnabledCache = true;
+          wsCaptureEnabledCacheExpireAt = now + 3000;
+          return true;
+        };
+        const postWsPacket = (site: WsSite, direction: 'send' | 'receive', parsed: any, raw: any, connectionInfo: any): void => {
+          if (!isWsCaptureEnabled()) return;
           const gmgnParsed = site === 'gmgn' ? parseGmgnEnvelope(parsed) : { payload: parsed };
           const message = {
             __DAGOBANG_WORKER_WS__: true,
@@ -496,6 +713,7 @@ export default defineContentScript({
               channel: gmgnParsed.channel ?? null,
               payload: gmgnParsed.payload ?? null,
               raw,
+              fromWorker: true,
               timestamp: Date.now(),
               connectionInfo,
             },
@@ -526,14 +744,15 @@ export default defineContentScript({
             const originalSend = ws.send;
 
             ws.send = function (data: any) {
+              if (site === 'gmgn') return originalSend.call(this, data);
+              if (!isWsCaptureEnabled()) return originalSend.call(this, data);
               try {
-                const rawEnabled = window.localStorage.getItem('dagobang_ws_monitor_enabled_v1');
-                if (rawEnabled === '0') return originalSend.call(this, data);
-              } catch {
-              }
-              try {
-                const parsed = JSON.parse(data);
-                postWsPacket(site, 'send', parsed, data, connectionInfo);
+                if (typeof data === 'string') {
+                  const parsed = JSON.parse(data);
+                  postWsPacket(site, 'send', parsed, undefined, connectionInfo);
+                } else {
+                  postWsPacket(site, 'send', null, data, connectionInfo);
+                }
               } catch {
                 postWsPacket(site, 'send', null, data, connectionInfo);
               }
@@ -541,14 +760,14 @@ export default defineContentScript({
             };
 
             ws.addEventListener('message', function (event: MessageEvent) {
+              if (!isWsCaptureEnabled()) return;
               try {
-                const rawEnabled = window.localStorage.getItem('dagobang_ws_monitor_enabled_v1');
-                if (rawEnabled === '0') return;
-              } catch {
-              }
-              try {
-                const parsed = JSON.parse(event.data);
-                postWsPacket(site, 'receive', parsed, event.data, connectionInfo);
+                if (typeof event.data === 'string') {
+                  const parsed = JSON.parse(event.data);
+                  postWsPacket(site, 'receive', parsed, undefined, connectionInfo);
+                } else {
+                  postWsPacket(site, 'receive', null, event.data, connectionInfo);
+                }
               } catch {
                 postWsPacket(site, 'receive', null, event.data, connectionInfo);
               }
@@ -594,6 +813,11 @@ export default defineContentScript({
         target.addEventListener('message', (event: MessageEvent) => {
           const data = (event as any).data as any;
           if (!data || !data.__DAGOBANG_WORKER_WS__ || !data.payload) return;
+          const workerSite = data.payload.site === 'axiom' ? 'axiom' : 'gmgn';
+          const workerDirection = data.payload.direction === 'send' ? 'send' : 'receive';
+          const shouldProbe = isWsBridgeProbeEnabled();
+          const startedAt = shouldProbe ? performance.now() : 0;
+          let posted = false;
           window.postMessage(
             {
               type: 'DAGOBANG_WS_PACKET',
@@ -601,6 +825,19 @@ export default defineContentScript({
             },
             '*',
           );
+          posted = true;
+          if (shouldProbe) {
+            recordWsBridgeProbe({
+              packetSource: 'worker_forward',
+              site: workerSite,
+              direction: workerDirection,
+              parseAttempted: false,
+              parseSucceeded: false,
+              textBytes: estimateTextBytes(data.payload.raw),
+              posted,
+              handleMs: performance.now() - startedAt,
+            });
+          }
         });
         if ((worker as any).port && typeof (worker as any).port.start === 'function') {
           (worker as any).port.start();

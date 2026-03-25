@@ -243,7 +243,8 @@
           "devHasSold": "Dev已清仓",
           "dryRun": "DryRun（仅记录）",
           "quotaExceeded": "已满足筛选但超出本推买入名额（按市值排序）",
-          "passedButNoOrder": "已满足筛选但未下单（可能钱包未解锁/重复买入/买入中）"
+          "passedButNoOrder": "已满足筛选但未下单（可能钱包未解锁/重复买入/买入中）",
+          "recentBoughtCooldown": "已满足筛选但未下单（近期同币已买入，冷却中）"
         }
       },
       "type": {

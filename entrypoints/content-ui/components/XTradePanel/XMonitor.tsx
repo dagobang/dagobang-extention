@@ -30,6 +30,8 @@ type XSniperBuyRecordLite = {
 };
 
 const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
+const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
+const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
 const SIGNAL_PAGE_SIZE = 20;
 const SIGNAL_CACHE_LIMIT = 200;
 
@@ -137,6 +139,7 @@ const buildNotBoughtReason = (input: {
   strategy: any;
   signal: UnifiedTwitterSignal;
   token: UnifiedSignalToken;
+  recentBoughtCooldown: boolean;
 }) => {
   if (!input.wsMonitorEnabled) return input.tt('contentUi.xMonitor.notBought.reason.wsMonitorDisabled');
   if (!input.strategy?.enabled) return input.tt('contentUi.xMonitor.notBought.reason.sniperDisabled');
@@ -223,6 +226,7 @@ const buildNotBoughtReason = (input: {
   if (input.strategy?.blockIfDevSell && devHasSold === true) return input.tt('contentUi.xMonitor.notBought.reason.devHasSold');
 
   if (input.strategy?.dryRun === true) return input.tt('contentUi.xMonitor.notBought.reason.dryRun');
+  if (input.recentBoughtCooldown) return input.tt('contentUi.xMonitor.notBought.reason.recentBoughtCooldown');
   const shouldPickByMcap = (() => {
     const tokens = Array.isArray(input.signal.tokens) ? (input.signal.tokens as UnifiedSignalToken[]) : [];
     const scanLimit = Math.min(500, tokens.length);
@@ -533,6 +537,7 @@ export function XMonitorContent({
   }, [twitterSnipeStrategy]);
 
   const [boughtByAddr, setBoughtByAddr] = useState<Record<string, { dryRun: boolean; tsMs: number }>>({});
+  const [boughtOnceByAddr, setBoughtOnceByAddr] = useState<Record<string, { dryTsMs?: number; realTsMs?: number }>>({});
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
@@ -563,6 +568,40 @@ export function XMonitorContent({
 
   useEffect(() => {
     if (!active) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await browser.storage.local.get(BOUGHT_ONCE_STORAGE_KEY);
+        const raw = (res as any)?.[BOUGHT_ONCE_STORAGE_KEY];
+        const now = Date.now();
+        const next: Record<string, { dryTsMs?: number; realTsMs?: number }> = {};
+        if (raw && typeof raw === 'object') {
+          for (const [key, ts] of Object.entries(raw as Record<string, unknown>)) {
+            if (typeof key !== 'string') continue;
+            const match = key.match(/^(dry:)?\d+:(0x[a-fA-F0-9]{40}):full$/);
+            if (!match) continue;
+            const addr = String(match[2]).toLowerCase();
+            const n = typeof ts === 'number' ? ts : Number(ts);
+            if (!Number.isFinite(n)) continue;
+            if (now - n > BOUGHT_ONCE_TTL_MS) continue;
+            const prev = next[addr] ?? {};
+            if (match[1]) prev.dryTsMs = n;
+            else prev.realTsMs = n;
+            next[addr] = prev;
+          }
+        }
+        if (!cancelled) setBoughtOnceByAddr(next);
+      } catch {
+        if (!cancelled) setBoughtOnceByAddr({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
     const listener = (message: any) => {
       if (!message || message.type !== 'bg:xsniper:buy') return;
       const record = message.record as XSniperBuyRecordLite | undefined;
@@ -574,6 +613,18 @@ export function XMonitorContent({
         const cur = prev[addr];
         if (cur && cur.tsMs >= tsMs) return prev;
         return { ...prev, [addr]: { dryRun: record.dryRun === true, tsMs } };
+      });
+      setBoughtOnceByAddr((prev) => {
+        const cur = prev[addr] ?? {};
+        const next = { ...cur };
+        if (record.dryRun === true) {
+          if ((next.dryTsMs ?? 0) >= tsMs) return prev;
+          next.dryTsMs = tsMs;
+        } else {
+          if ((next.realTsMs ?? 0) >= tsMs) return prev;
+          next.realTsMs = tsMs;
+        }
+        return { ...prev, [addr]: next };
       });
     };
     browser.runtime.onMessage.addListener(listener as any);
@@ -1135,6 +1186,12 @@ export function XMonitorContent({
                       {displayTokens.map((token) => {
                         const tokenAddr = token.tokenAddress;
                         const bought = boughtByAddr[tokenAddr.toLowerCase()] ?? null;
+                        const boughtOnce = boughtOnceByAddr[tokenAddr.toLowerCase()] ?? null;
+                        const nowMs = Date.now();
+                        const strategyDryRun = twitterSnipeStrategy?.dryRun === true;
+                        const recentBoughtCooldown = strategyDryRun
+                          ? (typeof boughtOnce?.dryTsMs === 'number' && nowMs - boughtOnce.dryTsMs <= BOUGHT_ONCE_TTL_MS)
+                          : (typeof boughtOnce?.realTsMs === 'number' && nowMs - boughtOnce.realTsMs <= BOUGHT_ONCE_TTL_MS);
                         const notBoughtReason = !bought
                           ? buildNotBoughtReason({
                             tt,
@@ -1142,6 +1199,7 @@ export function XMonitorContent({
                             strategy: twitterSnipeStrategy,
                             signal,
                             token,
+                            recentBoughtCooldown,
                           })
                           : null;
                         const shortAddr = `${tokenAddr.slice(0, 6)}...${tokenAddr.slice(-4)}`;

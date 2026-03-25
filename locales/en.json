@@ -243,7 +243,8 @@
           "devHasSold": "Dev has sold",
           "dryRun": "DryRun (record only)",
           "quotaExceeded": "Passed filters but exceeded per-post quota (sorted by market cap)",
-          "passedButNoOrder": "Passed filters but no order (wallet locked / duplicate / in progress)"
+          "passedButNoOrder": "Passed filters but no order (wallet locked / duplicate / in progress)",
+          "recentBoughtCooldown": "Passed filters but no order (recently bought same token, cooling down)"
         }
       },
       "type": {

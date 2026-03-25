@@ -321,9 +321,16 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
         pushWsSnapshot,
         computeWsConfirm,
       });
+      const perTweetMax = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
+      const dryRun = strategy?.dryRun === true;
+      let boughtCount = 0;
       for (const { m } of picked) {
         if (!m?.tokenAddress) continue;
-        await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
+        const bought = await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
+        if (!dryRun && bought) {
+          boughtCount += 1;
+          if (boughtCount >= perTweetMax) break;
+        }
       }
     } catch (e) {
       console.error('XSniperTrade twitter signal handler error', e);
