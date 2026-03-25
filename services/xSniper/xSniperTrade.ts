@@ -326,7 +326,17 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       let boughtCount = 0;
       for (const { m } of picked) {
         if (!m?.tokenAddress) continue;
-        const bought = await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
+        let bought = false;
+        try {
+          bought = await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
+        } catch (e) {
+          console.error('XSniperTrade buy attempt failed', {
+            tokenAddress: m.tokenAddress,
+            signalId: signal.id,
+            tweetId: signal.tweetId,
+          }, e);
+          continue;
+        }
         if (!dryRun && bought) {
           boughtCount += 1;
           if (boughtCount >= perTweetMax) break;

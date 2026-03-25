@@ -142,14 +142,74 @@ export const tryAutoBuyOnce = async (input: {
   await input.loadBoughtOnceIfNeeded();
   const dryRun = input.strategy?.dryRun === true;
   const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun });
-  if (input.boughtOnceAtMs.has(key)) return false;
-  if (input.buyInFlight.has(key)) return false;
+  const emitBuyFailure = (reason: string, extras?: {
+    buyAmountBnb?: number;
+    metrics?: TokenMetrics;
+    tokenInfo?: TokenInfo | null;
+    confirm?: { windowMs?: number; stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number } };
+  }) => {
+    if (dryRun) return;
+    console.warn('XSniperTrade buy skipped', { reason, chainId: input.chainId, tokenAddress: input.tokenAddress });
+    const now = Date.now();
+    const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
+    const tweetUrl = buildTweetUrl(input.signal);
+    const m = extras?.metrics ?? input.metrics;
+    input.emitRecord({
+      id: `${now}-${Math.random().toString(16).slice(2)}`,
+      side: 'buy',
+      tsMs: now,
+      tweetAtMs,
+      tweetUrl,
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      tokenSymbol: extras?.tokenInfo?.symbol ? String(extras.tokenInfo.symbol) : (m.tokenSymbol ? String(m.tokenSymbol) : undefined),
+      tokenName: extras?.tokenInfo?.name ? String(extras.tokenInfo.name) : undefined,
+      buyAmountBnb: extras?.buyAmountBnb,
+      dryRun: false,
+      reason,
+      marketCapUsd: m.marketCapUsd,
+      liquidityUsd: m.liquidityUsd,
+      holders: m.holders,
+      kol: m.kol,
+      vol24hUsd: m.vol24hUsd,
+      netBuy24hUsd: m.netBuy24hUsd,
+      buyTx24h: m.buyTx24h,
+      sellTx24h: m.sellTx24h,
+      smartMoney: m.smartMoney,
+      createdAtMs: m.createdAtMs,
+      devAddress: m.devAddress,
+      devHoldPercent: m.devHoldPercent,
+      devHasSold: m.devHasSold,
+      confirmWindowMs: extras?.confirm?.windowMs,
+      confirmMcapChangePct: extras?.confirm?.stats?.mcapChangePct,
+      confirmHoldersDelta: extras?.confirm?.stats?.holdersDelta,
+      confirmBuySellRatio: extras?.confirm?.stats?.buySellRatio,
+      userScreen: input.signal?.userScreen ? String(input.signal.userScreen) : undefined,
+      userName: input.signal?.userName ? String(input.signal.userName) : undefined,
+      tweetType: input.signal?.tweetType ? String(input.signal.tweetType) : undefined,
+      channel: input.signal?.channel ? String(input.signal.channel) : undefined,
+      signalId: input.signal?.id ? String(input.signal.id) : undefined,
+      signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+      signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+    });
+  };
+  if (input.boughtOnceAtMs.has(key)) {
+    emitBuyFailure('buy_skipped_recently_bought');
+    return false;
+  }
+  if (input.buyInFlight.has(key)) {
+    emitBuyFailure('buy_skipped_in_flight');
+    return false;
+  }
   input.buyInFlight.add(key);
   try {
     const amountNumber = (typeof input.amountBnbOverride === 'number' && Number.isFinite(input.amountBnbOverride)
       ? input.amountBnbOverride
       : (parseNumber(input.strategy.buyAmountBnb) ?? 0));
-    if (amountNumber <= 0) return false;
+    if (amountNumber <= 0) {
+      emitBuyFailure('buy_invalid_amount', { buyAmountBnb: amountNumber });
+      return false;
+    }
 
     const confirmNowMs = Date.now();
     const confirm = input.computeWsConfirm(input.tokenAddress, confirmNowMs, input.strategy);
@@ -199,14 +259,24 @@ export const tryAutoBuyOnce = async (input: {
           });
         }
       }
+      emitBuyFailure('ws_confirm_failed', {
+        buyAmountBnb: amountNumber,
+        confirm,
+      });
       return false;
     }
 
     const status = await WalletService.getStatus();
-    if (!dryRun && (status.locked || !status.address)) return false;
+    if (!dryRun && (status.locked || !status.address)) {
+      emitBuyFailure('wallet_locked', { buyAmountBnb: amountNumber, confirm });
+      return false;
+    }
 
     const tokenInfo = (await input.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ?? (await input.buildGenericTokenInfo(input.chainId, input.tokenAddress));
-    if (!tokenInfo) return false;
+    if (!tokenInfo) {
+      emitBuyFailure('token_info_missing', { buyAmountBnb: amountNumber, confirm });
+      return false;
+    }
 
     const refreshedMcap = Number(tokenInfo?.tokenPrice?.marketCap ?? 0);
     const sanitizedRefreshedMcap = sanitizeMarketCapUsd(refreshedMcap);
@@ -219,7 +289,15 @@ export const tryAutoBuyOnce = async (input: {
     };
     const signalAtMs = getSignalTimeMs(input.signal);
     const skipTokenCreatedAtWindowCheck = isRepostOrQuoteSignal(input.signal);
-    if (!shouldBuyByConfig(refreshedMetrics, input.strategy, signalAtMs, Date.now(), { skipTokenCreatedAtWindowCheck })) return false;
+    if (!shouldBuyByConfig(refreshedMetrics, input.strategy, signalAtMs, Date.now(), { skipTokenCreatedAtWindowCheck })) {
+      emitBuyFailure('buy_filter_mismatch_after_refresh', {
+        buyAmountBnb: amountNumber,
+        metrics: refreshedMetrics,
+        tokenInfo,
+        confirm,
+      });
+      return false;
+    }
 
     if (dryRun) {
       const entryPriceUsd = await input.getEntryPriceUsd(
@@ -334,12 +412,27 @@ export const tryAutoBuyOnce = async (input: {
     }
 
     const amountWei = parseEther(String(amountNumber));
-    const rsp = await TradeService.buy({
-      chainId: input.chainId,
-      tokenAddress: input.tokenAddress,
-      bnbAmountWei: amountWei.toString(),
-      tokenInfo,
-    } as any);
+    let rsp: any;
+    try {
+      rsp = await TradeService.buy({
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        bnbAmountWei: amountWei.toString(),
+        tokenInfo,
+      } as any);
+    } catch (e) {
+      console.error('XSniperTrade buy submit failed', {
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+      }, e);
+      emitBuyFailure('buy_submit_failed', {
+        buyAmountBnb: amountNumber,
+        metrics: refreshedMetrics,
+        tokenInfo,
+        confirm,
+      });
+      return false;
+    }
     void input.broadcastToActiveTabs({
       type: 'bg:tradeSuccess',
       source: 'xsniper',

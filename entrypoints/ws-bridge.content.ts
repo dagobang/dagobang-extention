@@ -70,6 +70,28 @@ export default defineContentScript({
         shouldWrapWorkerScriptUrl: () => false,
       },
     ];
+    const GMGN_MONITORED_CHANNELS = new Set([
+      'public_broadcast',
+      'new_pool_info',
+      'trenches_update',
+      'twitter_user_monitor_basic',
+      'twitter_monitor_basic',
+      'twitter_monitor_token',
+      'twitter_monitor_translation',
+    ]);
+
+    const normalizeWsChannel = (channel: unknown): string => {
+      if (typeof channel !== 'string') return '';
+      return channel.trim().toLowerCase();
+    };
+
+    const shouldForwardWsPacket = (site: WsSite, direction: 'send' | 'receive', channel: unknown): boolean => {
+      if (site !== 'gmgn') return true;
+      if (direction !== 'receive') return false;
+      const normalized = normalizeWsChannel(channel);
+      if (!normalized) return false;
+      return GMGN_MONITORED_CHANNELS.has(normalized);
+    };
 
     (function mainWorldEntry() {
       const g = globalThis as any;
@@ -416,9 +438,10 @@ export default defineContentScript({
       return null;
     }
 
-    function postWsPacket(adapter: WsAdapter, direction: 'send' | 'receive', parsed: any, raw: any, connectionInfo: any): void {
-      if (!isWsCaptureEnabled()) return;
+    function postWsPacket(adapter: WsAdapter, direction: 'send' | 'receive', parsed: any, raw: any, connectionInfo: any): boolean {
+      if (!isWsCaptureEnabled()) return false;
       const normalized = adapter.parseEnvelope(parsed);
+      if (!shouldForwardWsPacket(adapter.site, direction, normalized.channel)) return false;
       window.postMessage(
         {
           type: 'DAGOBANG_WS_PACKET',
@@ -433,6 +456,7 @@ export default defineContentScript({
         },
         '*',
       );
+      return true;
     }
 
     function createWrappedWebSocket(BaseWebSocket: typeof WebSocket) {
@@ -459,15 +483,12 @@ export default defineContentScript({
               parseAttempted = true;
               const parsed = JSON.parse(data);
               parseSucceeded = true;
-              postWsPacket(adapter, 'send', parsed, undefined, connectionInfo);
-              posted = true;
+              posted = postWsPacket(adapter, 'send', parsed, undefined, connectionInfo);
             } else {
-              postWsPacket(adapter, 'send', null, data, connectionInfo);
-              posted = true;
+              posted = postWsPacket(adapter, 'send', null, data, connectionInfo);
             }
           } catch {
-            postWsPacket(adapter, 'send', null, data, connectionInfo);
-            posted = true;
+            posted = postWsPacket(adapter, 'send', null, data, connectionInfo);
           }
           if (shouldProbe) {
             recordWsBridgeProbe({
@@ -497,15 +518,12 @@ export default defineContentScript({
               parseAttempted = true;
               const parsed = JSON.parse(event.data);
               parseSucceeded = true;
-              postWsPacket(adapter, 'receive', parsed, undefined, connectionInfo);
-              posted = true;
+              posted = postWsPacket(adapter, 'receive', parsed, undefined, connectionInfo);
             } else {
-              postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
-              posted = true;
+              posted = postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
             }
           } catch {
-            postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
-            posted = true;
+            posted = postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
           }
           if (shouldProbe) {
             recordWsBridgeProbe({
@@ -702,9 +720,27 @@ export default defineContentScript({
           wsCaptureEnabledCacheExpireAt = now + 3000;
           return true;
         };
-        const postWsPacket = (site: WsSite, direction: 'send' | 'receive', parsed: any, raw: any, connectionInfo: any): void => {
-          if (!isWsCaptureEnabled()) return;
+        const normalizeWsChannel = (channel: unknown): string => {
+          if (typeof channel !== 'string') return '';
+          return channel.trim().toLowerCase();
+        };
+        const shouldForwardWsPacket = (site: WsSite, direction: 'send' | 'receive', channel: unknown): boolean => {
+          if (site !== 'gmgn') return true;
+          if (direction !== 'receive') return false;
+          const normalized = normalizeWsChannel(channel);
+          if (!normalized) return false;
+          return normalized === 'public_broadcast'
+            || normalized === 'new_pool_info'
+            || normalized === 'trenches_update'
+            || normalized === 'twitter_user_monitor_basic'
+            || normalized === 'twitter_monitor_basic'
+            || normalized === 'twitter_monitor_token'
+            || normalized === 'twitter_monitor_translation';
+        };
+        const postWsPacket = (site: WsSite, direction: 'send' | 'receive', parsed: any, raw: any, connectionInfo: any): boolean => {
+          if (!isWsCaptureEnabled()) return false;
           const gmgnParsed = site === 'gmgn' ? parseGmgnEnvelope(parsed) : { payload: parsed };
+          if (!shouldForwardWsPacket(site, direction, gmgnParsed.channel)) return false;
           const message = {
             __DAGOBANG_WORKER_WS__: true,
             payload: {
@@ -722,7 +758,7 @@ export default defineContentScript({
           const target = self as any;
           if (typeof target.postMessage === 'function') {
             target.postMessage(message);
-            return;
+            return true;
           }
           if (ports.length) {
             for (const port of ports) {
@@ -731,7 +767,9 @@ export default defineContentScript({
               } catch {
               }
             }
+            return true;
           }
+          return false;
         };
         const createWrappedWebSocket = (BaseWebSocket: typeof WebSocket) => {
           const WrappedWebSocket = function (this: unknown, url: string | URL, protocols?: string | string[]) {

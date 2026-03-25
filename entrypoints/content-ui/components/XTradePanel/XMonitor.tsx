@@ -27,6 +27,10 @@ type XSniperBuyRecordLite = {
   tokenAddress: string;
   tsMs: number;
   dryRun?: boolean;
+  reason?: string;
+  signalId?: string;
+  signalEventId?: string;
+  signalTweetId?: string;
 };
 
 const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
@@ -131,6 +135,45 @@ const resolveTwitterSnipeByActivePreset = (twitterSnipe: any) => {
     presets,
     activePresetId,
   };
+};
+
+const resolveReasonLabel = (tt: TTFunc, reason: unknown) => {
+  if (reason == null) return '';
+  const raw = String(reason).trim();
+  if (!raw) return '';
+  const key = `contentUi.autoTradeStrategy.snipeHistoryReasonCode.${raw}`;
+  const translated = tt(key);
+  return translated === key ? raw : translated;
+};
+
+const getSignalIdentityKeys = (signal: UnifiedTwitterSignal): string[] => {
+  const list = [
+    (signal as any)?.id,
+    (signal as any)?.eventId,
+    (signal as any)?.tweetId,
+  ];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    const s = typeof item === 'string' ? item.trim() : '';
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+};
+
+const getRecordSignalIdentityKeys = (record: XSniperBuyRecordLite): string[] => {
+  const list = [record.signalId, record.signalEventId, record.signalTweetId];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    const s = typeof item === 'string' ? item.trim() : '';
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
 };
 
 const buildNotBoughtReason = (input: {
@@ -537,6 +580,7 @@ export function XMonitorContent({
   }, [twitterSnipeStrategy]);
 
   const [boughtByAddr, setBoughtByAddr] = useState<Record<string, { dryRun: boolean; tsMs: number }>>({});
+  const [buyFailReasonBySignalToken, setBuyFailReasonBySignalToken] = useState<Record<string, { tsMs: number; reason: string }>>({});
   const [boughtOnceByAddr, setBoughtOnceByAddr] = useState<Record<string, { dryTsMs?: number; realTsMs?: number }>>({});
   useEffect(() => {
     if (!active) return;
@@ -547,18 +591,36 @@ export function XMonitorContent({
         const raw = (res as any)?.[HISTORY_STORAGE_KEY];
         const list = Array.isArray(raw) ? (raw as XSniperBuyRecordLite[]) : [];
         const next: Record<string, { dryRun: boolean; tsMs: number }> = {};
+        const nextFail: Record<string, { tsMs: number; reason: string }> = {};
         for (const r of list) {
           if (!r || r.side !== 'buy') continue;
           const addr = typeof r.tokenAddress === 'string' ? r.tokenAddress.trim().toLowerCase() : '';
           if (!addr) continue;
           const tsMs = typeof r.tsMs === 'number' ? r.tsMs : 0;
+          const reason = typeof r.reason === 'string' ? r.reason.trim() : '';
+          if (reason) {
+            const signalKeys = getRecordSignalIdentityKeys(r);
+            for (const sk of signalKeys) {
+              const mapKey = `${sk}:${addr}`;
+              const prev = nextFail[mapKey];
+              if (prev && prev.tsMs >= tsMs) continue;
+              nextFail[mapKey] = { tsMs, reason };
+            }
+            continue;
+          }
           const prev = next[addr];
           if (prev && prev.tsMs >= tsMs) continue;
           next[addr] = { dryRun: r.dryRun === true, tsMs };
         }
-        if (!cancelled) setBoughtByAddr(next);
+        if (!cancelled) {
+          setBoughtByAddr(next);
+          setBuyFailReasonBySignalToken(nextFail);
+        }
       } catch {
-        if (!cancelled) setBoughtByAddr({});
+        if (!cancelled) {
+          setBoughtByAddr({});
+          setBuyFailReasonBySignalToken({});
+        }
       }
     })();
     return () => {
@@ -609,6 +671,25 @@ export function XMonitorContent({
       const addr = typeof record.tokenAddress === 'string' ? record.tokenAddress.trim().toLowerCase() : '';
       if (!addr) return;
       const tsMs = typeof record.tsMs === 'number' ? record.tsMs : 0;
+      const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
+      if (reason) {
+        const signalKeys = getRecordSignalIdentityKeys(record);
+        if (signalKeys.length) {
+          setBuyFailReasonBySignalToken((prev) => {
+            let changed = false;
+            const next = { ...prev };
+            for (const sk of signalKeys) {
+              const mapKey = `${sk}:${addr}`;
+              const cur = next[mapKey];
+              if (cur && cur.tsMs >= tsMs) continue;
+              next[mapKey] = { tsMs, reason };
+              changed = true;
+            }
+            return changed ? next : prev;
+          });
+        }
+        return;
+      }
       setBoughtByAddr((prev) => {
         const cur = prev[addr];
         if (cur && cur.tsMs >= tsMs) return prev;
@@ -1186,6 +1267,20 @@ export function XMonitorContent({
                       {displayTokens.map((token) => {
                         const tokenAddr = token.tokenAddress;
                         const bought = boughtByAddr[tokenAddr.toLowerCase()] ?? null;
+                        const signalReasonKeys = getSignalIdentityKeys(signal);
+                        const persistedFailureReasonLabel = (() => {
+                          const addr = tokenAddr.toLowerCase();
+                          let latestTs = 0;
+                          let latestReason = '';
+                          for (const sk of signalReasonKeys) {
+                            const row = buyFailReasonBySignalToken[`${sk}:${addr}`];
+                            if (!row) continue;
+                            if (row.tsMs < latestTs) continue;
+                            latestTs = row.tsMs;
+                            latestReason = row.reason;
+                          }
+                          return latestReason ? resolveReasonLabel(tt, latestReason) : '';
+                        })();
                         const boughtOnce = boughtOnceByAddr[tokenAddr.toLowerCase()] ?? null;
                         const nowMs = Date.now();
                         const strategyDryRun = twitterSnipeStrategy?.dryRun === true;
@@ -1193,14 +1288,14 @@ export function XMonitorContent({
                           ? (typeof boughtOnce?.dryTsMs === 'number' && nowMs - boughtOnce.dryTsMs <= BOUGHT_ONCE_TTL_MS)
                           : (typeof boughtOnce?.realTsMs === 'number' && nowMs - boughtOnce.realTsMs <= BOUGHT_ONCE_TTL_MS);
                         const notBoughtReason = !bought
-                          ? buildNotBoughtReason({
+                          ? (persistedFailureReasonLabel || buildNotBoughtReason({
                             tt,
                             wsMonitorEnabled,
                             strategy: twitterSnipeStrategy,
                             signal,
                             token,
                             recentBoughtCooldown,
-                          })
+                          }))
                           : null;
                         const shortAddr = `${tokenAddr.slice(0, 6)}...${tokenAddr.slice(-4)}`;
                         const symbol = token.tokenSymbol?.trim() || '';
