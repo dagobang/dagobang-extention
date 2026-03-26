@@ -12,7 +12,6 @@ const interactionOptions: Array<{ value: AutoTradeInteractionType; labelKey: str
 type XSniperBasicSectionProps = {
   open: boolean;
   canEdit: boolean;
-  wsMonitorEnabled: boolean;
   twitterSnipe: any;
   targetUsersInput: string;
   presetJsonInput: string;
@@ -21,9 +20,6 @@ type XSniperBasicSectionProps = {
   activeSnipePreset: AutoTradeTwitterSnipePreset | null;
   tt: (key: string, subs?: Array<string | number>) => string;
   onToggle: () => void;
-  onWsMonitorEnabledChange: (next: boolean) => void;
-  onTwitterSnipeEnabledChange: (checked: boolean) => void;
-  onDryRunChange: (checked: boolean) => void;
   onAddPresetFromCurrent: () => void;
   onRemoveActivePreset: () => void;
   onApplyActivePreset: (id: string) => void;
@@ -40,7 +36,6 @@ type XSniperBasicSectionProps = {
 export function XSniperBasicSection({
   open,
   canEdit,
-  wsMonitorEnabled,
   twitterSnipe,
   targetUsersInput,
   presetJsonInput,
@@ -49,9 +44,6 @@ export function XSniperBasicSection({
   activeSnipePreset,
   tt,
   onToggle,
-  onWsMonitorEnabledChange,
-  onTwitterSnipeEnabledChange,
-  onDryRunChange,
   onAddPresetFromCurrent,
   onRemoveActivePreset,
   onApplyActivePreset,
@@ -76,52 +68,10 @@ export function XSniperBasicSection({
       </button>
       {open ? (
       <div className="space-y-2">
-      <div className="space-y-2 pb-3 border-b border-zinc-800/60">
-      <label className="flex items-center justify-between gap-3">
-        <div className="flex flex-col">
-          <div className="text-[14px] font-semibold text-zinc-200">{tt('contentUi.xMonitor.wsMonitorEnabled')}</div>
-          <div className="text-[11px] text-zinc-500">{tt('contentUi.xMonitor.wsMonitorEnabledDesc')}</div>
-        </div>
-        <input
-          type="checkbox"
-          className="h-4 w-4 accent-emerald-500"
-          checked={wsMonitorEnabled}
-          disabled={!canEdit}
-          onChange={(e) => onWsMonitorEnabledChange(e.target.checked)}
-        />
-      </label>
-      {!wsMonitorEnabled ? (
-        <div className="text-[11px] text-amber-200/90">{tt('contentUi.xMonitor.wsMonitorDisabledSniperTip')}</div>
-      ) : null}
-    </div>
     <div className="space-y-2 pb-3 border-b border-zinc-800/60">
       <div>
         <div className="text-xs text-zinc-500">{tt('contentUi.autoTradeStrategy.twitterSnipeDesc')}</div>
       </div>
-      <label className="flex items-center justify-between gap-2 text-[12px] text-zinc-300">
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            className="h-3.5 w-3.5 accent-emerald-500"
-            checked={twitterSnipe?.enabled !== false}
-            disabled={!canEdit || !wsMonitorEnabled}
-            onChange={(e) => onTwitterSnipeEnabledChange(e.target.checked)}
-          />
-          {tt('contentUi.autoTradeStrategy.twitterSnipeEnabled')}
-        </div>
-      </label>
-      <label className="flex items-center justify-between gap-2 text-[12px] text-zinc-300">
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            className="h-3.5 w-3.5 accent-amber-500"
-            checked={!!twitterSnipe?.dryRun}
-            disabled={!canEdit}
-            onChange={(e) => onDryRunChange(e.target.checked)}
-          />
-          {tt('contentUi.autoTradeStrategy.twitterSnipeDryRun')}
-        </div>
-      </label>
       <div className="space-y-2 rounded-md border border-zinc-800/70 bg-zinc-900/30 p-2">
         <div className="flex items-center justify-between gap-2">
           <div className="text-[12px] text-zinc-400">参数方案</div>

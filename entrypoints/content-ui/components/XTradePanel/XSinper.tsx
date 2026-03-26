@@ -14,7 +14,6 @@ import { XSniperFilterSection } from './XSniperFilterSection';
 import { XSniperRapidSection } from './XSniperRapidSection';
 import { XSniperSoundSection } from './XSniperSoundSection';
 import { XSniperWsConfirmSection } from './XSniperWsConfirmSection';
-import { XSniperWsStatusSection } from './XSniperWsStatusSection';
 
 type XSniperPanelProps = {
   siteInfo: SiteInfo
@@ -28,6 +27,8 @@ type XSniperContentProps = {
   siteInfo: SiteInfo | null;
   active: boolean;
   view?: 'config' | 'history';
+  showWsStatusInHistory?: boolean;
+  onOpenConfig?: () => void;
   settings: Settings | null;
   isUnlocked: boolean;
 };
@@ -116,6 +117,8 @@ export function XSniperContent({
   siteInfo,
   active,
   view = 'config',
+  showWsStatusInHistory = false,
+  onOpenConfig,
   settings,
   isUnlocked,
 }: XSniperContentProps) {
@@ -147,7 +150,6 @@ export function XSniperContent({
       logs: [],
     };
   });
-  const [showLogs, setShowLogs] = useState(false);
   const [configSectionOpen, setConfigSectionOpen] = useState<Record<string, boolean>>({
     basic: true,
     filter: false,
@@ -392,41 +394,59 @@ export function XSniperContent({
     : '';
   const activeSnipePreset = snipePresets.find((item) => item.id === activeSnipePresetId) ?? null;
 
+  const applyTwitterSnipePatch = (
+    base: AutoTradeConfig,
+    patch: Partial<AutoTradeConfig['twitterSnipe']>
+  ): AutoTradeConfig => {
+    const current = (base.twitterSnipe ?? {}) as any;
+    const next = {
+      ...current,
+      ...patch,
+    } as any;
+    const presets = Array.isArray(next.presets) ? next.presets : [];
+    const activeId = typeof next.activePresetId === 'string' ? next.activePresetId : '';
+    if (activeId) {
+      next.presets = presets.map((item: any) => {
+        if (!item || item.id !== activeId) return item;
+        return {
+          ...item,
+          strategy: {
+            ...(item.strategy ?? {}),
+            ...patch,
+          },
+        };
+      });
+    } else {
+      next.presets = presets;
+    }
+    return {
+      ...base,
+      twitterSnipe: next,
+    };
+  };
+
   const updateTwitterSnipe = (patch: Partial<AutoTradeConfig['twitterSnipe']>) => {
     setIsDirty(true);
     setDraft((prev) =>
       prev
-        ? {
-          ...prev,
-          twitterSnipe: {
-            ...(() => {
-              const current = prev.twitterSnipe as any;
-              const next = {
-                ...current,
-                ...patch,
-              } as any;
-              const presets = Array.isArray(next.presets) ? next.presets : [];
-              const activeId = typeof next.activePresetId === 'string' ? next.activePresetId : '';
-              if (activeId) {
-                next.presets = presets.map((item: any) => {
-                  if (!item || item.id !== activeId) return item;
-                  return {
-                    ...item,
-                    strategy: {
-                      ...(item.strategy ?? {}),
-                      ...patch,
-                    },
-                  };
-                });
-              } else {
-                next.presets = presets;
-              }
-              return next;
-            })(),
-          },
-        }
+        ? applyTwitterSnipePatch(prev, patch)
         : prev
     );
+  };
+  const persistTwitterSnipeQuickPatch = async (patch: Partial<AutoTradeConfig['twitterSnipe']>) => {
+    if (!draft) return;
+    const nextDraft = applyTwitterSnipePatch(draft, patch);
+    setDraft(nextDraft);
+    setIsDirty(false);
+    setTargetUsersInput(nextDraft.twitterSnipe.targetUsers.join('\n'));
+    lastAppliedKeyRef.current = JSON.stringify(normalizeAutoTrade(nextDraft));
+    if (!settings) return;
+    const nextSettings: Settings = { ...settings, autoTrade: nextDraft };
+    (window as any).__DAGOBANG_SETTINGS__ = nextSettings;
+    try {
+      await call({ type: 'settings:set', settings: nextSettings } as const);
+    } catch {
+    }
   };
   const applyActivePreset = (presetId: string) => {
     setIsDirty(true);
@@ -690,13 +710,12 @@ export function XSniperContent({
 
   return (
     <>
-      <div className="dagobang-scrollbar p-3 space-y-3 max-h-[64vh] overflow-y-auto">
+      <div className="dagobang-scrollbar p-2 space-y-2 max-h-[64vh] overflow-y-auto">
         {view === 'config' ? (
           <>
             <XSniperBasicSection
               open={configSectionOpen.basic}
               canEdit={canEdit}
-              wsMonitorEnabled={wsMonitorEnabled}
               twitterSnipe={twitterSnipe}
               targetUsersInput={targetUsersInput}
               presetJsonInput={presetJsonInput}
@@ -705,11 +724,6 @@ export function XSniperContent({
               activeSnipePreset={activeSnipePreset}
               tt={tt}
               onToggle={() => toggleConfigSection('basic')}
-              onWsMonitorEnabledChange={(next) => {
-                void handleWsMonitorEnabledChange(next);
-              }}
-              onTwitterSnipeEnabledChange={(checked) => updateTwitterSnipe({ enabled: checked })}
-              onDryRunChange={(checked) => updateTwitterSnipe({ dryRun: checked })}
               onAddPresetFromCurrent={addPresetFromCurrent}
               onRemoveActivePreset={removeActivePreset}
               onApplyActivePreset={applyActivePreset}
@@ -771,14 +785,6 @@ export function XSniperContent({
             />
           </>
         ) : null}
-        {view === 'config' ? (
-          <XSniperWsStatusSection
-            wsStatus={wsStatus}
-            showLogs={showLogs}
-            tt={tt}
-            onToggleLogs={() => setShowLogs((v) => !v)}
-          />
-        ) : null}
         {view === 'history' ? (
           <XSniperHistoryView
             siteInfo={siteInfo}
@@ -790,6 +796,16 @@ export function XSniperContent({
             historyGroups={historyGroups}
             latestTokenByAddr={latestTokenByAddr}
             athMcapByAddr={athMcapByAddr}
+            wsStatus={wsStatus}
+            twitterSnipeEnabled={twitterSnipe?.enabled !== false}
+            twitterSnipeDryRun={!!twitterSnipe?.dryRun}
+            onTwitterSnipeEnabledChange={(next) => {
+              void persistTwitterSnipeQuickPatch({ enabled: next });
+            }}
+            onTwitterSnipeDryRunChange={(next) => {
+              void persistTwitterSnipeQuickPatch({ dryRun: next });
+            }}
+            onOpenConfig={onOpenConfig}
             onClearHistory={() => {
               void (async () => {
                 try {

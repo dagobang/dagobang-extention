@@ -12,6 +12,7 @@ import {
 import { debugLogTxError, extractRevertReasonFromError, serializeTxError, tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { createLimitOrderScanner } from './background/limitOrderScanner';
 import { createXSniperTrade } from '@/services/xSniper/xSniperTrade';
+import { createTokenSniperTrade } from '@/services/tokenSniper/tokenSniperTrade';
 import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/limitOrders/executor';
 import type { BgRequest, LimitOrderScanStatus } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
@@ -95,6 +96,7 @@ export default defineBackground(() => {
   limitOrderScanner.start();
 
   const AutoTrade = createXSniperTrade({ onStateChanged: broadcastStateChange });
+  const TokenSniperTrade = createTokenSniperTrade({ onStateChanged: broadcastStateChange });
 
   browser.runtime.onInstalled.addListener(() => {
     console.log('Extension installed');
@@ -570,7 +572,10 @@ export default defineBackground(() => {
 
           case 'twitter:signal': {
             const signal = msg.payload as any;
-            await (AutoTrade as any).handleTwitterSignal(signal);
+            await Promise.all([
+              (AutoTrade as any).handleTwitterSignal(signal),
+              (TokenSniperTrade as any).handleTwitterSignal(signal),
+            ]);
             return { ok: true };
           }
         }

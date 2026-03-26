@@ -359,6 +359,73 @@ export function validateSettings(input: Settings): Settings | null {
     presets,
     activePresetId,
   };
+  const inputTokenSnipe = (inputAutoTrade as any)?.tokenSnipe ?? {};
+  const defaultTokenSnipe = (defaultAutoTrade as any).tokenSnipe ?? {};
+  const tokenSnipeEnabled = typeof inputTokenSnipe?.enabled === 'boolean'
+    ? inputTokenSnipe.enabled
+    : (defaultTokenSnipe.enabled !== false);
+  const tokenSnipePlaySound = typeof inputTokenSnipe?.playSound === 'boolean'
+    ? inputTokenSnipe.playSound
+    : (defaultTokenSnipe.playSound !== false);
+  const tokenSnipeSoundPreset = TRADE_SUCCESS_SOUND_PRESETS.includes((inputTokenSnipe as any)?.soundPreset)
+    ? (inputTokenSnipe as any).soundPreset
+    : (((defaultTokenSnipe as any)?.soundPreset ?? 'Boom') as any);
+  const tokenSnipeTargetUsers = parseListInput(inputTokenSnipe?.targetUsers, defaultTokenSnipe.targetUsers ?? []);
+  const tokenSnipeAllowedTweetTypes = ['all', 'tweet', 'reply', 'quote', 'retweet', 'follow'] as const;
+  const tokenSnipeAllowedInteractionTypes = ['tweet', 'reply', 'quote', 'retweet', 'follow'] as const;
+  const tokenSnipeTasks = Array.isArray(inputTokenSnipe?.tasks)
+    ? inputTokenSnipe.tasks
+      .map((raw: any) => {
+        const id = typeof raw?.id === 'string' ? raw.id.trim() : '';
+        const chain = Number(raw?.chain);
+        const tokenAddress = normalizeAddress(typeof raw?.tokenAddress === 'string' ? raw.tokenAddress : '');
+        if (!id || !tokenAddress || !Number.isFinite(chain) || chain <= 0) return null;
+        const tokenSymbol = typeof raw?.tokenSymbol === 'string' ? raw.tokenSymbol.trim() : '';
+        const tokenName = typeof raw?.tokenName === 'string' ? raw.tokenName.trim() : '';
+        const tweetTypeRaw = typeof raw?.tweetType === 'string' ? raw.tweetType.trim().toLowerCase() : 'all';
+        const tweetType = tokenSnipeAllowedTweetTypes.includes(tweetTypeRaw as any) ? tweetTypeRaw : 'all';
+        const tweetTypesRaw = Array.isArray(raw?.tweetTypes)
+          ? raw.tweetTypes
+          : (tweetTypeRaw && tweetTypeRaw !== 'all' ? [tweetTypeRaw] : tokenSnipeAllowedInteractionTypes);
+        const tweetTypes = tweetTypesRaw
+          .map((x: any) => String(x).trim().toLowerCase())
+          .filter((x: string) => tokenSnipeAllowedInteractionTypes.includes(x as any))
+          .filter((x: string, idx: number, arr: string[]) => arr.indexOf(x) === idx);
+        const normalizedTweetTypes = tweetTypes.length ? tweetTypes : [...tokenSnipeAllowedInteractionTypes];
+        const legacyTweetType = normalizedTweetTypes.length === tokenSnipeAllowedInteractionTypes.length
+          ? 'all'
+          : normalizedTweetTypes[0];
+        const targetUrls = parseListInput(raw?.targetUrls, [])
+          .map((x) => x.trim())
+          .filter(Boolean);
+        const buyAmountBnbRaw = typeof raw?.buyAmountBnb === 'string' ? raw.buyAmountBnb.trim() : '';
+        const buyAmountBnb = buyAmountBnbRaw || '0';
+        const createdAtNum = Number(raw?.createdAt);
+        const createdAt = Number.isFinite(createdAtNum) && createdAtNum > 0 ? Math.floor(createdAtNum) : Date.now();
+        return {
+          id,
+          chain: Math.floor(chain),
+          tokenAddress,
+          tokenSymbol: tokenSymbol || undefined,
+          tokenName: tokenName || undefined,
+          tweetType: legacyTweetType,
+          tweetTypes: normalizedTweetTypes as any,
+          targetUrls,
+          autoBuy: typeof raw?.autoBuy === 'boolean' ? raw.autoBuy : true,
+          buyAmountBnb,
+          autoSell: typeof raw?.autoSell === 'boolean' ? raw.autoSell : true,
+          createdAt,
+        };
+      })
+      .filter(Boolean)
+    : (Array.isArray(defaultTokenSnipe.tasks) ? defaultTokenSnipe.tasks : []);
+  const tokenSnipe = {
+    enabled: tokenSnipeEnabled,
+    targetUsers: tokenSnipeTargetUsers,
+    playSound: tokenSnipePlaySound,
+    soundPreset: tokenSnipeSoundPreset,
+    tasks: tokenSnipeTasks,
+  };
 
   const autoTrade: AutoTradeConfig = {
     takeProfitMultiple: typeof inputAutoTrade?.takeProfitMultiple === 'string'
@@ -376,6 +443,7 @@ export function validateSettings(input: Settings): Settings | null {
       preset: triggerSoundPreset,
     },
     twitterSnipe,
+    tokenSnipe,
   };
 
   const inputAdvancedAutoSell = (input as any).advancedAutoSell as Partial<AdvancedAutoSellConfig> | undefined;

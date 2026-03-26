@@ -32,6 +32,7 @@ export type ChainSettings = {
 };
 
 export type AutoTradeInteractionType = 'tweet' | 'reply' | 'quote' | 'retweet' | 'follow';
+export type TokenSnipeTweetType = AutoTradeInteractionType | 'all';
 
 export type RapidExitByTypeConfig = Partial<Record<AutoTradeInteractionType, {
   enabled?: boolean;
@@ -116,6 +117,29 @@ export type AutoTradeTwitterSnipeStrategy = AutoTradeTwitterSnipeRuntimeStrategy
   activePresetId?: string;
 };
 
+export type TokenSnipeTask = {
+  id: string;
+  chain: number;
+  tokenAddress: `0x${string}`;
+  tokenSymbol?: string;
+  tokenName?: string;
+  tweetType: TokenSnipeTweetType;
+  tweetTypes?: AutoTradeInteractionType[];
+  targetUrls: string[];
+  autoBuy: boolean;
+  buyAmountBnb: string;
+  autoSell: boolean;
+  createdAt: number;
+};
+
+export type AutoTradeTokenSnipeConfig = {
+  enabled: boolean;
+  targetUsers: string[];
+  playSound: boolean;
+  soundPreset: TradeSuccessSoundPreset;
+  tasks: TokenSnipeTask[];
+};
+
 export type AutoTradeConfig = {
   takeProfitMultiple: string;
   stopLossMultiple: string;
@@ -123,6 +147,25 @@ export type AutoTradeConfig = {
   wsMonitorEnabled: boolean;
   triggerSound: AutoTradeTriggerSound;
   twitterSnipe: AutoTradeTwitterSnipeStrategy;
+  tokenSnipe: AutoTradeTokenSnipeConfig;
+};
+
+export type TokenSnipeTaskState = 'idle' | 'matched' | 'buying' | 'bought' | 'sell_order_created' | 'sold' | 'failed';
+
+export type TokenSnipeTaskRuntimeStatus = {
+  taskId: string;
+  state: TokenSnipeTaskState;
+  matchedAt?: number;
+  boughtAt?: number;
+  soldAt?: number;
+  signalId?: string;
+  tweetId?: string;
+  quotedTweetId?: string;
+  buyTxHash?: string;
+  sellTxHash?: string;
+  sellOrderIds?: string[];
+  message?: string;
+  updatedAt: number;
 };
 
 export type AdvancedAutoSellRuleType = 'take_profit' | 'stop_loss';

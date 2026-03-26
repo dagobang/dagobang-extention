@@ -5,6 +5,7 @@ import { chainNames } from '@/constants/chains/chainName';
 import { call } from '@/utils/messaging';
 import { navigateToUrl, type SiteInfo, parsePlatformTokenLink } from '@/utils/sites';
 import { formatBnbAmount, formatCompactNumber, formatShortAddress } from '@/utils/format';
+import { XSniperWsStatusSection } from './XSniperWsStatusSection';
 
 type HistoryGroup = { key: string; parent: XSniperBuyRecord; children: XSniperBuyRecord[] };
 
@@ -18,6 +19,12 @@ type XSniperHistoryViewProps = {
   historyGroups: HistoryGroup[];
   latestTokenByAddr: Record<string, any>;
   athMcapByAddr: Record<string, number>;
+  wsStatus: any;
+  twitterSnipeEnabled: boolean;
+  twitterSnipeDryRun: boolean;
+  onTwitterSnipeEnabledChange: (next: boolean) => void;
+  onTwitterSnipeDryRunChange: (next: boolean) => void;
+  onOpenConfig?: () => void;
   onClearHistory: () => void;
 };
 
@@ -103,11 +110,20 @@ export function XSniperHistoryView({
   historyGroups,
   latestTokenByAddr,
   athMcapByAddr,
+  wsStatus,
+  twitterSnipeEnabled,
+  twitterSnipeDryRun,
+  onTwitterSnipeEnabledChange,
+  onTwitterSnipeDryRunChange,
+  onOpenConfig,
   onClearHistory,
 }: XSniperHistoryViewProps) {
   const [keyword, setKeyword] = useState('');
   const [visibleCount, setVisibleCount] = useState(20);
   const [sellingKey, setSellingKey] = useState<string | null>(null);
+  const [wsExpanded, setWsExpanded] = useState(false);
+  const [showWsLogs, setShowWsLogs] = useState(false);
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
   const normalizedKeyword = keyword.trim().toLowerCase();
 
   const filteredGroups = useMemo(() => {
@@ -225,8 +241,99 @@ export function XSniperHistoryView({
 
   return (
     <div className="dagobang-scrollbar space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.snipeHistoryTitle')}</div>
+      <div className="rounded-md border border-zinc-800 bg-zinc-900/30 p-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-zinc-300">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-emerald-500"
+              checked={twitterSnipeEnabled}
+              disabled={!canEdit}
+              onChange={(e) => onTwitterSnipeEnabledChange(e.target.checked)}
+            />
+            <span>{tt('contentUi.autoTradeStrategy.twitterSnipeEnabled')}</span>
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-amber-500"
+              checked={twitterSnipeDryRun}
+              disabled={!canEdit}
+              onChange={(e) => onTwitterSnipeDryRunChange(e.target.checked)}
+            />
+            <span>{tt('contentUi.autoTradeStrategy.twitterSnipeDryRun')}</span>
+          </label>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-800"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setWsExpanded((v) => !v);
+              }}
+            >
+              {wsExpanded ? '收起WS' : '展开WS'}
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-800"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setSummaryExpanded((v) => !v);
+              }}
+            >
+              {summaryExpanded ? '收起统计' : '展开统计'}
+            </button>
+            {onOpenConfig ? (
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+                disabled={!canEdit}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onOpenConfig();
+                }}
+              >
+                狙击设置
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+      {wsExpanded ? (
+        <XSniperWsStatusSection
+          wsStatus={wsStatus}
+          showLogs={showWsLogs}
+          tt={tt}
+          onToggleLogs={() => setShowWsLogs((v) => !v)}
+        />
+      ) : null}
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          placeholder={tt('contentUi.autoTradeStrategy.snipeHistorySearchPlaceholder')}
+          className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none placeholder:text-zinc-500"
+        />
+        {keyword ? (
+          <button
+            type="button"
+            className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setKeyword('');
+            }}
+          >
+            {tt('contentUi.autoTradeStrategy.snipeHistorySearchClear')}
+          </button>
+        ) : null}
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -254,29 +361,7 @@ export function XSniperHistoryView({
           </button>
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          placeholder={tt('contentUi.autoTradeStrategy.snipeHistorySearchPlaceholder')}
-          className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none placeholder:text-zinc-500"
-        />
-        {keyword ? (
-          <button
-            type="button"
-            className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-800"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setKeyword('');
-            }}
-          >
-            {tt('contentUi.autoTradeStrategy.snipeHistorySearchClear')}
-          </button>
-        ) : null}
-      </div>
-      {buyHistory.length ? (
+      {buyHistory.length && summaryExpanded ? (
         <div className="rounded-md border border-zinc-800 bg-zinc-900/30 px-3 py-2 text-[11px] text-zinc-400">
           {(() => {
             const list = buyHistory.filter((x) => x && x.side !== 'sell');

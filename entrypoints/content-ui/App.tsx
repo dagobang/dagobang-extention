@@ -624,6 +624,14 @@ export default function App() {
         playAutoTradePreset(autoTradeSoundPreset);
         return;
       }
+      if (message.type === 'bg:tokenSniper:matched') {
+        const tokenSnipe = settingsRef.current?.autoTrade?.tokenSnipe;
+        if (tokenSnipe?.playSound === false) return;
+        const preset = (message?.preset ?? tokenSnipe?.soundPreset ?? autoTradeSoundPreset) as TradeSuccessSoundPreset;
+        ensureAutoTradeAudioReady();
+        playAutoTradePreset(preset);
+        return;
+      }
       if (message.type === 'bg:tradeSuccess') {
         ensureTradeSuccessAudioReady();
         if (message?.side === 'buy') playTradeBuySound();

@@ -225,6 +225,13 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
     ],
     activePresetId: 'preset-flow',
   },
+  tokenSnipe: {
+    enabled: true,
+    targetUsers: [],
+    playSound: true,
+    soundPreset: 'Boom',
+    tasks: [],
+  },
 };
 
 const DEFAULT_ADVANCED_AUTO_SELL: AdvancedAutoSellConfig = {

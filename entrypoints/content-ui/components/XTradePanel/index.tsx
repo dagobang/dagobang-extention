@@ -3,16 +3,19 @@ import { X } from 'lucide-react';
 import type { Settings } from '@/types/extention';
 import { XSniperContent } from './XSinper';
 import { XMonitorContent } from './XMonitor';
+import { XTokenSniperContent } from './XTokenSniper';
 
 type XTradePanelProps = {
   siteInfo: SiteInfo | null;
   visible: boolean;
-  activeTab?: 'xmonitor' | 'xsniper' | 'xhistory';
-  onActiveTabChange?: (tab: 'xmonitor' | 'xsniper' | 'xhistory') => void;
+  activeTab?: 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xhistory';
+  onActiveTabChange?: (tab: 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xhistory') => void;
   onVisibleChange: (visible: boolean) => void;
   settings: Settings | null;
   isUnlocked: boolean;
 };
+
+type XTradeMainTab = 'xmonitor' | 'xsniper' | 'xtokensniper';
 
 const clampPos = (value: { x: number; y: number }, panelWidth: number) => {
   const width = window.innerWidth || 0;
@@ -22,8 +25,14 @@ const clampPos = (value: { x: number; y: number }, panelWidth: number) => {
   return { x: clampedX, y: clampedY };
 };
 
-const resolvePanelWidth = (tab: 'xmonitor' | 'xsniper' | 'xhistory', viewportWidth: number) => {
-  const base = tab === 'xhistory' ? 560 : tab === 'xsniper' ? 560 : 380;
+const normalizeMainTab = (tab?: 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xhistory'): XTradeMainTab => {
+  if (tab === 'xtokensniper') return 'xtokensniper';
+  if (tab === 'xmonitor') return 'xmonitor';
+  return 'xsniper';
+};
+
+const resolvePanelWidth = (tab: XTradeMainTab, viewportWidth: number) => {
+  const base = tab === 'xsniper' || tab === 'xtokensniper' ? 560 : 380;
   const maxAllowed = Math.max(320, viewportWidth - 24);
   return Math.min(base, maxAllowed);
 };
@@ -37,7 +46,8 @@ export function XTradePanel({
   settings,
   isUnlocked,
 }: XTradePanelProps) {
-  const [activeTab, setActiveTab] = useState<'xmonitor' | 'xsniper' | 'xhistory'>(() => activeTabProp ?? 'xmonitor');
+  const [activeTab, setActiveTab] = useState<XTradeMainTab>(() => normalizeMainTab(activeTabProp));
+  const [showSniperConfigModal, setShowSniperConfigModal] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth || 0);
   const panelWidth = resolvePanelWidth(activeTab, viewportWidth || 0);
   const [pos, setPos] = useState(() => {
@@ -48,10 +58,20 @@ export function XTradePanel({
   });
   const posRef = useRef(pos);
   const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
-  const applyTab = (next: 'xmonitor' | 'xsniper' | 'xhistory') => {
+  const applyTab = (next: XTradeMainTab) => {
     setActiveTab(next);
     onActiveTabChange?.(next);
   };
+
+  useEffect(() => {
+    if (!activeTabProp) return;
+    setActiveTab(normalizeMainTab(activeTabProp));
+  }, [activeTabProp]);
+
+  useEffect(() => {
+    if (visible) return;
+    setShowSniperConfigModal(false);
+  }, [visible]);
 
   useEffect(() => {
     posRef.current = pos;
@@ -153,13 +173,13 @@ export function XTradePanel({
           <button
             type="button"
             className={
-              activeTab === 'xhistory'
+              activeTab === 'xtokensniper'
                 ? 'rounded-full border border-emerald-500/50 bg-emerald-500/20 px-3 py-1 text-[12px] text-emerald-200'
                 : 'rounded-full border border-zinc-700 px-3 py-1 text-[12px] text-zinc-300 hover:border-zinc-500'
             }
-            onClick={() => applyTab('xhistory')}
+            onClick={() => applyTab('xtokensniper')}
           >
-            订单/仓位
+            代币狙击
           </button>
         </div>
         <button className="text-zinc-400 hover:text-zinc-200" onClick={() => onVisibleChange(false)}>
@@ -170,11 +190,42 @@ export function XTradePanel({
       <XMonitorContent siteInfo={siteInfo} active={activeTab === 'xmonitor'} settings={settings} />
       <XSniperContent
         siteInfo={siteInfo}
-        active={activeTab === 'xsniper' || activeTab === 'xhistory'}
-        view={activeTab === 'xhistory' ? 'history' : 'config'}
+        active={activeTab === 'xsniper'}
+        view="history"
+        showWsStatusInHistory
+        onOpenConfig={() => setShowSniperConfigModal(true)}
         settings={settings}
         isUnlocked={isUnlocked}
       />
+      <XTokenSniperContent
+        siteInfo={siteInfo}
+        active={activeTab === 'xtokensniper'}
+        settings={settings}
+        isUnlocked={isUnlocked}
+      />
+      {showSniperConfigModal ? (
+        <div className="fixed inset-0 z-[2147483648] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-[560px] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/30">
+            <div className="flex items-center justify-between border-b border-zinc-800/60 px-4 py-3">
+              <div className="text-[13px] font-semibold text-emerald-300">推特狙击设置</div>
+              <button
+                type="button"
+                className="text-zinc-400 hover:text-zinc-200"
+                onClick={() => setShowSniperConfigModal(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <XSniperContent
+              siteInfo={siteInfo}
+              active={showSniperConfigModal}
+              view="config"
+              settings={settings}
+              isUnlocked={isUnlocked}
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
