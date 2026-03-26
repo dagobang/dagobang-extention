@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Pencil, Trash2 } from 'lucide-react';
 import { isAddress } from 'viem';
 import { browser } from 'wxt/browser';
 import { TRADE_SUCCESS_SOUND_PRESETS, type Settings, type TokenSnipeTask, type TokenSnipeTaskRuntimeStatus, type TradeSuccessSoundPreset } from '@/types/extention';
 import { call } from '@/utils/messaging';
 import { defaultSettings } from '@/utils/defaults';
-import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
-import { TOKEN_SNIPER_STATUS_STORAGE_KEY } from '@/services/tokenSniper/tokenSniperTrade';
+import { type SiteInfo } from '@/utils/sites';
+import { TOKEN_SNIPER_HISTORY_STORAGE_KEY, TOKEN_SNIPER_STATUS_STORAGE_KEY } from '@/services/tokenSniper/tokenSniperTrade';
 import { TokenAPI } from '@/hooks/TokenAPI';
-import { formatAgeShort, formatShortAddress } from '@/utils/format';
+import { XTokenSniperTaskList } from '@/entrypoints/content-ui/components/XTradePanel/XTokenSniperTaskList';
+import { XTokenSniperOrderHistory, type TokenSniperOrderRecord } from '@/entrypoints/content-ui/components/XTradePanel/XTokenSniperOrderHistory';
 
 type XTokenSniperContentProps = {
   siteInfo: SiteInfo | null;
@@ -51,11 +51,6 @@ const normalizeTaskTweetTypes = (task: TokenSnipeTask) => {
   if (TWEET_TYPE_OPTIONS.some((opt) => opt.value === task.tweetType)) return [task.tweetType as any];
   return TWEET_TYPE_OPTIONS.map((x) => x.value);
 };
-const formatTweetTypesLabel = (types: Array<(typeof TWEET_TYPE_OPTIONS)[number]['value']>) => {
-  if (types.length >= TWEET_TYPE_OPTIONS.length) return '全部类型';
-  return types.join('/');
-};
-
 const normalizeTokenSnipe = (settings: Settings | null | undefined): TokenSnipeDraft => {
   const defaults = defaultSettings().autoTrade.tokenSnipe;
   const raw = (settings as any)?.autoTrade?.tokenSnipe ?? null;
@@ -84,6 +79,8 @@ export function XTokenSniperContent({
   const [enabled, setEnabled] = useState(normalized.enabled);
   const [tasks, setTasks] = useState<TokenSnipeTask[]>(normalized.tasks);
   const [taskStatusById, setTaskStatusById] = useState<Record<string, TokenSnipeTaskRuntimeStatus>>({});
+  const [orderHistory, setOrderHistory] = useState<TokenSniperOrderRecord[]>([]);
+  const [activeTab, setActiveTab] = useState<'tasks' | 'history'>('tasks');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -125,10 +122,31 @@ export function XTokenSniperContent({
       } catch {
       }
     };
-    void loadStatus();
+    const loadOrderHistory = async () => {
+      try {
+        const res = await browser.storage.local.get(TOKEN_SNIPER_HISTORY_STORAGE_KEY);
+        const raw = (res as any)?.[TOKEN_SNIPER_HISTORY_STORAGE_KEY];
+        if (cancelled) return;
+        if (!Array.isArray(raw)) {
+          setOrderHistory([]);
+          return;
+        }
+        setOrderHistory(raw as TokenSniperOrderRecord[]);
+      } catch {
+      }
+    };
+    void Promise.all([loadStatus(), loadOrderHistory()]);
     const onMessage = (message: any) => {
       if (!message || typeof message.type !== 'string') return;
-      if (message.type === 'bg:stateChanged' || message.type === 'bg:tokenSniper:matched' || message.type === 'bg:tradeSuccess') {
+      if (message.type === 'bg:stateChanged' || message.type === 'bg:tokenSniper:matched') {
+        void Promise.all([loadStatus(), loadOrderHistory()]);
+        return;
+      }
+      if (message.type === 'bg:tradeSuccess' && message?.source === 'tokenSniper') {
+        void Promise.all([loadStatus(), loadOrderHistory()]);
+        return;
+      }
+      if (message.type === 'bg:tradeSuccess') {
         void loadStatus();
       }
     };
@@ -279,23 +297,11 @@ export function XTokenSniperContent({
     if (ok) setShowSettingsModal(false);
   };
 
-  const stateLabel = (status?: TokenSnipeTaskRuntimeStatus) => {
-    if (!status) return '未执行';
-    switch (status.state) {
-      case 'matched':
-        return '已命中';
-      case 'buying':
-        return '买入中';
-      case 'bought':
-        return '买入成功';
-      case 'sell_order_created':
-        return '卖单已创建';
-      case 'sold':
-        return '已卖出';
-      case 'failed':
-        return '失败';
-      default:
-        return '待命';
+  const clearOrderHistory = async () => {
+    try {
+      await browser.storage.local.set({ [TOKEN_SNIPER_HISTORY_STORAGE_KEY]: [] } as any);
+      setOrderHistory([]);
+    } catch {
     }
   };
 
@@ -318,141 +324,47 @@ export function XTokenSniperContent({
         </label>
       </div>
 
-      <div className="rounded-lg border border-zinc-800 bg-zinc-950/35 p-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-[13px] font-semibold text-zinc-100">任务列表</div>
-          <div className="text-[11px] text-zinc-500">共 {tasks.length} 条</div>
-        </div>
-        <div className="space-y-2 max-h-[360px] overflow-auto pr-1">
-          {tasks.map((task) => {
-            const status = taskStatusById[task.id];
-            const tokenLink = siteInfo ? parsePlatformTokenLink(siteInfo, task.tokenAddress) : '';
-            const tokenLabel = task.tokenSymbol || '-';
-            const expanded = !!expandedTaskById[task.id];
-            const ageLabel = formatAgeShort(status?.updatedAt ?? task.createdAt);
-            const tweetTypes = normalizeTaskTweetTypes(task);
-            const buyAmountLabel = `${task.buyAmountBnb || '0'} BNB`;
-            const buyState =
-              status?.state === 'buying'
-                ? '买入中'
-                : status?.buyTxHash || status?.state === 'bought' || status?.state === 'sell_order_created' || status?.state === 'sold'
-                  ? '已买入'
-                  : task.autoBuy
-                    ? '待触发'
-                    : '关闭';
-            const sellState =
-              status?.state === 'sell_order_created'
-                ? '卖单已挂'
-                : status?.sellTxHash || status?.state === 'sold'
-                  ? '已卖出'
-                  : task.autoSell
-                    ? '待触发'
-                    : '关闭';
-            return (
-              <div key={task.id} className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2 text-[12px]">
-                    <div className="min-w-0 flex-1 flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="text-zinc-400 hover:text-zinc-200"
-                        onClick={() => setExpandedTaskById((prev) => ({ ...prev, [task.id]: !prev[task.id] }))}
-                      >
-                        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                      </button>
-                      <a
-                        href={tokenLink || '#'}
-                        className="truncate text-zinc-100 hover:underline"
-                        onClick={(e) => {
-                          if (!tokenLink) return;
-                          e.preventDefault();
-                          e.stopPropagation();
-                          navigateToUrl(tokenLink);
-                        }}
-                      >
-                        {tokenLabel}
-                      </a>
-                      <div className="truncate text-zinc-400">{task.tokenName || '-'}</div>
-                      <div className={`ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] ${status?.state === 'failed' ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/15 text-emerald-300'}`}>
-                        {stateLabel(status)}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="inline-flex items-center text-zinc-300 hover:text-zinc-100 disabled:opacity-50"
-                      disabled={saving || !resolvedSettings || !isUnlocked}
-                      onClick={() => openEditModal(task)}
-                    >
-                      <Pencil size={13} />
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-500">
-                    <div className="min-w-0 flex flex-1 items-center gap-2 overflow-hidden">
-                      <span>{formatShortAddress(task.tokenAddress)}</span>
-                      <span>·</span>
-                      <span>{ageLabel}</span>
-                      <span>·</span>
-                      <span>{formatTweetTypesLabel(tweetTypes)}</span>
-                      <span>·</span>
-                      <span className={task.autoBuy ? 'text-emerald-300' : 'text-zinc-500'}>
-                        买入 {buyAmountLabel}{task.autoBuy ? '' : '(手动)'}
-                      </span>
-                      <span>·</span>
-                      <span className={task.autoSell ? 'text-emerald-300' : 'text-zinc-500'}>
-                        卖出 {task.autoSell ? '自动' : '手动'}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="shrink-0 text-rose-300 hover:text-rose-200 disabled:opacity-50"
-                      disabled={saving || !resolvedSettings || !isUnlocked}
-                      title="删除任务"
-                      aria-label="删除任务"
-                      onClick={() => {
-                        void removeTask(task.id);
-                      }}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-                {expanded ? (
-                  <div className="mt-2 space-y-1 border-t border-zinc-800/60 pt-2 text-[11px] text-zinc-400">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>买入状态：{buyState}</div>
-                      <div>卖出状态：{sellState}</div>
-                    </div>
-                    <div className="space-y-1">
-                      <div>目标链接：{task.targetUrls.length} 条</div>
-                      <div className="space-y-0.5">
-                        {task.targetUrls.map((url, idx) => (
-                          <a
-                            key={`${task.id}-url-${idx}`}
-                            href={url}
-                            className="block truncate text-emerald-300 hover:text-emerald-200 hover:underline"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              navigateToUrl(url);
-                            }}
-                          >
-                            {idx + 1}. {url}
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                    {status?.buyTxHash ? <div>买入Tx：{formatShortAddress(status.buyTxHash, 8, 6)}</div> : null}
-                    {status?.sellTxHash ? <div>卖出Tx：{formatShortAddress(status.sellTxHash, 8, 6)}</div> : null}
-                    {status?.sellOrderIds?.length ? <div>挂单ID：{status.sellOrderIds.slice(0, 3).join(', ')}</div> : null}
-                    {status?.message ? <div>详情：{status.message}</div> : null}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-          {!tasks.length ? <div className="text-[12px] text-zinc-500">暂无任务</div> : null}
+      <div className="rounded-lg border border-zinc-800 bg-zinc-950/35 p-2">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            className={`rounded-md border px-3 py-1.5 text-[12px] ${activeTab === 'tasks' ? 'border-emerald-500/70 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500'}`}
+            onClick={() => setActiveTab('tasks')}
+          >
+            任务列表 ({tasks.length})
+          </button>
+          <button
+            type="button"
+            className={`rounded-md border px-3 py-1.5 text-[12px] ${activeTab === 'history' ? 'border-emerald-500/70 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500'}`}
+            onClick={() => setActiveTab('history')}
+          >
+            订单历史 ({orderHistory.length})
+          </button>
         </div>
       </div>
+
+      {activeTab === 'tasks' ? (
+        <XTokenSniperTaskList
+          tasks={tasks}
+          taskStatusById={taskStatusById}
+          expandedTaskById={expandedTaskById}
+          siteInfo={siteInfo}
+          canEdit={!saving && !!resolvedSettings && isUnlocked}
+          onToggleExpand={(taskId) => setExpandedTaskById((prev) => ({ ...prev, [taskId]: !prev[taskId] }))}
+          onEdit={openEditModal}
+          onRemove={(taskId) => {
+            void removeTask(taskId);
+          }}
+        />
+      ) : (
+        <XTokenSniperOrderHistory
+          orderHistory={orderHistory}
+          siteInfo={siteInfo}
+          onClear={() => {
+            void clearOrderHistory();
+          }}
+        />
+      )}
 
       <div className="flex items-center justify-end gap-2">
         <button

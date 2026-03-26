@@ -11,8 +11,11 @@ import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoRes
 import { parseNumber } from '@/services/xSniper/engine/metrics';
 
 export const TOKEN_SNIPER_STATUS_STORAGE_KEY = 'dagobang_token_sniper_task_status_v1';
+export const TOKEN_SNIPER_HISTORY_STORAGE_KEY = 'dagobang_token_sniper_order_history_v1';
+export const TOKEN_SNIPER_HISTORY_LIMIT = 300;
 
 let statusWriteQueue: Promise<void> = Promise.resolve();
+let historyWriteQueue: Promise<void> = Promise.resolve();
 const handledSignalByTask = new Map<string, number>();
 
 const runStatusMutation = async (mutate: (statusMap: Record<string, TokenSnipeTaskRuntimeStatus>) => boolean) => {
@@ -37,6 +40,59 @@ const enqueueStatusMutation = (mutate: (statusMap: Record<string, TokenSnipeTask
     })
     .catch(() => {});
   return statusWriteQueue;
+};
+
+type TokenSniperOrderRecord = {
+  id: string;
+  tsMs: number;
+  taskId: string;
+  taskCreatedAt: number;
+  action: 'matched' | 'buy' | 'buy_failed' | 'sell_order_created';
+  chainId: number;
+  tokenAddress: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  buyAmountBnb?: number;
+  signalId?: string;
+  signalType?: string;
+  signalAtMs?: number;
+  signalActionAtMs?: number;
+  signalReceivedAtMs?: number;
+  accountKey?: string;
+  accountScreen?: string;
+  tweetId?: string;
+  quotedTweetId?: string;
+  txHash?: string;
+  sellOrderIds?: string[];
+  message?: string;
+};
+
+const runHistoryMutation = async (mutate: (list: TokenSniperOrderRecord[]) => boolean) => {
+  const res = await browser.storage.local.get(TOKEN_SNIPER_HISTORY_STORAGE_KEY);
+  const raw = (res as any)?.[TOKEN_SNIPER_HISTORY_STORAGE_KEY];
+  const list = Array.isArray(raw) ? (raw as TokenSniperOrderRecord[]).slice() : [];
+  const changed = mutate(list);
+  if (!changed) return;
+  await browser.storage.local.set({ [TOKEN_SNIPER_HISTORY_STORAGE_KEY]: list.slice(0, TOKEN_SNIPER_HISTORY_LIMIT) } as any);
+};
+
+const enqueueHistoryMutation = (mutate: (list: TokenSniperOrderRecord[]) => boolean) => {
+  historyWriteQueue = historyWriteQueue
+    .then(async () => {
+      try {
+        await runHistoryMutation(mutate);
+      } catch {
+      }
+    })
+    .catch(() => {});
+  return historyWriteQueue;
+};
+
+const pushTokenSniperHistory = async (record: TokenSniperOrderRecord) => {
+  await enqueueHistoryMutation((list) => {
+    list.unshift(record);
+    return true;
+  });
 };
 
 const toSignalTweetType = (signal: UnifiedTwitterSignal) => {
@@ -126,6 +182,26 @@ const getSignalStableId = (signal: UnifiedTwitterSignal) => {
   return values[0] || `${signal.userScreen ?? ''}:${signal.ts ?? Date.now()}`;
 };
 
+const normalizeSignalMs = (value: unknown) => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n > 1_000_000_000_000 ? n : n * 1000;
+};
+
+const getSignalAtMs = (signal: UnifiedTwitterSignal) => {
+  const received = normalizeSignalMs((signal as any).receivedAtMs);
+  if (received > 0) return received;
+  return normalizeSignalMs(signal.ts);
+};
+
+const getSignalActorKey = (signal: UnifiedTwitterSignal) => {
+  const byScreen = String(signal.userScreen ?? '').trim().replace(/^@/, '').toLowerCase();
+  if (byScreen) return byScreen;
+  const byName = String(signal.userName ?? '').trim().toLowerCase();
+  if (byName) return byName;
+  return '';
+};
+
 const updateTaskStatus = async (taskId: string, patch: Partial<TokenSnipeTaskRuntimeStatus>) => {
   await enqueueStatusMutation((statusMap) => {
     const prev = statusMap[taskId];
@@ -140,10 +216,11 @@ const updateTaskStatus = async (taskId: string, patch: Partial<TokenSnipeTaskRun
   });
 };
 
-const cleanupHandledSignalMap = (now: number) => {
-  if (handledSignalByTask.size < 2000) return;
+const cleanupHandledSignalMap = (now: number, activeTaskIds: Set<string>) => {
+  const ttlMs = 30 * 24 * 60 * 60 * 1000;
   for (const [k, ts] of handledSignalByTask) {
-    if (now - ts > 2 * 60 * 60 * 1000) handledSignalByTask.delete(k);
+    const taskId = k.split(':', 1)[0];
+    if (!activeTaskIds.has(taskId) || now - ts > ttlMs) handledSignalByTask.delete(k);
   }
 };
 
@@ -171,6 +248,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
       if (!matchTargetUsers(signal, tokenSnipe.targetUsers)) return;
 
       const signalType = toSignalTweetType(signal);
+      if (!signalType) return;
       const tweetIds = new Set(
         [signal.tweetId, signal.quotedTweetId]
           .map((x) => (typeof x === 'string' ? x.trim() : ''))
@@ -178,15 +256,24 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
       );
       if (!tweetIds.size) return;
       const stableSignalId = getSignalStableId(signal);
+      const rawSignalActionAtMs = normalizeSignalMs(signal.ts);
+      if (!(rawSignalActionAtMs > 0)) return;
+      const rawSignalReceivedAtMs = normalizeSignalMs((signal as any).receivedAtMs);
+      const signalReceivedAtMs = rawSignalReceivedAtMs > 0 ? rawSignalReceivedAtMs : 0;
+      const signalActionAtMs = rawSignalActionAtMs;
+      const signalAtMs = getSignalAtMs(signal) || signalActionAtMs;
+      const signalActorKey = getSignalActorKey(signal);
+      const accountKey = signalActorKey || `unknown:${stableSignalId}`;
       const now = Date.now();
-      cleanupHandledSignalMap(now);
+      const activeTaskIds = new Set(tokenSnipe.tasks.filter((x) => x?.id).map((x) => String(x.id)));
+      cleanupHandledSignalMap(now, activeTaskIds);
       let played = false;
 
       for (const task of tokenSnipe.tasks) {
         if (!task || !task.id || !task.tokenAddress) continue;
         if (Number(task.chain) !== Number(settings.chainId)) continue;
+        if (signalAtMs > 0 && signalAtMs <= Number(task.createdAt || 0)) continue;
         const taskTweetTypes = normalizeTaskTweetTypes(task);
-        if (!signalType) continue;
         if (!taskTweetTypes.includes(signalType)) continue;
         const targetIds = new Set(
           parseList(task.targetUrls)
@@ -196,7 +283,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
         if (!targetIds.size) continue;
         const hit = Array.from(tweetIds).some((id) => targetIds.has(id));
         if (!hit) continue;
-        const dedupeKey = `${task.id}:${task.tokenAddress.toLowerCase()}:${stableSignalId}`;
+        const dedupeKey = `${task.id}:${accountKey}`;
         if (handledSignalByTask.has(dedupeKey)) continue;
         handledSignalByTask.set(dedupeKey, now);
 
@@ -204,6 +291,27 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
           state: 'matched',
           matchedAt: now,
           signalId: stableSignalId,
+          tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
+          quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
+          message: '已命中',
+        });
+        await pushTokenSniperHistory({
+          id: `token-sniper-matched-${task.id}-${stableSignalId}-${now}`,
+          tsMs: now,
+          taskId: task.id,
+          taskCreatedAt: Number(task.createdAt || 0),
+          action: 'matched',
+          chainId: task.chain,
+          tokenAddress: task.tokenAddress,
+          tokenSymbol: task.tokenSymbol,
+          tokenName: task.tokenName,
+          signalId: stableSignalId,
+          signalType,
+          signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
+          signalActionAtMs: signalActionAtMs > 0 ? signalActionAtMs : undefined,
+          signalReceivedAtMs: signalReceivedAtMs > 0 ? signalReceivedAtMs : undefined,
+          accountKey,
+          accountScreen: String(signal.userScreen ?? '').trim() || undefined,
           tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
           quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
           message: '已命中',
@@ -227,6 +335,28 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
         const amountBnb = parseNumber(task.buyAmountBnb) ?? 0;
         if (!(amountBnb > 0)) {
           await updateTaskStatus(task.id, { state: 'failed', message: '买入金额无效' });
+          await pushTokenSniperHistory({
+            id: `token-sniper-buy-failed-${task.id}-${stableSignalId}-${Date.now()}`,
+            tsMs: Date.now(),
+            taskId: task.id,
+            taskCreatedAt: Number(task.createdAt || 0),
+            action: 'buy_failed',
+            chainId: task.chain,
+            tokenAddress: task.tokenAddress,
+            tokenSymbol: task.tokenSymbol,
+            tokenName: task.tokenName,
+            buyAmountBnb: amountBnb,
+            signalId: stableSignalId,
+            signalType,
+            signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
+            signalActionAtMs: signalActionAtMs > 0 ? signalActionAtMs : undefined,
+            signalReceivedAtMs: signalReceivedAtMs > 0 ? signalReceivedAtMs : undefined,
+            accountKey,
+            accountScreen: String(signal.userScreen ?? '').trim() || undefined,
+            tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
+            quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
+            message: '买入金额无效',
+          });
           deps.onStateChanged();
           continue;
         }
@@ -236,12 +366,56 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
           const status = await WalletService.getStatus();
           if (status.locked) {
             await updateTaskStatus(task.id, { state: 'failed', message: '钱包未解锁' });
+            await pushTokenSniperHistory({
+              id: `token-sniper-buy-failed-${task.id}-${stableSignalId}-${Date.now()}`,
+              tsMs: Date.now(),
+              taskId: task.id,
+              taskCreatedAt: Number(task.createdAt || 0),
+              action: 'buy_failed',
+              chainId: task.chain,
+              tokenAddress: task.tokenAddress,
+              tokenSymbol: task.tokenSymbol,
+              tokenName: task.tokenName,
+              buyAmountBnb: amountBnb,
+              signalId: stableSignalId,
+              signalType,
+              signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
+              signalActionAtMs: signalActionAtMs > 0 ? signalActionAtMs : undefined,
+              signalReceivedAtMs: signalReceivedAtMs > 0 ? signalReceivedAtMs : undefined,
+              accountKey,
+              accountScreen: String(signal.userScreen ?? '').trim() || undefined,
+              tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
+              quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
+              message: '钱包未解锁',
+            });
             deps.onStateChanged();
             continue;
           }
           const tokenInfo = await fetchTokenInfoFresh(task.chain, task.tokenAddress);
           if (!tokenInfo) {
             await updateTaskStatus(task.id, { state: 'failed', message: '获取代币信息失败' });
+            await pushTokenSniperHistory({
+              id: `token-sniper-buy-failed-${task.id}-${stableSignalId}-${Date.now()}`,
+              tsMs: Date.now(),
+              taskId: task.id,
+              taskCreatedAt: Number(task.createdAt || 0),
+              action: 'buy_failed',
+              chainId: task.chain,
+              tokenAddress: task.tokenAddress,
+              tokenSymbol: task.tokenSymbol,
+              tokenName: task.tokenName,
+              buyAmountBnb: amountBnb,
+              signalId: stableSignalId,
+              signalType,
+              signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
+              signalActionAtMs: signalActionAtMs > 0 ? signalActionAtMs : undefined,
+              signalReceivedAtMs: signalReceivedAtMs > 0 ? signalReceivedAtMs : undefined,
+              accountKey,
+              accountScreen: String(signal.userScreen ?? '').trim() || undefined,
+              tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
+              quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
+              message: '获取代币信息失败',
+            });
             deps.onStateChanged();
             continue;
           }
@@ -256,6 +430,29 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             state: 'bought',
             boughtAt: Date.now(),
             buyTxHash,
+            message: '买入成功',
+          });
+          await pushTokenSniperHistory({
+            id: `token-sniper-buy-${task.id}-${stableSignalId}-${Date.now()}`,
+            tsMs: Date.now(),
+            taskId: task.id,
+            taskCreatedAt: Number(task.createdAt || 0),
+            action: 'buy',
+            chainId: task.chain,
+            tokenAddress: task.tokenAddress,
+            tokenSymbol: task.tokenSymbol,
+            tokenName: task.tokenName,
+            buyAmountBnb: amountBnb,
+            signalId: stableSignalId,
+            signalType,
+            signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
+            signalActionAtMs: signalActionAtMs > 0 ? signalActionAtMs : undefined,
+            signalReceivedAtMs: signalReceivedAtMs > 0 ? signalReceivedAtMs : undefined,
+            accountKey,
+            accountScreen: String(signal.userScreen ?? '').trim() || undefined,
+            tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
+            quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
+            txHash: buyTxHash,
             message: '买入成功',
           });
           await broadcastToTabs({
@@ -300,26 +497,98 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                   })
                   : null;
                 const allOrders = trailing ? [...orders, trailing] : orders;
-                const created = allOrders.length
-                  ? await Promise.all(allOrders.map(async (item) => createLimitOrder(item)))
+                const sellOrderIds = allOrders.length
+                  ? await (async () => {
+                    const ids: string[] = [];
+                    for (const item of allOrders) {
+                      const createdOrder = await createLimitOrder(item);
+                      const id = (createdOrder as any)?.id;
+                      if (id) ids.push(String(id));
+                    }
+                    return ids;
+                  })()
                   : [];
-                const sellOrderIds = created
-                  .map((item: any) => (item?.id ? String(item.id) : ''))
-                  .filter(Boolean);
                 await updateTaskStatus(task.id, {
                   state: 'sell_order_created',
+                  sellOrderIds,
+                  message: sellOrderIds.length ? `已创建${sellOrderIds.length}个卖出单` : '已触发自动卖出',
+                });
+                await pushTokenSniperHistory({
+                  id: `token-sniper-sell-order-${task.id}-${stableSignalId}-${Date.now()}`,
+                  tsMs: Date.now(),
+                  taskId: task.id,
+                  taskCreatedAt: Number(task.createdAt || 0),
+                  action: 'sell_order_created',
+                  chainId: task.chain,
+                  tokenAddress: task.tokenAddress,
+                  tokenSymbol: task.tokenSymbol,
+                  tokenName: task.tokenName,
+                  signalId: stableSignalId,
+                  signalType,
+                  signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
+                  signalActionAtMs: signalActionAtMs > 0 ? signalActionAtMs : undefined,
+                  signalReceivedAtMs: signalReceivedAtMs > 0 ? signalReceivedAtMs : undefined,
+                  accountKey,
+                  accountScreen: String(signal.userScreen ?? '').trim() || undefined,
+                  tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
+                  quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
                   sellOrderIds,
                   message: sellOrderIds.length ? `已创建${sellOrderIds.length}个卖出单` : '已触发自动卖出',
                 });
               }
             } catch {
               await updateTaskStatus(task.id, { state: 'failed', message: '自动卖出创建失败' });
+              await pushTokenSniperHistory({
+                id: `token-sniper-buy-failed-${task.id}-${stableSignalId}-${Date.now()}`,
+                tsMs: Date.now(),
+                taskId: task.id,
+                taskCreatedAt: Number(task.createdAt || 0),
+                action: 'buy_failed',
+                chainId: task.chain,
+                tokenAddress: task.tokenAddress,
+                tokenSymbol: task.tokenSymbol,
+                tokenName: task.tokenName,
+                buyAmountBnb: amountBnb,
+                signalId: stableSignalId,
+                signalType,
+                signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
+                signalActionAtMs: signalActionAtMs > 0 ? signalActionAtMs : undefined,
+                signalReceivedAtMs: signalReceivedAtMs > 0 ? signalReceivedAtMs : undefined,
+                accountKey,
+                accountScreen: String(signal.userScreen ?? '').trim() || undefined,
+                tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
+                quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
+                message: '自动卖出创建失败',
+              });
             }
           }
         } catch (e: any) {
+          const failMessage = String(e?.shortMessage || e?.message || '买入失败');
           await updateTaskStatus(task.id, {
             state: 'failed',
-            message: String(e?.shortMessage || e?.message || '买入失败'),
+            message: failMessage,
+          });
+          await pushTokenSniperHistory({
+            id: `token-sniper-buy-failed-${task.id}-${stableSignalId}-${Date.now()}`,
+            tsMs: Date.now(),
+            taskId: task.id,
+            taskCreatedAt: Number(task.createdAt || 0),
+            action: 'buy_failed',
+            chainId: task.chain,
+            tokenAddress: task.tokenAddress,
+            tokenSymbol: task.tokenSymbol,
+            tokenName: task.tokenName,
+            buyAmountBnb: amountBnb,
+            signalId: stableSignalId,
+            signalType,
+            signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
+            signalActionAtMs: signalActionAtMs > 0 ? signalActionAtMs : undefined,
+            signalReceivedAtMs: signalReceivedAtMs > 0 ? signalReceivedAtMs : undefined,
+            accountKey,
+            accountScreen: String(signal.userScreen ?? '').trim() || undefined,
+            tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
+            quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
+            message: failMessage,
           });
         }
         deps.onStateChanged();
