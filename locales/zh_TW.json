@@ -419,7 +419,7 @@
         "dry_run_stop_loss": "模擬止損",
         "dry_run_trailing_stop": "模擬移動止損"
       },
-      "fixedSnipe": "定點狙擊",
+      "fixedSnipe": "代幣狙擊",
       "fixedSnipeDesc": "鎖定特定 X 用戶，發推即觸發買入",
       "activitySnipe": "異動狙擊",
       "activitySnipeDesc": "監控互動行為（回覆、引用、轉推、關注）觸發買入",

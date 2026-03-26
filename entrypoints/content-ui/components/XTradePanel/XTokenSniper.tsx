@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Pencil, Play, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, Trash2 } from 'lucide-react';
 import { isAddress } from 'viem';
 import { browser } from 'wxt/browser';
 import { TRADE_SUCCESS_SOUND_PRESETS, type Settings, type TokenSnipeTask, type TokenSnipeTaskRuntimeStatus, type TradeSuccessSoundPreset } from '@/types/extention';
@@ -7,7 +7,6 @@ import { call } from '@/utils/messaging';
 import { defaultSettings } from '@/utils/defaults';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { TOKEN_SNIPER_STATUS_STORAGE_KEY } from '@/services/tokenSniper/tokenSniperTrade';
-import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import { formatAgeShort, formatShortAddress } from '@/utils/format';
 
@@ -34,7 +33,6 @@ const parseList = (value: string) =>
     .filter(Boolean);
 
 const createTaskId = () => `token-task-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-const SOUND_OFF = '__off__';
 const TWEET_TYPE_OPTIONS: Array<{ value: 'tweet' | 'reply' | 'quote' | 'retweet' | 'follow'; label: string }> = [
   { value: 'tweet', label: 'tweet' },
   { value: 'reply', label: 'reply' },
@@ -103,18 +101,12 @@ export function XTokenSniperContent({
   const [autoSellInput, setAutoSellInput] = useState(true);
 
   const [targetUsersInput, setTargetUsersInput] = useState(normalized.targetUsers.join('\n'));
-  const [playSound, setPlaySound] = useState(normalized.playSound);
-  const [soundPreset, setSoundPreset] = useState<TradeSuccessSoundPreset>(normalized.soundPreset);
-  const soundSelectValue = playSound ? soundPreset : SOUND_OFF;
-  const previewSound = useTradeSuccessSound({ enabled: true, volume: resolvedSettings?.tradeSuccessSoundVolume ?? 60 });
 
   useEffect(() => {
     if (!active) return;
     setEnabled(normalized.enabled);
     setTasks(normalized.tasks);
     setTargetUsersInput(normalized.targetUsers.join('\n'));
-    setPlaySound(normalized.playSound);
-    setSoundPreset(normalized.soundPreset);
   }, [active, normalizedKey]);
 
   useEffect(() => {
@@ -158,8 +150,6 @@ export function XTokenSniperContent({
         enabled,
         tasks,
         targetUsers: parseList(targetUsersInput),
-        playSound,
-        soundPreset,
         ...patch,
       };
       const nextSettings: Settings = {
@@ -285,8 +275,6 @@ export function XTokenSniperContent({
   const saveSettings = async () => {
     const ok = await persistTokenSnipe({
       targetUsers: parseList(targetUsersInput),
-      playSound,
-      soundPreset,
     });
     if (ok) setShowSettingsModal(false);
   };
@@ -596,42 +584,6 @@ export function XTokenSniperContent({
                 onChange={(e) => setTargetUsersInput(e.target.value)}
                 placeholder="@elonmusk"
               />
-            </div>
-            <div className="flex items-center gap-2 text-[12px] text-zinc-400">
-              <div>触发音效</div>
-              <select
-                className="min-w-[180px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-200 outline-none"
-                value={soundSelectValue}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (value === SOUND_OFF) {
-                    setPlaySound(false);
-                    return;
-                  }
-                  setPlaySound(true);
-                  setSoundPreset(value as TradeSuccessSoundPreset);
-                }}
-              >
-                <option value={SOUND_OFF}>关闭</option>
-                {TRADE_SUCCESS_SOUND_PRESETS.map((preset) => (
-                  <option key={preset} value={preset}>
-                    {preset}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
-                disabled={!playSound}
-                onClick={() => {
-                  if (!playSound) return;
-                  previewSound.ensureReady();
-                  previewSound.playPreset(soundPreset);
-                }}
-                title="预览音效"
-              >
-                <Play size={14} />
-              </button>
             </div>
             <div className="flex items-center justify-end gap-2">
               <button

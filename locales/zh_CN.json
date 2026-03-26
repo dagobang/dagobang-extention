@@ -419,7 +419,7 @@
         "dry_run_stop_loss": "模拟止损",
         "dry_run_trailing_stop": "模拟移动止损"
       },
-      "fixedSnipe": "定点狙击",
+      "fixedSnipe": "代币狙击",
       "fixedSnipeDesc": "锁定特定 X 用户，发推即触发买入",
       "activitySnipe": "异动狙击",
       "activitySnipeDesc": "监控互动行为（回复、引用、转推、关注）触发买入",

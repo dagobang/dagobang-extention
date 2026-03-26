@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import { TRADE_SUCCESS_SOUND_PRESETS, type AutoTradeConfig, type AutoTradeInteractionType, type AutoTradeTwitterSnipePreset, type Settings, type TradeSuccessSoundPreset, type XSniperBuyRecord } from '@/types/extention';
+import { type AutoTradeConfig, type AutoTradeInteractionType, type AutoTradeTwitterSnipePreset, type Settings, type XSniperBuyRecord } from '@/types/extention';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { defaultSettings } from '@/utils/defaults';
 import { call } from '@/utils/messaging';
-import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import { browser } from 'wxt/browser';
 import { SiteInfo } from '@/utils/sites';
 import { clearXSniperHistory, XSNIPER_HISTORY_STORAGE_KEY } from '@/services/xSniper/xSniperHistory';
@@ -33,7 +32,6 @@ type XSniperContentProps = {
   isUnlocked: boolean;
 };
 
-const SOUND_OFF = '__off__';
 const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
 
 const cloneAutoTrade = (value: AutoTradeConfig | null) => {
@@ -155,7 +153,7 @@ export function XSniperContent({
     filter: false,
     wsConfirm: false,
     rapid: true,
-    sellSound: false,
+    sell: false,
   });
   const [buyHistory, setBuyHistory] = useState<XSniperBuyRecord[]>([]);
   const [latestTokenByAddr, setLatestTokenByAddr] = useState<Record<string, any>>({});
@@ -380,11 +378,6 @@ export function XSniperContent({
     return () => window.removeEventListener('dagobang-twitter-signal' as any, onSignal as any);
   }, [active, wsMonitorEnabled]);
 
-  const presetOptions = useMemo(
-    () => TRADE_SUCCESS_SOUND_PRESETS.map((preset) => ({ value: preset, label: preset })),
-    []
-  );
-  const previewSound = useTradeSuccessSound({ enabled: true, volume: 60 });
   const twitterSnipe = draft?.twitterSnipe;
   const snipePresets = Array.isArray((twitterSnipe as any)?.presets)
     ? ((twitterSnipe as any).presets as AutoTradeTwitterSnipePreset[])
@@ -577,11 +570,6 @@ export function XSniperContent({
       window.alert('配置JSON格式不正确');
     }
   };
-  const soundSelectValue =
-    draft?.triggerSound.enabled === false ? SOUND_OFF : (draft?.triggerSound.preset ?? 'Boom');
-  const deleteTweetSoundPreset = (twitterSnipe?.deleteTweetSoundPreset ?? 'Handgun') as TradeSuccessSoundPreset;
-  const deleteTweetSoundSelectValue =
-    twitterSnipe?.deleteTweetPlaySound === false ? SOUND_OFF : deleteTweetSoundPreset;
   const rapidExitEnabled = (twitterSnipe as any)?.rapidExitEnabled !== false;
   const getRapidUnifiedValue = (field: string) => {
     if (field === 'takeProfitPct') return (twitterSnipe as any)?.rapidTakeProfitPct ?? '';
@@ -680,32 +668,6 @@ export function XSniperContent({
       : current.filter((x) => x !== interactionType);
     updateTwitterSnipe({ interactionTypes: next });
   };
-  const handleTriggerSoundChange = (value: string) => {
-    setDraft((prev) => {
-      if (!prev) return prev;
-      setIsDirty(true);
-      if (value === SOUND_OFF) return { ...prev, triggerSound: { ...prev.triggerSound, enabled: false } };
-      return { ...prev, triggerSound: { ...prev.triggerSound, enabled: true, preset: value as TradeSuccessSoundPreset } };
-    });
-  };
-  const handlePreviewTriggerSound = () => {
-    const preset = draft?.triggerSound.preset ?? 'Boom';
-    previewSound.ensureReady();
-    previewSound.playPreset(preset);
-  };
-  const handleDeleteTweetSoundChange = (value: string) => {
-    if (value === SOUND_OFF) {
-      updateTwitterSnipe({ deleteTweetPlaySound: false } as any);
-      return;
-    }
-    updateTwitterSnipe({ deleteTweetPlaySound: true, deleteTweetSoundPreset: value as TradeSuccessSoundPreset } as any);
-  };
-  const handlePreviewDeleteTweetSound = () => {
-    if (deleteTweetSoundSelectValue === SOUND_OFF) return;
-    previewSound.ensureReady();
-    previewSound.playPreset(deleteTweetSoundPreset);
-  };
-
   if (!active || !draft) return null;
 
   return (
@@ -766,22 +728,13 @@ export function XSniperContent({
               updateRapidTypeValue={updateRapidTypeValue}
             />
             <XSniperSoundSection
-              open={configSectionOpen.sellSound}
+              open={configSectionOpen.sell}
               canEdit={canEdit}
-              soundOffValue={SOUND_OFF}
-              soundSelectValue={soundSelectValue}
-              deleteTweetSoundSelectValue={deleteTweetSoundSelectValue}
-              deleteTweetSoundPreset={deleteTweetSoundPreset}
               twitterSnipe={twitterSnipe}
-              presetOptions={presetOptions}
               tt={tt}
-              onToggle={() => toggleConfigSection('sellSound')}
-              onTriggerSoundChange={handleTriggerSoundChange}
-              onPreviewTriggerSound={handlePreviewTriggerSound}
+              onToggle={() => toggleConfigSection('sell')}
               onAutoSellEnabledChange={(checked) => updateTwitterSnipe({ autoSellEnabled: checked })}
               onDeleteTweetSellPercentChange={(value) => updateTwitterSnipe({ deleteTweetSellPercent: value })}
-              onDeleteTweetSoundChange={handleDeleteTweetSoundChange}
-              onPreviewDeleteTweetSound={handlePreviewDeleteTweetSound}
             />
           </>
         ) : null}

@@ -209,7 +209,13 @@ export const TRADE_SUCCESS_SOUND_PRESETS = [
   'Mario-Life',
   'Mario-Mushroom',
   'Mario-Start',
+  'Animal-Cat',
+  'Animal-Cow',
+  'Animal-Dog',
+  'Animal-Elephant',
+  'Animal-Horse',
   'Animal-Frog',
+  'Animal-Rooster',
   'Animal-Wolf',
 ] as const;
 

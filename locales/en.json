@@ -419,7 +419,7 @@
         "dry_run_stop_loss": "Dry stop loss",
         "dry_run_trailing_stop": "Dry trailing stop"
       },
-      "fixedSnipe": "Fixed Snipe",
+      "fixedSnipe": "Token Snipe",
       "fixedSnipeDesc": "Lock specific X users and buy on new tweets",
       "activitySnipe": "Activity Snipe",
       "activitySnipeDesc": "Monitor interactions (reply/quote/retweet/follow) and buy",

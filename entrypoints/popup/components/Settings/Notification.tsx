@@ -18,12 +18,21 @@ export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChan
   const tradeSuccessSoundEnabled = !!settingsDraft.tradeSuccessSoundEnabled;
   const tradeSuccessSoundPresetBuy = isPreset(settingsDraft.tradeSuccessSoundPresetBuy) ? settingsDraft.tradeSuccessSoundPresetBuy : 'Bell';
   const tradeSuccessSoundPresetSell = isPreset(settingsDraft.tradeSuccessSoundPresetSell) ? settingsDraft.tradeSuccessSoundPresetSell : 'Coins';
+  const tokenSnipeSoundEnabled = settingsDraft.autoTrade.tokenSnipe?.playSound !== false;
+  const tokenSnipeSoundPreset = isPreset(settingsDraft.autoTrade.tokenSnipe?.soundPreset) ? settingsDraft.autoTrade.tokenSnipe.soundPreset : 'Boom';
+  const xSniperTriggerSoundEnabled = settingsDraft.autoTrade.triggerSound?.enabled !== false;
+  const xSniperTriggerSoundPreset = isPreset(settingsDraft.autoTrade.triggerSound?.preset) ? settingsDraft.autoTrade.triggerSound.preset : 'Boom';
+  const xSniperDeleteTweetSoundEnabled = settingsDraft.autoTrade.twitterSnipe?.deleteTweetPlaySound !== false;
+  const xSniperDeleteTweetSoundPreset = isPreset(settingsDraft.autoTrade.twitterSnipe?.deleteTweetSoundPreset) ? settingsDraft.autoTrade.twitterSnipe.deleteTweetSoundPreset : 'Handgun';
   const tradeSuccessSoundVolume = typeof settingsDraft.tradeSuccessSoundVolume === 'number'
     ? Math.max(0, Math.min(100, Math.floor(settingsDraft.tradeSuccessSoundVolume)))
     : 60;
 
   const buySelectValue = tradeSuccessSoundEnabled ? tradeSuccessSoundPresetBuy : OFF_VALUE;
   const sellSelectValue = tradeSuccessSoundEnabled ? tradeSuccessSoundPresetSell : OFF_VALUE;
+  const tokenSnipeSelectValue = tokenSnipeSoundEnabled ? tokenSnipeSoundPreset : OFF_VALUE;
+  const xSniperTriggerSelectValue = xSniperTriggerSoundEnabled ? xSniperTriggerSoundPreset : OFF_VALUE;
+  const xSniperDeleteTweetSelectValue = xSniperDeleteTweetSoundEnabled ? xSniperDeleteTweetSoundPreset : OFF_VALUE;
 
   const previewSound = useTradeSuccessSound({
     enabled: true,
@@ -87,7 +96,7 @@ export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChan
           />
         </label>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <div className="space-y-1">
             <div className="text-[14px] text-zinc-400">{tt('popup.settings.tradeSuccessSoundBuyPreset')}</div>
             <div className="flex items-center gap-2">
@@ -150,6 +159,182 @@ export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChan
                 type="button"
                 className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
                 onClick={() => play(tradeSuccessSoundPresetSell)}
+                title={tt('popup.settings.previewSound')}
+              >
+                <Play size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 pt-1">
+          <div className="space-y-1">
+            <div className="text-[14px] text-zinc-400">{tt('contentUi.autoTradeStrategy.fixedSnipe')} · {tt('contentUi.autoTradeStrategy.sectionSound')}</div>
+            <div className="flex items-center gap-2">
+              <select
+                className="flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+                value={tokenSnipeSelectValue}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === OFF_VALUE) {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      autoTrade: {
+                        ...s.autoTrade,
+                        tokenSnipe: {
+                          ...s.autoTrade.tokenSnipe,
+                          playSound: false,
+                        },
+                      },
+                    }));
+                    return;
+                  }
+                  const next = v as TradeSuccessSoundPreset;
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    autoTrade: {
+                      ...s.autoTrade,
+                      tokenSnipe: {
+                        ...s.autoTrade.tokenSnipe,
+                        playSound: true,
+                        soundPreset: next,
+                      },
+                    },
+                  }));
+                  play(next);
+                }}
+              >
+                <option value={OFF_VALUE}>{tt('popup.settings.tradeSuccessSoundOff')}</option>
+                {TRADE_SUCCESS_SOUND_PRESETS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 hover:bg-zinc-800 disabled:opacity-50"
+                disabled={tokenSnipeSelectValue === OFF_VALUE}
+                onClick={() => {
+                  if (tokenSnipeSelectValue === OFF_VALUE) return;
+                  play(tokenSnipeSoundPreset);
+                }}
+                title={tt('popup.settings.previewSound')}
+              >
+                <Play size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[14px] text-zinc-400">{tt('contentUi.autoTradeStrategy.twitterSnipe')} · {tt('contentUi.autoTradeStrategy.sectionSound')}</div>
+            <div className="flex items-center gap-2">
+              <select
+                className="flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+                value={xSniperTriggerSelectValue}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === OFF_VALUE) {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      autoTrade: {
+                        ...s.autoTrade,
+                        triggerSound: {
+                          ...s.autoTrade.triggerSound,
+                          enabled: false,
+                        },
+                      },
+                    }));
+                    return;
+                  }
+                  const next = v as TradeSuccessSoundPreset;
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    autoTrade: {
+                      ...s.autoTrade,
+                      triggerSound: {
+                        ...s.autoTrade.triggerSound,
+                        enabled: true,
+                        preset: next,
+                      },
+                    },
+                  }));
+                  play(next);
+                }}
+              >
+                <option value={OFF_VALUE}>{tt('popup.settings.tradeSuccessSoundOff')}</option>
+                {TRADE_SUCCESS_SOUND_PRESETS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 hover:bg-zinc-800 disabled:opacity-50"
+                disabled={xSniperTriggerSelectValue === OFF_VALUE}
+                onClick={() => {
+                  if (xSniperTriggerSelectValue === OFF_VALUE) return;
+                  play(xSniperTriggerSoundPreset);
+                }}
+                title={tt('popup.settings.previewSound')}
+              >
+                <Play size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[14px] text-zinc-400">{tt('contentUi.autoTradeStrategy.deleteTweetSoundPreset')}</div>
+            <div className="flex items-center gap-2">
+              <select
+                className="flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+                value={xSniperDeleteTweetSelectValue}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === OFF_VALUE) {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      autoTrade: {
+                        ...s.autoTrade,
+                        twitterSnipe: {
+                          ...s.autoTrade.twitterSnipe,
+                          deleteTweetPlaySound: false,
+                        },
+                      },
+                    }));
+                    return;
+                  }
+                  const next = v as TradeSuccessSoundPreset;
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    autoTrade: {
+                      ...s.autoTrade,
+                      twitterSnipe: {
+                        ...s.autoTrade.twitterSnipe,
+                        deleteTweetPlaySound: true,
+                        deleteTweetSoundPreset: next,
+                      },
+                    },
+                  }));
+                  play(next);
+                }}
+              >
+                <option value={OFF_VALUE}>{tt('popup.settings.tradeSuccessSoundOff')}</option>
+                {TRADE_SUCCESS_SOUND_PRESETS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 hover:bg-zinc-800 disabled:opacity-50"
+                disabled={xSniperDeleteTweetSelectValue === OFF_VALUE}
+                onClick={() => {
+                  if (xSniperDeleteTweetSelectValue === OFF_VALUE) return;
+                  play(xSniperDeleteTweetSoundPreset);
+                }}
                 title={tt('popup.settings.previewSound')}
               >
                 <Play size={16} />
