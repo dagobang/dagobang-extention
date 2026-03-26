@@ -33,6 +33,7 @@ type XSniperContentProps = {
 };
 
 const SOUND_OFF = '__off__';
+const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
 
 const cloneAutoTrade = (value: AutoTradeConfig | null) => {
   if (!value) return null;
@@ -793,6 +794,7 @@ export function XSniperContent({
               void (async () => {
                 try {
                   await clearXSniperHistory();
+                  await browser.storage.local.remove(BOUGHT_ONCE_STORAGE_KEY);
                 } finally {
                   setBuyHistory([]);
                 }

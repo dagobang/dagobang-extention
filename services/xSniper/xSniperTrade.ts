@@ -17,10 +17,11 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
   const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
 
-  let boughtOnceLoaded = false;
+  let boughtOnceLastSyncMs = 0;
   const boughtOnceAtMs = new Map<string, number>();
   const buyInFlight = new Set<string>();
   const wsConfirmFailDedupe = new Map<string, number>();
+  const buyFailureRecordDedupe = new Map<string, number>();
   const wsSnapshotsByAddr = new Map<string, WsSnapshot[]>();
   const dryRunAutoSellByPosKey = new Map<string, DryRunAutoSellPos>();
   const rapidExitByPosKey = new Map<string, RapidExitPosition>();
@@ -32,6 +33,38 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   };
 
   const shouldLogWsConfirmFail = (key: string, nowMs: number) => shouldLogWsConfirmFailFromWs(wsConfirmFailDedupe, key, nowMs);
+  const shouldEmitBuyFailureRecord = (input: {
+    reason: string;
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    signal?: UnifiedTwitterSignal;
+  }) => {
+    const now = Date.now();
+    const signalStableId = (() => {
+      const id = typeof input.signal?.id === 'string' ? input.signal.id.trim() : '';
+      if (id) return id;
+      const ev = typeof input.signal?.eventId === 'string' ? input.signal.eventId.trim() : '';
+      if (ev) return ev;
+      const tw = typeof input.signal?.tweetId === 'string' ? input.signal.tweetId.trim() : '';
+      if (tw) return tw;
+      return '';
+    })();
+    const key = `${input.reason}:${input.chainId}:${input.tokenAddress.toLowerCase()}:${signalStableId || 'no-signal'}`;
+    const ttlMs =
+      input.reason === 'buy_skipped_recently_bought' || input.reason === 'buy_skipped_in_flight'
+        ? 60_000
+        : 10_000;
+    const prev = buyFailureRecordDedupe.get(key);
+    if (typeof prev === 'number' && now - prev < ttlMs) return false;
+    buyFailureRecordDedupe.set(key, now);
+    if (buyFailureRecordDedupe.size > 3000) {
+      for (const [k, ts] of buyFailureRecordDedupe) {
+        if (now - ts > 10 * 60_000) buyFailureRecordDedupe.delete(k);
+      }
+      if (buyFailureRecordDedupe.size > 3500) buyFailureRecordDedupe.clear();
+    }
+    return true;
+  };
 
   const emitRecord = (record: XSniperBuyRecord) => {
     void pushXSniperHistory(record);
@@ -84,20 +117,26 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   };
 
   const loadBoughtOnceIfNeeded = async () => {
-    if (boughtOnceLoaded) return;
-    boughtOnceLoaded = true;
+    const now = Date.now();
+    if (now - boughtOnceLastSyncMs < 3000) return;
+    boughtOnceLastSyncMs = now;
     try {
       const res = await browser.storage.local.get(BOUGHT_ONCE_STORAGE_KEY);
       const raw = (res as any)?.[BOUGHT_ONCE_STORAGE_KEY];
-      if (!raw || typeof raw !== 'object') return;
-      const now = Date.now();
+      const next = new Map<string, number>();
+      if (!raw || typeof raw !== 'object') {
+        boughtOnceAtMs.clear();
+        return;
+      }
       for (const [key, ts] of Object.entries(raw as Record<string, unknown>)) {
         if (typeof key !== 'string') continue;
         const n = typeof ts === 'number' ? ts : Number(ts);
         if (!Number.isFinite(n)) continue;
         if (now - n > BOUGHT_ONCE_TTL_MS) continue;
-        boughtOnceAtMs.set(key, n);
+        next.set(key, n);
       }
+      boughtOnceAtMs.clear();
+      for (const [key, ts] of next) boughtOnceAtMs.set(key, ts);
     } catch {
     }
   };
@@ -192,6 +231,7 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
       buyInFlight,
       computeWsConfirm,
       shouldLogWsConfirmFail,
+      shouldEmitBuyFailureRecord,
       emitRecord,
       broadcastToActiveTabs,
       fetchTokenInfoFresh,

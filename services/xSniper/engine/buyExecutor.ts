@@ -109,6 +109,12 @@ export const tryAutoBuyOnce = async (input: {
     stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number };
   };
   shouldLogWsConfirmFail: (key: string, nowMs: number) => boolean;
+  shouldEmitBuyFailureRecord?: (input: {
+    reason: string;
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    signal?: UnifiedTwitterSignal;
+  }) => boolean;
   emitRecord: (record: XSniperBuyRecord) => void;
   broadcastToActiveTabs: (message: any) => Promise<void>;
   fetchTokenInfoFresh: (chainId: number, tokenAddress: `0x${string}`) => Promise<TokenInfo | null>;
@@ -149,6 +155,12 @@ export const tryAutoBuyOnce = async (input: {
     confirm?: { windowMs?: number; stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number } };
   }) => {
     if (dryRun) return;
+    if (input.shouldEmitBuyFailureRecord && !input.shouldEmitBuyFailureRecord({
+      reason,
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      signal: input.signal,
+    })) return;
     console.warn('XSniperTrade buy skipped', { reason, chainId: input.chainId, tokenAddress: input.tokenAddress });
     const now = Date.now();
     const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
