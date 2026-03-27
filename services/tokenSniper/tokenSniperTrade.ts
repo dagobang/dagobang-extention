@@ -13,6 +13,7 @@ import { parseNumber } from '@/services/xSniper/engine/metrics';
 export const TOKEN_SNIPER_STATUS_STORAGE_KEY = 'dagobang_token_sniper_task_status_v1';
 export const TOKEN_SNIPER_HISTORY_STORAGE_KEY = 'dagobang_token_sniper_order_history_v1';
 export const TOKEN_SNIPER_HISTORY_LIMIT = 300;
+export const TOKEN_SNIPER_SIGNAL_ACTION_EXPIRE_MS = 3 * 60 * 1000;
 
 let statusWriteQueue: Promise<void> = Promise.resolve();
 let historyWriteQueue: Promise<void> = Promise.resolve();
@@ -92,6 +93,20 @@ const pushTokenSniperHistory = async (record: TokenSniperOrderRecord) => {
   await enqueueHistoryMutation((list) => {
     list.unshift(record);
     return true;
+  });
+};
+
+const hasHandledSignalInHistory = async (input: { taskId: string; accountKey: string; tweetId: string }) => {
+  const res = await browser.storage.local.get(TOKEN_SNIPER_HISTORY_STORAGE_KEY);
+  const raw = (res as any)?.[TOKEN_SNIPER_HISTORY_STORAGE_KEY];
+  if (!Array.isArray(raw) || !raw.length) return false;
+  return raw.some((item: any) => {
+    if (!item || String(item.taskId || '') !== input.taskId) return false;
+    if (String(item.accountKey || '') !== input.accountKey) return false;
+    const tweetIds = [item.tweetId, item.quotedTweetId]
+      .map((x) => (typeof x === 'string' ? x.trim() : ''))
+      .filter(Boolean);
+    return tweetIds.includes(input.tweetId);
   });
 };
 
@@ -256,15 +271,16 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
       );
       if (!tweetIds.size) return;
       const stableSignalId = getSignalStableId(signal);
-      const rawSignalActionAtMs = normalizeSignalMs(signal.ts);
+      const rawSignalActionAtMs = normalizeSignalMs((signal as any).receivedAtMs);
       if (!(rawSignalActionAtMs > 0)) return;
-      const rawSignalReceivedAtMs = normalizeSignalMs((signal as any).receivedAtMs);
+      const rawSignalReceivedAtMs = normalizeSignalMs(signal.ts);
       const signalReceivedAtMs = rawSignalReceivedAtMs > 0 ? rawSignalReceivedAtMs : 0;
       const signalActionAtMs = rawSignalActionAtMs;
       const signalAtMs = getSignalAtMs(signal) || signalActionAtMs;
       const signalActorKey = getSignalActorKey(signal);
       const accountKey = signalActorKey || `unknown:${stableSignalId}`;
       const now = Date.now();
+      if (now - signalActionAtMs > TOKEN_SNIPER_SIGNAL_ACTION_EXPIRE_MS) return;
       const activeTaskIds = new Set(tokenSnipe.tasks.filter((x) => x?.id).map((x) => String(x.id)));
       cleanupHandledSignalMap(now, activeTaskIds);
       let played = false;
@@ -272,7 +288,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
       for (const task of tokenSnipe.tasks) {
         if (!task || !task.id || !task.tokenAddress) continue;
         if (Number(task.chain) !== Number(settings.chainId)) continue;
-        if (signalAtMs > 0 && signalAtMs <= Number(task.createdAt || 0)) continue;
+        if (signalActionAtMs <= Number(task.createdAt || 0)) continue;
         const taskTweetTypes = normalizeTaskTweetTypes(task);
         if (!taskTweetTypes.includes(signalType)) continue;
         const targetIds = new Set(
@@ -281,10 +297,14 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             .filter(Boolean),
         );
         if (!targetIds.size) continue;
-        const hit = Array.from(tweetIds).some((id) => targetIds.has(id));
-        if (!hit) continue;
-        const dedupeKey = `${task.id}:${accountKey}`;
+        const matchedTweetId = Array.from(tweetIds).find((id) => targetIds.has(id));
+        if (!matchedTweetId) continue;
+        const dedupeKey = `${task.id}:${accountKey}:${matchedTweetId}`;
         if (handledSignalByTask.has(dedupeKey)) continue;
+        if (await hasHandledSignalInHistory({ taskId: task.id, accountKey, tweetId: matchedTweetId })) {
+          handledSignalByTask.set(dedupeKey, now);
+          continue;
+        }
         handledSignalByTask.set(dedupeKey, now);
 
         await updateTaskStatus(task.id, {

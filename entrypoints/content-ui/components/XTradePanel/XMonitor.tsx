@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AlarmClockCheck, Trophy, ChefHat, Users, X, UserStar, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlarmClockCheck, Trophy, ChefHat, Users, X, UserStar } from 'lucide-react';
 import type { Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber, formatCountShort } from '@/utils/format';
@@ -554,17 +554,6 @@ export function XMonitorContent({
     () => resolveTwitterSnipeByActivePreset(twitterSnipeSource),
     [twitterSnipeSource]
   );
-  const activeStrategyName = useMemo(() => {
-    const source = twitterSnipeSource ?? {};
-    const presets = Array.isArray(source.presets) ? source.presets : [];
-    const activePresetId = typeof source.activePresetId === 'string' ? source.activePresetId.trim() : '';
-    if (!activePresetId) return '';
-    const active = presets.find((item: any) => item && typeof item.id === 'string' && item.id === activePresetId);
-    if (!active) return '';
-    const name = typeof active.name === 'string' ? active.name.trim() : '';
-    return name || activePresetId;
-  }, [twitterSnipeSource]);
-
   const tickerLenFilter = useMemo(() => {
     const parseLen = (v: any) => {
       if (typeof v !== 'string') return null;
@@ -732,15 +721,6 @@ export function XMonitorContent({
     }
     return 200;
   });
-  const settingsCollapsedStorageKey = 'dagobang_xmonitor_settingsCollapsed_v1';
-  const [settingsCollapsed, setSettingsCollapsed] = useState(() => {
-    try {
-      return window.localStorage.getItem(settingsCollapsedStorageKey) === '1';
-    } catch {
-      return false;
-    }
-  });
-
   const [signalPage, setSignalPage] = useState(1);
 
   useEffect(() => {
@@ -756,13 +736,6 @@ export function XMonitorContent({
     } catch {
     }
   }, [tokenLimit]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(settingsCollapsedStorageKey, settingsCollapsed ? '1' : '0');
-    } catch {
-    }
-  }, [settingsCollapsed]);
 
   useEffect(() => {
     const loadFromStorage = () => {
@@ -838,13 +811,9 @@ export function XMonitorContent({
 
   return (
     <>
-      <div className="px-4 py-2 border-b border-zinc-800/60 space-y-2">
-        <div className="flex items-start justify-between gap-2">
-          <label className="flex items-center justify-between gap-2 flex-1">
-            <div className="flex flex-col">
-              <div className="text-[14px] font-semibold text-zinc-200">{tt('contentUi.xMonitor.wsMonitorEnabled')}</div>
-              {settingsCollapsed ? null : <div className="text-[11px] text-zinc-500">{tt('contentUi.xMonitor.wsMonitorEnabledDesc')}</div>}
-            </div>
+      <div className="px-4 py-2 border-b border-zinc-800/60">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+          <label className="flex items-center gap-2 text-[14px] font-semibold text-zinc-200">
             <input
               type="checkbox"
               className="h-4 w-4 accent-emerald-500"
@@ -871,59 +840,18 @@ export function XMonitorContent({
                 }
               }}
             />
+            {tt('contentUi.xMonitor.wsMonitorEnabled')}
           </label>
-          <button
-            type="button"
-            className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-            onClick={() => setSettingsCollapsed((prev) => !prev)}
-            aria-label={settingsCollapsed ? 'Expand monitor settings' : 'Collapse monitor settings'}
-          >
-            {settingsCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          </button>
+          <label className="flex items-center gap-2 text-[14px] text-zinc-300">
+            <input
+              type="checkbox"
+              className="h-3 w-3 accent-emerald-500"
+              checked={onlyWithTokens}
+              onChange={(e) => setOnlyWithTokens(e.target.checked)}
+            />
+            {tt('contentUi.xMonitor.filterOnlyWithTokens')}
+          </label>
         </div>
-        {settingsCollapsed ? null : (
-          <div className="flex items-center justify-between gap-2">
-            <label className="flex items-center gap-2 text-[14px] text-zinc-300">
-              <input
-                type="checkbox"
-                className="h-3 w-3 accent-emerald-500"
-                checked={onlyWithTokens}
-                onChange={(e) => setOnlyWithTokens(e.target.checked)}
-              />
-              {tt('contentUi.xMonitor.filterOnlyWithTokens')}
-            </label>
-            <div className="flex items-center gap-2 text-[12px] text-zinc-400">
-              <div>{tt('contentUi.xMonitor.tokenLimit')}</div>
-              <select
-                className="h-7 rounded-md border border-zinc-800 bg-zinc-950/30 px-2 text-[12px] text-zinc-200 outline-none"
-                value={String(tokenLimit)}
-                onChange={(e) => {
-                  const n = Number(e.target.value);
-                  const next = Number.isFinite(n) && n > 0 ? Math.floor(n) : 10;
-                  setTokenLimit(next);
-                }}
-              >
-                {[5, 10, 20, 50, 100, 200].map((n) => (
-                  <option key={n} value={String(n)}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        )}
-        {!settingsCollapsed && activeStrategyName ? (
-          <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-            <span>当前生效策略</span>
-            <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300">
-              {activeStrategyName}
-            </span>
-          </div>
-        ) : null}
-
-        {!settingsCollapsed && !resolvedSettings ? (
-          <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.statusSettingsNotLoaded')}</div>
-        ) : null}
       </div>
 
       <div className="dagobang-scrollbar max-h-[62vh] overflow-y-auto p-3">
@@ -933,8 +861,28 @@ export function XMonitorContent({
           <div className="px-2 py-8 text-center text-[14px] text-zinc-500">{tt('contentUi.xMonitor.empty')}</div>
         ) : (
           <div>
-            <div className="mb-2 px-1 text-[11px] text-zinc-500">
-              {tt('contentUi.xMonitor.pageStatus', [visiblePagedSignals.length, visibleSignals.length])}
+            <div className="mb-2 flex items-center justify-between gap-2 px-1">
+              <div className="text-[11px] text-zinc-500">
+                {tt('contentUi.xMonitor.pageStatus', [visiblePagedSignals.length, visibleSignals.length])}
+              </div>
+              <div className="flex items-center gap-2 text-[12px] text-zinc-400">
+                <div>{tt('contentUi.xMonitor.tokenLimit')}</div>
+                <select
+                  className="h-7 rounded-md border border-zinc-800 bg-zinc-950/30 px-2 text-[12px] text-zinc-200 outline-none"
+                  value={String(tokenLimit)}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    const next = Number.isFinite(n) && n > 0 ? Math.floor(n) : 10;
+                    setTokenLimit(next);
+                  }}
+                >
+                  {[5, 10, 20, 50, 100, 200].map((n) => (
+                    <option key={n} value={String(n)}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             {visiblePagedSignals.map((signal) => {
               const signalAtMs = getSignalAtMs(signal);

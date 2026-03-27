@@ -86,13 +86,6 @@ export class TokenAPI {
     }
 
     static async getTokenHolding(platform: string, chain: string, walletAddress: string, tokenAddress: string, opts?: { cacheTtlMs?: number }): Promise<string | null> {
-        if (platform === 'gmgn') {
-            const holding = await GmgnAPI.getTokenHolding(chain, walletAddress, tokenAddress) ?? null;
-            if (holding) {
-                return parseEther(holding).toString();
-            }
-        }
-
         const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
         return await this.getBalance(platform, chain, walletAddress, tokenAddressNormalized, opts);
     }

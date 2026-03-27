@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { formatShortAddress } from '@/utils/format';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
+import { t, type Locale } from '@/utils/i18n';
 
 export type TokenSniperOrderRecord = {
   id: string;
@@ -25,11 +26,11 @@ export type TokenSniperOrderRecord = {
   message?: string;
 };
 
-const orderActionLabel = (action: TokenSniperOrderRecord['action']) => {
-  if (action === 'matched') return '命中';
-  if (action === 'buy') return '买入成功';
-  if (action === 'sell_order_created') return '卖单创建';
-  return '买入失败';
+const orderActionLabel = (action: TokenSniperOrderRecord['action'], tt: (key: string, subs?: Array<string | number>) => string) => {
+  if (action === 'matched') return tt('contentUi.tokenSniper.orderHistory.actionMatched');
+  if (action === 'buy') return tt('contentUi.tokenSniper.orderHistory.actionBuySuccess');
+  if (action === 'sell_order_created') return tt('contentUi.tokenSniper.orderHistory.actionSellOrderCreated');
+  return tt('contentUi.tokenSniper.orderHistory.actionBuyFailed');
 };
 
 const orderActionClass = (action: TokenSniperOrderRecord['action']) => {
@@ -39,37 +40,62 @@ const orderActionClass = (action: TokenSniperOrderRecord['action']) => {
   return 'border-rose-500/40 bg-rose-500/15 text-rose-300';
 };
 
-const formatDateTime = (ms?: number) => {
+const formatDateTime = (ms: number | undefined, locale: Locale) => {
   const n = Number(ms || 0);
   if (!(n > 0)) return '-';
-  return new Date(n).toLocaleString('zh-CN', { hour12: false });
+  const dateLocale = locale === 'zh_CN' ? 'zh-CN' : locale === 'zh_TW' ? 'zh-TW' : 'en-US';
+  return new Date(n).toLocaleString(dateLocale, { hour12: false });
 };
 
 export function XTokenSniperOrderHistory(props: {
   orderHistory: TokenSniperOrderRecord[];
+  locale: Locale;
   siteInfo: SiteInfo | null;
   onClear: () => void;
 }) {
+  const tt = (key: string, subs?: Array<string | number>) => t(key, props.locale, subs);
   const [visibleCount, setVisibleCount] = useState(20);
   useEffect(() => {
     setVisibleCount((prev) => Math.max(20, Math.min(prev, props.orderHistory.length || 20)));
   }, [props.orderHistory.length]);
   const visibleHistory = useMemo(() => props.orderHistory.slice(0, visibleCount), [props.orderHistory, visibleCount]);
   const hasMore = props.orderHistory.length > visibleCount;
+  const exportJson = () => {
+    if (!props.orderHistory.length) return;
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const fileName = `token-sniper-order-history-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.json`;
+    const content = JSON.stringify(props.orderHistory, null, 2);
+    const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-950/35 p-3 space-y-2">
       <div className="flex items-center justify-between">
-        <div className="text-[13px] font-semibold text-zinc-100">订单历史</div>
+        <div className="text-[13px] font-semibold text-zinc-100">{tt('contentUi.tokenSniper.orderHistory.title')}</div>
         <div className="flex items-center gap-2">
-          <div className="text-[11px] text-zinc-500">共 {props.orderHistory.length} 条</div>
+          <div className="text-[11px] text-zinc-500">{tt('contentUi.tokenSniper.orderHistory.total', [props.orderHistory.length])}</div>
+          <button
+            type="button"
+            className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+            disabled={!props.orderHistory.length}
+            onClick={exportJson}
+          >
+            {tt('contentUi.tokenSniper.orderHistory.exportJson')}
+          </button>
           <button
             type="button"
             className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
             disabled={!props.orderHistory.length}
             onClick={props.onClear}
           >
-            清空
+            {tt('contentUi.tokenSniper.orderHistory.clear')}
           </button>
         </div>
       </div>
@@ -103,12 +129,12 @@ export function XTokenSniperOrderHistory(props: {
           return (
             <div key={item.id} className="rounded-md border border-zinc-800 bg-zinc-900/30 px-2 py-1 text-[11px] text-zinc-300 space-y-0.5">
               <div className="flex items-center gap-2">
-                <span className={`inline-flex shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${orderActionClass(item.action)}`}>{orderActionLabel(item.action)}</span>
+                <span className={`inline-flex shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${orderActionClass(item.action)}`}>{orderActionLabel(item.action, tt)}</span>
                 <button type="button" className="truncate font-medium text-zinc-100 hover:text-emerald-300" onClick={openTokenPage}>{tokenLabel}</button>
                 <span className="truncate text-zinc-500">{userLabel}</span>
                 <div className="ml-auto shrink-0 text-right text-[10px] leading-4 tabular-nums text-zinc-500">
-                  <div className="whitespace-nowrap">推文动作时间 {formatDateTime(signalActionMs)}</div>
-                  <div className="whitespace-nowrap">任务创建时间 {formatDateTime(taskCreatedMs)}</div>
+                  <div className="whitespace-nowrap">{tt('contentUi.tokenSniper.orderHistory.signalActionTime', [formatDateTime(signalActionMs, props.locale)])}</div>
+                  <div className="whitespace-nowrap">{tt('contentUi.tokenSniper.orderHistory.taskCreateTime', [formatDateTime(taskCreatedMs, props.locale)])}</div>
                 </div>
               </div>
               <div className="truncate text-[10px] text-zinc-500">
@@ -123,12 +149,12 @@ export function XTokenSniperOrderHistory(props: {
                   </button>
                 ) : signalTypeLabel}
                 {' · '}
-                挂{sellOrderLabel} · Tx {txHashLabel}{item.message ? ` · ${item.message}` : ''}
+                {tt('contentUi.tokenSniper.orderHistory.sellOrderAndTx', [sellOrderLabel, txHashLabel])}{item.message ? ` · ${item.message}` : ''}
               </div>
             </div>
           );
         })}
-        {!props.orderHistory.length ? <div className="text-[12px] text-zinc-500">暂无历史</div> : null}
+        {!props.orderHistory.length ? <div className="text-[12px] text-zinc-500">{tt('contentUi.tokenSniper.orderHistory.empty')}</div> : null}
       </div>
       {hasMore ? (
         <div className="flex justify-center">
@@ -137,7 +163,7 @@ export function XTokenSniperOrderHistory(props: {
             className="rounded-md border border-zinc-700 px-3 py-1 text-[11px] text-zinc-300 hover:border-zinc-500"
             onClick={() => setVisibleCount((prev) => prev + 20)}
           >
-            加载更多
+            {tt('contentUi.tokenSniper.orderHistory.loadMore')}
           </button>
         </div>
       ) : null}

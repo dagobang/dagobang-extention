@@ -5,6 +5,7 @@ import { TRADE_SUCCESS_SOUND_PRESETS, type Settings, type TokenSnipeTask, type T
 import { call } from '@/utils/messaging';
 import { defaultSettings } from '@/utils/defaults';
 import { type SiteInfo } from '@/utils/sites';
+import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { TOKEN_SNIPER_HISTORY_STORAGE_KEY, TOKEN_SNIPER_STATUS_STORAGE_KEY } from '@/services/tokenSniper/tokenSniperTrade';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import { XTokenSniperTaskList } from '@/entrypoints/content-ui/components/XTradePanel/XTokenSniperTaskList';
@@ -74,6 +75,8 @@ export function XTokenSniperContent({
     if (settings) return settings;
     return (window as any).__DAGOBANG_SETTINGS__ ?? null;
   }, [settings]);
+  const locale: Locale = normalizeLocale(resolvedSettings?.locale ?? 'zh_CN');
+  const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
   const normalized = useMemo(() => normalizeTokenSnipe(resolvedSettings), [resolvedSettings]);
   const normalizedKey = useMemo(() => JSON.stringify(normalized), [normalized]);
   const [enabled, setEnabled] = useState(normalized.enabled);
@@ -181,7 +184,7 @@ export function XTokenSniperContent({
       await call({ type: 'settings:set', settings: nextSettings } as const);
       return true;
     } catch (e: any) {
-      setError(String(e?.message || '保存失败'));
+      setError(String(e?.message || tt('contentUi.tokenSniper.errorSaveFailed')));
       return false;
     } finally {
       setSaving(false);
@@ -256,12 +259,12 @@ export function XTokenSniperContent({
   const saveTask = async () => {
     const tokenAddress = tokenAddressInput.trim();
     if (!isAddress(tokenAddress)) {
-      setError('代币地址不合法');
+      setError(tt('contentUi.tokenSniper.errorInvalidTokenAddress'));
       return;
     }
     const targetUrls = parseList(targetUrlsInput);
     if (!targetUrls.length) {
-      setError('请至少输入一个目标推文链接');
+      setError(tt('contentUi.tokenSniper.errorTargetUrlRequired'));
       return;
     }
     const selectedTweetTypes = tweetTypesInput.length
@@ -308,39 +311,35 @@ export function XTokenSniperContent({
   if (!active) return null;
 
   return (
-    <div className="px-4 py-3 space-y-3">
-      <div className="rounded-lg border border-zinc-800 bg-zinc-950/35 p-3">
-        <label className="flex items-center justify-between gap-2 text-[13px] text-zinc-200">
-          <span>是否启用代币狙击</span>
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-emerald-500"
-            checked={enabled}
-            disabled={!resolvedSettings || !isUnlocked || saving}
-            onChange={(e) => {
-              void saveEnabled(e.target.checked);
-            }}
-          />
-        </label>
-      </div>
+    <div className="px-4 py-2 space-y-2">
+      <label className="flex items-center gap-2 px-1 py-1 text-[13px] text-zinc-200">
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-emerald-500"
+          checked={enabled}
+          disabled={!resolvedSettings || !isUnlocked || saving}
+          onChange={(e) => {
+            void saveEnabled(e.target.checked);
+          }}
+        />
+        <span>{tt('contentUi.tokenSniper.enable')}</span>
+      </label>
 
-      <div className="rounded-lg border border-zinc-800 bg-zinc-950/35 p-2">
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            className={`rounded-md border px-3 py-1.5 text-[12px] ${activeTab === 'tasks' ? 'border-emerald-500/70 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500'}`}
-            onClick={() => setActiveTab('tasks')}
-          >
-            任务列表 ({tasks.length})
-          </button>
-          <button
-            type="button"
-            className={`rounded-md border px-3 py-1.5 text-[12px] ${activeTab === 'history' ? 'border-emerald-500/70 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500'}`}
-            onClick={() => setActiveTab('history')}
-          >
-            订单历史 ({orderHistory.length})
-          </button>
-        </div>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          className={`rounded-md border px-3 py-1.5 text-[12px] ${activeTab === 'tasks' ? 'border-emerald-500/70 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500'}`}
+          onClick={() => setActiveTab('tasks')}
+        >
+          {tt('contentUi.tokenSniper.taskListTab', [tasks.length])}
+        </button>
+        <button
+          type="button"
+          className={`rounded-md border px-3 py-1.5 text-[12px] ${activeTab === 'history' ? 'border-emerald-500/70 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500'}`}
+          onClick={() => setActiveTab('history')}
+        >
+          {tt('contentUi.tokenSniper.orderHistoryTab', [orderHistory.length])}
+        </button>
       </div>
 
       {activeTab === 'tasks' ? (
@@ -348,6 +347,7 @@ export function XTokenSniperContent({
           tasks={tasks}
           taskStatusById={taskStatusById}
           expandedTaskById={expandedTaskById}
+          locale={locale}
           siteInfo={siteInfo}
           canEdit={!saving && !!resolvedSettings && isUnlocked}
           onToggleExpand={(taskId) => setExpandedTaskById((prev) => ({ ...prev, [taskId]: !prev[taskId] }))}
@@ -359,6 +359,7 @@ export function XTokenSniperContent({
       ) : (
         <XTokenSniperOrderHistory
           orderHistory={orderHistory}
+          locale={locale}
           siteInfo={siteInfo}
           onClear={() => {
             void clearOrderHistory();
@@ -373,7 +374,7 @@ export function XTokenSniperContent({
           disabled={!resolvedSettings || !isUnlocked}
           onClick={openCreateModal}
         >
-          新增任务
+          {tt('contentUi.tokenSniper.addTask')}
         </button>
         <button
           type="button"
@@ -381,35 +382,35 @@ export function XTokenSniperContent({
           disabled={!resolvedSettings || !isUnlocked}
           onClick={() => setShowSettingsModal(true)}
         >
-          狙击设置
+          {tt('contentUi.tokenSniper.sniperSettings')}
         </button>
       </div>
 
       {showAddModal ? (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-[560px] rounded-lg border border-zinc-800 bg-zinc-950 p-3 space-y-2">
-            <div className="text-[13px] font-semibold text-zinc-100">{editTaskId ? '编辑任务' : '新增任务'}</div>
+            <div className="text-[13px] font-semibold text-zinc-100">{editTaskId ? tt('contentUi.tokenSniper.editTask') : tt('contentUi.tokenSniper.newTask')}</div>
             <div className="grid grid-cols-2 gap-2">
               <input
                 className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
-                placeholder="Token Address"
+                placeholder={tt('contentUi.tokenSniper.tokenAddressPlaceholder')}
                 value={tokenAddressInput}
                 onChange={(e) => setTokenAddressInput(e.target.value)}
               />
               <input
                 className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
-                placeholder="Token Symbol"
+                placeholder={tt('contentUi.tokenSniper.tokenSymbolPlaceholder')}
                 value={tokenSymbolInput}
                 onChange={(e) => setTokenSymbolInput(e.target.value)}
               />
               <input
                 className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
-                placeholder="Token Name"
+                placeholder={tt('contentUi.tokenSniper.tokenNamePlaceholder')}
                 value={tokenNameInput}
                 onChange={(e) => setTokenNameInput(e.target.value)}
               />
               <div className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5">
-                <div className="mb-1 text-[11px] text-zinc-400">推文类型（可多选）</div>
+                <div className="mb-1 text-[11px] text-zinc-400">{tt('contentUi.tokenSniper.tweetTypesMulti')}</div>
                 <div className="flex flex-wrap gap-2 text-[12px]">
                   {TWEET_TYPE_OPTIONS.map((item) => {
                     const checked = tweetTypesInput.includes(item.value);
@@ -429,7 +430,7 @@ export function XTokenSniperContent({
                             });
                           }}
                         />
-                        <span>{item.label}</span>
+                        <span>{tt(`contentUi.autoTradeStrategy.interaction.${item.label}`)}</span>
                       </label>
                     );
                   })}
@@ -438,24 +439,24 @@ export function XTokenSniperContent({
             </div>
             <textarea
               className="w-full min-h-[72px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
-              placeholder="目标推文链接（可多个）"
+              placeholder={tt('contentUi.tokenSniper.targetTweetUrlsPlaceholder')}
               value={targetUrlsInput}
               onChange={(e) => setTargetUrlsInput(e.target.value)}
             />
             <div className="grid grid-cols-3 gap-2 text-[12px]">
               <label className="flex items-center gap-2 text-zinc-300">
                 <input type="checkbox" className="h-4 w-4 accent-emerald-500" checked={autoBuyInput} onChange={(e) => setAutoBuyInput(e.target.checked)} />
-                自动买入
+                {tt('contentUi.tokenSniper.autoBuy')}
               </label>
               <input
                 className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
-                placeholder="买入BNB"
+                placeholder={tt('contentUi.tokenSniper.buyAmountBnbPlaceholder')}
                 value={buyAmountInput}
                 onChange={(e) => setBuyAmountInput(e.target.value)}
               />
               <label className="flex items-center gap-2 text-zinc-300">
                 <input type="checkbox" className="h-4 w-4 accent-emerald-500" checked={autoSellInput} onChange={(e) => setAutoSellInput(e.target.checked)} />
-                自动卖出
+                {tt('contentUi.tokenSniper.autoSell')}
               </label>
             </div>
             <div className="flex items-center justify-end gap-2">
@@ -467,7 +468,7 @@ export function XTokenSniperContent({
                   resetTaskForm();
                 }}
               >
-                取消
+                {tt('common.cancel')}
               </button>
               <button
                 type="button"
@@ -477,7 +478,7 @@ export function XTokenSniperContent({
                   void saveTask();
                 }}
               >
-                {editTaskId ? '保存修改' : '保存任务'}
+                {editTaskId ? tt('contentUi.tokenSniper.saveChanges') : tt('contentUi.tokenSniper.saveTask')}
               </button>
             </div>
           </div>
@@ -487,14 +488,14 @@ export function XTokenSniperContent({
       {showSettingsModal ? (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-[560px] rounded-lg border border-zinc-800 bg-zinc-950 p-3 space-y-3">
-            <div className="text-[13px] font-semibold text-zinc-100">狙击设置</div>
+            <div className="text-[13px] font-semibold text-zinc-100">{tt('contentUi.tokenSniper.settingsTitle')}</div>
             <div className="space-y-1">
-              <div className="text-[12px] text-zinc-400">目标用户（可多个，逗号/空格/换行分隔）</div>
+              <div className="text-[12px] text-zinc-400">{tt('contentUi.tokenSniper.targetUsersHint')}</div>
               <textarea
                 className="w-full min-h-[72px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
                 value={targetUsersInput}
                 onChange={(e) => setTargetUsersInput(e.target.value)}
-                placeholder="@elonmusk"
+                placeholder={tt('contentUi.tokenSniper.targetUsersPlaceholder')}
               />
             </div>
             <div className="flex items-center justify-end gap-2">
@@ -503,7 +504,7 @@ export function XTokenSniperContent({
                 className="rounded-md border border-zinc-700 px-3 py-1.5 text-[12px] text-zinc-200"
                 onClick={() => setShowSettingsModal(false)}
               >
-                取消
+                {tt('common.cancel')}
               </button>
               <button
                 type="button"
@@ -513,7 +514,7 @@ export function XTokenSniperContent({
                   void saveSettings();
                 }}
               >
-                保存设置
+                {tt('contentUi.tokenSniper.saveSettings')}
               </button>
             </div>
           </div>
