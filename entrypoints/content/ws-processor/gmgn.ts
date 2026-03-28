@@ -215,6 +215,65 @@ const getTwitterFilters = () => {
 
 const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';
 const TWITTER_UNIFIED_CACHE_LIMIT = 50;
+const TWITTER_UNIFIED_CACHE_PERSIST_DEBOUNCE_MS = 5000;
+let pendingUnifiedTwitterCachePayload: { list: UnifiedTwitterSignal[]; ts: number } | null = null;
+let pendingUnifiedTwitterCacheTimer: number | null = null;
+
+const mergeUnifiedTwitterCacheList = (base: UnifiedTwitterSignal[], incoming: UnifiedTwitterSignal[]): UnifiedTwitterSignal[] => {
+  const toOrderTs = (signal: UnifiedTwitterSignal): number => {
+    const ts = typeof signal.ts === 'number' && Number.isFinite(signal.ts) ? signal.ts : 0;
+    const recv = typeof signal.receivedAtMs === 'number' && Number.isFinite(signal.receivedAtMs) ? signal.receivedAtMs : 0;
+    return Math.max(ts, recv);
+  };
+  const all = [...base, ...incoming];
+  const byId = new Map<string, UnifiedTwitterSignal>();
+  for (const s of all) {
+    if (!s || typeof s.id !== 'string') continue;
+    const prev = byId.get(s.id);
+    if (!prev || toOrderTs(s) >= toOrderTs(prev)) byId.set(s.id, s);
+  }
+  const byEvent = new Map<string, UnifiedTwitterSignal>();
+  for (const s of byId.values()) {
+    const key = s.eventId ? `${s.site}:${s.eventId}` : `id:${s.id}`;
+    const prev = byEvent.get(key);
+    if (!prev || toOrderTs(s) >= toOrderTs(prev)) byEvent.set(key, s);
+  }
+  return Array.from(byEvent.values())
+    .sort((a, b) => toOrderTs(a) - toOrderTs(b))
+    .slice(-TWITTER_UNIFIED_CACHE_LIMIT);
+};
+
+const flushUnifiedTwitterCachePersist = () => {
+  const payload = pendingUnifiedTwitterCachePayload;
+  if (!payload) return;
+  pendingUnifiedTwitterCachePayload = null;
+  try {
+    let persistedList: UnifiedTwitterSignal[] = [];
+    try {
+      const raw = window.localStorage.getItem(TWITTER_UNIFIED_CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.list)) {
+          persistedList = (parsed.list as UnifiedTwitterSignal[]).filter((x) => x && typeof (x as any).id === 'string');
+        }
+      }
+    } catch {
+    }
+    const mergedList = mergeUnifiedTwitterCacheList(persistedList, payload.list);
+    const mergedPayload = { list: mergedList, ts: Date.now() };
+    (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = mergedPayload;
+    window.localStorage.setItem(TWITTER_UNIFIED_CACHE_KEY, JSON.stringify(mergedPayload));
+  } catch {
+  }
+};
+
+const scheduleUnifiedTwitterCachePersist = () => {
+  if (pendingUnifiedTwitterCacheTimer != null) return;
+  pendingUnifiedTwitterCacheTimer = window.setTimeout(() => {
+    pendingUnifiedTwitterCacheTimer = null;
+    flushUnifiedTwitterCachePersist();
+  }, TWITTER_UNIFIED_CACHE_PERSIST_DEBOUNCE_MS);
+};
 
 const loadUnifiedTwitterCache = () => {
   try {
@@ -231,10 +290,8 @@ const saveUnifiedTwitterCache = (list: UnifiedTwitterSignal[]) => {
   const next = list.slice(-TWITTER_UNIFIED_CACHE_LIMIT);
   const payload = { list: next, ts: Date.now() };
   (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = payload;
-  try {
-    window.localStorage.setItem(TWITTER_UNIFIED_CACHE_KEY, JSON.stringify(payload));
-  } catch {
-  }
+  pendingUnifiedTwitterCachePayload = payload;
+  scheduleUnifiedTwitterCachePersist();
 };
 
 const getSignalUser = (signal: UnifiedTwitterSignal): string | null => {
@@ -754,12 +811,154 @@ const emitTrenchesTokenEvent = (tokenData: any, receivedAtMs: number) => {
 export function initGmgnWsMonitor(options: {
   call: <T extends BgRequest>(req: T) => Promise<BgResponse<T>>;
 }): WsSiteMonitor {
+  const SIGNAL_FORWARD_WINDOW_MS = 80;
+  const SIGNAL_FORWARD_PROBE_WINDOW_MS = 3000;
+  type SignalForwardDedupeMode = 'strict' | 'balanced' | 'aggressive';
+  type SignalForwardProbeWindow = {
+    windowStartAt: number;
+    received: number;
+    dedupeOverwrite: number;
+    enqueued: number;
+    flushedSignals: number;
+    flushes: number;
+    callOk: number;
+    callFail: number;
+    callTotalMs: number;
+    callMaxMs: number;
+  };
   const cached = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
   if (cached) (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = cached;
   refreshUnifiedTwitterCache();
   const translationsByEventId = new Map<string, TwitterTranslationPatch>();
   const signalsByEventId = new Map<string, { signal: UnifiedTwitterSignal; updatedAtMs: number }>();
   const tokenByAddress = new Map<string, TokenSnapshot>();
+  const pendingForwardByChannel = new Map<string, Map<string, UnifiedTwitterSignal>>();
+  const forwardTimerByChannel = new Map<string, number>();
+  const forwardQueueByChannel = new Map<string, Promise<void>>();
+  const createSignalForwardProbeWindow = (now: number): SignalForwardProbeWindow => ({
+    windowStartAt: now,
+    received: 0,
+    dedupeOverwrite: 0,
+    enqueued: 0,
+    flushedSignals: 0,
+    flushes: 0,
+    callOk: 0,
+    callFail: 0,
+    callTotalMs: 0,
+    callMaxMs: 0,
+  });
+  let signalForwardProbeWindow = createSignalForwardProbeWindow(Date.now());
+
+  const resolveSignalForwardDedupeMode = (): SignalForwardDedupeMode => {
+    const settingsRaw = ((window as any).__DAGOBANG_SETTINGS__ ?? null) as any;
+    const settingsMode = typeof settingsRaw?.autoTrade?.signalForwardDedupeMode === 'string'
+      ? settingsRaw.autoTrade.signalForwardDedupeMode.trim().toLowerCase()
+      : '';
+    const localOverride = (() => {
+      try {
+        const raw = window.localStorage.getItem('dagobang_signal_forward_dedupe_mode_v1');
+        return typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+      } catch {
+        return '';
+      }
+    })();
+    const mode = localOverride || settingsMode;
+    if (mode === 'strict') return 'strict';
+    if (mode === 'aggressive') return 'aggressive';
+    return 'balanced';
+  };
+
+  const flushSignalForwardProbe = (now: number, dedupeMode: SignalForwardDedupeMode) => {
+    const durationMs = now - signalForwardProbeWindow.windowStartAt;
+    if (durationMs < SIGNAL_FORWARD_PROBE_WINDOW_MS) return;
+    const output = {
+      ...signalForwardProbeWindow,
+      durationMs,
+      dedupeMode,
+      dedupeRate: signalForwardProbeWindow.received > 0
+        ? signalForwardProbeWindow.dedupeOverwrite / signalForwardProbeWindow.received
+        : 0,
+      forwardRate: signalForwardProbeWindow.received > 0
+        ? signalForwardProbeWindow.flushedSignals / signalForwardProbeWindow.received
+        : 0,
+      avgCallMs: signalForwardProbeWindow.callOk + signalForwardProbeWindow.callFail > 0
+        ? signalForwardProbeWindow.callTotalMs / (signalForwardProbeWindow.callOk + signalForwardProbeWindow.callFail)
+        : 0,
+    };
+    (window as any).__DAGOBANG_SIGNAL_FORWARD_PROBE__ = output;
+    window.postMessage({ type: 'DAGOBANG_SIGNAL_FORWARD_PROBE', payload: output }, '*');
+    signalForwardProbeWindow = createSignalForwardProbeWindow(now);
+  };
+
+  const getSignalForwardKey = (signal: UnifiedTwitterSignal, dedupeMode: SignalForwardDedupeMode): string => {
+    const values = [signal.id, signal.eventId, signal.tweetId, signal.quotedTweetId]
+      .map((x) => (typeof x === 'string' ? x.trim() : ''))
+      .filter(Boolean);
+    if (values.length) return `${dedupeMode}:id:${values[0]}`;
+    const tokenKey = Array.isArray(signal.tokens)
+      ? signal.tokens
+        .map((t) => (typeof t?.tokenAddress === 'string' ? t.tokenAddress.trim().toLowerCase() : ''))
+        .find(Boolean) ?? ''
+      : '';
+    const userKey = typeof signal.userScreen === 'string' ? signal.userScreen.trim().toLowerCase() : '';
+    const typeKey = typeof signal.tweetType === 'string' ? signal.tweetType.trim().toLowerCase() : '';
+    const tsKey = typeof signal.ts === 'number' && Number.isFinite(signal.ts) ? String(signal.ts) : '';
+    if (dedupeMode === 'strict') return `strict:fallback:${tokenKey}:${userKey}:${typeKey}:${tsKey}`;
+    if (dedupeMode === 'aggressive') return `aggressive:fallback:${tokenKey}:${userKey}:${typeKey}`;
+    const tsBucket = tsKey ? String(Math.floor(Number(tsKey) / SIGNAL_FORWARD_WINDOW_MS)) : '';
+    return `balanced:fallback:${tokenKey}:${userKey}:${typeKey}:${tsBucket}`;
+  };
+
+  const flushForwardChannel = (channel: string) => {
+    const map = pendingForwardByChannel.get(channel);
+    if (!map || !map.size) return;
+    const batch = Array.from(map.values());
+    pendingForwardByChannel.delete(channel);
+    signalForwardProbeWindow.flushes += 1;
+    signalForwardProbeWindow.flushedSignals += batch.length;
+    const prevQueue = forwardQueueByChannel.get(channel) ?? Promise.resolve();
+    const nextQueue = prevQueue
+      .then(async () => {
+        for (const signal of batch) {
+          const startedAt = performance.now();
+          let ok = true;
+          await options.call({ type: 'twitter:signal', payload: signal }).catch(() => {
+            ok = false;
+          });
+          const elapsed = performance.now() - startedAt;
+          signalForwardProbeWindow.callTotalMs += elapsed;
+          if (elapsed > signalForwardProbeWindow.callMaxMs) signalForwardProbeWindow.callMaxMs = elapsed;
+          if (ok) signalForwardProbeWindow.callOk += 1;
+          else signalForwardProbeWindow.callFail += 1;
+        }
+      })
+      .catch(() => { });
+    forwardQueueByChannel.set(channel, nextQueue);
+  };
+
+  const enqueueSignalForward = (channel: string, signal: UnifiedTwitterSignal) => {
+    const dedupeMode = resolveSignalForwardDedupeMode();
+    const now = Date.now();
+    const normalizedChannel = channel || 'twitter_monitor_basic';
+    let map = pendingForwardByChannel.get(normalizedChannel);
+    if (!map) {
+      map = new Map<string, UnifiedTwitterSignal>();
+      pendingForwardByChannel.set(normalizedChannel, map);
+    }
+    const key = getSignalForwardKey(signal, dedupeMode);
+    signalForwardProbeWindow.received += 1;
+    if (map.has(key)) signalForwardProbeWindow.dedupeOverwrite += 1;
+    else signalForwardProbeWindow.enqueued += 1;
+    map.set(key, signal);
+    flushSignalForwardProbe(now, dedupeMode);
+    if (forwardTimerByChannel.has(normalizedChannel)) return;
+    const timer = window.setTimeout(() => {
+      forwardTimerByChannel.delete(normalizedChannel);
+      flushForwardChannel(normalizedChannel);
+      flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
+    }, SIGNAL_FORWARD_WINDOW_MS);
+    forwardTimerByChannel.set(normalizedChannel, timer);
+  };
 
   let wsStatus: WsStatus = {
     connected: false,
@@ -887,7 +1086,7 @@ export function initGmgnWsMonitor(options: {
         pushLog('signal', `${summarizeTokensForLog(merged)}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
         emitStatus();
         if (signalHasTokens(merged) && merged.tweetType !== 'delete_post') {
-          void options.call({ type: 'twitter:signal', payload: merged }).catch(() => { });
+          enqueueSignalForward(channel, merged);
         }
         continue;
       }
@@ -950,7 +1149,7 @@ export function initGmgnWsMonitor(options: {
       pushLog('signal', `${summarizeTokensForLog(signal)}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
       emitStatus();
       if (signalHasTokens(signal) && signal.tweetType !== 'delete_post') {
-        void options.call({ type: 'twitter:signal', payload: signal }).catch(() => { });
+        enqueueSignalForward(channel, signal);
       }
     }
     emitStatus();
@@ -1121,7 +1320,7 @@ export function initGmgnWsMonitor(options: {
       if (!has) continue;
       if (isWsMonitorEnabled()) {
         window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-        if (signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: s });
+        if (signalHasTokens(s) && s.tweetType !== 'delete_post') enqueueSignalForward('twitter_monitor_token', s);
       }
     }
   };
@@ -1180,7 +1379,7 @@ export function initGmgnWsMonitor(options: {
       if (!hit) continue;
       if (isWsMonitorEnabled()) {
         window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-        if (enabled && signalHasTokens(s) && s.tweetType !== 'delete_post') void options.call({ type: 'twitter:signal', payload: s });
+        if (enabled && signalHasTokens(s) && s.tweetType !== 'delete_post') enqueueSignalForward('twitter_monitor_token', s);
       }
     }
   };
@@ -1298,13 +1497,22 @@ export function initGmgnWsMonitor(options: {
     if (!data || data.type !== 'DAGOBANG_WS_PACKET') return;
     if (data.site !== 'gmgn' || data.direction !== 'receive') return;
     const channel = normalizeChannel(data.channel);
-    const payload = data.payload ?? data.raw ?? data;
+    const payload = data.payload ?? data;
     const now = Date.now();
     const processor = CHANNEL_PROCESSORS[channel] ?? handleOtherChannel;
     processor(data, channel, payload, now);
   };
 
   window.addEventListener('message', onMessage);
+  const onPageHide = () => {
+    if (pendingUnifiedTwitterCacheTimer != null) {
+      window.clearTimeout(pendingUnifiedTwitterCacheTimer);
+      pendingUnifiedTwitterCacheTimer = null;
+    }
+    flushUnifiedTwitterCachePersist();
+  };
+  window.addEventListener('pagehide', onPageHide);
+  window.addEventListener('beforeunload', onPageHide);
 
   return {
     setQuickBuySettings: (_settings) => {
@@ -1312,7 +1520,18 @@ export function initGmgnWsMonitor(options: {
     emitStatus,
     dispose: () => {
       window.clearInterval(statusTimer);
+      for (const timer of forwardTimerByChannel.values()) {
+        window.clearTimeout(timer);
+      }
+      forwardTimerByChannel.clear();
+      for (const channel of pendingForwardByChannel.keys()) {
+        flushForwardChannel(channel);
+      }
+      flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
       window.removeEventListener('message', onMessage);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onPageHide);
+      onPageHide();
     },
   };
 }

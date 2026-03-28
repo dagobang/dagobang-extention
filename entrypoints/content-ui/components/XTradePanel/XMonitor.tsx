@@ -33,6 +33,24 @@ type XSniperBuyRecordLite = {
   signalTweetId?: string;
 };
 
+type SignalForwardProbe = {
+  windowStartAt: number;
+  durationMs: number;
+  dedupeMode: 'strict' | 'balanced' | 'aggressive';
+  received: number;
+  dedupeOverwrite: number;
+  enqueued: number;
+  flushedSignals: number;
+  flushes: number;
+  callOk: number;
+  callFail: number;
+  callTotalMs: number;
+  callMaxMs: number;
+  dedupeRate: number;
+  forwardRate: number;
+  avgCallMs: number;
+};
+
 const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
 const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
 const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -548,6 +566,29 @@ export function XMonitorContent({
   useEffect(() => {
     setWsMonitorEnabled(resolvedSettings?.autoTrade?.wsMonitorEnabled !== false);
   }, [resolvedSettings?.autoTrade?.wsMonitorEnabled]);
+  const [signalForwardProbe, setSignalForwardProbe] = useState<SignalForwardProbe | null>(() => {
+    const current = (window as any).__DAGOBANG_SIGNAL_FORWARD_PROBE__;
+    return current && typeof current === 'object' ? (current as SignalForwardProbe) : null;
+  });
+
+  useEffect(() => {
+    if (!active) return;
+    const applyPayload = (payload: any) => {
+      if (!payload || typeof payload !== 'object') return;
+      if (typeof payload.received !== 'number') return;
+      setSignalForwardProbe(payload as SignalForwardProbe);
+    };
+    applyPayload((window as any).__DAGOBANG_SIGNAL_FORWARD_PROBE__);
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as any;
+      if (!data || data.type !== 'DAGOBANG_SIGNAL_FORWARD_PROBE') return;
+      applyPayload(data.payload);
+    };
+    window.addEventListener('message', onMessage);
+    return () => {
+      window.removeEventListener('message', onMessage);
+    };
+  }, [active]);
 
   const twitterSnipeSource = (resolvedSettings as any)?.autoTrade?.twitterSnipe ?? null;
   const twitterSnipeStrategy = useMemo(
@@ -771,20 +812,41 @@ export function XMonitorContent({
   }, []);
 
   useEffect(() => {
-    const onSignal = (e: Event) => {
-      const signal = (e as CustomEvent<any>).detail as UnifiedTwitterSignal | null;
-      if (!signal || typeof signal !== 'object') return;
-      if (typeof (signal as any).id !== 'string') return;
+    const signalUiWindowMs = 80;
+    const pendingSignals: UnifiedTwitterSignal[] = [];
+    let flushTimer: number | null = null;
+    const flushSignals = () => {
+      flushTimer = null;
+      if (!pendingSignals.length) return;
+      const batch = pendingSignals.splice(0, pendingSignals.length);
       const map = signalsRef.current;
-      map.set(signal.id, signal);
+      for (const signal of batch) {
+        map.set(signal.id, signal);
+      }
       const nextIds = Array.from(map.values())
         .sort((a, b) => getSignalAtMs(b) - getSignalAtMs(a))
         .slice(0, SIGNAL_CACHE_LIMIT)
         .map((x) => x.id);
       setSignalIds(nextIds);
     };
+    const onSignal = (e: Event) => {
+      const signal = (e as CustomEvent<any>).detail as UnifiedTwitterSignal | null;
+      if (!signal || typeof signal !== 'object') return;
+      if (typeof (signal as any).id !== 'string') return;
+      pendingSignals.push(signal);
+      if (flushTimer == null) {
+        flushTimer = window.setTimeout(flushSignals, signalUiWindowMs);
+      }
+    };
     window.addEventListener('dagobang-twitter-signal' as any, onSignal as any);
-    return () => window.removeEventListener('dagobang-twitter-signal' as any, onSignal as any);
+    return () => {
+      window.removeEventListener('dagobang-twitter-signal' as any, onSignal as any);
+      if (flushTimer != null) {
+        window.clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      flushSignals();
+    };
   }, []);
 
   const signalList = useMemo(() => {
@@ -806,6 +868,25 @@ export function XMonitorContent({
   }, [visibleSignals, signalPage]);
 
   const hasMoreSignals = visiblePagedSignals.length < visibleSignals.length;
+  const signalForwardProbeText = useMemo(() => {
+    if (!signalForwardProbe) return '';
+    const dedupe = `${(Math.max(0, Math.min(1, signalForwardProbe.dedupeRate)) * 100).toFixed(1)}%`;
+    const forward = `${signalForwardProbe.flushedSignals}/${signalForwardProbe.received}`;
+    const avgMs = Number.isFinite(signalForwardProbe.avgCallMs) ? signalForwardProbe.avgCallMs.toFixed(1) : '0.0';
+    const maxMs = Number.isFinite(signalForwardProbe.callMaxMs) ? signalForwardProbe.callMaxMs.toFixed(1) : '0.0';
+    return `${signalForwardProbe.dedupeMode} 去重 ${dedupe} · 转发 ${forward} · 调用 ${avgMs}/${maxMs}ms`;
+  }, [signalForwardProbe]);
+  const signalForwardProbeClassName = useMemo(() => {
+    if (!signalForwardProbe) return 'text-zinc-500';
+    const fail = signalForwardProbe.callFail;
+    const avg = signalForwardProbe.avgCallMs;
+    const max = signalForwardProbe.callMaxMs;
+    const received = signalForwardProbe.received;
+    const dedupeRate = signalForwardProbe.dedupeRate;
+    if (fail > 0 || avg >= 120 || max >= 300) return 'text-rose-400';
+    if (avg >= 60 || max >= 160 || (received >= 20 && dedupeRate <= 0.03)) return 'text-amber-400';
+    return 'text-emerald-400';
+  }, [signalForwardProbe]);
 
   if (!active) return null;
 
@@ -852,6 +933,9 @@ export function XMonitorContent({
             {tt('contentUi.xMonitor.filterOnlyWithTokens')}
           </label>
         </div>
+        {signalForwardProbeText ? (
+          <div className={`mt-1 text-[11px] ${signalForwardProbeClassName}`}>{signalForwardProbeText}</div>
+        ) : null}
       </div>
 
       <div className="dagobang-scrollbar max-h-[62vh] overflow-y-auto p-3">

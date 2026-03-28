@@ -322,28 +322,30 @@ export function XSniperContent({
     readLatestFromCache();
 
     if (!wsMonitorEnabled) return;
+    const signalUiWindowMs = 80;
+    const pendingSignals: Array<{ tokens: any[]; signalTs: number }> = [];
+    let flushTimer: number | null = null;
 
-    const onSignal = (e: Event) => {
-      const signal = (e as CustomEvent<any>).detail as any;
-      if (!signal || typeof signal !== 'object') return;
-      const tokens = Array.isArray(signal.tokens) ? (signal.tokens as any[]) : [];
-      if (!tokens.length) return;
-      const signalTs = typeof signal.ts === 'number' ? signal.ts : 0;
-
+    const flushPendingSignals = () => {
+      flushTimer = null;
+      if (!pendingSignals.length) return;
+      const batch = pendingSignals.splice(0, pendingSignals.length);
       setAthMcapByAddr((prev) => {
         let changed = false;
         const next = { ...prev };
-        for (const t of tokens) {
-          const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
-          if (!addr) continue;
-          const key = addr.toLowerCase();
-          const mcap = typeof t?.marketCapUsd === 'number' && Number.isFinite(t.marketCapUsd) && t.marketCapUsd >= 3000 ? t.marketCapUsd : null;
-          if (mcap == null) continue;
-          const cur = next[key];
-          const merged = cur != null && Number.isFinite(cur) ? Math.max(cur, mcap) : mcap;
-          if (merged !== cur) {
-            next[key] = merged;
-            changed = true;
+        for (const entry of batch) {
+          for (const t of entry.tokens) {
+            const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
+            if (!addr) continue;
+            const key = addr.toLowerCase();
+            const mcap = typeof t?.marketCapUsd === 'number' && Number.isFinite(t.marketCapUsd) && t.marketCapUsd >= 3000 ? t.marketCapUsd : null;
+            if (mcap == null) continue;
+            const cur = next[key];
+            const merged = cur != null && Number.isFinite(cur) ? Math.max(cur, mcap) : mcap;
+            if (merged !== cur) {
+              next[key] = merged;
+              changed = true;
+            }
           }
         }
         return changed ? next : prev;
@@ -352,30 +354,51 @@ export function XSniperContent({
       setLatestTokenByAddr((prev) => {
         let changed = false;
         const next = { ...prev };
-        for (const t of tokens) {
-          const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
-          if (!addr) continue;
-          const key = addr.toLowerCase();
-          const updatedAtMs = typeof t?.updatedAtMs === 'number' ? t.updatedAtMs : signalTs;
-          const cur = next[key];
-          if (cur && typeof cur.updatedAtMs === 'number' && updatedAtMs <= cur.updatedAtMs) continue;
-          next[key] = {
-            updatedAtMs,
-            marketCapUsd: typeof t?.marketCapUsd === 'number' ? t.marketCapUsd : undefined,
-            priceUsd: typeof t?.priceUsd === 'number' ? t.priceUsd : undefined,
-            holders: typeof t?.holders === 'number' ? t.holders : undefined,
-            devHoldPercent: typeof t?.devHoldPercent === 'number' ? t.devHoldPercent : undefined,
-            devHasSold: typeof t?.devHasSold === 'boolean' ? t.devHasSold : undefined,
-            kol: typeof t?.kol === 'number' ? t.kol : undefined,
-          };
-          changed = true;
+        for (const entry of batch) {
+          for (const t of entry.tokens) {
+            const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
+            if (!addr) continue;
+            const key = addr.toLowerCase();
+            const updatedAtMs = typeof t?.updatedAtMs === 'number' ? t.updatedAtMs : entry.signalTs;
+            const cur = next[key];
+            if (cur && typeof cur.updatedAtMs === 'number' && updatedAtMs <= cur.updatedAtMs) continue;
+            next[key] = {
+              updatedAtMs,
+              marketCapUsd: typeof t?.marketCapUsd === 'number' ? t.marketCapUsd : undefined,
+              priceUsd: typeof t?.priceUsd === 'number' ? t.priceUsd : undefined,
+              holders: typeof t?.holders === 'number' ? t.holders : undefined,
+              devHoldPercent: typeof t?.devHoldPercent === 'number' ? t.devHoldPercent : undefined,
+              devHasSold: typeof t?.devHasSold === 'boolean' ? t.devHasSold : undefined,
+              kol: typeof t?.kol === 'number' ? t.kol : undefined,
+            };
+            changed = true;
+          }
         }
         return changed ? next : prev;
       });
     };
 
+    const onSignal = (e: Event) => {
+      const signal = (e as CustomEvent<any>).detail as any;
+      if (!signal || typeof signal !== 'object') return;
+      const tokens = Array.isArray(signal.tokens) ? (signal.tokens as any[]) : [];
+      if (!tokens.length) return;
+      const signalTs = typeof signal.ts === 'number' ? signal.ts : 0;
+      pendingSignals.push({ tokens, signalTs });
+      if (flushTimer == null) {
+        flushTimer = window.setTimeout(flushPendingSignals, signalUiWindowMs);
+      }
+    };
+
     window.addEventListener('dagobang-twitter-signal' as any, onSignal as any);
-    return () => window.removeEventListener('dagobang-twitter-signal' as any, onSignal as any);
+    return () => {
+      window.removeEventListener('dagobang-twitter-signal' as any, onSignal as any);
+      if (flushTimer != null) {
+        window.clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      flushPendingSignals();
+    };
   }, [active, wsMonitorEnabled]);
 
   const twitterSnipe = draft?.twitterSnipe;

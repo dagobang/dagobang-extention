@@ -113,94 +113,83 @@ export default defineContentScript({
     const WS_MONITOR_ENABLED_KEY = 'dagobang_ws_monitor_enabled_v1';
     const WS_BRIDGE_PROBE_ENABLED_KEY = 'dagobang_ws_bridge_probe_enabled_v1';
     let wsCaptureEnabledCache = true;
-    let wsCaptureEnabledCacheExpireAt = 0;
     let wsBridgeProbeEnabledCache = false;
-    let wsBridgeProbeEnabledCacheExpireAt = 0;
+    let wsFlagCacheInitialized = false;
     type WsBridgeProbeWindow = {
-      scope: 'main';
       windowStartAt: number;
       packets: number;
-      mainPackets: number;
-      workerForwardPackets: number;
-      receivePackets: number;
-      sendPackets: number;
       parseAttempts: number;
-      parseSuccess: number;
       parseFail: number;
-      postCount: number;
-      textBytes: number;
       handleTotalMs: number;
       handleMaxMs: number;
-      lastAt: number;
-      gmgnPackets: number;
-      axiomPackets: number;
     };
     const createWsBridgeProbeWindow = (now: number): WsBridgeProbeWindow => ({
-      scope: 'main',
       windowStartAt: now,
       packets: 0,
-      mainPackets: 0,
-      workerForwardPackets: 0,
-      receivePackets: 0,
-      sendPackets: 0,
       parseAttempts: 0,
-      parseSuccess: 0,
       parseFail: 0,
-      postCount: 0,
-      textBytes: 0,
       handleTotalMs: 0,
       handleMaxMs: 0,
-      lastAt: now,
-      gmgnPackets: 0,
-      axiomPackets: 0,
     });
     let wsBridgeProbeWindow = createWsBridgeProbeWindow(Date.now());
 
-    function isWsCaptureEnabled(): boolean {
-      const now = Date.now();
-      if (now < wsCaptureEnabledCacheExpireAt) return wsCaptureEnabledCache;
+    const applyWsFlagFromStorage = (key: string, raw: string | null) => {
+      if (key === WS_MONITOR_ENABLED_KEY) {
+        if (raw === '0') wsCaptureEnabledCache = false;
+        else if (raw === '1') wsCaptureEnabledCache = true;
+        else wsCaptureEnabledCache = true;
+      }
+      if (key === WS_BRIDGE_PROBE_ENABLED_KEY) {
+        wsBridgeProbeEnabledCache = raw === '1';
+      }
+    };
+
+    const readWsFlagsFromStorage = () => {
       try {
-        const raw = window.localStorage.getItem(WS_MONITOR_ENABLED_KEY);
-        if (raw === '0') {
-          wsCaptureEnabledCache = false;
-          wsCaptureEnabledCacheExpireAt = now + 3000;
-          return false;
-        }
-        if (raw === '1') {
-          wsCaptureEnabledCache = true;
-          wsCaptureEnabledCacheExpireAt = now + 3000;
-          return true;
-        }
+        applyWsFlagFromStorage(WS_MONITOR_ENABLED_KEY, window.localStorage.getItem(WS_MONITOR_ENABLED_KEY));
+        applyWsFlagFromStorage(WS_BRIDGE_PROBE_ENABLED_KEY, window.localStorage.getItem(WS_BRIDGE_PROBE_ENABLED_KEY));
       } catch {
       }
-      wsCaptureEnabledCache = true;
-      wsCaptureEnabledCacheExpireAt = now + 3000;
-      return true;
+    };
+
+    const ensureWsFlagCache = () => {
+      if (wsFlagCacheInitialized) return;
+      readWsFlagsFromStorage();
+      window.addEventListener('storage', (event) => {
+        if (!event || typeof event.key !== 'string') return;
+        if (event.key !== WS_MONITOR_ENABLED_KEY && event.key !== WS_BRIDGE_PROBE_ENABLED_KEY) return;
+        applyWsFlagFromStorage(event.key, event.newValue);
+      });
+      try {
+        const rawSetItem = window.localStorage.setItem.bind(window.localStorage);
+        window.localStorage.setItem = ((key: string, value: string) => {
+          rawSetItem(key, value);
+          if (key === WS_MONITOR_ENABLED_KEY || key === WS_BRIDGE_PROBE_ENABLED_KEY) {
+            applyWsFlagFromStorage(key, value);
+          }
+        }) as Storage['setItem'];
+        const rawRemoveItem = window.localStorage.removeItem.bind(window.localStorage);
+        window.localStorage.removeItem = ((key: string) => {
+          rawRemoveItem(key);
+          if (key === WS_MONITOR_ENABLED_KEY || key === WS_BRIDGE_PROBE_ENABLED_KEY) {
+            applyWsFlagFromStorage(key, null);
+          }
+        }) as Storage['removeItem'];
+      } catch {
+      }
+      wsFlagCacheInitialized = true;
+    };
+
+    function isWsCaptureEnabled(): boolean {
+      if (!wsFlagCacheInitialized) ensureWsFlagCache();
+      return wsCaptureEnabledCache;
     }
 
     function isWsBridgeProbeEnabled(): boolean {
-      const now = Date.now();
-      if (now < wsBridgeProbeEnabledCacheExpireAt) return wsBridgeProbeEnabledCache;
-      try {
-        const raw = window.localStorage.getItem(WS_BRIDGE_PROBE_ENABLED_KEY);
-        if (raw === '1') {
-          wsBridgeProbeEnabledCache = true;
-          wsBridgeProbeEnabledCacheExpireAt = now + 3000;
-          return true;
-        }
-      } catch {
-      }
-      wsBridgeProbeEnabledCache = false;
-      wsBridgeProbeEnabledCacheExpireAt = now + 3000;
-      return false;
+      if (!wsFlagCacheInitialized) ensureWsFlagCache();
+      return wsBridgeProbeEnabledCache;
     }
-
-    function estimateTextBytes(raw: unknown): number {
-      if (typeof raw === 'string') return raw.length;
-      if (raw instanceof ArrayBuffer) return raw.byteLength;
-      if (ArrayBuffer.isView(raw)) return raw.byteLength;
-      return 0;
-    }
+    ensureWsFlagCache();
 
     function flushWsBridgeProbe(now: number): void {
       const duration = now - wsBridgeProbeWindow.windowStartAt;
@@ -208,7 +197,6 @@ export default defineContentScript({
       const packetsPerSec = duration > 0 ? (wsBridgeProbeWindow.packets * 1000) / duration : 0;
       const avgHandleMs = wsBridgeProbeWindow.packets > 0 ? wsBridgeProbeWindow.handleTotalMs / wsBridgeProbeWindow.packets : 0;
       const parseFailRate = wsBridgeProbeWindow.parseAttempts > 0 ? wsBridgeProbeWindow.parseFail / wsBridgeProbeWindow.parseAttempts : 0;
-      const textKbps = duration > 0 ? (wsBridgeProbeWindow.textBytes / 1024) / (duration / 1000) : 0;
       const localBusyScore = (avgHandleMs >= 1 ? 1 : 0) + (wsBridgeProbeWindow.handleMaxMs >= 6 ? 1 : 0) + (packetsPerSec >= 120 ? 1 : 0);
       const remoteCongestionScore = (packetsPerSec < 20 ? 1 : 0) + (avgHandleMs < 0.8 ? 1 : 0) + (wsBridgeProbeWindow.handleMaxMs < 4 ? 1 : 0);
       const likelyCause =
@@ -223,7 +211,6 @@ export default defineContentScript({
         packetsPerSec,
         avgHandleMs,
         parseFailRate,
-        textKbps,
         likelyCause,
       };
       (window as any).__DAGOBANG_WS_BRIDGE_PROBE__ = snapshot;
@@ -232,33 +219,18 @@ export default defineContentScript({
     }
 
     function recordWsBridgeProbe(entry: {
-      packetSource: 'main' | 'worker_forward';
-      site: WsSite;
-      direction: 'send' | 'receive';
       parseAttempted: boolean;
       parseSucceeded: boolean;
-      textBytes: number;
-      posted: boolean;
       handleMs: number;
     }): void {
       if (!isWsBridgeProbeEnabled()) return;
       const now = Date.now();
       const next = wsBridgeProbeWindow;
       next.packets += 1;
-      if (entry.packetSource === 'main') next.mainPackets += 1;
-      if (entry.packetSource === 'worker_forward') next.workerForwardPackets += 1;
-      if (entry.direction === 'receive') next.receivePackets += 1;
-      if (entry.direction === 'send') next.sendPackets += 1;
-      if (entry.site === 'gmgn') next.gmgnPackets += 1;
-      if (entry.site === 'axiom') next.axiomPackets += 1;
       if (entry.parseAttempted) next.parseAttempts += 1;
-      if (entry.parseSucceeded) next.parseSuccess += 1;
       if (entry.parseAttempted && !entry.parseSucceeded) next.parseFail += 1;
-      if (entry.posted) next.postCount += 1;
-      next.textBytes += entry.textBytes;
       next.handleTotalMs += entry.handleMs;
       if (entry.handleMs > next.handleMaxMs) next.handleMaxMs = entry.handleMs;
-      next.lastAt = now;
       flushWsBridgeProbe(now);
     }
 
@@ -442,18 +414,22 @@ export default defineContentScript({
       if (!isWsCaptureEnabled()) return false;
       const normalized = adapter.parseEnvelope(parsed);
       if (!shouldForwardWsPacket(adapter.site, direction, normalized.channel)) return false;
+      const packet: any = {
+        type: 'DAGOBANG_WS_PACKET',
+        site: adapter.site,
+        direction,
+        channel: normalized.channel ?? null,
+        payload: normalized.payload ?? null,
+        timestamp: Date.now(),
+      };
+      if (adapter.site !== 'gmgn' && raw !== undefined) {
+        packet.raw = raw;
+      }
+      if (adapter.site !== 'gmgn' && connectionInfo && Object.keys(connectionInfo).length) {
+        packet.connectionInfo = connectionInfo;
+      }
       window.postMessage(
-        {
-          type: 'DAGOBANG_WS_PACKET',
-          site: adapter.site,
-          direction,
-          channel: normalized.channel ?? null,
-          payload: normalized.payload ?? null,
-          raw,
-          fromWorker: false,
-          timestamp: Date.now(),
-          connectionInfo,
-        },
+        packet,
         '*',
       );
       return true;
@@ -476,29 +452,22 @@ export default defineContentScript({
           const startedAt = shouldProbe ? performance.now() : 0;
           let parseAttempted = false;
           let parseSucceeded = false;
-          let posted = false;
-          const textBytes = estimateTextBytes(data);
           try {
             if (typeof data === 'string') {
               parseAttempted = true;
               const parsed = JSON.parse(data);
               parseSucceeded = true;
-              posted = postWsPacket(adapter, 'send', parsed, undefined, connectionInfo);
+              postWsPacket(adapter, 'send', parsed, undefined, connectionInfo);
             } else {
-              posted = postWsPacket(adapter, 'send', null, data, connectionInfo);
+              postWsPacket(adapter, 'send', null, data, connectionInfo);
             }
           } catch {
-            posted = postWsPacket(adapter, 'send', null, data, connectionInfo);
+            postWsPacket(adapter, 'send', null, data, connectionInfo);
           }
           if (shouldProbe) {
             recordWsBridgeProbe({
-              packetSource: 'main',
-              site: adapter.site,
-              direction: 'send',
               parseAttempted,
               parseSucceeded,
-              textBytes,
-              posted,
               handleMs: performance.now() - startedAt,
             });
           }
@@ -511,29 +480,22 @@ export default defineContentScript({
           const startedAt = shouldProbe ? performance.now() : 0;
           let parseAttempted = false;
           let parseSucceeded = false;
-          let posted = false;
-          const textBytes = estimateTextBytes(event.data);
           try {
             if (typeof event.data === 'string') {
               parseAttempted = true;
               const parsed = JSON.parse(event.data);
               parseSucceeded = true;
-              posted = postWsPacket(adapter, 'receive', parsed, undefined, connectionInfo);
+              postWsPacket(adapter, 'receive', parsed, undefined, connectionInfo);
             } else {
-              posted = postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
+              postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
             }
           } catch {
-            posted = postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
+            postWsPacket(adapter, 'receive', null, event.data, connectionInfo);
           }
           if (shouldProbe) {
             recordWsBridgeProbe({
-              packetSource: 'main',
-              site: adapter.site,
-              direction: 'receive',
               parseAttempted,
               parseSucceeded,
-              textBytes,
-              posted,
               handleMs: performance.now() - startedAt,
             });
           }
@@ -698,26 +660,23 @@ export default defineContentScript({
           return { payload: data };
         };
         let wsCaptureEnabledCache = true;
-        let wsCaptureEnabledCacheExpireAt = 0;
+        let wsCaptureEnabledLoaded = false;
         const isWsCaptureEnabled = (): boolean => {
-          const now = Date.now();
-          if (now < wsCaptureEnabledCacheExpireAt) return wsCaptureEnabledCache;
+          if (wsCaptureEnabledLoaded) return wsCaptureEnabledCache;
+          wsCaptureEnabledLoaded = true;
           try {
             const rawEnabled = window.localStorage.getItem('dagobang_ws_monitor_enabled_v1');
             if (rawEnabled === '0') {
               wsCaptureEnabledCache = false;
-              wsCaptureEnabledCacheExpireAt = now + 3000;
               return false;
             }
             if (rawEnabled === '1') {
               wsCaptureEnabledCache = true;
-              wsCaptureEnabledCacheExpireAt = now + 3000;
               return true;
             }
           } catch {
           }
           wsCaptureEnabledCache = true;
-          wsCaptureEnabledCacheExpireAt = now + 3000;
           return true;
         };
         const normalizeWsChannel = (channel: unknown): string => {
@@ -741,18 +700,22 @@ export default defineContentScript({
           if (!isWsCaptureEnabled()) return false;
           const gmgnParsed = site === 'gmgn' ? parseGmgnEnvelope(parsed) : { payload: parsed };
           if (!shouldForwardWsPacket(site, direction, gmgnParsed.channel)) return false;
+          const packetPayload: any = {
+            site,
+            direction,
+            channel: gmgnParsed.channel ?? null,
+            payload: gmgnParsed.payload ?? null,
+            timestamp: Date.now(),
+          };
+          if (site !== 'gmgn' && raw !== undefined) {
+            packetPayload.raw = raw;
+          }
+          if (site !== 'gmgn' && connectionInfo && Object.keys(connectionInfo).length) {
+            packetPayload.connectionInfo = connectionInfo;
+          }
           const message = {
             __DAGOBANG_WORKER_WS__: true,
-            payload: {
-              site,
-              direction,
-              channel: gmgnParsed.channel ?? null,
-              payload: gmgnParsed.payload ?? null,
-              raw,
-              fromWorker: true,
-              timestamp: Date.now(),
-              connectionInfo,
-            },
+            payload: packetPayload,
           };
 
           const target = self as any;
@@ -851,11 +814,8 @@ export default defineContentScript({
         target.addEventListener('message', (event: MessageEvent) => {
           const data = (event as any).data as any;
           if (!data || !data.__DAGOBANG_WORKER_WS__ || !data.payload) return;
-          const workerSite = data.payload.site === 'axiom' ? 'axiom' : 'gmgn';
-          const workerDirection = data.payload.direction === 'send' ? 'send' : 'receive';
           const shouldProbe = isWsBridgeProbeEnabled();
           const startedAt = shouldProbe ? performance.now() : 0;
-          let posted = false;
           window.postMessage(
             {
               type: 'DAGOBANG_WS_PACKET',
@@ -863,16 +823,10 @@ export default defineContentScript({
             },
             '*',
           );
-          posted = true;
           if (shouldProbe) {
             recordWsBridgeProbe({
-              packetSource: 'worker_forward',
-              site: workerSite,
-              direction: workerDirection,
               parseAttempted: false,
               parseSucceeded: false,
-              textBytes: estimateTextBytes(data.payload.raw),
-              posted,
               handleMs: performance.now() - startedAt,
             });
           }

@@ -655,8 +655,11 @@ export default function App() {
   useEffect(() => {
     const dedupeStorageKey = 'dagobang_delete_tweet_sound_dedupe_v2';
     const dedupeMaxCount = 2000;
+    const dedupePersistDebounceMs = 1500;
     const normalizeAddr = (value: unknown) => (typeof value === 'string' ? value.trim().toLowerCase() : '');
     const normalizeText = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+    let pendingPersistMap: Record<string, number> | null = null;
+    let persistTimer: number | null = null;
     const loadPlayedMap = () => {
       try {
         const raw = window.localStorage.getItem(dedupeStorageKey);
@@ -668,11 +671,22 @@ export default function App() {
         return {} as Record<string, number>;
       }
     };
-    const persistPlayedMap = (map: Record<string, number>) => {
+    const flushPersistPlayedMap = () => {
+      const map = pendingPersistMap;
+      if (!map) return;
+      pendingPersistMap = null;
       try {
         window.localStorage.setItem(dedupeStorageKey, JSON.stringify(map));
       } catch {
       }
+    };
+    const persistPlayedMap = (map: Record<string, number>) => {
+      pendingPersistMap = map;
+      if (persistTimer != null) return;
+      persistTimer = window.setTimeout(() => {
+        persistTimer = null;
+        flushPersistPlayedMap();
+      }, dedupePersistDebounceMs);
     };
     const clampPlayedMap = (map: Record<string, number>) => {
       const entries = Object.entries(map).filter(([, ts]) => typeof ts === 'number' && Number.isFinite(ts));
@@ -727,7 +741,21 @@ export default function App() {
       persistPlayedMap(next);
     };
     window.addEventListener('dagobang-twitter-signal' as any, onTwitterSignal as any);
-    return () => window.removeEventListener('dagobang-twitter-signal' as any, onTwitterSignal as any);
+    const onPageHide = () => {
+      if (persistTimer != null) {
+        window.clearTimeout(persistTimer);
+        persistTimer = null;
+      }
+      flushPersistPlayedMap();
+    };
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onPageHide);
+    return () => {
+      window.removeEventListener('dagobang-twitter-signal' as any, onTwitterSignal as any);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onPageHide);
+      onPageHide();
+    };
   }, [ensureDeleteTweetAudioReady, playDeleteTweetPreset]);
 
   useEffect(() => {

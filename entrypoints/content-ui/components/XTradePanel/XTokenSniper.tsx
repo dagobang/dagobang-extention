@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { isAddress } from 'viem';
 import { browser } from 'wxt/browser';
 import { TRADE_SUCCESS_SOUND_PRESETS, type Settings, type TokenSnipeTask, type TokenSnipeTaskRuntimeStatus, type TradeSuccessSoundPreset } from '@/types/extention';
@@ -90,6 +90,8 @@ export function XTokenSniperContent({
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [editTaskId, setEditTaskId] = useState<string | null>(null);
   const [expandedTaskById, setExpandedTaskById] = useState<Record<string, boolean>>({});
+  const reloadTimerRef = useRef<number | null>(null);
+  const reloadingRef = useRef(false);
 
   const [tokenAddressInput, setTokenAddressInput] = useState('');
   const [tokenSymbolInput, setTokenSymbolInput] = useState('');
@@ -112,6 +114,7 @@ export function XTokenSniperContent({
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
+    const reloadWindowMs = 100;
     const loadStatus = async () => {
       try {
         const res = await browser.storage.local.get(TOKEN_SNIPER_STATUS_STORAGE_KEY);
@@ -124,6 +127,22 @@ export function XTokenSniperContent({
         setTaskStatusById(raw as Record<string, TokenSnipeTaskRuntimeStatus>);
       } catch {
       }
+    };
+    const reloadAll = async () => {
+      if (reloadingRef.current) return;
+      reloadingRef.current = true;
+      try {
+        await Promise.all([loadStatus(), loadOrderHistory()]);
+      } finally {
+        reloadingRef.current = false;
+      }
+    };
+    const scheduleReload = () => {
+      if (reloadTimerRef.current != null) return;
+      reloadTimerRef.current = window.setTimeout(() => {
+        reloadTimerRef.current = null;
+        void reloadAll();
+      }, reloadWindowMs);
     };
     const loadOrderHistory = async () => {
       try {
@@ -138,24 +157,28 @@ export function XTokenSniperContent({
       } catch {
       }
     };
-    void Promise.all([loadStatus(), loadOrderHistory()]);
+    void reloadAll();
     const onMessage = (message: any) => {
       if (!message || typeof message.type !== 'string') return;
       if (message.type === 'bg:stateChanged' || message.type === 'bg:tokenSniper:matched') {
-        void Promise.all([loadStatus(), loadOrderHistory()]);
+        scheduleReload();
         return;
       }
       if (message.type === 'bg:tradeSuccess' && message?.source === 'tokenSniper') {
-        void Promise.all([loadStatus(), loadOrderHistory()]);
+        scheduleReload();
         return;
       }
       if (message.type === 'bg:tradeSuccess') {
-        void loadStatus();
+        scheduleReload();
       }
     };
     browser.runtime.onMessage.addListener(onMessage);
     return () => {
       cancelled = true;
+      if (reloadTimerRef.current != null) {
+        window.clearTimeout(reloadTimerRef.current);
+        reloadTimerRef.current = null;
+      }
       browser.runtime.onMessage.removeListener(onMessage);
     };
   }, [active]);

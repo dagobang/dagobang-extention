@@ -8,6 +8,7 @@ const KEYS = {
   unlocked: 'db_unlocked_v1',
   limitOrders: 'db_limit_orders_v1',
 } as const;
+export const SETTINGS_STORAGE_KEY = KEYS.settings;
 
 export type StoredWallet = {
   version: 1;

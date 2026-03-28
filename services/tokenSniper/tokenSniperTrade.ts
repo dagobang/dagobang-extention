@@ -18,6 +18,67 @@ export const TOKEN_SNIPER_SIGNAL_ACTION_EXPIRE_MS = 3 * 60 * 1000;
 let statusWriteQueue: Promise<void> = Promise.resolve();
 let historyWriteQueue: Promise<void> = Promise.resolve();
 const handledSignalByTask = new Map<string, number>();
+const historyHandledKeySet = new Set<string>();
+let historyHandledKeySetLoaded = false;
+let historyHandledKeySetLoading: Promise<void> | null = null;
+let historyHandledKeySetListenerBound = false;
+
+const buildHandledHistoryKey = (input: { taskId: string; accountKey: string; tweetId: string }) =>
+  `${input.taskId}:${input.accountKey}:${input.tweetId}`;
+
+const indexHistoryRecord = (item: any) => {
+  if (!item) return;
+  const taskId = String(item.taskId || '').trim();
+  const accountKey = String(item.accountKey || '').trim();
+  if (!taskId || !accountKey) return;
+  const tweetIds = [item.tweetId, item.quotedTweetId]
+    .map((x) => (typeof x === 'string' ? x.trim() : ''))
+    .filter(Boolean);
+  for (const tweetId of tweetIds) {
+    historyHandledKeySet.add(buildHandledHistoryKey({ taskId, accountKey, tweetId }));
+  }
+};
+
+const bindHandledHistoryStorageListener = () => {
+  if (historyHandledKeySetListenerBound) return;
+  browser.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+    const changed = changes?.[TOKEN_SNIPER_HISTORY_STORAGE_KEY];
+    if (!changed) return;
+    historyHandledKeySet.clear();
+    const next = changed.newValue;
+    if (Array.isArray(next)) {
+      for (const item of next) indexHistoryRecord(item);
+      historyHandledKeySetLoaded = true;
+      return;
+    }
+    historyHandledKeySetLoaded = false;
+  });
+  historyHandledKeySetListenerBound = true;
+};
+
+const ensureHandledHistoryLoaded = async () => {
+  bindHandledHistoryStorageListener();
+  if (historyHandledKeySetLoaded) return;
+  if (historyHandledKeySetLoading) {
+    await historyHandledKeySetLoading;
+    return;
+  }
+  historyHandledKeySetLoading = (async () => {
+    try {
+      const res = await browser.storage.local.get(TOKEN_SNIPER_HISTORY_STORAGE_KEY);
+      const raw = (res as any)?.[TOKEN_SNIPER_HISTORY_STORAGE_KEY];
+      historyHandledKeySet.clear();
+      if (Array.isArray(raw)) {
+        for (const item of raw) indexHistoryRecord(item);
+      }
+      historyHandledKeySetLoaded = true;
+    } finally {
+      historyHandledKeySetLoading = null;
+    }
+  })();
+  await historyHandledKeySetLoading;
+};
 
 const runStatusMutation = async (mutate: (statusMap: Record<string, TokenSnipeTaskRuntimeStatus>) => boolean) => {
   const res = await browser.storage.local.get(TOKEN_SNIPER_STATUS_STORAGE_KEY);
@@ -90,6 +151,8 @@ const enqueueHistoryMutation = (mutate: (list: TokenSniperOrderRecord[]) => bool
 };
 
 const pushTokenSniperHistory = async (record: TokenSniperOrderRecord) => {
+  indexHistoryRecord(record);
+  historyHandledKeySetLoaded = true;
   await enqueueHistoryMutation((list) => {
     list.unshift(record);
     return true;
@@ -97,17 +160,8 @@ const pushTokenSniperHistory = async (record: TokenSniperOrderRecord) => {
 };
 
 const hasHandledSignalInHistory = async (input: { taskId: string; accountKey: string; tweetId: string }) => {
-  const res = await browser.storage.local.get(TOKEN_SNIPER_HISTORY_STORAGE_KEY);
-  const raw = (res as any)?.[TOKEN_SNIPER_HISTORY_STORAGE_KEY];
-  if (!Array.isArray(raw) || !raw.length) return false;
-  return raw.some((item: any) => {
-    if (!item || String(item.taskId || '') !== input.taskId) return false;
-    if (String(item.accountKey || '') !== input.accountKey) return false;
-    const tweetIds = [item.tweetId, item.quotedTweetId]
-      .map((x) => (typeof x === 'string' ? x.trim() : ''))
-      .filter(Boolean);
-    return tweetIds.includes(input.tweetId);
-  });
+  await ensureHandledHistoryLoaded();
+  return historyHandledKeySet.has(buildHandledHistoryKey(input));
 };
 
 const toSignalTweetType = (signal: UnifiedTwitterSignal) => {
