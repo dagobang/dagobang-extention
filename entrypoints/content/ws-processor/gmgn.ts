@@ -609,7 +609,7 @@ const summarizeTokensForLog = (signal: UnifiedTwitterSignal): string => {
   return `${first}+${tokens.length - 1}`;
 };
 
-const signalHasTokens = (signal: UnifiedTwitterSignal): boolean => normalizeSignalTokens(signal).length > 0;
+const shouldForwardTwitterSignal = (signal: UnifiedTwitterSignal): boolean => signal.tweetType !== 'delete_post';
 
 const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number): UnifiedTwitterSignal | null => {
   if (!item || typeof item !== 'object') return null;
@@ -1085,7 +1085,7 @@ export function initGmgnWsMonitor(options: {
         wsStatus = { ...wsStatus, lastSignalAt: now, signalCount: wsStatus.signalCount + 1 };
         pushLog('signal', `${summarizeTokensForLog(merged)}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
         emitStatus();
-        if (signalHasTokens(merged) && merged.tweetType !== 'delete_post') {
+        if (shouldForwardTwitterSignal(merged)) {
           enqueueSignalForward(channel, merged);
         }
         continue;
@@ -1148,7 +1148,7 @@ export function initGmgnWsMonitor(options: {
       };
       pushLog('signal', `${summarizeTokensForLog(signal)}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
       emitStatus();
-      if (signalHasTokens(signal) && signal.tweetType !== 'delete_post') {
+      if (shouldForwardTwitterSignal(signal)) {
         enqueueSignalForward(channel, signal);
       }
     }
@@ -1320,7 +1320,7 @@ export function initGmgnWsMonitor(options: {
       if (!has) continue;
       if (isWsMonitorEnabled()) {
         window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-        if (signalHasTokens(s) && s.tweetType !== 'delete_post') enqueueSignalForward('twitter_monitor_token', s);
+        if (shouldForwardTwitterSignal(s)) enqueueSignalForward('twitter_monitor_token', s);
       }
     }
   };
@@ -1379,7 +1379,7 @@ export function initGmgnWsMonitor(options: {
       if (!hit) continue;
       if (isWsMonitorEnabled()) {
         window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-        if (enabled && signalHasTokens(s) && s.tweetType !== 'delete_post') enqueueSignalForward('twitter_monitor_token', s);
+        if (enabled && shouldForwardTwitterSignal(s)) enqueueSignalForward('twitter_monitor_token', s);
       }
     }
   };

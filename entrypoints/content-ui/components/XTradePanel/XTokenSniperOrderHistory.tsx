@@ -107,6 +107,7 @@ export function XTokenSniperOrderHistory(props: {
           const tweetId = item.tweetId || item.quotedTweetId || '';
           const txHashLabel = item.txHash ? formatShortAddress(item.txHash, 8, 6) : '-';
           const sellOrderLabel = item.sellOrderIds?.length ? `${item.sellOrderIds.length}` : '-';
+          const triggerMs = Number(item.tsMs || 0);
           const taskCreatedMs = Number(item.taskCreatedAt || 0);
           const signalActionMs = Number(item.signalActionAtMs || 0);
           const tweetUrl = tweetId ? `https://x.com/i/web/status/${tweetId}` : '';
@@ -133,8 +134,17 @@ export function XTokenSniperOrderHistory(props: {
                 <button type="button" className="truncate font-medium text-zinc-100 hover:text-emerald-300" onClick={openTokenPage}>{tokenLabel}</button>
                 <span className="truncate text-zinc-500">{userLabel}</span>
                 <div className="ml-auto shrink-0 text-right text-[10px] leading-4 tabular-nums text-zinc-500">
-                  <div className="whitespace-nowrap">{tt('contentUi.tokenSniper.orderHistory.signalActionTime', [formatDateTime(signalActionMs, props.locale)])}</div>
-                  <div className="whitespace-nowrap">{tt('contentUi.tokenSniper.orderHistory.taskCreateTime', [formatDateTime(taskCreatedMs, props.locale)])}</div>
+                  {item.action === 'matched' ? (
+                    <>
+                      <div className="whitespace-nowrap">{tt('contentUi.tokenSniper.orderHistory.signalActionTime', [formatDateTime(signalActionMs, props.locale)])}</div>
+                      <div className="whitespace-nowrap">{tt('contentUi.tokenSniper.orderHistory.taskCreateTime', [formatDateTime(taskCreatedMs, props.locale)])}</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="whitespace-nowrap">{tt('contentUi.tokenSniper.orderHistory.triggerTime', [formatDateTime(triggerMs, props.locale)])}</div>
+                      <div className="whitespace-nowrap">{tt('contentUi.tokenSniper.orderHistory.signalActionTime', [formatDateTime(signalActionMs, props.locale)])}</div>
+                    </>
+                  )}
                 </div>
               </div>
               <div className="truncate text-[10px] text-zinc-500">

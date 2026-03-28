@@ -325,6 +325,7 @@
         "actionBuySuccess": "买入成功",
         "actionSellOrderCreated": "卖单创建",
         "actionBuyFailed": "买入失败",
+        "triggerTime": "触发时间 {0}",
         "signalActionTime": "推文动作时间 {0}",
         "taskCreateTime": "任务创建时间 {0}",
         "sellOrderAndTx": "挂{0} · Tx {1}",

@@ -325,6 +325,7 @@
         "actionBuySuccess": "Buy success",
         "actionSellOrderCreated": "Sell order created",
         "actionBuyFailed": "Buy failed",
+        "triggerTime": "Trigger time {0}",
         "signalActionTime": "Signal action time {0}",
         "taskCreateTime": "Task created time {0}",
         "sellOrderAndTx": "Orders {0} · Tx {1}",

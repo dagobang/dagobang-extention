@@ -325,6 +325,7 @@
         "actionBuySuccess": "買入成功",
         "actionSellOrderCreated": "賣單建立",
         "actionBuyFailed": "買入失敗",
+        "triggerTime": "觸發時間 {0}",
         "signalActionTime": "推文動作時間 {0}",
         "taskCreateTime": "任務建立時間 {0}",
         "sellOrderAndTx": "掛{0} · Tx {1}",
