@@ -611,6 +611,37 @@ export default function App() {
   useEffect(() => {
     if (!siteInfo) return;
     const listener = (message: any) => {
+      if (message.type === 'bg:tokenSniper:gmgnWalletAddress') {
+        return (async () => {
+          if (siteInfo?.platform !== 'gmgn') return { ok: false, error: 'not_gmgn_page' };
+          try {
+            const address = String(await GmgnAPI.getWalletAddress() || '').trim().toLowerCase();
+            if (!address) return { ok: false, error: 'gmgn_wallet_not_found' };
+            return { ok: true, address };
+          } catch (e: any) {
+            return { ok: false, error: String(e?.message || e || 'gmgn_wallet_query_failed') };
+          }
+        })();
+      }
+      if (message.type === 'bg:tokenSniper:gmgnBuy') {
+        return (async () => {
+          if (siteInfo?.platform !== 'gmgn') return { ok: false, error: 'not_gmgn_page' };
+          try {
+            const tokenAddress = typeof message?.tokenAddress === 'string' ? message.tokenAddress : '';
+            const amountWei = typeof message?.amountWei === 'string' ? message.amountWei : '';
+            const gasGwei = typeof message?.gasGwei === 'string' ? message.gasGwei.trim() : '';
+            if (!tokenAddress || !amountWei) return { ok: false, error: 'invalid_params' };
+            await GmgnAPI.buyToken({
+              tokenAddress,
+              amount: amountWei,
+              gasGwei: gasGwei || undefined,
+            });
+            return { ok: true };
+          } catch (e: any) {
+            return { ok: false, error: String(e?.message || e || 'gmgn_buy_failed') };
+          }
+        })();
+      }
       if (message.type === 'bg:stateChanged') {
         refreshAll();
         refreshToken();

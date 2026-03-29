@@ -1,6 +1,6 @@
 import { browser } from 'wxt/browser';
 import { parseEther } from 'viem';
-import { TRADE_SUCCESS_SOUND_PRESETS, type TokenSnipeTask, type TokenSnipeTaskRuntimeStatus, type UnifiedTwitterSignal } from '@/types/extention';
+import { TRADE_SUCCESS_SOUND_PRESETS, type TokenSnipeBuyMethod, type TokenSnipeTask, type TokenSnipeTaskRuntimeStatus, type UnifiedTwitterSignal } from '@/types/extention';
 import { defaultSettings } from '@/utils/defaults';
 import { SettingsService } from '@/services/settings';
 import { WalletService } from '@/services/wallet';
@@ -9,6 +9,8 @@ import { buildStrategySellOrderInputs, buildStrategyTrailingSellOrderInputs } fr
 import { cancelAllSellLimitOrdersForToken, createLimitOrder } from '@/services/limitOrders/store';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import { parseNumber } from '@/services/xSniper/engine/metrics';
+import type { TokenInfo } from '@/types/token';
+import { chainNames } from '@/constants/chains/chainName';
 
 export const TOKEN_SNIPER_STATUS_STORAGE_KEY = 'dagobang_token_sniper_task_status_v1';
 export const TOKEN_SNIPER_HISTORY_STORAGE_KEY = 'dagobang_token_sniper_order_history_v1';
@@ -202,7 +204,7 @@ const parseCommaOrLineList = (value: unknown): string[] => {
   if (Array.isArray(value)) return value.map((x) => String(x).trim()).filter(Boolean);
   if (typeof value !== 'string') return [];
   return value
-    .split(/[\n,]/)
+    .split(/[\n,，]/)
     .map((x) => x.trim())
     .filter(Boolean);
 };
@@ -295,6 +297,34 @@ const buildSignalKeywordText = (signal: UnifiedTwitterSignal) =>
     .join('\n')
     .toLowerCase();
 
+const buildFastBuyTokenInfo = (task: TokenSnipeTask): TokenInfo => ({
+  chain: chainNames[task.chain as any] ?? 'bsc',
+  address: task.tokenAddress,
+  name: task.tokenName ?? '',
+  symbol: task.tokenSymbol ?? '',
+  decimals: 18,
+  logo: '',
+  launchpad: '',
+  launchpad_progress: 0,
+  launchpad_platform: '',
+  launchpad_status: 1,
+  quote_token: '',
+  quote_token_address: '',
+  pool_pair: '',
+  dex_type: '',
+  tokenPrice: {
+    price: '0',
+    marketCap: '0',
+    timestamp: Date.now(),
+  },
+});
+const normalizeBuyMethod = (task: TokenSnipeTask): TokenSnipeBuyMethod => {
+  const raw = typeof (task as any)?.buyMethod === 'string' ? String((task as any).buyMethod).trim().toLowerCase() : '';
+  if (raw === 'all' || raw === 'dagobang' || raw === 'gmgn') return raw;
+  return 'dagobang';
+};
+const normalizeAddress = (value: unknown): string => (typeof value === 'string' ? value.trim().toLowerCase() : '');
+
 const updateTaskStatus = async (taskId: string, patch: Partial<TokenSnipeTaskRuntimeStatus>) => {
   await enqueueStatusMutation((statusMap) => {
     const prev = statusMap[taskId];
@@ -318,7 +348,7 @@ const cleanupHandledSignalMap = (now: number, activeTaskIds: Set<string>) => {
 };
 
 export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => {
-  const { fetchTokenInfoFreshWithReason, buildGenericTokenInfoWithReason, getEntryPriceUsd } = createTokenInfoResolvers();
+  const { getEntryPriceUsd } = createTokenInfoResolvers();
 
   const broadcastToTabs = async (message: any) => {
     try {
@@ -328,6 +358,63 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
         browser.tabs.sendMessage(tab.id, message).catch(() => { });
       }
     } catch {
+    }
+  };
+  const requestGmgnBuyViaContent = async (input: { tokenAddress: `0x${string}`; amountWei: string; gasGwei?: string }) => {
+    try {
+      const tabs = await browser.tabs.query({});
+      const settled = await Promise.all(
+        tabs
+          .filter((tab) => !!tab.id)
+          .map(async (tab) => {
+            try {
+              const response = await browser.tabs.sendMessage(tab.id as number, {
+                type: 'bg:tokenSniper:gmgnBuy',
+                tokenAddress: input.tokenAddress,
+                amountWei: input.amountWei,
+                gasGwei: input.gasGwei,
+              });
+              return response;
+            } catch {
+              return null;
+            }
+          }),
+      );
+      const success = settled.some((item: any) => item?.ok === true);
+      if (!success) {
+        const msg = settled.find((item: any) => typeof item?.error === 'string')?.error;
+        return { ok: false, error: msg || '未找到可用的 GMGN 页面或页面未登录' };
+      }
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'GMGN买入请求发送失败' };
+    }
+  };
+  const requestGmgnWalletAddressViaContent = async () => {
+    try {
+      const tabs = await browser.tabs.query({});
+      const settled = await Promise.all(
+        tabs
+          .filter((tab) => !!tab.id)
+          .map(async (tab) => {
+            try {
+              const response = await browser.tabs.sendMessage(tab.id as number, {
+                type: 'bg:tokenSniper:gmgnWalletAddress',
+              });
+              return response;
+            } catch {
+              return null;
+            }
+          }),
+      );
+      const success = settled.find((item: any) => item?.ok === true && typeof item?.address === 'string' && item.address.trim());
+      if (!success) {
+        const msg = settled.find((item: any) => typeof item?.error === 'string')?.error;
+        return { ok: false, error: msg || '未找到可用的 GMGN 页面或页面未登录' };
+      }
+      return { ok: true, address: normalizeAddress((success as any).address) };
+    } catch {
+      return { ok: false, error: 'GMGN地址查询失败' };
     }
   };
 
@@ -495,68 +582,78 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             deps.onStateChanged();
             continue;
           }
-          const tokenInfoResult = await fetchTokenInfoFreshWithReason(task.chain, task.tokenAddress);
-          const genericTokenInfoResult = tokenInfoResult.tokenInfo
-            ? { tokenInfo: null, failureReason: undefined }
-            : await buildGenericTokenInfoWithReason(task.chain, task.tokenAddress);
-          const tokenInfo =
-            tokenInfoResult.tokenInfo
-            ?? genericTokenInfoResult.tokenInfo;
-          if (!tokenInfo) {
-            const failureReason = genericTokenInfoResult.failureReason || tokenInfoResult.failureReason || '';
-            const failMessage = failureReason === 'invalid_address'
-              ? '获取代币信息失败：代币地址无效'
-              : failureReason === 'fourmeme_rate_limited'
-                ? '获取代币信息失败：接口限流(429)'
-              : failureReason === 'fourmeme_empty'
-                ? '获取代币信息失败：接口未返回该代币'
-                : failureReason === 'flap_rate_limited'
-                  ? '获取代币信息失败：Flap接口限流(429)'
-                : failureReason === 'flap_fetch_failed'
-                  ? '获取代币信息失败：Flap信息查询失败'
-                  : failureReason === 'fourmeme_error'
-                    ? '获取代币信息失败：接口请求异常'
-                    : failureReason === 'rpc_rate_limited'
-                      ? '获取代币信息失败：RPC限流(429)'
-                    : '获取代币信息失败：RPC或接口异常';
-            await updateTaskStatus(task.id, { state: 'failed', message: failMessage });
-            await pushTokenSniperHistory({
-              id: `token-sniper-buy-failed-${task.id}-${stableSignalId}-${Date.now()}`,
-              tsMs: Date.now(),
-              taskId: task.id,
-              taskCreatedAt: Number(task.createdAt || 0),
-              action: 'buy_failed',
-              chainId: task.chain,
-              tokenAddress: task.tokenAddress,
-              tokenSymbol: task.tokenSymbol,
-              tokenName: task.tokenName,
-              buyAmountBnb: amountBnb,
-              signalId: stableSignalId,
-              signalType,
-              signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
-              signalActionAtMs: signalActionAtMs > 0 ? signalActionAtMs : undefined,
-              signalReceivedAtMs: signalReceivedAtMs > 0 ? signalReceivedAtMs : undefined,
-              accountKey,
-              accountScreen: String(signal.userScreen ?? '').trim() || undefined,
-              tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
-              quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
-              message: failMessage,
-            });
-            deps.onStateChanged();
-            continue;
+          const tokenInfo = buildFastBuyTokenInfo(task);
+          const amountWei = parseEther(String(amountBnb)).toString();
+          const buyMethod = normalizeBuyMethod(task);
+          let shouldDagobangBuy = buyMethod === 'all' || buyMethod === 'dagobang';
+          let shouldGmgnBuy = buyMethod === 'all' || buyMethod === 'gmgn';
+          const pluginWalletAddress = normalizeAddress(status.address);
+          let sameAddressDowngraded = false;
+          if (buyMethod === 'all' && shouldDagobangBuy && shouldGmgnBuy && pluginWalletAddress) {
+            const gmgnWalletRsp = await requestGmgnWalletAddressViaContent();
+            const gmgnWalletAddress = gmgnWalletRsp.ok ? normalizeAddress(gmgnWalletRsp.address) : '';
+            if (gmgnWalletAddress && gmgnWalletAddress === pluginWalletAddress) {
+              shouldGmgnBuy = false;
+              sameAddressDowngraded = true;
+            }
           }
-          const rsp = await TradeService.buy({
-            chainId: task.chain,
-            tokenAddress: task.tokenAddress,
-            bnbAmountWei: parseEther(String(amountBnb)).toString(),
-            tokenInfo,
-          } as any);
-          const buyTxHash = typeof (rsp as any)?.txHash === 'string' ? String((rsp as any).txHash) : undefined;
+          const attemptedDagobang = shouldDagobangBuy;
+          const attemptedGmgn = shouldGmgnBuy;
+          let buyTxHash: string | undefined;
+          let dagobangOk = false;
+          let gmgnOk = false;
+          let gmgnError = '';
+          const buyTasks: Array<Promise<void>> = [];
+          if (shouldDagobangBuy) {
+            buyTasks.push((async () => {
+              const rsp = await TradeService.buy({
+                chainId: task.chain,
+                tokenAddress: task.tokenAddress,
+                bnbAmountWei: amountWei,
+                gasPriceGwei: typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() : undefined,
+                tokenInfo,
+              } as any);
+              const txHash = typeof (rsp as any)?.txHash === 'string' ? String((rsp as any).txHash) : '';
+              if (txHash) buyTxHash = txHash;
+              dagobangOk = true;
+            })());
+          }
+          if (shouldGmgnBuy) {
+            buyTasks.push((async () => {
+              const gmgnRsp = await requestGmgnBuyViaContent({
+                tokenAddress: task.tokenAddress,
+                amountWei,
+                gasGwei: typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() || undefined : undefined,
+              });
+              if (!gmgnRsp.ok) {
+                gmgnError = gmgnRsp.error || 'GMGN买入失败';
+                throw new Error(gmgnError);
+              }
+              gmgnOk = true;
+            })());
+          }
+          const settled = await Promise.allSettled(buyTasks);
+          const failedMessages = settled
+            .filter((item) => item.status === 'rejected')
+            .map((item: PromiseRejectedResult) => String(item.reason?.message || item.reason || '').trim())
+            .filter(Boolean);
+          if (!dagobangOk && !gmgnOk) {
+            throw new Error(failedMessages[0] || gmgnError || '买入失败');
+          }
+          const buyMessage = buyMethod === 'all'
+            ? (attemptedDagobang && attemptedGmgn
+              ? (dagobangOk && gmgnOk ? '双通道买入成功' : (dagobangOk ? '打狗棒买入成功，GMGN买入失败' : 'GMGN买入成功，打狗棒买入失败'))
+              : (attemptedDagobang
+                ? (sameAddressDowngraded ? '同地址自动降级：打狗棒买入成功' : '打狗棒买入成功')
+                : 'GMGN买入成功'))
+            : buyMethod === 'gmgn'
+              ? 'GMGN买入成功'
+              : '买入成功';
           await updateTaskStatus(task.id, {
             state: 'bought',
             boughtAt: Date.now(),
             buyTxHash,
-            message: '买入成功',
+            message: buyMessage,
           });
           await pushTokenSniperHistory({
             id: `token-sniper-buy-${task.id}-${stableSignalId}-${Date.now()}`,
@@ -579,18 +676,28 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
             quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
             txHash: buyTxHash,
-            message: '买入成功',
+            message: buyMessage,
           });
-          await broadcastToTabs({
-            type: 'bg:tradeSuccess',
-            source: 'tokenSniper',
-            side: 'buy',
-            chainId: task.chain,
-            tokenAddress: task.tokenAddress,
-            txHash: buyTxHash,
-          });
-
-          if (task.autoSell) {
+          if (dagobangOk) {
+            await broadcastToTabs({
+              type: 'bg:tradeSuccess',
+              source: 'tokenSniper',
+              side: 'buy',
+              chainId: task.chain,
+              tokenAddress: task.tokenAddress,
+              txHash: buyTxHash,
+            });
+          }
+          if (gmgnOk) {
+            await broadcastToTabs({
+              type: 'bg:tradeSuccess',
+              source: 'tokenSniper',
+              side: 'buy',
+              chainId: task.chain,
+              tokenAddress: task.tokenAddress,
+            });
+          }
+          if (task.autoSell && dagobangOk) {
             try {
               const cfg = (settings as any).advancedAutoSell;
               const entryPriceUsd = await getEntryPriceUsd(

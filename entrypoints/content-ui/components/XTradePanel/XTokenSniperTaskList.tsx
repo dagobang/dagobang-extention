@@ -29,6 +29,23 @@ const formatTweetTypesLabel = (types: Array<(typeof TWEET_TYPE_OPTIONS)[number][
   if (types.length >= TWEET_TYPE_OPTIONS.length) return tt('contentUi.tokenSniper.taskList.allTypes');
   return types.map((type) => tt(`contentUi.autoTradeStrategy.interaction.${type}`)).join('/');
 };
+const normalizeBuyMethod = (task: TokenSnipeTask): 'all' | 'dagobang' | 'gmgn' => {
+  const raw = typeof (task as any)?.buyMethod === 'string' ? String((task as any).buyMethod).trim().toLowerCase() : '';
+  if (raw === 'all' || raw === 'dagobang' || raw === 'gmgn') return raw;
+  return 'dagobang';
+};
+const formatBuyMethodLabel = (task: TokenSnipeTask, tt: (key: string, subs?: Array<string | number>) => string) => {
+  const method = normalizeBuyMethod(task);
+  if (method === 'all') return tt('contentUi.tokenSniper.buyMethodAll');
+  if (method === 'gmgn') return tt('contentUi.tokenSniper.buyMethodGmgn');
+  return tt('contentUi.tokenSniper.buyMethodDagobang');
+};
+const getBuyMethodBadgeClass = (task: TokenSnipeTask) => {
+  const method = normalizeBuyMethod(task);
+  if (method === 'all') return 'bg-violet-500/20 text-violet-300 border border-violet-500/30';
+  if (method === 'gmgn') return 'bg-sky-500/20 text-sky-300 border border-sky-500/30';
+  return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+};
 
 const stateLabel = (status: TokenSnipeTaskRuntimeStatus | undefined, tt: (key: string, subs?: Array<string | number>) => string) => {
   if (!status) return tt('contentUi.tokenSniper.taskList.statePending');
@@ -86,6 +103,9 @@ export function XTokenSniperTaskList(props: {
           const targetUrls = Array.isArray(task.targetUrls) ? task.targetUrls : [];
           const keywords = Array.isArray(task.keywords) ? task.keywords : [];
           const buyAmountLabel = `${task.buyAmountBnb || '0'} BNB`;
+          const buyGasGweiLabel = typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() : '';
+          const buyMethodLabel = formatBuyMethodLabel(task, tt);
+          const buyMethodBadgeClass = getBuyMethodBadgeClass(task);
           const buyState =
             status?.state === 'buying'
               ? tt('contentUi.tokenSniper.taskList.buyStateBuying')
@@ -127,6 +147,9 @@ export function XTokenSniperTaskList(props: {
                       {tokenLabel}
                     </a>
                     <div className="truncate text-zinc-400">{task.tokenName || '-'}</div>
+                    <div className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${buyMethodBadgeClass}`}>
+                      {buyMethodLabel}
+                    </div>
                     <div className={`ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] ${status?.state === 'failed' ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/15 text-emerald-300'}`}>
                       {stateLabel(status, tt)}
                     </div>
@@ -151,6 +174,14 @@ export function XTokenSniperTaskList(props: {
                     <span className={task.autoBuy ? 'text-emerald-300' : 'text-zinc-500'}>
                       {tt('contentUi.tokenSniper.taskList.buyAmount', [buyAmountLabel])}{task.autoBuy ? '' : tt('contentUi.tokenSniper.taskList.manualTag')}
                     </span>
+                    {buyGasGweiLabel ? (
+                      <>
+                        <span>·</span>
+                        <span className={task.autoBuy ? 'text-emerald-300' : 'text-zinc-500'}>
+                          {tt('contentUi.tokenSniper.taskList.buyGasGwei', [buyGasGweiLabel])}
+                        </span>
+                      </>
+                    ) : null}
                     <span>·</span>
                     <span className={task.autoSell ? 'text-emerald-300' : 'text-zinc-500'}>
                       {tt('contentUi.tokenSniper.taskList.sellMode', [task.autoSell ? tt('contentUi.tokenSniper.taskList.modeAuto') : tt('contentUi.tokenSniper.taskList.modeManual')])}

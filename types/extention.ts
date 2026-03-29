@@ -33,6 +33,7 @@ export type ChainSettings = {
 
 export type AutoTradeInteractionType = 'tweet' | 'reply' | 'quote' | 'retweet' | 'follow';
 export type TokenSnipeTweetType = AutoTradeInteractionType | 'all';
+export type TokenSnipeBuyMethod = 'all' | 'dagobang' | 'gmgn';
 
 export type RapidExitByTypeConfig = Partial<Record<AutoTradeInteractionType, {
   enabled?: boolean;
@@ -129,6 +130,8 @@ export type TokenSnipeTask = {
   keywords?: string[];
   autoBuy: boolean;
   buyAmountBnb: string;
+  buyGasGwei?: string;
+  buyMethod?: TokenSnipeBuyMethod;
   autoSell: boolean;
   createdAt: number;
 };
@@ -146,6 +149,7 @@ export type AutoTradeConfig = {
   stopLossMultiple: string;
   maxHoldMinutes: string;
   wsMonitorEnabled: boolean;
+  signalForwardWindowMs?: number;
   triggerSound: AutoTradeTriggerSound;
   twitterSnipe: AutoTradeTwitterSnipeStrategy;
   tokenSnipe: AutoTradeTokenSnipeConfig;
@@ -302,6 +306,7 @@ export type TxBuyInput = {
   poolFee?: number;
   slippageBps?: number;
   gasPreset?: GasPreset;
+  gasPriceGwei?: string;
   deadlineSeconds?: number;
   tokenInfo?: TokenInfo;
 };

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isAddress } from 'viem';
 import { browser } from 'wxt/browser';
-import { TRADE_SUCCESS_SOUND_PRESETS, type Settings, type TokenSnipeTask, type TokenSnipeTaskRuntimeStatus, type TradeSuccessSoundPreset } from '@/types/extention';
+import { TRADE_SUCCESS_SOUND_PRESETS, type Settings, type TokenSnipeBuyMethod, type TokenSnipeTask, type TokenSnipeTaskRuntimeStatus, type TradeSuccessSoundPreset } from '@/types/extention';
 import { call } from '@/utils/messaging';
 import { defaultSettings } from '@/utils/defaults';
 import { type SiteInfo } from '@/utils/sites';
@@ -47,6 +47,16 @@ const TWEET_TYPE_OPTIONS: Array<{ value: 'tweet' | 'reply' | 'quote' | 'retweet'
   { value: 'retweet', label: 'retweet' },
   { value: 'follow', label: 'follow' },
 ];
+const BUY_METHOD_OPTIONS: Array<{ value: TokenSnipeBuyMethod; labelKey: string }> = [
+  { value: 'all', labelKey: 'contentUi.tokenSniper.buyMethodAll' },
+  { value: 'dagobang', labelKey: 'contentUi.tokenSniper.buyMethodDagobang' },
+  { value: 'gmgn', labelKey: 'contentUi.tokenSniper.buyMethodGmgn' },
+];
+const normalizeBuyMethod = (task: TokenSnipeTask | null | undefined): TokenSnipeBuyMethod => {
+  const raw = typeof (task as any)?.buyMethod === 'string' ? String((task as any).buyMethod).trim().toLowerCase() : '';
+  if (raw === 'all' || raw === 'dagobang' || raw === 'gmgn') return raw;
+  return 'dagobang';
+};
 const normalizeTaskTweetTypes = (task: TokenSnipeTask) => {
   const fromArray = Array.isArray((task as any)?.tweetTypes)
     ? (task as any).tweetTypes
@@ -108,6 +118,8 @@ export function XTokenSniperContent({
   const [keywordsInput, setKeywordsInput] = useState('');
   const [autoBuyInput, setAutoBuyInput] = useState(true);
   const [buyAmountInput, setBuyAmountInput] = useState('0.01');
+  const [buyGasGweiInput, setBuyGasGweiInput] = useState('');
+  const [buyMethodInput, setBuyMethodInput] = useState<TokenSnipeBuyMethod>('dagobang');
   const [autoSellInput, setAutoSellInput] = useState(true);
 
   const [targetUsersInput, setTargetUsersInput] = useState(normalized.targetUsers.join('\n'));
@@ -238,6 +250,8 @@ export function XTokenSniperContent({
     setKeywordsInput('');
     setAutoBuyInput(true);
     setBuyAmountInput('0.01');
+    setBuyGasGweiInput('');
+    setBuyMethodInput('dagobang');
     setAutoSellInput(true);
   };
 
@@ -257,6 +271,8 @@ export function XTokenSniperContent({
     setKeywordsInput(Array.isArray(task.keywords) ? task.keywords.join('\n') : '');
     setAutoBuyInput(task.autoBuy);
     setBuyAmountInput(task.buyAmountBnb);
+    setBuyGasGweiInput(typeof task.buyGasGwei === 'string' ? task.buyGasGwei : '');
+    setBuyMethodInput(normalizeBuyMethod(task));
     setAutoSellInput(task.autoSell);
     setError('');
     setShowAddModal(true);
@@ -317,6 +333,8 @@ export function XTokenSniperContent({
       keywords,
       autoBuy: autoBuyInput,
       buyAmountBnb: buyAmountInput.trim() || '0',
+      buyGasGwei: buyGasGweiInput.trim() || undefined,
+      buyMethod: buyMethodInput,
       autoSell: autoSellInput,
       createdAt: currentTask?.createdAt ?? Date.now(),
     };
@@ -487,7 +505,7 @@ export function XTokenSniperContent({
               value={keywordsInput}
               onChange={(e) => setKeywordsInput(e.target.value)}
             />
-            <div className="grid grid-cols-3 gap-2 text-[12px]">
+            <div className="grid grid-cols-4 gap-2 text-[12px]">
               <label className="flex items-center gap-2 text-zinc-300">
                 <input type="checkbox" className="h-4 w-4 accent-emerald-500" checked={autoBuyInput} onChange={(e) => setAutoBuyInput(e.target.checked)} />
                 {tt('contentUi.tokenSniper.autoBuy')}
@@ -498,7 +516,36 @@ export function XTokenSniperContent({
                 value={buyAmountInput}
                 onChange={(e) => setBuyAmountInput(e.target.value)}
               />
-              <label className="flex items-center gap-2 text-zinc-300">
+              <input
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
+                placeholder={tt('contentUi.tokenSniper.buyGasGweiPlaceholder')}
+                value={buyGasGweiInput}
+                onChange={(e) => setBuyGasGweiInput(e.target.value)}
+              />
+              <div className="col-span-4 space-y-1">
+                <div className="text-[11px] text-zinc-400">{tt('contentUi.tokenSniper.buyMethodTitle')}</div>
+                <div className="grid grid-cols-3 gap-1">
+                  {BUY_METHOD_OPTIONS.map((option) => {
+                    const active = buyMethodInput === option.value;
+                    const toneClass = option.value === 'all'
+                      ? (active ? 'border-violet-400 bg-violet-500/20 text-violet-200' : 'border-violet-500/30 bg-zinc-900 text-violet-300')
+                      : option.value === 'gmgn'
+                        ? (active ? 'border-sky-400 bg-sky-500/20 text-sky-200' : 'border-sky-500/30 bg-zinc-900 text-sky-300')
+                        : (active ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200' : 'border-emerald-500/30 bg-zinc-900 text-emerald-300');
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`rounded-md border px-2 py-1.5 text-[12px] transition-colors ${toneClass}`}
+                        onClick={() => setBuyMethodInput(option.value)}
+                      >
+                        {tt(option.labelKey)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <label className="col-span-4 flex items-center gap-2 text-zinc-300">
                 <input type="checkbox" className="h-4 w-4 accent-emerald-500" checked={autoSellInput} onChange={(e) => setAutoSellInput(e.target.checked)} />
                 {tt('contentUi.tokenSniper.autoSell')}
               </label>

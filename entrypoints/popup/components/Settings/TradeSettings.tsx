@@ -5,6 +5,7 @@ type TradeSettingsProps = SettingsDraftProps;
 export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSettingsProps) {
   const tokenBalancePollIntervalMs = settingsDraft.tokenBalancePollIntervalMs ?? 2000;
   const tokenBalancePollIntervalOptions = [500, 1000, 1500, 2000, 3000, 5000, 10000];
+  const signalForwardWindowMs = settingsDraft.autoTrade?.signalForwardWindowMs;
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -108,6 +109,42 @@ export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSett
               </option>
             ))}
           </select>
+        </label>
+      </div>
+
+      <div className="space-y-3 pt-4 border-t border-zinc-800">
+        <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">{tt('popup.settings.wsSignalForward')}</div>
+        <label className="block space-y-1">
+          <div className="text-[14px] text-zinc-400">{tt('popup.settings.signalForwardWindowMs')}</div>
+          <input
+            type="number"
+            min={0}
+            className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+            value={typeof signalForwardWindowMs === 'number' && Number.isFinite(signalForwardWindowMs) ? String(signalForwardWindowMs) : ''}
+            onChange={(e) => {
+              const raw = e.target.value.trim();
+              if (!raw) {
+                setSettingsDraft((s) => ({
+                  ...s,
+                  autoTrade: {
+                    ...s.autoTrade,
+                    signalForwardWindowMs: undefined,
+                  },
+                }));
+                return;
+              }
+              const next = Number(raw);
+              setSettingsDraft((s) => ({
+                ...s,
+                autoTrade: {
+                  ...s.autoTrade,
+                  signalForwardWindowMs: Number.isFinite(next) && next >= 0 ? Math.floor(next) : undefined,
+                },
+              }));
+            }}
+            placeholder="0"
+          />
+          <div className="text-[12px] text-zinc-500">{tt('popup.settings.signalForwardWindowHint')}</div>
         </label>
       </div>
     </div>

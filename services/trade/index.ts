@@ -228,7 +228,10 @@ export class TradeService {
     const isTurbo = executionMode === 'turbo';
     const chainSettings = settings.chains[input.chainId];
     const gasPreset = input.gasPreset ?? chainSettings.buyGasPreset ?? chainSettings.gasPreset;
-    const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'buy');
+    const gasPriceFromInput = typeof input.gasPriceGwei === 'string' ? parseGweiToWei(input.gasPriceGwei) : 0n;
+    const gasPriceWei = gasPriceFromInput > 0n
+      ? gasPriceFromInput
+      : getGasPriceWei(chainSettings, gasPreset, 'buy');
 
     const perfEnabled = isTurbo;
     const perfStart = perfEnabled ? Date.now() : 0;

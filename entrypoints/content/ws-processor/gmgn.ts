@@ -763,6 +763,7 @@ export function initGmgnWsMonitor(options: {
   call: <T extends BgRequest>(req: T) => Promise<BgResponse<T>>;
 }): WsSiteMonitor {
   const SIGNAL_FORWARD_WINDOW_MS = 80;
+  const SIGNAL_FORWARD_FAST_WINDOW_MS = 0;
   const SIGNAL_FORWARD_PROBE_WINDOW_MS = 3000;
   type SignalForwardDedupeMode = 'strict' | 'balanced' | 'aggressive';
   type SignalForwardProbeWindow = {
@@ -841,6 +842,17 @@ export function initGmgnWsMonitor(options: {
     signalForwardProbeWindow = createSignalForwardProbeWindow(now);
   };
 
+  const resolveSignalForwardWindowMs = (channel: string): number => {
+    const settingsRaw = ((window as any).__DAGOBANG_SETTINGS__ ?? null) as any;
+    const cfg = Number((settingsRaw as any)?.autoTrade?.signalForwardWindowMs);
+    if (Number.isFinite(cfg) && cfg >= 0) return Math.floor(cfg);
+    const normalizedChannel = typeof channel === 'string' ? channel.trim() : '';
+    if (normalizedChannel === 'twitter_monitor' || normalizedChannel === 'twitter_monitor_translation' || normalizedChannel === 'twitter_monitor_token') {
+      return SIGNAL_FORWARD_FAST_WINDOW_MS;
+    }
+    return SIGNAL_FORWARD_WINDOW_MS;
+  };
+
   const getSignalForwardKey = (signal: UnifiedTwitterSignal, dedupeMode: SignalForwardDedupeMode): string => {
     const values = [signal.id, signal.eventId, signal.tweetId, signal.quotedTweetId]
       .map((x) => (typeof x === 'string' ? x.trim() : ''))
@@ -903,11 +915,17 @@ export function initGmgnWsMonitor(options: {
     map.set(key, signal);
     flushSignalForwardProbe(now, dedupeMode);
     if (forwardTimerByChannel.has(normalizedChannel)) return;
+    const windowMs = resolveSignalForwardWindowMs(normalizedChannel);
+    if (windowMs <= 0) {
+      flushForwardChannel(normalizedChannel);
+      flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
+      return;
+    }
     const timer = window.setTimeout(() => {
       forwardTimerByChannel.delete(normalizedChannel);
       flushForwardChannel(normalizedChannel);
       flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
-    }, SIGNAL_FORWARD_WINDOW_MS);
+    }, windowMs);
     forwardTimerByChannel.set(normalizedChannel, timer);
   };
 

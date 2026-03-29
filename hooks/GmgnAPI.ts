@@ -4,6 +4,8 @@
  */
 import { PancakeFactoryV2, PancakeFactoryV3 } from "@/constants/contracts/address";
 import { TokenStat, TokenInfo } from "@/types/token";
+import { parseUnits } from "viem";
+import { getSettings } from "@/services/storage";
 
 
 export interface MultiTokenInfoResponse {
@@ -161,6 +163,7 @@ export interface BuyOrderParams {
   slippage?: number;
   tokenPrice?: string;
   nativePrice?: string;
+  gasGwei?: string;
 }
 
 export interface SellOrderParams {
@@ -169,6 +172,7 @@ export interface SellOrderParams {
   slippage?: number;
   tokenPrice?: string;
   nativePrice?: string;
+  gasGwei?: string;
 }
 
 // Candlestick Query Parameters
@@ -403,14 +407,42 @@ export class GmgnAPI {
     return `${baseUrl}${endpoint}?${urlParams.toString()}`;
   }
 
+  private static async resolveGasGwei(side: 'buy' | 'sell', overrideGasGwei?: string): Promise<string> {
+    const fallback = { slow: '0.06', standard: '0.12', fast: '1', turbo: '5' } as const;
+    const fromOverride = typeof overrideGasGwei === 'string' ? overrideGasGwei.trim() : '';
+    if (fromOverride && Number(fromOverride) > 0) return fromOverride;
+    try {
+      const settings = await getSettings();
+      const chainSettings = settings?.chains?.[settings?.chainId ?? 56];
+      const preset = side === 'buy'
+        ? (chainSettings?.buyGasPreset ?? chainSettings?.gasPreset ?? 'standard')
+        : (chainSettings?.sellGasPreset ?? chainSettings?.gasPreset ?? 'standard');
+      const gasConfig = side === 'buy' ? chainSettings?.buyGasGwei : chainSettings?.sellGasGwei;
+      const presetValue = preset === 'slow'
+        ? gasConfig?.slow
+        : preset === 'fast'
+          ? gasConfig?.fast
+          : preset === 'turbo'
+            ? gasConfig?.turbo
+            : gasConfig?.standard;
+      const normalized = typeof presetValue === 'string' ? presetValue.trim() : '';
+      if (normalized && Number(normalized) > 0) return normalized;
+    } catch {
+    }
+    return fallback.standard;
+  }
+
   public static async buyToken(params: BuyOrderParams): Promise<SwapOrderResponse> {
     const {
       tokenAddress,
       amount,
       slippage = 4,
       tokenPrice = '0',
-      nativePrice = '1000'
+      nativePrice = '1000',
+      gasGwei,
     } = params;
+    const effectiveGasGwei = await this.resolveGasGwei('buy', gasGwei);
+    const gasWei = parseUnits(effectiveGasGwei, 9).toString();
 
     const chain = await this.getChain();
     const fromAddress = await this.getWalletAddress();
@@ -435,14 +467,14 @@ export class GmgnAPI {
       simulate_before_submit: false,
       input_token: '0x0000000000000000000000000000000000000000',
       output_token: tokenAddress,
-      priority_gas_price: '0.0002',
-      gas_price: '55000000',
+      priority_gas_price: effectiveGasGwei,
+      gas_price: gasWei,
       auto_approve_after_buy: false,
       source: 'swap_web',
       swap_mode: 'ExactIn',
       input_amount: amount,
-      max_priority_fee_per_gas: '100000000',
-      max_fee_per_gas: '100000000'
+      max_priority_fee_per_gas: gasWei,
+      max_fee_per_gas: gasWei
     };
 
     const url = await this.buildApiUrl(this.SWAP_ENDPOINT, {}, this.SWAP_URL);
@@ -467,8 +499,11 @@ export class GmgnAPI {
       amount,
       slippage = 4,
       tokenPrice = '0',
-      nativePrice = '1000'
+      nativePrice = '1000',
+      gasGwei,
     } = params;
+    const effectiveGasGwei = await this.resolveGasGwei('sell', gasGwei);
+    const gasWei = parseUnits(effectiveGasGwei, 9).toString();
 
     const chain = await this.getChain();
     const fromAddress = await this.getWalletAddress();
@@ -493,13 +528,13 @@ export class GmgnAPI {
       simulate_before_submit: false,
       input_token: tokenAddress,
       output_token: '0x0000000000000000000000000000000000000000',
-      priority_gas_price: '0.0002',
-      gas_price: '1100000000',
+      priority_gas_price: effectiveGasGwei,
+      gas_price: gasWei,
       source: 'swap_web',
       swap_mode: 'ExactIn',
       input_amount: amount,
-      max_priority_fee_per_gas: '1100000000',
-      max_fee_per_gas: '1100000000'
+      max_priority_fee_per_gas: gasWei,
+      max_fee_per_gas: gasWei
     };
 
     const url = await this.buildApiUrl(this.SWAP_ENDPOINT, {}, this.SWAP_URL);

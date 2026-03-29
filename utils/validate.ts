@@ -226,6 +226,13 @@ export function validateSettings(input: Settings): Settings | null {
   const wsMonitorEnabled = typeof (inputAutoTrade as any)?.wsMonitorEnabled === 'boolean'
     ? !!(inputAutoTrade as any).wsMonitorEnabled
     : !!(defaultAutoTrade as any).wsMonitorEnabled;
+  const inputSignalForwardWindowMs = Number((inputAutoTrade as any)?.signalForwardWindowMs);
+  const defaultSignalForwardWindowMs = Number((defaultAutoTrade as any)?.signalForwardWindowMs);
+  const signalForwardWindowMs = Number.isFinite(inputSignalForwardWindowMs) && inputSignalForwardWindowMs >= 0
+    ? Math.floor(inputSignalForwardWindowMs)
+    : (Number.isFinite(defaultSignalForwardWindowMs) && defaultSignalForwardWindowMs >= 0
+      ? Math.floor(defaultSignalForwardWindowMs)
+      : undefined);
   const inputTriggerSound = (inputAutoTrade as any)?.triggerSound as any;
   const defaultTriggerSound = (defaultAutoTrade as any).triggerSound as any;
   const triggerSoundPreset = TRADE_SUCCESS_SOUND_PRESETS.includes(inputTriggerSound?.preset)
@@ -386,6 +393,7 @@ export function validateSettings(input: Settings): Settings | null {
   const tokenSnipeTargetUsers = parseListInput(inputTokenSnipe?.targetUsers, defaultTokenSnipe.targetUsers ?? []);
   const tokenSnipeAllowedTweetTypes = ['all', 'tweet', 'reply', 'quote', 'retweet', 'follow'] as const;
   const tokenSnipeAllowedInteractionTypes = ['tweet', 'reply', 'quote', 'retweet', 'follow'] as const;
+  const tokenSnipeAllowedBuyMethods = ['all', 'dagobang', 'gmgn'] as const;
   const tokenSnipeTasks = Array.isArray(inputTokenSnipe?.tasks)
     ? inputTokenSnipe.tasks
       .map((raw: any) => {
@@ -416,6 +424,9 @@ export function validateSettings(input: Settings): Settings | null {
           .filter(Boolean);
         const buyAmountBnbRaw = typeof raw?.buyAmountBnb === 'string' ? raw.buyAmountBnb.trim() : '';
         const buyAmountBnb = buyAmountBnbRaw || '0';
+        const buyGasGwei = clampStringNumber(raw?.buyGasGwei, '');
+        const buyMethodRaw = typeof raw?.buyMethod === 'string' ? raw.buyMethod.trim().toLowerCase() : '';
+        const buyMethod = tokenSnipeAllowedBuyMethods.includes(buyMethodRaw as any) ? buyMethodRaw : 'dagobang';
         const createdAtNum = Number(raw?.createdAt);
         const createdAt = Number.isFinite(createdAtNum) && createdAtNum > 0 ? Math.floor(createdAtNum) : Date.now();
         return {
@@ -430,6 +441,8 @@ export function validateSettings(input: Settings): Settings | null {
           keywords,
           autoBuy: typeof raw?.autoBuy === 'boolean' ? raw.autoBuy : true,
           buyAmountBnb,
+          buyGasGwei: buyGasGwei || undefined,
+          buyMethod: buyMethod as any,
           autoSell: typeof raw?.autoSell === 'boolean' ? raw.autoSell : true,
           createdAt,
         };
@@ -455,6 +468,7 @@ export function validateSettings(input: Settings): Settings | null {
       ? inputAutoTrade.maxHoldMinutes.trim()
       : defaultAutoTrade.maxHoldMinutes,
     wsMonitorEnabled,
+    signalForwardWindowMs,
     triggerSound: {
       enabled: triggerSoundEnabled,
       preset: triggerSoundPreset,
