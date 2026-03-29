@@ -83,6 +83,8 @@ export function XTokenSniperTaskList(props: {
           const expanded = !!props.expandedTaskById[task.id];
           const ageLabel = formatAgeShort(status?.updatedAt ?? task.createdAt);
           const tweetTypes = normalizeTaskTweetTypes(task);
+          const targetUrls = Array.isArray(task.targetUrls) ? task.targetUrls : [];
+          const keywords = Array.isArray(task.keywords) ? task.keywords : [];
           const buyAmountLabel = `${task.buyAmountBnb || '0'} BNB`;
           const buyState =
             status?.state === 'buying'
@@ -173,9 +175,9 @@ export function XTokenSniperTaskList(props: {
                     <div>{tt('contentUi.tokenSniper.taskList.sellStatus', [sellState])}</div>
                   </div>
                   <div className="space-y-1">
-                    <div>{tt('contentUi.tokenSniper.taskList.targetLinks', [task.targetUrls.length])}</div>
+                    <div>{tt('contentUi.tokenSniper.taskList.targetLinks', [targetUrls.length])}</div>
                     <div className="space-y-0.5">
-                      {task.targetUrls.map((url, idx) => (
+                      {targetUrls.map((url, idx) => (
                         <a
                           key={`${task.id}-url-${idx}`}
                           href={url}
@@ -188,6 +190,16 @@ export function XTokenSniperTaskList(props: {
                         >
                           {idx + 1}. {url}
                         </a>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div>{tt('contentUi.tokenSniper.taskList.targetKeywords', [keywords.length])}</div>
+                    <div className="space-y-0.5">
+                      {keywords.map((word, idx) => (
+                        <div key={`${task.id}-kw-${idx}`} className="truncate text-emerald-300">
+                          {idx + 1}. {word}
+                        </div>
                       ))}
                     </div>
                   </div>

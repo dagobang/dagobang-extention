@@ -282,6 +282,7 @@
       "tokenNamePlaceholder": "Token Name",
       "tweetTypesMulti": "Tweet types (multi-select)",
       "targetTweetUrlsPlaceholder": "Target tweet URLs (multiple)",
+      "keywordsPlaceholder": "Keywords (multiple, comma or newline separated)",
       "autoBuy": "Auto buy",
       "buyAmountBnbPlaceholder": "Buy BNB",
       "autoSell": "Auto sell",
@@ -294,6 +295,7 @@
       "errorSaveFailed": "Save failed",
       "errorInvalidTokenAddress": "Invalid token address",
       "errorTargetUrlRequired": "Please enter at least one target tweet URL",
+      "errorTargetRequired": "Please enter at least one target tweet URL or keyword",
       "taskList": {
         "title": "Task list",
         "total": "Total {0}",
@@ -321,6 +323,7 @@
         "buyStatus": "Buy status: {0}",
         "sellStatus": "Sell status: {0}",
         "targetLinks": "Target links: {0}",
+        "targetKeywords": "Target keywords: {0}",
         "buyTx": "Buy Tx: {0}",
         "sellTx": "Sell Tx: {0}",
         "orderIds": "Order IDs: {0}",

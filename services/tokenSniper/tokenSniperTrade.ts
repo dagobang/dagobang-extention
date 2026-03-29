@@ -198,6 +198,15 @@ const parseList = (value: unknown): string[] => {
     .filter(Boolean);
 };
 
+const parseCommaOrLineList = (value: unknown): string[] => {
+  if (Array.isArray(value)) return value.map((x) => String(x).trim()).filter(Boolean);
+  if (typeof value !== 'string') return [];
+  return value
+    .split(/[\n,]/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+};
+
 const extractTweetIds = (text: string): string[] => {
   const ids = new Set<string>();
   const source = String(text || '');
@@ -271,6 +280,21 @@ const getSignalActorKey = (signal: UnifiedTwitterSignal) => {
   return '';
 };
 
+const buildSignalKeywordText = (signal: UnifiedTwitterSignal) =>
+  [
+    signal.text,
+    signal.translatedText,
+    signal.quotedText,
+    (signal as any).quotedTranslatedText,
+    (signal as any).quotedTranslation,
+    (signal as any).quoteTranslatedText,
+    (signal as any).translation,
+  ]
+    .map((x) => (typeof x === 'string' ? x.trim() : ''))
+    .filter(Boolean)
+    .join('\n')
+    .toLowerCase();
+
 const updateTaskStatus = async (taskId: string, patch: Partial<TokenSnipeTaskRuntimeStatus>) => {
   await enqueueStatusMutation((statusMap) => {
     const prev = statusMap[taskId];
@@ -333,6 +357,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
       const signalAtMs = getSignalAtMs(signal) || signalActionAtMs;
       const signalActorKey = getSignalActorKey(signal);
       const accountKey = signalActorKey || `unknown:${stableSignalId}`;
+      const signalKeywordText = buildSignalKeywordText(signal);
       const now = Date.now();
       if (now - signalActionAtMs > TOKEN_SNIPER_SIGNAL_ACTION_EXPIRE_MS) return;
       const activeTaskIds = new Set(tokenSnipe.tasks.filter((x) => x?.id).map((x) => String(x.id)));
@@ -350,12 +375,17 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             .flatMap((x) => extractTweetIds(x))
             .filter(Boolean),
         );
-        if (!targetIds.size) continue;
         const matchedTweetId = Array.from(tweetIds).find((id) => targetIds.has(id));
-        if (!matchedTweetId) continue;
-        const dedupeKey = `${task.id}:${accountKey}:${matchedTweetId}`;
+        const hasTargetMatch = !!matchedTweetId;
+        const keywords = parseCommaOrLineList((task as any)?.keywords).map((x) => x.toLowerCase());
+        const hasKeywordMatch = !!signalKeywordText && keywords.some((x) => signalKeywordText.includes(x));
+        if (!targetIds.size && !keywords.length) continue;
+        if (!hasTargetMatch && !hasKeywordMatch) continue;
+        const dedupeTweetId = matchedTweetId || Array.from(tweetIds)[0];
+        if (!dedupeTweetId) continue;
+        const dedupeKey = `${task.id}:${accountKey}:${dedupeTweetId}`;
         if (handledSignalByTask.has(dedupeKey)) continue;
-        if (await hasHandledSignalInHistory({ taskId: task.id, accountKey, tweetId: matchedTweetId })) {
+        if (await hasHandledSignalInHistory({ taskId: task.id, accountKey, tweetId: dedupeTweetId })) {
           handledSignalByTask.set(dedupeKey, now);
           continue;
         }

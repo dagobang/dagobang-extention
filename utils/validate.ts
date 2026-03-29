@@ -38,6 +38,19 @@ function parseListInput(value: any, fallback: string[]) {
   return fallback;
 }
 
+function parseCommaOrLineListInput(value: any, fallback: string[]) {
+  if (Array.isArray(value)) {
+    return value.map((x) => String(x).trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/[\n,，]/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+  }
+  return fallback;
+}
+
 function clampStringNumber(value: any, fallback: string) {
   if (typeof value !== 'string') return fallback;
   const trimmed = value.trim();
@@ -398,6 +411,9 @@ export function validateSettings(input: Settings): Settings | null {
         const targetUrls = parseListInput(raw?.targetUrls, [])
           .map((x) => x.trim())
           .filter(Boolean);
+        const keywords = parseCommaOrLineListInput(raw?.keywords, [])
+          .map((x) => x.trim())
+          .filter(Boolean);
         const buyAmountBnbRaw = typeof raw?.buyAmountBnb === 'string' ? raw.buyAmountBnb.trim() : '';
         const buyAmountBnb = buyAmountBnbRaw || '0';
         const createdAtNum = Number(raw?.createdAt);
@@ -411,6 +427,7 @@ export function validateSettings(input: Settings): Settings | null {
           tweetType: legacyTweetType,
           tweetTypes: normalizedTweetTypes as any,
           targetUrls,
+          keywords,
           autoBuy: typeof raw?.autoBuy === 'boolean' ? raw.autoBuy : true,
           buyAmountBnb,
           autoSell: typeof raw?.autoSell === 'boolean' ? raw.autoSell : true,

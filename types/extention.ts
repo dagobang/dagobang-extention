@@ -126,6 +126,7 @@ export type TokenSnipeTask = {
   tweetType: TokenSnipeTweetType;
   tweetTypes?: AutoTradeInteractionType[];
   targetUrls: string[];
+  keywords?: string[];
   autoBuy: boolean;
   buyAmountBnb: string;
   autoSell: boolean;

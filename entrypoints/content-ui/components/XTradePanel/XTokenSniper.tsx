@@ -33,6 +33,12 @@ const parseList = (value: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
+const parseCommaOrLineList = (value: string) =>
+  value
+    .split(/[\n,，]/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+
 const createTaskId = () => `token-task-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 const TWEET_TYPE_OPTIONS: Array<{ value: 'tweet' | 'reply' | 'quote' | 'retweet' | 'follow'; label: string }> = [
   { value: 'tweet', label: 'tweet' },
@@ -99,6 +105,7 @@ export function XTokenSniperContent({
   const [tokenNameInput, setTokenNameInput] = useState('');
   const [tweetTypesInput, setTweetTypesInput] = useState<Array<(typeof TWEET_TYPE_OPTIONS)[number]['value']>>(TWEET_TYPE_OPTIONS.map((x) => x.value));
   const [targetUrlsInput, setTargetUrlsInput] = useState('');
+  const [keywordsInput, setKeywordsInput] = useState('');
   const [autoBuyInput, setAutoBuyInput] = useState(true);
   const [buyAmountInput, setBuyAmountInput] = useState('0.01');
   const [autoSellInput, setAutoSellInput] = useState(true);
@@ -228,6 +235,7 @@ export function XTokenSniperContent({
     setTokenNameInput('');
     setTweetTypesInput(TWEET_TYPE_OPTIONS.map((x) => x.value));
     setTargetUrlsInput('');
+    setKeywordsInput('');
     setAutoBuyInput(true);
     setBuyAmountInput('0.01');
     setAutoSellInput(true);
@@ -245,7 +253,8 @@ export function XTokenSniperContent({
     setTokenSymbolInput(task.tokenSymbol ?? '');
     setTokenNameInput(task.tokenName ?? '');
     setTweetTypesInput(normalizeTaskTweetTypes(task));
-    setTargetUrlsInput(task.targetUrls.join('\n'));
+    setTargetUrlsInput(Array.isArray(task.targetUrls) ? task.targetUrls.join('\n') : '');
+    setKeywordsInput(Array.isArray(task.keywords) ? task.keywords.join('\n') : '');
     setAutoBuyInput(task.autoBuy);
     setBuyAmountInput(task.buyAmountBnb);
     setAutoSellInput(task.autoSell);
@@ -287,8 +296,9 @@ export function XTokenSniperContent({
       return;
     }
     const targetUrls = parseList(targetUrlsInput);
-    if (!targetUrls.length) {
-      setError(tt('contentUi.tokenSniper.errorTargetUrlRequired'));
+    const keywords = parseCommaOrLineList(keywordsInput);
+    if (!targetUrls.length && !keywords.length) {
+      setError(tt('contentUi.tokenSniper.errorTargetRequired'));
       return;
     }
     const selectedTweetTypes = tweetTypesInput.length
@@ -304,6 +314,7 @@ export function XTokenSniperContent({
       tweetType: selectedTweetTypes.length === TWEET_TYPE_OPTIONS.length ? 'all' : selectedTweetTypes[0],
       tweetTypes: selectedTweetTypes,
       targetUrls,
+      keywords,
       autoBuy: autoBuyInput,
       buyAmountBnb: buyAmountInput.trim() || '0',
       autoSell: autoSellInput,
@@ -469,6 +480,12 @@ export function XTokenSniperContent({
               placeholder={tt('contentUi.tokenSniper.targetTweetUrlsPlaceholder')}
               value={targetUrlsInput}
               onChange={(e) => setTargetUrlsInput(e.target.value)}
+            />
+            <textarea
+              className="w-full min-h-[72px] rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
+              placeholder={tt('contentUi.tokenSniper.keywordsPlaceholder')}
+              value={keywordsInput}
+              onChange={(e) => setKeywordsInput(e.target.value)}
             />
             <div className="grid grid-cols-3 gap-2 text-[12px]">
               <label className="flex items-center gap-2 text-zinc-300">

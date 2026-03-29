@@ -282,6 +282,7 @@
       "tokenNamePlaceholder": "Token Name",
       "tweetTypesMulti": "推文类型（可多选）",
       "targetTweetUrlsPlaceholder": "目标推文链接（可多个）",
+      "keywordsPlaceholder": "关键字（可多个，逗号或换行分隔）",
       "autoBuy": "自动买入",
       "buyAmountBnbPlaceholder": "买入BNB",
       "autoSell": "自动卖出",
@@ -294,6 +295,7 @@
       "errorSaveFailed": "保存失败",
       "errorInvalidTokenAddress": "代币地址不合法",
       "errorTargetUrlRequired": "请至少输入一个目标推文链接",
+      "errorTargetRequired": "请至少输入一个目标推文链接或关键字",
       "taskList": {
         "title": "任务列表",
         "total": "共 {0} 条",
@@ -321,6 +323,7 @@
         "buyStatus": "买入状态：{0}",
         "sellStatus": "卖出状态：{0}",
         "targetLinks": "目标链接：{0} 条",
+        "targetKeywords": "目标关键字：{0} 条",
         "buyTx": "买入Tx：{0}",
         "sellTx": "卖出Tx：{0}",
         "orderIds": "挂单ID：{0}",

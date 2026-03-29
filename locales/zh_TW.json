@@ -282,6 +282,7 @@
       "tokenNamePlaceholder": "Token Name",
       "tweetTypesMulti": "推文類型（可多選）",
       "targetTweetUrlsPlaceholder": "目標推文連結（可多個）",
+      "keywordsPlaceholder": "關鍵字（可多個，逗號或換行分隔）",
       "autoBuy": "自動買入",
       "buyAmountBnbPlaceholder": "買入BNB",
       "autoSell": "自動賣出",
@@ -294,6 +295,7 @@
       "errorSaveFailed": "儲存失敗",
       "errorInvalidTokenAddress": "代幣地址不合法",
       "errorTargetUrlRequired": "請至少輸入一個目標推文連結",
+      "errorTargetRequired": "請至少輸入一個目標推文連結或關鍵字",
       "taskList": {
         "title": "任務列表",
         "total": "共 {0} 條",
@@ -321,6 +323,7 @@
         "buyStatus": "買入狀態：{0}",
         "sellStatus": "賣出狀態：{0}",
         "targetLinks": "目標連結：{0} 條",
+        "targetKeywords": "目標關鍵字：{0} 條",
         "buyTx": "買入Tx：{0}",
         "sellTx": "賣出Tx：{0}",
         "orderIds": "掛單ID：{0}",
