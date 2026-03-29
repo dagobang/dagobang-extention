@@ -773,6 +773,7 @@ export function XSniperContent({
             latestTokenByAddr={latestTokenByAddr}
             athMcapByAddr={athMcapByAddr}
             wsStatus={wsStatus}
+            wsMonitorEnabled={wsMonitorEnabled}
             twitterSnipeEnabled={twitterSnipe?.enabled !== false}
             twitterSnipeDryRun={!!twitterSnipe?.dryRun}
             onTwitterSnipeEnabledChange={(next) => {

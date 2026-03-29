@@ -33,23 +33,7 @@ type XSniperBuyRecordLite = {
   signalTweetId?: string;
 };
 
-type SignalForwardProbe = {
-  windowStartAt: number;
-  durationMs: number;
-  dedupeMode: 'strict' | 'balanced' | 'aggressive';
-  received: number;
-  dedupeOverwrite: number;
-  enqueued: number;
-  flushedSignals: number;
-  flushes: number;
-  callOk: number;
-  callFail: number;
-  callTotalMs: number;
-  callMaxMs: number;
-  dedupeRate: number;
-  forwardRate: number;
-  avgCallMs: number;
-};
+type MonitorUserFilterMode = 'all' | 'twitterSnipe' | 'tokenSnipe';
 
 const HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
 const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
@@ -120,17 +104,26 @@ const isRepostOrQuoteSignal = (signal: UnifiedTwitterSignal) => {
   return type === 'repost' || type === 'quote';
 };
 
+const normalizeTargetUsers = (list: unknown): string[] =>
+  Array.isArray(list)
+    ? list.map((x) => String(x).replace(/^@/, '').trim().toLowerCase()).filter(Boolean)
+    : [];
+
+const matchesTargetUsers = (signal: UnifiedTwitterSignal, targetUsers: string[]) => {
+  if (!targetUsers.length) return true;
+  const screen = String((signal as any).userScreen ?? '').replace(/^@/, '').trim().toLowerCase();
+  const name = String((signal as any).userName ?? '').trim().toLowerCase();
+  if (!screen && !name) return false;
+  return targetUsers.some((u) => u === screen || u === name);
+};
+
 const matchesTwitterFilters = (signal: UnifiedTwitterSignal, strategy: any) => {
   const allowedTypes = Array.isArray(strategy?.interactionTypes) ? strategy.interactionTypes.map((x: any) => String(x).toLowerCase()) : [];
   const it = getSignalInteraction(signal);
   if (allowedTypes.length && (!it || !allowedTypes.includes(it))) return false;
 
-  const targetUsers = Array.isArray(strategy?.targetUsers) ? strategy.targetUsers.map((x: any) => String(x).toLowerCase()).filter(Boolean) : [];
-  if (!targetUsers.length) return true;
-
-  const screen = String((signal as any).userScreen ?? '').replace(/^@/, '').toLowerCase();
-  const name = String((signal as any).userName ?? '').toLowerCase();
-  return targetUsers.some((u: string) => u === screen || u === name);
+  const targetUsers = normalizeTargetUsers(strategy?.targetUsers);
+  return matchesTargetUsers(signal, targetUsers);
 };
 
 const getDevHasSold = (token: UnifiedSignalToken) => {
@@ -566,29 +559,6 @@ export function XMonitorContent({
   useEffect(() => {
     setWsMonitorEnabled(resolvedSettings?.autoTrade?.wsMonitorEnabled !== false);
   }, [resolvedSettings?.autoTrade?.wsMonitorEnabled]);
-  const [signalForwardProbe, setSignalForwardProbe] = useState<SignalForwardProbe | null>(() => {
-    const current = (window as any).__DAGOBANG_SIGNAL_FORWARD_PROBE__;
-    return current && typeof current === 'object' ? (current as SignalForwardProbe) : null;
-  });
-
-  useEffect(() => {
-    if (!active) return;
-    const applyPayload = (payload: any) => {
-      if (!payload || typeof payload !== 'object') return;
-      if (typeof payload.received !== 'number') return;
-      setSignalForwardProbe(payload as SignalForwardProbe);
-    };
-    applyPayload((window as any).__DAGOBANG_SIGNAL_FORWARD_PROBE__);
-    const onMessage = (event: MessageEvent) => {
-      const data = event.data as any;
-      if (!data || data.type !== 'DAGOBANG_SIGNAL_FORWARD_PROBE') return;
-      applyPayload(data.payload);
-    };
-    window.addEventListener('message', onMessage);
-    return () => {
-      window.removeEventListener('message', onMessage);
-    };
-  }, [active]);
 
   const twitterSnipeSource = (resolvedSettings as any)?.autoTrade?.twitterSnipe ?? null;
   const twitterSnipeStrategy = useMemo(
@@ -752,6 +722,16 @@ export function XMonitorContent({
       return false;
     }
   });
+  const userFilterModeStorageKey = 'dagobang_xmonitor_userFilterMode_v1';
+  const [userFilterMode, setUserFilterMode] = useState<MonitorUserFilterMode>(() => {
+    try {
+      const raw = window.localStorage.getItem(userFilterModeStorageKey);
+      if (raw === 'all' || raw === 'twitterSnipe' || raw === 'tokenSnipe') return raw;
+      if (window.localStorage.getItem('dagobang_xmonitor_onlySnipeTargets_v1') === '1') return 'twitterSnipe';
+    } catch {
+    }
+    return 'all';
+  });
   const tokenLimitStorageKey = 'dagobang_xmonitor_tokenLimit_v1';
   const [tokenLimit, setTokenLimit] = useState<number>(() => {
     try {
@@ -770,6 +750,13 @@ export function XMonitorContent({
     } catch {
     }
   }, [onlyWithTokens]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(userFilterModeStorageKey, userFilterMode);
+    } catch {
+    }
+  }, [userFilterMode]);
 
   useEffect(() => {
     try {
@@ -854,13 +841,31 @@ export function XMonitorContent({
     return signalIds.map((id) => map.get(id)).filter(Boolean) as UnifiedTwitterSignal[];
   }, [signalIds]);
 
+  const twitterSnipeTargetUsers = useMemo(
+    () => normalizeTargetUsers(twitterSnipeStrategy?.targetUsers),
+    [twitterSnipeStrategy]
+  );
+  const tokenSnipeTargetUsers = useMemo(
+    () => normalizeTargetUsers((resolvedSettings as any)?.autoTrade?.tokenSnipe?.targetUsers),
+    [resolvedSettings]
+  );
+
   const visibleSignals = useMemo(() => {
-    return onlyWithTokens ? signalList.filter((s) => Array.isArray(s.tokens) && s.tokens.length > 0) : signalList;
-  }, [signalList, onlyWithTokens]);
+    let next = signalList;
+    if (onlyWithTokens) {
+      next = next.filter((s) => Array.isArray(s.tokens) && s.tokens.length > 0);
+    }
+    if (userFilterMode === 'twitterSnipe') {
+      next = next.filter((s) => matchesTargetUsers(s, twitterSnipeTargetUsers));
+    } else if (userFilterMode === 'tokenSnipe') {
+      next = next.filter((s) => matchesTargetUsers(s, tokenSnipeTargetUsers));
+    }
+    return next;
+  }, [signalList, onlyWithTokens, userFilterMode, twitterSnipeTargetUsers, tokenSnipeTargetUsers]);
 
   useEffect(() => {
     setSignalPage(1);
-  }, [onlyWithTokens, active]);
+  }, [onlyWithTokens, userFilterMode, twitterSnipeTargetUsers, tokenSnipeTargetUsers, active]);
 
   const visiblePagedSignals = useMemo(() => {
     const count = Math.max(1, signalPage) * SIGNAL_PAGE_SIZE;
@@ -868,25 +873,6 @@ export function XMonitorContent({
   }, [visibleSignals, signalPage]);
 
   const hasMoreSignals = visiblePagedSignals.length < visibleSignals.length;
-  const signalForwardProbeText = useMemo(() => {
-    if (!signalForwardProbe) return '';
-    const dedupe = `${(Math.max(0, Math.min(1, signalForwardProbe.dedupeRate)) * 100).toFixed(1)}%`;
-    const forward = `${signalForwardProbe.flushedSignals}/${signalForwardProbe.received}`;
-    const avgMs = Number.isFinite(signalForwardProbe.avgCallMs) ? signalForwardProbe.avgCallMs.toFixed(1) : '0.0';
-    const maxMs = Number.isFinite(signalForwardProbe.callMaxMs) ? signalForwardProbe.callMaxMs.toFixed(1) : '0.0';
-    return `${signalForwardProbe.dedupeMode} 去重 ${dedupe} · 转发 ${forward} · 调用 ${avgMs}/${maxMs}ms`;
-  }, [signalForwardProbe]);
-  const signalForwardProbeClassName = useMemo(() => {
-    if (!signalForwardProbe) return 'text-zinc-500';
-    const fail = signalForwardProbe.callFail;
-    const avg = signalForwardProbe.avgCallMs;
-    const max = signalForwardProbe.callMaxMs;
-    const received = signalForwardProbe.received;
-    const dedupeRate = signalForwardProbe.dedupeRate;
-    if (fail > 0 || avg >= 120 || max >= 300) return 'text-rose-400';
-    if (avg >= 60 || max >= 160 || (received >= 20 && dedupeRate <= 0.03)) return 'text-amber-400';
-    return 'text-emerald-400';
-  }, [signalForwardProbe]);
 
   if (!active) return null;
 
@@ -894,7 +880,10 @@ export function XMonitorContent({
     <>
       <div className="px-4 py-2 border-b border-zinc-800/60">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-          <label className="flex items-center gap-2 text-[14px] font-semibold text-zinc-200">
+          <label
+            className="flex items-center gap-2 text-[14px] font-semibold text-zinc-200"
+            title={tt('contentUi.xMonitor.wsMonitorEnabledDesc')}
+          >
             <input
               type="checkbox"
               className="h-4 w-4 accent-emerald-500"
@@ -921,21 +910,39 @@ export function XMonitorContent({
                 }
               }}
             />
-            {tt('contentUi.xMonitor.wsMonitorEnabled')}
+            {tt('contentUi.xMonitor.wsMonitorEnabledShort')}
           </label>
-          <label className="flex items-center gap-2 text-[14px] text-zinc-300">
+          <label
+            className="flex items-center gap-2 text-[14px] text-zinc-300"
+            title={tt('contentUi.xMonitor.filterOnlyWithTokensDesc')}
+          >
             <input
               type="checkbox"
               className="h-3 w-3 accent-emerald-500"
               checked={onlyWithTokens}
               onChange={(e) => setOnlyWithTokens(e.target.checked)}
             />
-            {tt('contentUi.xMonitor.filterOnlyWithTokens')}
+            {tt('contentUi.xMonitor.filterOnlyWithTokensShort')}
           </label>
+          <div className="flex items-center gap-2 text-[12px] text-zinc-400" title={tt('contentUi.xMonitor.filterUserScopeDesc')}>
+            <span>{tt('contentUi.xMonitor.filterUserScopeShort')}</span>
+            <select
+              className="h-7 rounded-md border border-zinc-800 bg-zinc-950/30 px-2 text-[12px] text-zinc-200 outline-none"
+              value={userFilterMode}
+              title={tt('contentUi.xMonitor.filterUserScopeDesc')}
+              onChange={(e) => {
+                const next = e.target.value;
+                if (next === 'all' || next === 'twitterSnipe' || next === 'tokenSnipe') {
+                  setUserFilterMode(next);
+                }
+              }}
+            >
+              <option value="all">{tt('contentUi.xMonitor.filterUserScopeAll')}</option>
+              <option value="twitterSnipe">{tt('contentUi.xMonitor.filterUserScopeTwitterSnipe')}</option>
+              <option value="tokenSnipe">{tt('contentUi.xMonitor.filterUserScopeTokenSnipe')}</option>
+            </select>
+          </div>
         </div>
-        {signalForwardProbeText ? (
-          <div className={`mt-1 text-[11px] ${signalForwardProbeClassName}`}>{signalForwardProbeText}</div>
-        ) : null}
       </div>
 
       <div className="dagobang-scrollbar max-h-[62vh] overflow-y-auto p-3">

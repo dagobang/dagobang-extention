@@ -20,6 +20,7 @@ type XSniperHistoryViewProps = {
   latestTokenByAddr: Record<string, any>;
   athMcapByAddr: Record<string, number>;
   wsStatus: any;
+  wsMonitorEnabled: boolean;
   twitterSnipeEnabled: boolean;
   twitterSnipeDryRun: boolean;
   onTwitterSnipeEnabledChange: (next: boolean) => void;
@@ -111,6 +112,7 @@ export function XSniperHistoryView({
   latestTokenByAddr,
   athMcapByAddr,
   wsStatus,
+  wsMonitorEnabled,
   twitterSnipeEnabled,
   twitterSnipeDryRun,
   onTwitterSnipeEnabledChange,
@@ -244,17 +246,20 @@ export function XSniperHistoryView({
       <div className="rounded-md border border-zinc-800 bg-zinc-900/30 p-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-zinc-300">
-          <label className="flex items-center gap-1.5">
+          <label
+            className="flex items-center gap-1.5"
+            title={wsMonitorEnabled ? tt('contentUi.autoTradeStrategy.twitterSnipeEnabledDesc') : tt('contentUi.xMonitor.wsMonitorDisabledSniperTip')}
+          >
             <input
               type="checkbox"
               className="h-3.5 w-3.5 accent-emerald-500"
               checked={twitterSnipeEnabled}
-              disabled={!canEdit}
+              disabled={!canEdit || !wsMonitorEnabled}
               onChange={(e) => onTwitterSnipeEnabledChange(e.target.checked)}
             />
-            <span>{tt('contentUi.autoTradeStrategy.twitterSnipeEnabled')}</span>
+            <span className={!canEdit || !wsMonitorEnabled ? 'text-zinc-500' : ''}>{tt('contentUi.autoTradeStrategy.twitterSnipeEnabledShort')}</span>
           </label>
-          <label className="flex items-center gap-1.5">
+          <label className="flex items-center gap-1.5" title={tt('contentUi.autoTradeStrategy.twitterSnipeDryRun')}>
             <input
               type="checkbox"
               className="h-3.5 w-3.5 accent-amber-500"
@@ -262,7 +267,7 @@ export function XSniperHistoryView({
               disabled={!canEdit}
               onChange={(e) => onTwitterSnipeDryRunChange(e.target.checked)}
             />
-            <span>{tt('contentUi.autoTradeStrategy.twitterSnipeDryRun')}</span>
+            <span>{tt('contentUi.autoTradeStrategy.twitterSnipeDryRunShort')}</span>
           </label>
           </div>
           <div className="flex items-center gap-1.5">
@@ -291,7 +296,7 @@ export function XSniperHistoryView({
             {onOpenConfig ? (
               <button
                 type="button"
-                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+                className="rounded-md border border-emerald-500/50 bg-emerald-500/15 px-2 py-1 text-[12px] text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-50"
                 disabled={!canEdit}
                 onClick={(e) => {
                   e.preventDefault();
@@ -299,7 +304,7 @@ export function XSniperHistoryView({
                   onOpenConfig();
                 }}
               >
-                狙击设置
+                {tt('contentUi.autoTradeStrategy.snipeSettings')}
               </button>
             ) : null}
           </div>

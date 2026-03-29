@@ -79,6 +79,7 @@ export function XTokenSniperContent({
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
   const normalized = useMemo(() => normalizeTokenSnipe(resolvedSettings), [resolvedSettings]);
   const normalizedKey = useMemo(() => JSON.stringify(normalized), [normalized]);
+  const wsMonitorEnabled = resolvedSettings?.autoTrade?.wsMonitorEnabled !== false;
   const [enabled, setEnabled] = useState(normalized.enabled);
   const [tasks, setTasks] = useState<TokenSnipeTask[]>(normalized.tasks);
   const [taskStatusById, setTaskStatusById] = useState<Record<string, TokenSnipeTaskRuntimeStatus>>({});
@@ -335,17 +336,20 @@ export function XTokenSniperContent({
 
   return (
     <div className="px-4 py-2 space-y-2">
-      <label className="flex items-center gap-2 px-1 py-1 text-[13px] text-zinc-200">
+      <label
+        className="flex items-center gap-2 px-1 py-1 text-[13px] text-zinc-200"
+        title={wsMonitorEnabled ? tt('contentUi.tokenSniper.enableDesc') : tt('contentUi.xMonitor.wsMonitorDisabledSniperTip')}
+      >
         <input
           type="checkbox"
           className="h-4 w-4 accent-emerald-500"
           checked={enabled}
-          disabled={!resolvedSettings || !isUnlocked || saving}
+          disabled={!resolvedSettings || !isUnlocked || saving || !wsMonitorEnabled}
           onChange={(e) => {
             void saveEnabled(e.target.checked);
           }}
         />
-        <span>{tt('contentUi.tokenSniper.enable')}</span>
+        <span className={!wsMonitorEnabled ? 'text-zinc-500' : ''}>{tt('contentUi.tokenSniper.enableShort')}</span>
       </label>
 
       <div className="grid grid-cols-2 gap-2">

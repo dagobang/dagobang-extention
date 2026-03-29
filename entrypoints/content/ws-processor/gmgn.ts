@@ -1,4 +1,4 @@
-import type { AutoTradeInteractionType, BgRequest, BgResponse, Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
+import type { BgRequest, BgResponse, Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import {
   asAddress,
   extractFirstFromObject,
@@ -185,32 +185,11 @@ const extractPublicBroadcastCreates = (payload: any) => {
   return results;
 };
 
-const normalizeInteractionType = (raw?: string | null): AutoTradeInteractionType | null => {
-  if (!raw) return null;
-  const v = raw.trim().toLowerCase();
-  if (v === 'tweet') return 'tweet';
-  if (v === 'reply') return 'reply';
-  if (v === 'quote') return 'quote';
-  if (v === 'retweet' || v === 'repost') return 'retweet';
-  if (v === 'follow') return 'follow';
-  return null;
-};
-
 const isWsMonitorEnabled = (): boolean => {
   const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
   const enabled = (settings as any)?.autoTrade?.wsMonitorEnabled;
   if (typeof enabled === 'boolean') return enabled;
   return true;
-};
-
-const getTwitterFilters = () => {
-  const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
-  const enabled = isWsMonitorEnabled() && (settings?.autoTrade?.twitterSnipe?.enabled ?? true);
-  const targets = (settings?.autoTrade?.twitterSnipe?.targetUsers ?? [])
-    .map((x) => x.trim().replace(/^@/, '').toLowerCase())
-    .filter(Boolean);
-  const interactions = (settings?.autoTrade?.twitterSnipe?.interactionTypes ?? []).map((x) => String(x).toLowerCase());
-  return { settings, enabled, targets, interactions };
 };
 
 const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';
@@ -294,36 +273,8 @@ const saveUnifiedTwitterCache = (list: UnifiedTwitterSignal[]) => {
   scheduleUnifiedTwitterCachePersist();
 };
 
-const getSignalUser = (signal: UnifiedTwitterSignal): string | null => {
-  const userRaw = signal.userScreen ?? null;
-  if (!userRaw) return null;
-  return userRaw.trim().replace(/^@/, '').toLowerCase();
-};
-
-const getSignalInteraction = (signal: UnifiedTwitterSignal): AutoTradeInteractionType | null => {
-  const type = signal.tweetType === 'delete_post' ? (signal.sourceTweetType ?? null) : signal.tweetType;
-  if (type === 'repost') return 'retweet';
-  if (type === 'tweet') return 'tweet';
-  if (type === 'reply') return 'reply';
-  if (type === 'quote') return 'quote';
-  if (type === 'follow') return 'follow';
-  return null;
-};
-
 const shouldKeepUnifiedSignal = (signal: UnifiedTwitterSignal) => {
-  const { targets, interactions } = getTwitterFilters();
-  if (!targets.length && !interactions.length) return true;
-  if (targets.length) {
-    const user = getSignalUser(signal);
-    if (!user) return false;
-    if (!targets.includes(user)) return false;
-  }
-  if (interactions.length) {
-    const it = getSignalInteraction(signal);
-    if (!it) return false;
-    if (!interactions.includes(it)) return false;
-  }
-  return true;
+  return Boolean(signal && typeof signal.id === 'string' && signal.id.trim());
 };
 
 const refreshUnifiedTwitterCache = () => {
@@ -1370,7 +1321,6 @@ export function initGmgnWsMonitor(options: {
 
     if (!changed) return;
     saveUnifiedTwitterCache(updated);
-    const { enabled } = getTwitterFilters();
     for (const s of updated) {
       if (!s) continue;
       const hit =
@@ -1379,7 +1329,7 @@ export function initGmgnWsMonitor(options: {
       if (!hit) continue;
       if (isWsMonitorEnabled()) {
         window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-        if (enabled && shouldForwardTwitterSignal(s)) enqueueSignalForward('twitter_monitor_token', s);
+        if (shouldForwardTwitterSignal(s)) enqueueSignalForward('twitter_monitor_token', s);
       }
     }
   };
