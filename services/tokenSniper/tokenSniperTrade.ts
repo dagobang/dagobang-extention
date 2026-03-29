@@ -294,7 +294,7 @@ const cleanupHandledSignalMap = (now: number, activeTaskIds: Set<string>) => {
 };
 
 export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => {
-  const { fetchTokenInfoFresh, getEntryPriceUsd } = createTokenInfoResolvers();
+  const { fetchTokenInfoFreshWithReason, buildGenericTokenInfoWithReason, getEntryPriceUsd } = createTokenInfoResolvers();
 
   const broadcastToTabs = async (message: any) => {
     try {
@@ -465,9 +465,31 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             deps.onStateChanged();
             continue;
           }
-          const tokenInfo = await fetchTokenInfoFresh(task.chain, task.tokenAddress);
+          const tokenInfoResult = await fetchTokenInfoFreshWithReason(task.chain, task.tokenAddress);
+          const genericTokenInfoResult = tokenInfoResult.tokenInfo
+            ? { tokenInfo: null, failureReason: undefined }
+            : await buildGenericTokenInfoWithReason(task.chain, task.tokenAddress);
+          const tokenInfo =
+            tokenInfoResult.tokenInfo
+            ?? genericTokenInfoResult.tokenInfo;
           if (!tokenInfo) {
-            await updateTaskStatus(task.id, { state: 'failed', message: '获取代币信息失败' });
+            const failureReason = genericTokenInfoResult.failureReason || tokenInfoResult.failureReason || '';
+            const failMessage = failureReason === 'invalid_address'
+              ? '获取代币信息失败：代币地址无效'
+              : failureReason === 'fourmeme_rate_limited'
+                ? '获取代币信息失败：接口限流(429)'
+              : failureReason === 'fourmeme_empty'
+                ? '获取代币信息失败：接口未返回该代币'
+                : failureReason === 'flap_rate_limited'
+                  ? '获取代币信息失败：Flap接口限流(429)'
+                : failureReason === 'flap_fetch_failed'
+                  ? '获取代币信息失败：Flap信息查询失败'
+                  : failureReason === 'fourmeme_error'
+                    ? '获取代币信息失败：接口请求异常'
+                    : failureReason === 'rpc_rate_limited'
+                      ? '获取代币信息失败：RPC限流(429)'
+                    : '获取代币信息失败：RPC或接口异常';
+            await updateTaskStatus(task.id, { state: 'failed', message: failMessage });
             await pushTokenSniperHistory({
               id: `token-sniper-buy-failed-${task.id}-${stableSignalId}-${Date.now()}`,
               tsMs: Date.now(),
@@ -488,7 +510,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
               accountScreen: String(signal.userScreen ?? '').trim() || undefined,
               tweetId: typeof signal.tweetId === 'string' ? signal.tweetId : undefined,
               quotedTweetId: typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId : undefined,
-              message: '获取代币信息失败',
+              message: failMessage,
             });
             deps.onStateChanged();
             continue;
