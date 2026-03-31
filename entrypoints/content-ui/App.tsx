@@ -997,10 +997,6 @@ export default function App() {
       const bal = BigInt(tokenBalanceWei || '0');
       if (!isTurbo) {
         if (bal <= 0n) throw new Error('No balance');
-      } else {
-        const pending = BigInt(pendingBuyTokenMinOutWei || '0');
-        if (bal <= 0n && pending <= 0n) throw new Error('No balance');
-        if (bal <= 0n && pending > 0n) throw new Error('Buy is pending, wait for confirmation before selling');
       }
       let amountWei = bal > 0n ? (bal * BigInt(pct)) / 100n : 0n;
       const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';

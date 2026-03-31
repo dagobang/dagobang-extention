@@ -9,8 +9,6 @@ import { buildStrategySellOrderInputs, buildStrategyTrailingSellOrderInputs } fr
 import { cancelAllSellLimitOrdersForToken, createLimitOrder } from '@/services/limitOrders/store';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import { parseNumber } from '@/services/xSniper/engine/metrics';
-import type { TokenInfo } from '@/types/token';
-import { chainNames } from '@/constants/chains/chainName';
 
 export const TOKEN_SNIPER_STATUS_STORAGE_KEY = 'dagobang_token_sniper_task_status_v1';
 export const TOKEN_SNIPER_HISTORY_STORAGE_KEY = 'dagobang_token_sniper_order_history_v1';
@@ -297,27 +295,6 @@ const buildSignalKeywordText = (signal: UnifiedTwitterSignal) =>
     .join('\n')
     .toLowerCase();
 
-const buildFastBuyTokenInfo = (task: TokenSnipeTask): TokenInfo => ({
-  chain: chainNames[task.chain as any] ?? 'bsc',
-  address: task.tokenAddress,
-  name: task.tokenName ?? '',
-  symbol: task.tokenSymbol ?? '',
-  decimals: 18,
-  logo: '',
-  launchpad: '',
-  launchpad_progress: 0,
-  launchpad_platform: '',
-  launchpad_status: 1,
-  quote_token: '',
-  quote_token_address: '',
-  pool_pair: '',
-  dex_type: '',
-  tokenPrice: {
-    price: '0',
-    marketCap: '0',
-    timestamp: Date.now(),
-  },
-});
 const normalizeBuyMethod = (task: TokenSnipeTask): TokenSnipeBuyMethod => {
   const raw = typeof (task as any)?.buyMethod === 'string' ? String((task as any).buyMethod).trim().toLowerCase() : '';
   if (raw === 'all' || raw === 'dagobang' || raw === 'gmgn') return raw;
@@ -348,7 +325,7 @@ const cleanupHandledSignalMap = (now: number, activeTaskIds: Set<string>) => {
 };
 
 export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => {
-  const { getEntryPriceUsd } = createTokenInfoResolvers();
+  const { getEntryPriceUsd, fetchTokenInfoFresh, buildGenericTokenInfo } = createTokenInfoResolvers();
 
   const broadcastToTabs = async (message: any) => {
     try {
@@ -582,7 +559,6 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             deps.onStateChanged();
             continue;
           }
-          const tokenInfo = buildFastBuyTokenInfo(task);
           const amountWei = parseEther(String(amountBnb)).toString();
           const buyMethod = normalizeBuyMethod(task);
           let shouldDagobangBuy = buyMethod === 'all' || buyMethod === 'dagobang';
@@ -596,6 +572,15 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
               shouldGmgnBuy = false;
               sameAddressDowngraded = true;
             }
+          }
+          const tokenInfo = shouldDagobangBuy
+            ? (
+              (await fetchTokenInfoFresh(task.chain, task.tokenAddress)) ??
+              (await buildGenericTokenInfo(task.chain, task.tokenAddress))
+            )
+            : null;
+          if (shouldDagobangBuy && !tokenInfo) {
+            throw new Error('token_info_missing');
           }
           const attemptedDagobang = shouldDagobangBuy;
           const attemptedGmgn = shouldGmgnBuy;
@@ -611,7 +596,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                 tokenAddress: task.tokenAddress,
                 bnbAmountWei: amountWei,
                 gasPriceGwei: typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() : undefined,
-                tokenInfo,
+                tokenInfo: tokenInfo as any,
               } as any);
               const txHash = typeof (rsp as any)?.txHash === 'string' ? String((rsp as any).txHash) : '';
               if (txHash) buyTxHash = txHash;
@@ -697,7 +682,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
               tokenAddress: task.tokenAddress,
             });
           }
-          if (task.autoSell && dagobangOk) {
+          if (task.autoSell && dagobangOk && tokenInfo) {
             try {
               const cfg = (settings as any).advancedAutoSell;
               const entryPriceUsd = await getEntryPriceUsd(

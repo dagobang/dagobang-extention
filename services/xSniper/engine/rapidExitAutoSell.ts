@@ -19,6 +19,8 @@ export type RapidExitPosition = {
   signalTweetId?: string;
   firstTakeProfitSeenAtMs?: number;
   runnerMode?: boolean;
+  stopLossHitCount?: number;
+  lastStopLossAtMs?: number;
 };
 
 type RapidExitConfig = {
@@ -109,6 +111,8 @@ const DEFAULT_AUX_WINDOW_10S_MS = 10000;
 const DEFAULT_AUX_WINDOW_30S_MS = 30000;
 const AUX_WINDOW_10S_TOLERANCE_MS = 3200;
 const AUX_WINDOW_30S_TOLERANCE_MS = 6000;
+const STOP_LOSS_ESCALATION_WINDOW_MS = 15000;
+const STOP_LOSS_HARD_EXIT_FACTOR = 1.8;
 
 const normalizeTweetType = (value: unknown): AutoTradeInteractionType | null => {
   const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -282,16 +286,26 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
     const windowGoldConfirmed = windowGoldCandidate && window30Pnl != null && window30Pnl >= window10Pnl + 4;
     const windowGoldFailed = windowGoldCandidate && window30Pnl != null && window30Pnl <= window10Pnl - 3;
     const runnerMode = pos.runnerMode === true;
+    const stopLossHitCount = Number.isFinite(pos.stopLossHitCount) ? Math.max(0, Math.floor(pos.stopLossHitCount as number)) : 0;
     const adaptiveTrailActivatePct = runnerMode ? Math.max(cfg.trailActivatePct, 12) : cfg.trailActivatePct;
     const adaptiveTrailDropPct = runnerMode ? Math.max(2.8, cfg.trailDropPct * 0.85) : cfg.trailDropPct;
     let reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop' | null = null;
     let sellPercent = cfg.sellPercent;
-    let keepAfterSell = false;
-    if (
+    const stopLossTriggered = (
       (ageMs >= cfg.minHoldMsForStopLoss && pnlPct <= cfg.stopLossPct)
       || (ageMs >= window10sMs - window10StopAheadMs && windowWeakLoss && pnlPct <= -1.2)
-    ) {
+    );
+    if (stopLossTriggered) {
       reason = 'rapid_stop_loss';
+      const hitAgainSoon =
+        stopLossHitCount >= 1
+        && typeof pos.lastStopLossAtMs === 'number'
+        && Number.isFinite(pos.lastStopLossAtMs)
+        && input.nowMs - pos.lastStopLossAtMs <= STOP_LOSS_ESCALATION_WINDOW_MS;
+      const hardStop = pnlPct <= cfg.stopLossPct * STOP_LOSS_HARD_EXIT_FACTOR;
+      if (hitAgainSoon || hardStop) {
+        sellPercent = 100;
+      }
     } else {
       const tpCandidate = !runnerMode && ageMs >= cfg.minHoldMsForTakeProfit && pnlPct >= cfg.takeProfitPct;
       if (tpCandidate) {
@@ -310,7 +324,6 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
         if (goldDogMode && tpSeenMs <= 12000) {
           reason = 'rapid_take_profit';
           sellPercent = Math.max(1, Math.min(cfg.sellPercent, GOLD_DOG_INITIAL_SELL_PERCENT));
-          keepAfterSell = sellPercent < 100;
         } else if (!strongMomentum || tpSeenMs >= tpSkipMaxMs) {
           reason = 'rapid_take_profit';
         }
@@ -345,7 +358,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
         signalTweetId: pos.signalTweetId,
       },
     });
-    if (keepAfterSell && reason === 'rapid_take_profit' && sellPercent < 100) {
+    if (sellPercent < 100) {
       const remainRatio = 1 - sellPercent / 100;
       if (remainRatio > 0.001) {
         pos.sizeBnb = pos.sizeBnb * remainRatio;
@@ -353,7 +366,14 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
         pos.entryMcapUsd = curMcap;
         pos.peakMcapUsd = curMcap;
         pos.firstTakeProfitSeenAtMs = undefined;
-        pos.runnerMode = true;
+        pos.runnerMode = reason === 'rapid_take_profit';
+        if (reason === 'rapid_stop_loss') {
+          pos.stopLossHitCount = stopLossHitCount + 1;
+          pos.lastStopLossAtMs = input.nowMs;
+        } else {
+          pos.stopLossHitCount = 0;
+          pos.lastStopLossAtMs = undefined;
+        }
         input.rapidExitByPosKey.set(posKey, pos);
         continue;
       }

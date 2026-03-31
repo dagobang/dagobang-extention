@@ -96,6 +96,8 @@ export const createSellExecutors = (deps: {
         return;
       }
 
+      const settings = await SettingsService.get();
+      const isTurbo = (settings as any).chains?.[input.chainId]?.executionMode === 'turbo';
       const tokenInfo =
         (await deps.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ??
         (await deps.buildGenericTokenInfo(input.chainId, input.tokenAddress));
@@ -104,30 +106,29 @@ export const createSellExecutors = (deps: {
         return;
       }
 
-      const settings = await SettingsService.get();
-      const isTurbo = (settings as any).chains?.[input.chainId]?.executionMode === 'turbo';
-      let balanceWei = 0n;
-      try {
-        balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, status.address));
-      } catch {
-        balanceWei = 0n;
-      }
-
-      if (balanceWei <= 0n) {
-        deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' });
-        deps.cleanupPosKey(posKey);
-        return;
-      }
-
-      const amountWei = calcSellAmountWei({
-        balanceWei,
-        sellPercentBps: bps,
-        isTurbo,
-        tokenInfo,
-      });
-      if (!isTurbo && amountWei <= 0n) {
-        deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'invalid_amount' });
-        return;
+      let amountWei = 0n;
+      if (!isTurbo) {
+        let balanceWei = 0n;
+        try {
+          balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, status.address));
+        } catch {
+          balanceWei = 0n;
+        }
+        if (balanceWei <= 0n) {
+          deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' });
+          deps.cleanupPosKey(posKey);
+          return;
+        }
+        amountWei = calcSellAmountWei({
+          balanceWei,
+          sellPercentBps: bps,
+          isTurbo,
+          tokenInfo,
+        });
+        if (amountWei <= 0n) {
+          deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'invalid_amount' });
+          return;
+        }
       }
 
       try {
@@ -137,15 +138,18 @@ export const createSellExecutors = (deps: {
         await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
       } catch {}
       let rsp: any;
+      let tokenInfoForTrade = tokenInfo;
       try {
         rsp = await TradeService.sell({
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
           tokenAmountWei: amountWei.toString(),
-          tokenInfo,
+          tokenInfo: tokenInfoForTrade,
           sellPercentBps: bps,
         } as any);
       } catch {
+      }
+      if (!rsp) {
         deps.emitRecord({
           ...baseRecord,
           dryRun: false,
@@ -166,9 +170,9 @@ export const createSellExecutors = (deps: {
       deps.emitRecord({
         ...baseRecord,
         dryRun: false,
-        tokenSymbol: tokenInfo.symbol ? String(tokenInfo.symbol) : baseRecord.tokenSymbol,
-        tokenName: tokenInfo.name ? String(tokenInfo.name) : baseRecord.tokenName,
-        sellTokenAmountWei: amountWei.toString(),
+        tokenSymbol: tokenInfoForTrade.symbol ? String(tokenInfoForTrade.symbol) : baseRecord.tokenSymbol,
+        tokenName: tokenInfoForTrade.name ? String(tokenInfoForTrade.name) : baseRecord.tokenName,
+        sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
         txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
       });
       deps.cleanupPosKey(posKey);
@@ -235,6 +239,8 @@ export const createSellExecutors = (deps: {
         return;
       }
 
+      const settings = await SettingsService.get();
+      const isTurbo = (settings as any).chains?.[input.chainId]?.executionMode === 'turbo';
       const tokenInfo =
         (await deps.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ??
         (await deps.buildGenericTokenInfo(input.chainId, input.tokenAddress));
@@ -243,29 +249,28 @@ export const createSellExecutors = (deps: {
         return;
       }
 
-      const settings = await SettingsService.get();
-      const isTurbo = (settings as any).chains?.[input.chainId]?.executionMode === 'turbo';
-      let balanceWei = 0n;
-      try {
-        balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, status.address));
-      } catch {
-        balanceWei = 0n;
-      }
-
-      if (balanceWei <= 0n) {
-        deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' });
-        return;
-      }
-
-      const amountWei = calcSellAmountWei({
-        balanceWei,
-        sellPercentBps: bps,
-        isTurbo,
-        tokenInfo,
-      });
-      if (!isTurbo && amountWei <= 0n) {
-        deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'invalid_amount' });
-        return;
+      let amountWei = 0n;
+      if (!isTurbo) {
+        let balanceWei = 0n;
+        try {
+          balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, status.address));
+        } catch {
+          balanceWei = 0n;
+        }
+        if (balanceWei <= 0n) {
+          deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' });
+          return;
+        }
+        amountWei = calcSellAmountWei({
+          balanceWei,
+          sellPercentBps: bps,
+          isTurbo,
+          tokenInfo,
+        });
+        if (amountWei <= 0n) {
+          deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'invalid_amount' });
+          return;
+        }
       }
 
       try {
@@ -275,15 +280,18 @@ export const createSellExecutors = (deps: {
         await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
       } catch {}
       let rsp: any;
+      let tokenInfoForTrade = tokenInfo;
       try {
         rsp = await TradeService.sell({
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
           tokenAmountWei: amountWei.toString(),
-          tokenInfo,
+          tokenInfo: tokenInfoForTrade,
           sellPercentBps: bps,
         } as any);
       } catch {
+      }
+      if (!rsp) {
         deps.emitRecord({
           ...baseRecord,
           dryRun: false,
@@ -304,9 +312,9 @@ export const createSellExecutors = (deps: {
       deps.emitRecord({
         ...baseRecord,
         dryRun: false,
-        tokenSymbol: tokenInfo.symbol ? String(tokenInfo.symbol) : baseRecord.tokenSymbol,
-        tokenName: tokenInfo.name ? String(tokenInfo.name) : baseRecord.tokenName,
-        sellTokenAmountWei: amountWei.toString(),
+        tokenSymbol: tokenInfoForTrade.symbol ? String(tokenInfoForTrade.symbol) : baseRecord.tokenSymbol,
+        tokenName: tokenInfoForTrade.name ? String(tokenInfoForTrade.name) : baseRecord.tokenName,
+        sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
         txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
       });
     } finally {

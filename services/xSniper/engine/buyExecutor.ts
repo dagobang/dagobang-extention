@@ -284,15 +284,23 @@ export const tryAutoBuyOnce = async (input: {
       return false;
     }
 
-    const tokenInfo = (await input.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ?? (await input.buildGenericTokenInfo(input.chainId, input.tokenAddress));
+    let settings: any = null;
+    try {
+      settings = await SettingsService.get();
+    } catch {
+      settings = null;
+    }
+    const tokenInfo =
+      (await input.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ??
+      (await input.buildGenericTokenInfo(input.chainId, input.tokenAddress));
     if (!tokenInfo) {
       emitBuyFailure('token_info_missing', { buyAmountBnb: amountNumber, confirm });
       return false;
     }
 
+    const sanitizedInputMcap = sanitizeMarketCapUsd(input.metrics.marketCapUsd);
     const refreshedMcap = Number(tokenInfo?.tokenPrice?.marketCap ?? 0);
     const sanitizedRefreshedMcap = sanitizeMarketCapUsd(refreshedMcap);
-    const sanitizedInputMcap = sanitizeMarketCapUsd(input.metrics.marketCapUsd);
     const refreshedMetrics: TokenMetrics = {
       ...input.metrics,
       tokenAddress: input.tokenAddress,
@@ -425,22 +433,25 @@ export const tryAutoBuyOnce = async (input: {
 
     const amountWei = parseEther(String(amountNumber));
     let rsp: any;
+    let tokenInfoForTrade = tokenInfo;
     try {
       rsp = await TradeService.buy({
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         bnbAmountWei: amountWei.toString(),
-        tokenInfo,
+        tokenInfo: tokenInfoForTrade,
       } as any);
-    } catch (e) {
+    } catch {
+    }
+    if (!rsp) {
       console.error('XSniperTrade buy submit failed', {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
-      }, e);
+      });
       emitBuyFailure('buy_submit_failed', {
         buyAmountBnb: amountNumber,
         metrics: refreshedMetrics,
-        tokenInfo,
+        tokenInfo: tokenInfoForTrade,
         confirm,
       });
       return false;
@@ -457,7 +468,7 @@ export const tryAutoBuyOnce = async (input: {
     const entryPriceUsd = await input.getEntryPriceUsd(
       input.chainId,
       input.tokenAddress,
-      tokenInfo,
+      tokenInfoForTrade,
       refreshedMetrics.priceUsd ?? null,
       refreshedMetrics.marketCapUsd ?? null,
     );
@@ -502,8 +513,8 @@ export const tryAutoBuyOnce = async (input: {
       tweetUrl,
       chainId: input.chainId,
       tokenAddress: input.tokenAddress,
-      tokenSymbol: tokenInfo.symbol ? String(tokenInfo.symbol) : undefined,
-      tokenName: tokenInfo.name ? String(tokenInfo.name) : undefined,
+      tokenSymbol: tokenInfoForTrade.symbol ? String(tokenInfoForTrade.symbol) : undefined,
+      tokenName: tokenInfoForTrade.name ? String(tokenInfoForTrade.name) : undefined,
       buyAmountBnb: amountNumber,
       txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
       entryPriceUsd: effectiveEntryPriceUsd ?? undefined,
@@ -537,17 +548,16 @@ export const tryAutoBuyOnce = async (input: {
 
     if (input.strategy?.autoSellEnabled && effectiveEntryPriceUsd != null && effectiveEntryPriceUsd > 0) {
       try {
-        await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
+        await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfoForTrade);
         await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
-        const settings = await SettingsService.get();
         const cfg = (settings as any).advancedAutoSell;
         if (cfg?.enabled) {
           const orders = buildStrategySellOrderInputs({
             config: cfg,
             chainId: input.chainId,
             tokenAddress: input.tokenAddress,
-            tokenSymbol: tokenInfo.symbol,
-            tokenInfo,
+            tokenSymbol: tokenInfoForTrade.symbol,
+            tokenInfo: tokenInfoForTrade,
             basePriceUsd: effectiveEntryPriceUsd,
           });
           const trailingMode = (cfg as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
@@ -556,8 +566,8 @@ export const tryAutoBuyOnce = async (input: {
               config: cfg,
               chainId: input.chainId,
               tokenAddress: input.tokenAddress,
-              tokenSymbol: tokenInfo.symbol,
-              tokenInfo,
+              tokenSymbol: tokenInfoForTrade.symbol,
+              tokenInfo: tokenInfoForTrade,
               basePriceUsd: effectiveEntryPriceUsd,
             })
             : null;
