@@ -29,6 +29,9 @@ export type ChainSettings = {
   approveGasGwei: string;
   buyGasPreset: GasPreset;
   sellGasPreset: GasPreset;
+  priorityFeeEnabled?: boolean;
+  buyPriorityFeeBnb?: string;
+  sellPriorityFeeBnb?: string;
 };
 
 export type AutoTradeInteractionType = 'tweet' | 'reply' | 'quote' | 'retweet' | 'follow';

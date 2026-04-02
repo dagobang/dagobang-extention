@@ -117,6 +117,70 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
           </label>
         </div>
       </div>
+      <div className="space-y-3 pt-4 border-t border-zinc-800">
+        <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Priority</div>
+        <label className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
+          <div className="text-[14px] text-zinc-300">启用优先费（48.club / blockrazor）</div>
+          <input
+            type="checkbox"
+            checked={!!settingsDraft.chains[settingsDraft.chainId].priorityFeeEnabled}
+            onChange={(e) =>
+              setSettingsDraft((s) => ({
+                ...s,
+                chains: {
+                  ...s.chains,
+                  [s.chainId]: {
+                    ...s.chains[s.chainId],
+                    priorityFeeEnabled: e.target.checked,
+                  },
+                },
+              }))
+            }
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1">
+            <div className="text-[14px] text-zinc-400">买入优先费(BNB)</div>
+            <input
+              className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+              value={settingsDraft.chains[settingsDraft.chainId].buyPriorityFeeBnb ?? ''}
+              onChange={(e) =>
+                setSettingsDraft((s) => ({
+                  ...s,
+                  chains: {
+                    ...s.chains,
+                    [s.chainId]: {
+                      ...s.chains[s.chainId],
+                      buyPriorityFeeBnb: e.target.value,
+                    },
+                  },
+                }))
+              }
+              placeholder="0.001"
+            />
+          </label>
+          <label className="block space-y-1">
+            <div className="text-[14px] text-zinc-400">卖出优先费(BNB)</div>
+            <input
+              className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+              value={settingsDraft.chains[settingsDraft.chainId].sellPriorityFeeBnb ?? ''}
+              onChange={(e) =>
+                setSettingsDraft((s) => ({
+                  ...s,
+                  chains: {
+                    ...s.chains,
+                    [s.chainId]: {
+                      ...s.chains[s.chainId],
+                      sellPriorityFeeBnb: e.target.value,
+                    },
+                  },
+                }))
+              }
+              placeholder="0.001"
+            />
+          </label>
+        </div>
+      </div>
     </div>
   );
 }

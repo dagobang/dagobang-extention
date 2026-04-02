@@ -168,6 +168,15 @@ export function validateSettings(input: Settings): Settings | null {
           typeof (cInput as any).approveGasGwei === 'string' && (cInput as any).approveGasGwei.trim()
             ? (cInput as any).approveGasGwei.trim()
             : (cDef as any).approveGasGwei ?? '0.06';
+        const priorityFeeEnabled = typeof (cInput as any).priorityFeeEnabled === 'boolean'
+          ? (cInput as any).priorityFeeEnabled
+          : !!(cDef as any).priorityFeeEnabled;
+        const buyPriorityFeeBnb = typeof (cInput as any).buyPriorityFeeBnb === 'string'
+          ? (cInput as any).buyPriorityFeeBnb.trim()
+          : ((cDef as any).buyPriorityFeeBnb ?? '0');
+        const sellPriorityFeeBnb = typeof (cInput as any).sellPriorityFeeBnb === 'string'
+          ? (cInput as any).sellPriorityFeeBnb.trim()
+          : ((cDef as any).sellPriorityFeeBnb ?? '0');
         const defaultBuyGasPreset = (cDef as any).buyGasPreset ?? cDef.gasPreset;
         const defaultSellGasPreset = (cDef as any).sellGasPreset ?? cDef.gasPreset;
         const buyGasPreset = allowedGasPresets.includes(inputBuyGasPreset) ? inputBuyGasPreset : defaultBuyGasPreset;
@@ -191,6 +200,9 @@ export function validateSettings(input: Settings): Settings | null {
           buyGasGwei,
           sellGasGwei,
           approveGasGwei,
+          priorityFeeEnabled,
+          buyPriorityFeeBnb,
+          sellPriorityFeeBnb,
         };
         // Fallback for RPCs if empty
         if (chains[cid].rpcUrls.length === 0) {

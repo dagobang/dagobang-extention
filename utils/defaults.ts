@@ -35,6 +35,9 @@ const BSC_MAINNET: ChainSettings = {
   buyGasGwei: DEFAULT_GAS_GWEI,
   sellGasGwei: DEFAULT_GAS_GWEI,
   approveGasGwei: '0.06',
+  priorityFeeEnabled: false,
+  buyPriorityFeeBnb: '0.00003',
+  sellPriorityFeeBnb: '0',
 };
 
 const DEFAULT_AUTOTRADE: AutoTradeConfig = {

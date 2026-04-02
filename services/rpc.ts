@@ -1,4 +1,4 @@
-import { createPublicClient, http, fallback, keccak256, type PublicClient } from 'viem';
+import { createPublicClient, http, fallback, keccak256, parseEther, type PublicClient } from 'viem';
 import { bsc } from 'viem/chains';
 import { SettingsService } from './settings';
 import BloxRouterAPI from '@/services/api/bloxRouter';
@@ -8,6 +8,19 @@ export type BroadcastTxResult = {
   txHash: `0x${string}`;
   via: BroadcastTxVia;
   rpcUrl?: string;
+};
+
+export type BroadcastTxSide = 'buy' | 'sell';
+
+export type BroadcastTxOptions = {
+  txSide?: BroadcastTxSide;
+  signerContext?: {
+    account: any;
+    chainId: number;
+    nonce: number;
+    gas: bigint;
+    gasPrice: bigint;
+  };
 };
 
 export class RpcService {
@@ -38,6 +51,87 @@ export class RpcService {
     });
     this.clientByUrl.set(url, client);
     return client;
+  }
+
+  private static getPriorityFeeBnbValue(settings: any, chainConfig: any, side: BroadcastTxSide): string {
+    const candidates = side === 'buy'
+      ? [
+        chainConfig?.buyPriorityFeeBnb,
+        chainConfig?.buyPriorityFee,
+        chainConfig?.priorityFeeBuyBnb,
+        settings?.buyPriorityFeeBnb,
+        settings?.buyPriorityFee,
+        settings?.priorityFeeBuyBnb,
+        settings?.priorityFee?.buyBnb,
+      ]
+      : [
+        chainConfig?.sellPriorityFeeBnb,
+        chainConfig?.sellPriorityFee,
+        chainConfig?.priorityFeeSellBnb,
+        settings?.sellPriorityFeeBnb,
+        settings?.sellPriorityFee,
+        settings?.priorityFeeSellBnb,
+        settings?.priorityFee?.sellBnb,
+      ];
+    for (const item of candidates) {
+      if (typeof item !== 'string') continue;
+      const v = item.trim();
+      if (v) return v;
+    }
+    return '0';
+  }
+
+  private static isPriorityFeeEnabled(settings: any, chainConfig: any): boolean {
+    const candidates = [
+      chainConfig?.priorityFeeEnabled,
+      chainConfig?.enablePriorityFee,
+      chainConfig?.usePriorityFee,
+      settings?.priorityFeeEnabled,
+      settings?.enablePriorityFee,
+      settings?.usePriorityFee,
+      settings?.priorityFee?.enabled,
+    ];
+    for (const item of candidates) {
+      if (typeof item === 'boolean') return item;
+    }
+    return false;
+  }
+
+  private static getBundleTipReceiver(url: string): `0x${string}` | null {
+    let host = '';
+    try {
+      host = new URL(url).hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+    if (host.endsWith('48.club') || host.includes('48.club')) {
+      return '0x4848489f0b2BEdd788c696e2D79b6b69D7484848';
+    }
+    if (host.includes('blockrazor')) {
+      return '0x1266C6bE60392A8Ff346E8d5ECCd3E69dD9c5F20';
+    }
+    return null;
+  }
+
+  private static async sendBundleViaRpc(
+    client: PublicClient,
+    signedTx: `0x${string}`,
+    tipTx: `0x${string}`,
+  ): Promise<`0x${string}`> {
+    const currentBlock = await client.getBlockNumber();
+    const maxBlockNumber = Number(currentBlock) + 100;
+    try {
+      await (client as any).request({
+        method: 'eth_sendBundle',
+        params: [{ txs: [signedTx, tipTx], maxBlockNumber }],
+      });
+    } catch {
+      await (client as any).request({
+        method: 'eth_sendMevBundle',
+        params: [{ Txs: [signedTx, tipTx], maxBlockNumber }],
+      });
+    }
+    return keccak256(signedTx) as `0x${string}`;
   }
 
   static async getClient(): Promise<PublicClient> {
@@ -83,12 +177,12 @@ export class RpcService {
     return end - start;
   }
 
-  static async broadcastTx(signedTx: `0x${string}`): Promise<`0x${string}`> {
-    const { txHash } = await this.broadcastTxDetailed(signedTx);
+  static async broadcastTx(signedTx: `0x${string}`, opts?: BroadcastTxOptions): Promise<`0x${string}`> {
+    const { txHash } = await this.broadcastTxDetailed(signedTx, opts);
     return txHash;
   }
 
-  static async broadcastTxDetailed(signedTx: `0x${string}`): Promise<BroadcastTxResult> {
+  static async broadcastTxDetailed(signedTx: `0x${string}`, opts?: BroadcastTxOptions): Promise<BroadcastTxResult> {
     if (typeof signedTx !== 'string' || !signedTx.startsWith('0x') || signedTx.length <= 2) {
       throw new Error('Invalid signed transaction');
     }
@@ -98,6 +192,16 @@ export class RpcService {
 
     const settings = await SettingsService.get();
     const chainConfig = settings.chains[settings.chainId];
+    const txSide = opts?.txSide;
+    const bundleSignerContext = opts?.signerContext;
+    const priorityFeeEnabled = txSide ? this.isPriorityFeeEnabled(settings as any, chainConfig as any) : false;
+    const priorityFeeBnb = txSide ? this.getPriorityFeeBnbValue(settings as any, chainConfig as any, txSide) : '0';
+    let priorityFeeWei = 0n;
+    try {
+      priorityFeeWei = parseEther(priorityFeeBnb);
+    } catch {
+      priorityFeeWei = 0n;
+    }
 
     const protectedUrls = this.normalizeUrls(chainConfig.protectedRpcUrls ?? []);
     if (protectedUrls.length === 0 && !settings.bloxrouteAuthHeader) {
@@ -130,7 +234,29 @@ export class RpcService {
           (async () => {
             const client = this.getClientForUrl(url);
             try {
-              const txHash = await client.sendRawTransaction({ serializedTransaction: signedTx });
+              const tipReceiver = this.getBundleTipReceiver(url);
+              const shouldUseBundle =
+                !!tipReceiver &&
+                !!bundleSignerContext &&
+                !!txSide &&
+                priorityFeeEnabled &&
+                priorityFeeWei > 0n;
+
+              const txHash = shouldUseBundle
+                ? await (async () => {
+                  const tipTx = await bundleSignerContext.account.signTransaction({
+                    to: tipReceiver,
+                    value: priorityFeeWei,
+                    gas: 21000n,
+                    gasPrice: bundleSignerContext.gasPrice,
+                    chain: bsc,
+                    chainId: bundleSignerContext.chainId,
+                    nonce: bundleSignerContext.nonce + 1,
+                    data: '0x',
+                  });
+                  return await this.sendBundleViaRpc(client, signedTx, tipTx);
+                })()
+                : await client.sendRawTransaction({ serializedTransaction: signedTx });
               return { txHash, via: 'rpc', rpcUrl: url };
             } catch (e: any) {
               failures.push(`${url}: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);

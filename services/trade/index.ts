@@ -410,7 +410,7 @@ export class TradeService {
       ]
     });
 
-    const txOpts = { skipEstimateGas: true, gasLimit: 900000n, trace };
+    const txOpts = { skipEstimateGas: true, gasLimit: 900000n, trace, txSide: 'buy' as const };
     const { txHash, broadcastVia, broadcastUrl } = await timeStep('sendTransaction', () =>
       this.sendTransaction(client, account, routerAddress, data, amountIn, gasPriceWei, input.chainId, txOpts)
     );
@@ -731,7 +731,7 @@ export class TradeService {
         ]
       });
 
-    const txOpts = { skipEstimateGas: true, gasLimit: 900000n, trace };
+    const txOpts = { skipEstimateGas: true, gasLimit: 900000n, trace, txSide: 'sell' as const };
     const { txHash, broadcastVia, broadcastUrl } = await timeStep('sendTransaction', () =>
       this.sendTransaction(client, account, routerAddress, data, 0n, gasPriceWei, input.chainId, txOpts)
     );
@@ -778,7 +778,7 @@ export class TradeService {
     value: bigint,
     gasPriceWei: bigint,
     chainId: number,
-    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void }
+    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell' }
   ) {
     return await sendTransaction(client, account, to, data, value, gasPriceWei, chainId, opts);
   }
