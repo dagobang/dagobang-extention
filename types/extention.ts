@@ -48,6 +48,7 @@ export type RapidExitByTypeConfig = Partial<Record<AutoTradeInteractionType, {
   runnerStopLossGraceMs?: string;
   earlyReversalPeakPct?: string;
   earlyReversalDropPct?: string;
+  emergencyStopLossPct?: string;
   sellPercent?: string;
 }>>;
 
@@ -104,6 +105,7 @@ export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
   rapidRunnerStopLossGraceMs?: string;
   rapidEarlyReversalPeakPct?: string;
   rapidEarlyReversalDropPct?: string;
+  rapidEmergencyStopLossPct?: string;
   rapidAuxWindow10sMs?: string;
   rapidAuxWindow30sMs?: string;
   rapidSellPercent?: string;

@@ -714,11 +714,21 @@ export function XSniperHistoryView({
                       const primary = isSell
                         ? `${tt('contentUi.autoTradeStrategy.snipeHistorySellPercent')}: ${c.sellPercent == null ? '-' : `${c.sellPercent.toFixed(2)}%`}`
                         : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnbAmount(c.buyAmountBnb)}`;
+                      const showTriggerMcap =
+                        isSell
+                        && (c.reason === 'rapid_take_profit' || c.reason === 'rapid_stop_loss' || c.reason === 'rapid_trailing_stop')
+                        && typeof c.marketCapUsd === 'number'
+                        && Number.isFinite(c.marketCapUsd);
                       return (
                         <div key={c.id} className="flex items-start justify-between gap-2 text-[11px] text-zinc-400">
                           <div className="min-w-0">
                             <span className={`mr-2 inline-flex rounded border px-1.5 py-0.5 text-[10px] ${badge.cls}`}>{badge.text}</span>
                             <span className="text-zinc-300">{primary}</span>
+                            {showTriggerMcap ? (
+                              <span className="ml-2 text-amber-300/80">
+                                {tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')}: {formatCompactNumber(c.marketCapUsd) ?? '-'}
+                              </span>
+                            ) : null}
                             {c.reason ? <span className="ml-2 text-amber-200/80">({resolveReasonLabel(tt, c.reason)})</span> : null}
                           </div>
                           <div className="shrink-0 text-[10px] text-zinc-500">{formatTs(c.tsMs)}</div>

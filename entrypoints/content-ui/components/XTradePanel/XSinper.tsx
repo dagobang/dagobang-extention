@@ -606,6 +606,7 @@ export function XSniperContent({
     if (field === 'runnerStopLossGraceMs') return (twitterSnipe as any)?.rapidRunnerStopLossGraceMs ?? '';
     if (field === 'earlyReversalPeakPct') return (twitterSnipe as any)?.rapidEarlyReversalPeakPct ?? '';
     if (field === 'earlyReversalDropPct') return (twitterSnipe as any)?.rapidEarlyReversalDropPct ?? '';
+    if (field === 'emergencyStopLossPct') return (twitterSnipe as any)?.rapidEmergencyStopLossPct ?? '';
     return '';
   };
   const getRapidTypeFallbackValue = (field: string) => {

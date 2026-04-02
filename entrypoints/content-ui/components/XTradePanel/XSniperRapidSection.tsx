@@ -68,7 +68,7 @@ export function XSniperRapidSection({
             <span>{tt('contentUi.autoTradeStrategy.rapidExitByTweetType')}</span>
           </label>
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
           <label className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-950/40 p-2">
             <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.rapidExitTakeProfitPct')}</div>
             <input
@@ -97,6 +97,16 @@ export function XSniperRapidSection({
               value={(twitterSnipe as any)?.rapidSellPercent ?? ''}
               disabled={!canEdit}
               onChange={(e) => updateTwitterSnipe({ rapidSellPercent: e.target.value } as any)}
+            />
+          </label>
+          <label className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-950/40 p-2">
+            <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.rapidExitEmergencyStopLossPct')}</div>
+            <input
+              type="number"
+              className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+              value={(twitterSnipe as any)?.rapidEmergencyStopLossPct ?? ''}
+              disabled={!canEdit}
+              onChange={(e) => updateTwitterSnipe({ rapidEmergencyStopLossPct: e.target.value } as any)}
             />
           </label>
         </div>
@@ -216,20 +226,21 @@ export function XSniperRapidSection({
               <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.rapidExitTierFallbackHint')}</div>
             </div>
             <div className="dagobang-scrollbar overflow-x-auto pb-1">
-              <div className="grid min-w-[860px] grid-cols-[84px_66px_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-2 text-[11px] text-zinc-500">
+              <div className="grid min-w-[940px] grid-cols-[84px_66px_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-2 text-[11px] text-zinc-500">
                 <div>{tt('contentUi.autoTradeStrategy.rapidExitTableType')}</div>
                 <div>{tt('contentUi.autoTradeStrategy.rapidExitTableEnabled')}</div>
                 <div>{tt('contentUi.autoTradeStrategy.rapidExitTableTakeProfit')}</div>
                 <div>{tt('contentUi.autoTradeStrategy.rapidExitTableStopLoss')}</div>
                 <div>{tt('contentUi.autoTradeStrategy.rapidExitTableTrailActivate')}</div>
                 <div>{tt('contentUi.autoTradeStrategy.rapidExitTableTrailDrop')}</div>
+                <div>{tt('contentUi.autoTradeStrategy.rapidExitTableEmergencyStopLoss')}</div>
                 <div>{tt('contentUi.autoTradeStrategy.rapidExitTableSellPercent')}</div>
                 <div>{tt('contentUi.autoTradeStrategy.rapidExitTableMinHoldStopLoss')}</div>
                 <div>{tt('contentUi.autoTradeStrategy.rapidExitTableMinHoldTakeProfit')}</div>
                 <div>{tt('contentUi.autoTradeStrategy.rapidExitTableMinHoldTrail')}</div>
               </div>
             {rapidTypeOptions.map((item) => (
-              <div key={item} className="mt-2 grid min-w-[860px] grid-cols-[84px_66px_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-2">
+              <div key={item} className="mt-2 grid min-w-[940px] grid-cols-[84px_66px_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-2">
                 <div className="flex items-center rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300">
                   {tt(`contentUi.autoTradeStrategy.interaction.${item}`)}
                 </div>
@@ -273,6 +284,14 @@ export function XSniperRapidSection({
                   placeholder={getRapidTypeFallbackValue('trailDropPct')}
                   disabled={!canEdit}
                   onChange={(e) => updateRapidTypeValue(item, 'trailDropPct', e.target.value)}
+                />
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
+                  value={getRapidTypeValue(item, 'emergencyStopLossPct')}
+                  placeholder={getRapidTypeFallbackValue('emergencyStopLossPct')}
+                  disabled={!canEdit}
+                  onChange={(e) => updateRapidTypeValue(item, 'emergencyStopLossPct', e.target.value)}
                 />
                 <input
                   type="number"

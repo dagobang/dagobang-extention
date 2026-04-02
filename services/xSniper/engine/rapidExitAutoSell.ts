@@ -37,6 +37,7 @@ type RapidExitConfig = {
   runnerStopLossGraceMs: number;
   earlyReversalPeakPct: number;
   earlyReversalDropPct: number;
+  emergencyStopLossPct: number;
 };
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -119,6 +120,8 @@ const STOP_LOSS_ESCALATION_WINDOW_MS = 15000;
 const STOP_LOSS_HARD_EXIT_FACTOR = 1.8;
 const DEFAULT_RUNNER_STOP_LOSS_GRACE_MS = 8000;
 const RUNNER_STOP_LOSS_EXTRA_BUFFER_PCT = 3.5;
+const DEFAULT_EMERGENCY_STOP_LOSS_PCT = -12.6;
+const EMERGENCY_STOP_LOSS_MIN_HOLD_MS = 350;
 const EARLY_REVERSAL_MIN_HOLD_MS = 1800;
 const EARLY_REVERSAL_PEAK_PCT_DEFAULT = 6.5;
 const EARLY_REVERSAL_DROP_PCT_DEFAULT = 4.2;
@@ -171,6 +174,11 @@ export const readRapidExitConfig = (strategy: any, tweetType?: unknown): RapidEx
     0.5,
     60,
   );
+  const emergencyStopLossPct = -Math.abs(clamp(
+    parseUnknownNumber(o?.emergencyStopLossPct) ?? parseNumber(strategy?.rapidEmergencyStopLossPct) ?? DEFAULT_EMERGENCY_STOP_LOSS_PCT,
+    -90,
+    -1,
+  ));
   return {
     enabled,
     takeProfitPct,
@@ -184,6 +192,7 @@ export const readRapidExitConfig = (strategy: any, tweetType?: unknown): RapidEx
     runnerStopLossGraceMs,
     earlyReversalPeakPct,
     earlyReversalDropPct,
+    emergencyStopLossPct,
   };
 };
 
@@ -335,13 +344,15 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       && ageMs >= window10sMs - window10StopAheadMs
       && windowWeakLoss
       && pnlPct <= -1.2;
+    const emergencyStopLossTriggered = ageMs >= Math.min(cfg.minHoldMsForStopLoss, EMERGENCY_STOP_LOSS_MIN_HOLD_MS)
+      && pnlPct <= cfg.emergencyStopLossPct;
     const earlyReversalTrailingTriggered = !runnerMode
       && ageMs >= Math.min(cfg.minHoldMsForTrail, EARLY_REVERSAL_MIN_HOLD_MS)
       && peakPnlPct >= cfg.earlyReversalPeakPct
       && dropFromPeakPct >= cfg.earlyReversalDropPct
       && pnlPct <= Math.max(cfg.takeProfitPct * 0.5, 4)
       && pnlPct > cfg.stopLossPct * STOP_LOSS_HARD_EXIT_FACTOR;
-    const stopLossTriggered = baseStopLossTriggered || weakWindowStopLossTriggered;
+    const stopLossTriggered = emergencyStopLossTriggered || baseStopLossTriggered || weakWindowStopLossTriggered;
     if (stopLossTriggered) {
       reason = 'rapid_stop_loss';
       const hitAgainSoon =
@@ -349,7 +360,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
         && typeof pos.lastStopLossAtMs === 'number'
         && Number.isFinite(pos.lastStopLossAtMs)
         && input.nowMs - pos.lastStopLossAtMs <= STOP_LOSS_ESCALATION_WINDOW_MS;
-      if (hitAgainSoon || hardStop) {
+      if (emergencyStopLossTriggered || hitAgainSoon || hardStop) {
         sellPercent = 100;
       }
     } else if (earlyReversalTrailingTriggered) {

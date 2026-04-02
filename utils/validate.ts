@@ -273,6 +273,7 @@ export function validateSettings(input: Settings): Settings | null {
         runnerStopLossGraceMs: clampStringNumber(source.runnerStopLossGraceMs, base.runnerStopLossGraceMs ?? ''),
         earlyReversalPeakPct: clampStringNumber(source.earlyReversalPeakPct, base.earlyReversalPeakPct ?? ''),
         earlyReversalDropPct: clampStringNumber(source.earlyReversalDropPct, base.earlyReversalDropPct ?? ''),
+        emergencyStopLossPct: clampStringNumber(source.emergencyStopLossPct, base.emergencyStopLossPct ?? ''),
         sellPercent: clampStringNumber(source.sellPercent, base.sellPercent ?? ''),
       };
     }
@@ -332,6 +333,7 @@ export function validateSettings(input: Settings): Settings | null {
     rapidRunnerStopLossGraceMs: clampStringNumber((rawInput as any)?.rapidRunnerStopLossGraceMs, (fallbackInput as any)?.rapidRunnerStopLossGraceMs),
     rapidEarlyReversalPeakPct: clampStringNumber((rawInput as any)?.rapidEarlyReversalPeakPct, (fallbackInput as any)?.rapidEarlyReversalPeakPct),
     rapidEarlyReversalDropPct: clampStringNumber((rawInput as any)?.rapidEarlyReversalDropPct, (fallbackInput as any)?.rapidEarlyReversalDropPct),
+    rapidEmergencyStopLossPct: clampStringNumber((rawInput as any)?.rapidEmergencyStopLossPct, (fallbackInput as any)?.rapidEmergencyStopLossPct),
     rapidAuxWindow10sMs: clampStringNumber((rawInput as any)?.rapidAuxWindow10sMs, (fallbackInput as any)?.rapidAuxWindow10sMs),
     rapidAuxWindow30sMs: clampStringNumber((rawInput as any)?.rapidAuxWindow30sMs, (fallbackInput as any)?.rapidAuxWindow30sMs),
     rapidSellPercent: clampStringNumber((rawInput as any)?.rapidSellPercent, (fallbackInput as any)?.rapidSellPercent),
