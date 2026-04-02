@@ -298,6 +298,8 @@ export function validateSettings(input: Settings): Settings | null {
     dryRun: typeof rawInput?.dryRun === 'boolean'
       ? rawInput.dryRun
       : (fallbackInput as any).dryRun ?? false,
+    dryRunBuyDelayMs: clampStringNumber((rawInput as any)?.dryRunBuyDelayMs, (fallbackInput as any)?.dryRunBuyDelayMs),
+    dryRunSellDelayMs: clampStringNumber((rawInput as any)?.dryRunSellDelayMs, (fallbackInput as any)?.dryRunSellDelayMs),
     autoSellEnabled: typeof rawInput?.autoSellEnabled === 'boolean'
       ? rawInput.autoSellEnabled
       : fallbackInput.autoSellEnabled,

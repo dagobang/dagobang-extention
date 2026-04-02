@@ -36,6 +36,16 @@ export const createSellExecutors = (deps: {
 }) => {
   const deleteSellInFlight = new Set<string>();
   const rapidSellInFlight = new Set<string>();
+  const readDryRunSellDelayMs = async () => {
+    try {
+      const settings = await SettingsService.get();
+      const raw = (settings as any)?.autoTrade?.twitterSnipe?.dryRunSellDelayMs;
+      const n = typeof raw === 'number' ? raw : Number(raw);
+      if (Number.isFinite(n)) return Math.max(0, Math.min(10000, Math.floor(n)));
+    } catch {
+    }
+    return 2000;
+  };
 
   const tryDeleteTweetSellOnce = async (input: {
     chainId: number;
@@ -85,7 +95,17 @@ export const createSellExecutors = (deps: {
       };
 
       if (input.dryRun) {
-        deps.emitRecord({ ...baseRecord, reason: 'dry_run' });
+        const delayMs = await readDryRunSellDelayMs();
+        if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+        const latestAfterDelay = deps.getLatestMarketCapUsd(input.tokenAddress);
+        const now2 = Date.now();
+        deps.emitRecord({
+          ...baseRecord,
+          tsMs: now2,
+          id: `${now2}-${Math.random().toString(16).slice(2)}`,
+          marketCapUsd: latestAfterDelay != null && Number.isFinite(latestAfterDelay) && latestAfterDelay > 0 ? latestAfterDelay : baseRecord.marketCapUsd,
+          reason: 'dry_run',
+        });
         deps.cleanupPosKey(posKey);
         return;
       }
@@ -229,7 +249,16 @@ export const createSellExecutors = (deps: {
       };
 
       if (input.dryRun) {
-        deps.emitRecord(baseRecord);
+        const delayMs = await readDryRunSellDelayMs();
+        if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+        const latestAfterDelay = deps.getLatestMarketCapUsd(input.tokenAddress);
+        const now2 = Date.now();
+        deps.emitRecord({
+          ...baseRecord,
+          tsMs: now2,
+          id: `${now2}-${Math.random().toString(16).slice(2)}`,
+          marketCapUsd: latestAfterDelay != null && Number.isFinite(latestAfterDelay) && latestAfterDelay > 0 ? latestAfterDelay : baseRecord.marketCapUsd,
+        });
         return;
       }
 

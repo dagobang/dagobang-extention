@@ -37,7 +37,7 @@ const BSC_MAINNET: ChainSettings = {
   approveGasGwei: '0.06',
   priorityFeeEnabled: false,
   buyPriorityFeeBnb: '0.00003',
-  sellPriorityFeeBnb: '0',
+  sellPriorityFeeBnb: '0.000025',
 };
 
 const DEFAULT_AUTOTRADE: AutoTradeConfig = {
@@ -52,6 +52,8 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
   twitterSnipe: {
     enabled: true,
     dryRun: true,
+    dryRunBuyDelayMs: '1000',
+    dryRunSellDelayMs: '2000',
     autoSellEnabled: true,
     buyAmountBnb: '0.01',
     buyNewCaCount: '1',
@@ -115,6 +117,8 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
         strategy: {
           enabled: true,
           dryRun: true,
+          dryRunBuyDelayMs: '1000',
+          dryRunSellDelayMs: '2000',
           autoSellEnabled: true,
           buyAmountBnb: '0.006',
           buyNewCaCount: '1',
@@ -179,6 +183,8 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
         strategy: {
           enabled: true,
           dryRun: true,
+          dryRunBuyDelayMs: '1000',
+          dryRunSellDelayMs: '2000',
           autoSellEnabled: true,
           buyAmountBnb: '0.008',
           buyNewCaCount: '2',

@@ -17,6 +17,8 @@ export type DryRunAutoSellPos = {
     active: boolean;
     peakMcapUsd: number;
   };
+  sellLatencyMs?: number;
+  scheduledSells?: Array<{ executeAtMs: number; sellPercentBps: number; reason: 'dry_run_take_profit' | 'dry_run_stop_loss' | 'dry_run_trailing_stop' }>;
   takeProfitTotal: number;
   takeProfitExecuted: number;
   executedIds: Set<string>;
@@ -55,28 +57,53 @@ export const maybeEvaluateDryRunAutoSell = async (input: {
       continue;
     }
 
+    const ensureQueues = () => {
+      if (!Array.isArray(pos.scheduledSells)) pos.scheduledSells = [];
+      if (!Number.isFinite(pos.sellLatencyMs as any) || (pos.sellLatencyMs as number) < 0) pos.sellLatencyMs = 2000;
+    };
+    const flushDueSells = () => {
+      ensureQueues();
+      const now = input.nowMs;
+      const remain: typeof pos.scheduledSells = [];
+      for (const s of pos.scheduledSells!) {
+        if (s.executeAtMs <= now) {
+          const sellBps = Math.max(1, Math.min(10000, Math.floor(Number(s.sellPercentBps))));
+          const rec: XSniperBuyRecord = {
+            id: `${now}-${Math.random().toString(16).slice(2)}`,
+            side: 'sell',
+            tsMs: now,
+            tweetAtMs: pos.tweetAtMs,
+            tweetUrl: pos.tweetUrl,
+            chainId: pos.chainId,
+            tokenAddress: pos.tokenAddress,
+            sellPercent: sellBps / 100,
+            dryRun: true,
+            marketCapUsd: curMcap,
+            reason: s.reason,
+            tweetType: pos.tweetType,
+            channel: pos.channel,
+            signalId: pos.signalId,
+            signalEventId: pos.signalEventId,
+            signalTweetId: pos.signalTweetId,
+          };
+          input.emitRecord(rec);
+        } else {
+          remain.push(s);
+        }
+      }
+      pos.scheduledSells = remain;
+    };
+    const scheduleSellRecord = (sellPercentBps: number, reason: 'dry_run_take_profit' | 'dry_run_stop_loss' | 'dry_run_trailing_stop') => {
+      ensureQueues();
+      const executeAtMs = input.nowMs + (pos.sellLatencyMs ?? 2000);
+      pos.scheduledSells!.push({ executeAtMs, sellPercentBps, reason });
+    };
+
+    flushDueSells();
+
     const pushSellRecord = (sellPercentBps: number, reason: 'dry_run_take_profit' | 'dry_run_stop_loss' | 'dry_run_trailing_stop') => {
       const sellBps = Math.max(1, Math.min(10000, Math.floor(Number(sellPercentBps))));
-      const now = Date.now();
-      const record: XSniperBuyRecord = {
-        id: `${now}-${Math.random().toString(16).slice(2)}`,
-        side: 'sell',
-        tsMs: now,
-        tweetAtMs: pos.tweetAtMs,
-        tweetUrl: pos.tweetUrl,
-        chainId: pos.chainId,
-        tokenAddress: pos.tokenAddress,
-        sellPercent: sellBps / 100,
-        dryRun: true,
-        marketCapUsd: curMcap,
-        reason,
-        tweetType: pos.tweetType,
-        channel: pos.channel,
-        signalId: pos.signalId,
-        signalEventId: pos.signalEventId,
-        signalTweetId: pos.signalTweetId,
-      };
-      input.emitRecord(record);
+      scheduleSellRecord(sellBps, reason);
     };
 
     if (pos.trailing?.enabled) {
@@ -136,5 +163,6 @@ export const maybeEvaluateDryRunAutoSell = async (input: {
     if (!(pos.remainingBps > 0)) {
       input.cleanupPosKey(posKey);
     }
+    flushDueSells();
   }
 };

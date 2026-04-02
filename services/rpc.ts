@@ -104,9 +104,6 @@ export class RpcService {
     } catch {
       return null;
     }
-    if (host.endsWith('48.club') || host.includes('48.club')) {
-      return '0x4848489f0b2BEdd788c696e2D79b6b69D7484848';
-    }
     if (host.includes('blockrazor')) {
       return '0x1266C6bE60392A8Ff346E8d5ECCd3E69dD9c5F20';
     }

@@ -15,6 +15,7 @@ const buildWsAutoSellPosition = (input: {
   tokenAddress: `0x${string}`;
   openedAtMs: number;
   entryMcapUsd: number;
+  sellLatencyMs?: number;
   tweetAtMs?: number;
   tweetUrl?: string;
   tweetType?: string;
@@ -74,6 +75,7 @@ const buildWsAutoSellPosition = (input: {
     openedAtMs: input.openedAtMs,
     entryMcapUsd,
     remainingBps: 10000,
+    sellLatencyMs: Number.isFinite(input.sellLatencyMs as any) ? Math.max(0, Math.floor(input.sellLatencyMs as number)) : 2000,
     takeProfits,
     stopLosses,
     trailing,
@@ -320,12 +322,25 @@ export const tryAutoBuyOnce = async (input: {
     }
 
     if (dryRun) {
+      const dryRunBuyDelayMs = Math.max(0, Math.min(10_000, Math.floor(parseNumber(input.strategy?.dryRunBuyDelayMs) ?? 1000)));
+      const dryRunSellDelayMs = Math.max(0, Math.min(10_000, Math.floor(parseNumber(input.strategy?.dryRunSellDelayMs) ?? 2000)));
+      if (dryRunBuyDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, dryRunBuyDelayMs));
+      }
+      const delayedRefreshed: any = (await input.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ?? {};
+      const delayedTokenInfo = delayedRefreshed.tokenInfo ?? tokenInfo;
+      const delayedRawMcap = Number(delayedTokenInfo?.tokenPrice?.marketCap ?? 0);
+      const delayedMcap = sanitizeMarketCapUsd(delayedRawMcap);
+      const dryRunMetrics: TokenMetrics = {
+        ...refreshedMetrics,
+        marketCapUsd: delayedMcap ?? refreshedMetrics.marketCapUsd,
+      };
       const entryPriceUsd = await input.getEntryPriceUsd(
         input.chainId,
         input.tokenAddress,
-        tokenInfo,
-        refreshedMetrics.priceUsd ?? null,
-        refreshedMetrics.marketCapUsd ?? null,
+        delayedTokenInfo,
+        dryRunMetrics.priceUsd ?? null,
+        dryRunMetrics.marketCapUsd ?? null,
       );
       input.boughtOnceAtMs.set(key, Date.now());
       void input.persistBoughtOnce();
@@ -346,7 +361,7 @@ export const tryAutoBuyOnce = async (input: {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         dryRun: true,
-        entryMcapUsd: refreshedMetrics.marketCapUsd ?? null,
+        entryMcapUsd: dryRunMetrics.marketCapUsd ?? null,
         buyAmountBnb: amountNumber,
         openedAtMs,
         tweetAtMs,
@@ -363,7 +378,7 @@ export const tryAutoBuyOnce = async (input: {
           const settings = await SettingsService.get();
           const cfg = (settings as any).advancedAutoSell as any;
           if (cfg?.enabled) {
-            const rawEntryMcap = refreshedMetrics.marketCapUsd;
+            const rawEntryMcap = dryRunMetrics.marketCapUsd;
             const entryMcapUsd = typeof rawEntryMcap === 'number' && Number.isFinite(rawEntryMcap) && rawEntryMcap > 0 ? rawEntryMcap : null;
             if (entryMcapUsd != null && entryMcapUsd > 0) {
               const wsPlan = buildWsAutoSellPosition({
@@ -372,6 +387,7 @@ export const tryAutoBuyOnce = async (input: {
                 tokenAddress: input.tokenAddress,
                 openedAtMs,
                 entryMcapUsd,
+                sellLatencyMs: dryRunSellDelayMs,
                 tweetAtMs,
                 tweetUrl,
                 tweetType,
@@ -396,26 +412,26 @@ export const tryAutoBuyOnce = async (input: {
         tweetUrl,
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
-        tokenSymbol: tokenInfo.symbol ? String(tokenInfo.symbol) : undefined,
-        tokenName: tokenInfo.name ? String(tokenInfo.name) : undefined,
+        tokenSymbol: delayedTokenInfo.symbol ? String(delayedTokenInfo.symbol) : undefined,
+        tokenName: delayedTokenInfo.name ? String(delayedTokenInfo.name) : undefined,
         buyAmountBnb: amountNumber,
         txHash: undefined,
         entryPriceUsd: entryPriceUsd ?? undefined,
         dryRun: true,
-        marketCapUsd: refreshedMetrics.marketCapUsd,
-        athMarketCapUsd: refreshedMetrics.marketCapUsd,
-        liquidityUsd: refreshedMetrics.liquidityUsd,
-        holders: refreshedMetrics.holders,
-        kol: refreshedMetrics.kol,
-        vol24hUsd: refreshedMetrics.vol24hUsd,
-        netBuy24hUsd: refreshedMetrics.netBuy24hUsd,
-        buyTx24h: refreshedMetrics.buyTx24h,
-        sellTx24h: refreshedMetrics.sellTx24h,
-        smartMoney: refreshedMetrics.smartMoney,
-        createdAtMs: refreshedMetrics.createdAtMs,
-        devAddress: refreshedMetrics.devAddress,
-        devHoldPercent: refreshedMetrics.devHoldPercent,
-        devHasSold: refreshedMetrics.devHasSold,
+        marketCapUsd: dryRunMetrics.marketCapUsd,
+        athMarketCapUsd: dryRunMetrics.marketCapUsd,
+        liquidityUsd: dryRunMetrics.liquidityUsd,
+        holders: dryRunMetrics.holders,
+        kol: dryRunMetrics.kol,
+        vol24hUsd: dryRunMetrics.vol24hUsd,
+        netBuy24hUsd: dryRunMetrics.netBuy24hUsd,
+        buyTx24h: dryRunMetrics.buyTx24h,
+        sellTx24h: dryRunMetrics.sellTx24h,
+        smartMoney: dryRunMetrics.smartMoney,
+        createdAtMs: dryRunMetrics.createdAtMs,
+        devAddress: dryRunMetrics.devAddress,
+        devHoldPercent: dryRunMetrics.devHoldPercent,
+        devHasSold: dryRunMetrics.devHasSold,
         confirmWindowMs: confirm.windowMs,
         confirmMcapChangePct: confirm.stats?.mcapChangePct ?? undefined,
         confirmHoldersDelta: confirm.stats?.holdersDelta ?? undefined,

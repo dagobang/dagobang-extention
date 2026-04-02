@@ -120,7 +120,7 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
       <div className="space-y-3 pt-4 border-t border-zinc-800">
         <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Priority</div>
         <label className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
-          <div className="text-[14px] text-zinc-300">启用优先费（48.club / blockrazor）</div>
+          <div className="text-[14px] text-zinc-300">启用优先费（blockrazor）</div>
           <input
             type="checkbox"
             checked={!!settingsDraft.chains[settingsDraft.chainId].priorityFeeEnabled}
@@ -156,7 +156,7 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
                   },
                 }))
               }
-              placeholder="0.001"
+              placeholder="最小 0.000025"
             />
           </label>
           <label className="block space-y-1">
@@ -176,7 +176,7 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
                   },
                 }))
               }
-              placeholder="0.001"
+              placeholder="最小 0.000025"
             />
           </label>
         </div>
