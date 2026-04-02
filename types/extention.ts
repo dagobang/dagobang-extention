@@ -45,6 +45,9 @@ export type RapidExitByTypeConfig = Partial<Record<AutoTradeInteractionType, {
   minHoldMsForTakeProfit?: string;
   minHoldMsForStopLoss?: string;
   minHoldMsForTrail?: string;
+  runnerStopLossGraceMs?: string;
+  earlyReversalPeakPct?: string;
+  earlyReversalDropPct?: string;
   sellPercent?: string;
 }>>;
 
@@ -98,6 +101,9 @@ export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
   rapidMinHoldMsForTakeProfit?: string;
   rapidMinHoldMsForStopLoss?: string;
   rapidMinHoldMsForTrail?: string;
+  rapidRunnerStopLossGraceMs?: string;
+  rapidEarlyReversalPeakPct?: string;
+  rapidEarlyReversalDropPct?: string;
   rapidAuxWindow10sMs?: string;
   rapidAuxWindow30sMs?: string;
   rapidSellPercent?: string;
@@ -448,6 +454,13 @@ export type UnifiedTwitterSignal = {
   ts: number;
 };
 
+export type XSniperEvalPoint = {
+  atMs: number;
+  marketCapUsd?: number;
+  holders?: number;
+  pnlMcapPct?: number;
+};
+
 export type XSniperBuyRecord = {
   id: string;
   side?: 'buy' | 'sell';
@@ -482,9 +495,15 @@ export type XSniperBuyRecord = {
   confirmMcapChangePct?: number;
   confirmHoldersDelta?: number;
   confirmBuySellRatio?: number;
-  eval10s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
-  eval30s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
-  eval60s?: { atMs: number; marketCapUsd?: number; holders?: number; pnlMcapPct?: number };
+  eval3s?: XSniperEvalPoint;
+  eval5s?: XSniperEvalPoint;
+  eval8s?: XSniperEvalPoint;
+  eval10s?: XSniperEvalPoint;
+  eval15s?: XSniperEvalPoint;
+  eval20s?: XSniperEvalPoint;
+  eval25s?: XSniperEvalPoint;
+  eval30s?: XSniperEvalPoint;
+  eval60s?: XSniperEvalPoint;
   userScreen?: string;
   userName?: string;
   tweetType?: string;

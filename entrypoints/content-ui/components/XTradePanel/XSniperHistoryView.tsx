@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Settings, XSniperBuyRecord } from '@/types/extention';
+import type { Settings, XSniperBuyRecord, XSniperEvalPoint } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { chainNames } from '@/constants/chains/chainName';
 import { call } from '@/utils/messaging';
@@ -28,6 +28,18 @@ type XSniperHistoryViewProps = {
   onOpenConfig?: () => void;
   onClearHistory: () => void;
 };
+
+const XSNIPER_EVAL_WINDOWS = [
+  { key: 'eval3s', label: '3s' },
+  { key: 'eval5s', label: '5s' },
+  { key: 'eval8s', label: '8s' },
+  { key: 'eval10s', label: '10s' },
+  { key: 'eval15s', label: '15s' },
+  { key: 'eval20s', label: '20s' },
+  { key: 'eval25s', label: '25s' },
+  { key: 'eval30s', label: '30s' },
+  { key: 'eval60s', label: '60s' },
+] as const satisfies ReadonlyArray<{ key: keyof XSniperBuyRecord; label: string }>;
 
 const buildTweetUrlFallback = (record: XSniperBuyRecord): string => {
   const id = String(record.signalTweetId ?? '').trim();
@@ -60,6 +72,20 @@ const resolveReasonLabel = (tt: (key: string, subs?: Array<string | number>) => 
   const key = `contentUi.autoTradeStrategy.snipeHistoryReasonCode.${raw}`;
   const translated = tt(key);
   return translated === key ? raw : translated;
+};
+
+const getEvalPoint = (record: XSniperBuyRecord, key: keyof XSniperBuyRecord): XSniperEvalPoint | null => {
+  const value = (record as any)[key];
+  if (!value || typeof value !== 'object') return null;
+  const atMs = Number((value as any).atMs);
+  if (!Number.isFinite(atMs) || atMs <= 0) return null;
+  return value as XSniperEvalPoint;
+};
+
+const formatEvalPnl = (record: XSniperBuyRecord, key: keyof XSniperBuyRecord) => {
+  const pnlPct = getEvalPoint(record, key)?.pnlMcapPct;
+  if (typeof pnlPct !== 'number' || !Number.isFinite(pnlPct)) return '-';
+  return `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
 };
 
 const computeWeightedPnlPct = (input: {
@@ -373,15 +399,12 @@ export function XSniperHistoryView({
             const total = list.length;
             const dry = list.filter((x) => x.dryRun === true).length;
             const confirmFail = list.filter((x) => x.reason === 'ws_confirm_failed').length;
-            const collect = (key: 'eval10s' | 'eval30s' | 'eval60s') =>
+            const collect = (key: keyof XSniperBuyRecord) =>
               list
-                .map((x) => (x as any)[key]?.pnlMcapPct)
+                .map((x) => getEvalPoint(x, key)?.pnlMcapPct)
                 .filter((v) => typeof v === 'number' && Number.isFinite(v)) as number[];
             const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
             const winRate = (arr: number[]) => (arr.length ? arr.filter((x) => x > 0).length / arr.length : null);
-            const a10 = collect('eval10s');
-            const a30 = collect('eval30s');
-            const a60 = collect('eval60s');
             const fmtPct = (v: number | null) => (v == null ? '-' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`);
             const fmtRate = (v: number | null) => (v == null ? '-' : `${(v * 100).toFixed(1)}%`);
             return (
@@ -389,9 +412,14 @@ export function XSniperHistoryView({
                 <span>{tt('contentUi.autoTradeStrategy.snipeHistorySummaryRecords')} {total}</span>
                 <span>{tt('contentUi.autoTradeStrategy.snipeHistorySummaryDry')} {dry}</span>
                 <span>{tt('contentUi.autoTradeStrategy.snipeHistorySummaryWsRejected')} {confirmFail}</span>
-                <span>10s {tt('contentUi.autoTradeStrategy.snipeHistorySummaryAvg')} {fmtPct(avg(a10))} {tt('contentUi.autoTradeStrategy.snipeHistorySummaryWinRate')} {fmtRate(winRate(a10))}</span>
-                <span>30s {tt('contentUi.autoTradeStrategy.snipeHistorySummaryAvg')} {fmtPct(avg(a30))} {tt('contentUi.autoTradeStrategy.snipeHistorySummaryWinRate')} {fmtRate(winRate(a30))}</span>
-                <span>60s {tt('contentUi.autoTradeStrategy.snipeHistorySummaryAvg')} {fmtPct(avg(a60))} {tt('contentUi.autoTradeStrategy.snipeHistorySummaryWinRate')} {fmtRate(winRate(a60))}</span>
+                {XSNIPER_EVAL_WINDOWS.map((window) => {
+                  const values = collect(window.key);
+                  return (
+                    <span key={window.key}>
+                      {window.label} {tt('contentUi.autoTradeStrategy.snipeHistorySummaryAvg')} {fmtPct(avg(values))} {tt('contentUi.autoTradeStrategy.snipeHistorySummaryWinRate')} {fmtRate(winRate(values))}
+                    </span>
+                  );
+                })}
               </div>
             );
           })()}
@@ -606,9 +634,12 @@ export function XSniperHistoryView({
                           </div>
                           <div className="col-span-3 text-zinc-400">
                             <span className="text-indigo-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryEvalWindow')}:</span>{' '}
-                            <span className="text-zinc-200">{(r as any).eval10s?.pnlMcapPct == null ? '-' : `${(r as any).eval10s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval10s.pnlMcapPct.toFixed(2)}%`}</span>{' '}
-                            / {(r as any).eval30s?.pnlMcapPct == null ? '-' : `${(r as any).eval30s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval30s.pnlMcapPct.toFixed(2)}%`}{' '}
-                            / {(r as any).eval60s?.pnlMcapPct == null ? '-' : `${(r as any).eval60s.pnlMcapPct >= 0 ? '+' : ''}${(r as any).eval60s.pnlMcapPct.toFixed(2)}%`}
+                            {XSNIPER_EVAL_WINDOWS.map((window, index) => (
+                              <span key={window.key}>
+                                {index > 0 ? ' / ' : ''}
+                                <span className="text-zinc-500">{window.label}</span> <span className="text-zinc-200">{formatEvalPnl(r, window.key)}</span>
+                              </span>
+                            ))}
                           </div>
                           {r.reason ? (
                             <div className="col-span-3 text-[11px] text-amber-200/90">

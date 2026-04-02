@@ -603,6 +603,9 @@ export function XSniperContent({
     if (field === 'minHoldMsForStopLoss') return (twitterSnipe as any)?.rapidMinHoldMsForStopLoss ?? '';
     if (field === 'minHoldMsForTakeProfit') return (twitterSnipe as any)?.rapidMinHoldMsForTakeProfit ?? '';
     if (field === 'minHoldMsForTrail') return (twitterSnipe as any)?.rapidMinHoldMsForTrail ?? '';
+    if (field === 'runnerStopLossGraceMs') return (twitterSnipe as any)?.rapidRunnerStopLossGraceMs ?? '';
+    if (field === 'earlyReversalPeakPct') return (twitterSnipe as any)?.rapidEarlyReversalPeakPct ?? '';
+    if (field === 'earlyReversalDropPct') return (twitterSnipe as any)?.rapidEarlyReversalDropPct ?? '';
     return '';
   };
   const getRapidTypeFallbackValue = (field: string) => {

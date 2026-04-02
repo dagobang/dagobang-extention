@@ -100,7 +100,7 @@ export function XSniperRapidSection({
             />
           </label>
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
           <label className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-950/40 p-2">
             <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.rapidExitTrailActivatePct')}</div>
             <input
@@ -121,10 +121,30 @@ export function XSniperRapidSection({
               onChange={(e) => updateTwitterSnipe({ rapidTrailDropPct: e.target.value } as any)}
             />
           </label>
+          <label className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-950/40 p-2">
+            <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.rapidExitEarlyReversalPeakPct')}</div>
+            <input
+              type="number"
+              className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+              value={(twitterSnipe as any)?.rapidEarlyReversalPeakPct ?? ''}
+              disabled={!canEdit}
+              onChange={(e) => updateTwitterSnipe({ rapidEarlyReversalPeakPct: e.target.value } as any)}
+            />
+          </label>
+          <label className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-950/40 p-2">
+            <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.rapidExitEarlyReversalDropPct')}</div>
+            <input
+              type="number"
+              className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+              value={(twitterSnipe as any)?.rapidEarlyReversalDropPct ?? ''}
+              disabled={!canEdit}
+              onChange={(e) => updateTwitterSnipe({ rapidEarlyReversalDropPct: e.target.value } as any)}
+            />
+          </label>
         </div>
         <div className="rounded-md border border-zinc-800/70 bg-zinc-950/30 p-2">
           <div className="mb-2 text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.rapidExitDelayProtection')}</div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
             <label className="space-y-1">
               <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.rapidExitMinHoldStopLoss')}</div>
               <input
@@ -153,6 +173,16 @@ export function XSniperRapidSection({
                 value={(twitterSnipe as any)?.rapidMinHoldMsForTrail ?? ''}
                 disabled={!canEdit}
                 onChange={(e) => updateTwitterSnipe({ rapidMinHoldMsForTrail: e.target.value } as any)}
+              />
+            </label>
+            <label className="space-y-1">
+              <div className="text-[11px] text-zinc-500">{tt('contentUi.autoTradeStrategy.rapidExitRunnerStopLossGrace')}</div>
+              <input
+                type="number"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                value={(twitterSnipe as any)?.rapidRunnerStopLossGraceMs ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => updateTwitterSnipe({ rapidRunnerStopLossGraceMs: e.target.value } as any)}
               />
             </label>
           </div>

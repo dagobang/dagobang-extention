@@ -1,9 +1,20 @@
 import { browser } from 'wxt/browser';
-import type { XSniperBuyRecord } from '@/types/extention';
+import type { XSniperBuyRecord, XSniperEvalPoint } from '@/types/extention';
 
 export const XSNIPER_HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
 export const XSNIPER_HISTORY_LIMIT = 200;
 const NON_PERSIST_BUY_REASONS = new Set(['buy_skipped_recently_bought', 'buy_skipped_in_flight']);
+const XSNIPER_EVAL_WINDOWS = [
+  { key: 'eval3s', minAgeMs: 3_000 },
+  { key: 'eval5s', minAgeMs: 5_000 },
+  { key: 'eval8s', minAgeMs: 8_000 },
+  { key: 'eval10s', minAgeMs: 10_000 },
+  { key: 'eval15s', minAgeMs: 15_000 },
+  { key: 'eval20s', minAgeMs: 20_000 },
+  { key: 'eval25s', minAgeMs: 25_000 },
+  { key: 'eval30s', minAgeMs: 30_000 },
+  { key: 'eval60s', minAgeMs: 60_000 },
+] as const satisfies ReadonlyArray<{ key: keyof XSniperBuyRecord; minAgeMs: number }>;
 let historyWriteQueue: Promise<void> = Promise.resolve();
 
 const shouldPersistRecord = (record: XSniperBuyRecord) => {
@@ -91,24 +102,19 @@ export const maybeUpdateXSniperHistoryEvaluations = async (input: {
           changed = true;
         }
       }
-      if (ageMs < 10_000) continue;
-      const buildEval = () => {
+      const buildEval = (): XSniperEvalPoint => {
         const pnlMcapPct = (() => {
           if (entryMcap == null || curMcap == null || entryMcap <= 0) return undefined;
           return ((curMcap - entryMcap) / entryMcap) * 100;
         })();
         return { atMs: input.nowMs, marketCapUsd: curMcap ?? undefined, holders: curHolders ?? undefined, pnlMcapPct };
       };
-      if (ageMs >= 10_000 && !r.eval10s) {
-        r.eval10s = buildEval();
-        changed = true;
-      }
-      if (ageMs >= 30_000 && !r.eval30s) {
-        r.eval30s = buildEval();
-        changed = true;
-      }
-      if (ageMs >= 60_000 && !r.eval60s) {
-        r.eval60s = buildEval();
+      let nextEval: XSniperEvalPoint | null = null;
+      for (const window of XSNIPER_EVAL_WINDOWS) {
+        if (ageMs < window.minAgeMs) continue;
+        if ((r as any)[window.key]) continue;
+        nextEval ??= buildEval();
+        (r as any)[window.key] = nextEval;
         changed = true;
       }
     }

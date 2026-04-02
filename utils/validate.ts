@@ -270,6 +270,9 @@ export function validateSettings(input: Settings): Settings | null {
         minHoldMsForTakeProfit: clampStringNumber(source.minHoldMsForTakeProfit, base.minHoldMsForTakeProfit ?? ''),
         minHoldMsForStopLoss: clampStringNumber(source.minHoldMsForStopLoss, base.minHoldMsForStopLoss ?? ''),
         minHoldMsForTrail: clampStringNumber(source.minHoldMsForTrail, base.minHoldMsForTrail ?? ''),
+        runnerStopLossGraceMs: clampStringNumber(source.runnerStopLossGraceMs, base.runnerStopLossGraceMs ?? ''),
+        earlyReversalPeakPct: clampStringNumber(source.earlyReversalPeakPct, base.earlyReversalPeakPct ?? ''),
+        earlyReversalDropPct: clampStringNumber(source.earlyReversalDropPct, base.earlyReversalDropPct ?? ''),
         sellPercent: clampStringNumber(source.sellPercent, base.sellPercent ?? ''),
       };
     }
@@ -326,6 +329,9 @@ export function validateSettings(input: Settings): Settings | null {
     rapidMinHoldMsForTakeProfit: clampStringNumber((rawInput as any)?.rapidMinHoldMsForTakeProfit, (fallbackInput as any)?.rapidMinHoldMsForTakeProfit),
     rapidMinHoldMsForStopLoss: clampStringNumber((rawInput as any)?.rapidMinHoldMsForStopLoss, (fallbackInput as any)?.rapidMinHoldMsForStopLoss),
     rapidMinHoldMsForTrail: clampStringNumber((rawInput as any)?.rapidMinHoldMsForTrail, (fallbackInput as any)?.rapidMinHoldMsForTrail),
+    rapidRunnerStopLossGraceMs: clampStringNumber((rawInput as any)?.rapidRunnerStopLossGraceMs, (fallbackInput as any)?.rapidRunnerStopLossGraceMs),
+    rapidEarlyReversalPeakPct: clampStringNumber((rawInput as any)?.rapidEarlyReversalPeakPct, (fallbackInput as any)?.rapidEarlyReversalPeakPct),
+    rapidEarlyReversalDropPct: clampStringNumber((rawInput as any)?.rapidEarlyReversalDropPct, (fallbackInput as any)?.rapidEarlyReversalDropPct),
     rapidAuxWindow10sMs: clampStringNumber((rawInput as any)?.rapidAuxWindow10sMs, (fallbackInput as any)?.rapidAuxWindow10sMs),
     rapidAuxWindow30sMs: clampStringNumber((rawInput as any)?.rapidAuxWindow30sMs, (fallbackInput as any)?.rapidAuxWindow30sMs),
     rapidSellPercent: clampStringNumber((rawInput as any)?.rapidSellPercent, (fallbackInput as any)?.rapidSellPercent),
