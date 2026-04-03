@@ -375,7 +375,8 @@ export async function sendTransaction(
       },
     });
     trace?.(`${labelPrefix}broadcastTx`, Date.now() - broadcastStart);
-    if (res0.isBundle) bumpNextNonce(chainId, account.address, 1);
+    const consumed = res0.isBundle ? 2 : 1;
+    if (consumed > 1) bumpNextNonce(chainId, account.address, consumed - 1);
     return {
       txHash: res0.txHash,
       broadcastVia: res0.via,

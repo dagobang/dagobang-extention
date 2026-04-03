@@ -197,9 +197,8 @@ export class RpcService {
     }
 
     const tryBroadcast = async (urls: string[], includeBloxroute: boolean) => {
-      const promises: Array<Promise<BroadcastTxResult>> = [];
-      const failures: string[] = [];
-
+      const bundleFailures: string[] = [];
+      const rawFailures: string[] = [];
       const bloxHeader = (settings.bloxrouteAuthHeader ?? '').trim();
       const bloxEnabledBySide =
         txSide === 'buy'
@@ -208,11 +207,12 @@ export class RpcService {
             ? ((chainConfig as any)?.bloxrouteSellEnabled ?? true)
             : true;
       const willUseBloxroute = includeBloxroute && this.bloxroutePrivateTxEnabled && bloxHeader && bloxEnabledBySide;
-      if (willUseBloxroute) {
-        promises.push(
-          (async () => {
-            try {
-              if (bundlePriorityMode && bundleSignerContext) {
+      if (bundlePriorityMode && bundleSignerContext) {
+        const bundlePromises: Array<Promise<BroadcastTxResult>> = [];
+        if (willUseBloxroute) {
+          bundlePromises.push(
+            (async () => {
+              try {
                 const tipTx = await bundleSignerContext.account.signTransaction({
                   to: this.bloxrouteDynamicFeeReceiver,
                   value: priorityFeeWei,
@@ -225,12 +225,62 @@ export class RpcService {
                 });
                 await BloxRouterAPI.sendBscBundle([signedTx, tipTx]);
                 return { txHash: keccak256(signedTx) as `0x${string}`, via: 'bloxroute', isBundle: true };
+              } catch (e: any) {
+                bundleFailures.push(`bloxroute: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
+                console.error('Error broadcasting tx via BloxRoute bundle:', e);
+                throw e;
               }
+            })(),
+          );
+        }
+        for (const url of urls) {
+          const tipReceiver = this.getBundleTipReceiver(url);
+          if (!tipReceiver) continue;
+          bundlePromises.push(
+            (async () => {
+              const client = this.getClientForUrl(url);
+              try {
+                const tipTx = await bundleSignerContext.account.signTransaction({
+                  to: tipReceiver,
+                  value: priorityFeeWei,
+                  gas: 21000n,
+                  gasPrice: bundleSignerContext.gasPrice,
+                  chain: bsc,
+                  chainId: bundleSignerContext.chainId,
+                  nonce: bundleSignerContext.nonce + 1,
+                  data: '0x',
+                });
+                const txHash = await this.sendBundleViaRpc(client, signedTx, tipTx);
+                return { txHash, via: 'rpc', rpcUrl: url, isBundle: true };
+              } catch (e: any) {
+                bundleFailures.push(`${url}: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
+                console.error(`Error broadcasting tx bundle to ${url}:`, e);
+                throw e;
+              }
+            })(),
+          );
+        }
+        if (bundlePromises.length === 0) {
+          throw new Error('Priority fee enabled but no bundle-capable route available. Configure blockrazor/bloxroute bundle route or disable priority fee.');
+        }
+        try {
+          return await Promise.any(bundlePromises);
+        } catch {
+          const detail = bundleFailures.length ? ` Details: ${bundleFailures.join(' | ')}` : '';
+          throw new Error(`Failed to broadcast transaction via bundle routes.${detail}`);
+        }
+      }
+
+      const rawPromises: Array<Promise<BroadcastTxResult>> = [];
+      if (willUseBloxroute) {
+        rawPromises.push(
+          (async () => {
+            try {
               const txHash = await BloxRouterAPI.sendBscPrivateTx(signedTx);
               if (!txHash) throw new Error('BloxRoute did not return tx hash');
               return { txHash, via: 'bloxroute' };
             } catch (e: any) {
-              failures.push(`bloxroute: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
+              rawFailures.push(`bloxroute: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
               console.error('Error broadcasting tx via BloxRoute:', e);
               throw e;
             }
@@ -239,36 +289,14 @@ export class RpcService {
       }
 
       for (const url of urls) {
-        promises.push(
+        rawPromises.push(
           (async () => {
             const client = this.getClientForUrl(url);
             try {
-              const tipReceiver = this.getBundleTipReceiver(url);
-              const shouldUseBundle =
-                !!tipReceiver &&
-                !!bundleSignerContext &&
-                !!txSide &&
-                priorityFeeEnabled &&
-                priorityFeeWei > 0n;
-
-              const txHash = shouldUseBundle
-                ? await (async () => {
-                  const tipTx = await bundleSignerContext.account.signTransaction({
-                    to: tipReceiver,
-                    value: priorityFeeWei,
-                    gas: 21000n,
-                    gasPrice: bundleSignerContext.gasPrice,
-                    chain: bsc,
-                    chainId: bundleSignerContext.chainId,
-                    nonce: bundleSignerContext.nonce + 1,
-                    data: '0x',
-                  });
-                  return await this.sendBundleViaRpc(client, signedTx, tipTx);
-                })()
-                : await client.sendRawTransaction({ serializedTransaction: signedTx });
-              return { txHash, via: 'rpc', rpcUrl: url, isBundle: shouldUseBundle };
+              const txHash = await client.sendRawTransaction({ serializedTransaction: signedTx });
+              return { txHash, via: 'rpc', rpcUrl: url, isBundle: false };
             } catch (e: any) {
-              failures.push(`${url}: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
+              rawFailures.push(`${url}: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
               console.error(`Error broadcasting tx to ${url}:`, e);
               const msg = String(e?.shortMessage || e?.message || '').toLowerCase();
               const isAlreadyKnown =
@@ -286,12 +314,11 @@ export class RpcService {
           })(),
         );
       }
-
       try {
-        return await Promise.any(promises);
+        return await Promise.any(rawPromises);
       } catch {
-        const detail = failures.length ? ` Details: ${failures.join(' | ')}` : '';
-        throw new Error(`Failed to broadcast transaction to any RPC endpoint.${detail}`);
+        const detail = rawFailures.length ? ` Details: ${rawFailures.join(' | ')}` : '';
+        throw new Error(`Failed to broadcast transaction to any raw route.${detail}`);
       }
     };
 

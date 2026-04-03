@@ -138,6 +138,10 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
             }
           />
         </label>
+        <div className="rounded-md border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-200">
+          <div>启用优先费后将进入 Bundle 专用广播轮次，不再与普通 RPC 混发。</div>
+          <div>若未配置支持 Bundle 的节点或 bloXroute 通道，交易会直接失败，请先检查网络设置。</div>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <label className="block space-y-1">
             <div className="text-[14px] text-zinc-400">买入优先费(BNB)</div>
