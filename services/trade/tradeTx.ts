@@ -142,6 +142,8 @@ const nonceLocked = new Set<string>();
 const nonceLockQueue = new Map<string, Array<() => void>>();
 const nonceState = new Map<string, { nextNonce: number; ts: number }>();
 const NONCE_CACHE_WINDOW_MS = 60_000;
+const txFlowLocked = new Set<string>();
+const txFlowQueue = new Map<string, Array<() => void>>();
 
 async function acquireNonceLock(key: string): Promise<() => void> {
   if (!nonceLocked.has(key)) {
@@ -168,6 +170,34 @@ function releaseNonceLock(key: string) {
     nonceLockQueue.delete(key);
   } else {
     nonceLockQueue.set(key, q);
+  }
+}
+
+async function acquireTxFlowLock(key: string): Promise<() => void> {
+  if (!txFlowLocked.has(key)) {
+    txFlowLocked.add(key);
+    return () => releaseTxFlowLock(key);
+  }
+  return await new Promise<() => void>((resolve) => {
+    const q = txFlowQueue.get(key) ?? [];
+    q.push(() => resolve(() => releaseTxFlowLock(key)));
+    txFlowQueue.set(key, q);
+  });
+}
+
+function releaseTxFlowLock(key: string) {
+  const q = txFlowQueue.get(key);
+  if (!q || q.length === 0) {
+    txFlowLocked.delete(key);
+    txFlowQueue.delete(key);
+    return;
+  }
+  const next = q.shift();
+  if (next) next();
+  if (q.length === 0) {
+    txFlowQueue.delete(key);
+  } else {
+    txFlowQueue.set(key, q);
   }
 }
 
@@ -209,6 +239,15 @@ export async function prewarmNonce(client: any, chainId: number, address: `0x${s
 function clearNonceState(chainId: number, address: `0x${string}`) {
   const key = `${chainId}:${address.toLowerCase()}`;
   nonceState.delete(key);
+}
+
+function bumpNextNonce(chainId: number, address: `0x${string}`, delta: number) {
+  const key = `${chainId}:${address.toLowerCase()}`;
+  const state = nonceState.get(key);
+  if (!state) return;
+  state.nextNonce += Math.max(0, Math.floor(delta));
+  state.ts = Date.now();
+  nonceState.set(key, state);
 }
 
 function isNonceRelatedError(e: any): boolean {
@@ -272,6 +311,9 @@ export async function sendTransaction(
   chainId: number,
   opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; priorityFeeBnbOverride?: string }
 ) {
+  const flowKey = `${chainId}:${String(account?.address ?? '').toLowerCase()}`;
+  const releaseFlow = await acquireTxFlowLock(flowKey);
+  try {
   const trace = opts?.trace;
   const useAutoNonce = opts?.nonce === undefined;
   const noncePromise = opts?.nonce !== undefined
@@ -321,7 +363,7 @@ export async function sendTransaction(
     trace?.(`${labelPrefix}signTransaction`, Date.now() - signStart);
 
     const broadcastStart = Date.now();
-    const res = await RpcService.broadcastTxDetailed(signed, {
+    const res0 = await RpcService.broadcastTxDetailed(signed, {
       txSide: opts?.txSide,
       priorityFeeBnbOverride: opts?.priorityFeeBnbOverride,
       signerContext: {
@@ -333,11 +375,12 @@ export async function sendTransaction(
       },
     });
     trace?.(`${labelPrefix}broadcastTx`, Date.now() - broadcastStart);
+    if (res0.isBundle) bumpNextNonce(chainId, account.address, 1);
     return {
-      txHash: res.txHash,
-      broadcastVia: res.via,
-      broadcastUrl: res.rpcUrl,
-      isBundle: res.isBundle,
+      txHash: res0.txHash,
+      broadcastVia: res0.via,
+      broadcastUrl: res0.rpcUrl,
+      isBundle: res0.isBundle,
     };
   };
 
@@ -359,5 +402,8 @@ export async function sendTransaction(
 
     clearNonceState(chainId, account.address);
     throw e;
+  }
+  } finally {
+    releaseFlow();
   }
 }
