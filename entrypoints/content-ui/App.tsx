@@ -886,7 +886,7 @@ export default function App() {
         const elapsed = (Date.now() - startTime) / 1000;
         setTxHash(res.txHash);
         setPendingBuyTokenMinOutWei(tokenMinOutWei);
-        const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl);
+        const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl, res.isBundle);
         toast.success(t('contentUi.toast.buySuccessTime', locale, [sym, elapsed.toFixed(2), provider]), { id: toastId, icon: '✅' });
 
         if (tokenInfo) {
@@ -1051,7 +1051,7 @@ export default function App() {
 
         const elapsed = (Date.now() - startTime) / 1000;
         setTxHash(res.txHash);
-        const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl);
+        const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl, res.isBundle);
         toast.success(t('contentUi.toast.sellSuccessTime', locale, [sym, elapsed.toFixed(2), provider]), { id: toastId, icon: '✅' });
 
         await Promise.all([refreshToken(true), refreshAll()]);

@@ -8,6 +8,7 @@ export type BroadcastTxResult = {
   txHash: `0x${string}`;
   via: BroadcastTxVia;
   rpcUrl?: string;
+  isBundle?: boolean;
 };
 
 export type BroadcastTxSide = 'buy' | 'sell';
@@ -27,6 +28,8 @@ export type BroadcastTxOptions = {
 export class RpcService {
   private static clientCache: { chainId: number; urls: string[]; client: PublicClient } | null = null;
   private static readonly bloxroutePrivateTxEnabled = true;
+  private static readonly bloxrouteDynamicFeeReceiver = '0x6374Ca2da5646C73Eb444aB99780495d61035f9b' as const;
+  private static readonly bloxrouteDynamicFeeTxGas = 100000n;
   private static readonly clientByUrl = new Map<string, PublicClient>();
 
   private static normalizeUrls(urls: string[]): string[] {
@@ -54,39 +57,15 @@ export class RpcService {
     return client;
   }
 
-  private static getPriorityFeeBnbValue(settings: any, chainConfig: any, side: BroadcastTxSide): string {
-    const candidates = side === 'buy'
-      ? [
-        chainConfig?.buyPriorityFeeBnb,
-        chainConfig?.buyPriorityFee,
-        chainConfig?.priorityFeeBuyBnb,
-      ]
-      : [
-        chainConfig?.sellPriorityFeeBnb,
-        chainConfig?.sellPriorityFee,
-        chainConfig?.priorityFeeSellBnb,
-      ];
-    for (const item of candidates) {
-      if (typeof item !== 'string') continue;
-      const v = item.trim();
-      if (v) return v;
-    }
-    return '0';
+  private static getPriorityFeeBnbValue(chainConfig: any, side: BroadcastTxSide): string {
+    const value = side === 'buy' ? chainConfig?.buyPriorityFeeBnb : chainConfig?.sellPriorityFeeBnb;
+    if (typeof value !== 'string') return '0';
+    const normalized = value.trim();
+    return normalized || '0';
   }
 
-  private static isPriorityFeeEnabled(settings: any, chainConfig: any): boolean {
-    const candidates = [
-      chainConfig?.priorityFeeEnabled,
-      chainConfig?.enablePriorityFee,
-      chainConfig?.usePriorityFee,
-      settings?.priorityFeeEnabled,
-      settings?.enablePriorityFee,
-      settings?.usePriorityFee,
-      settings?.priorityFee?.enabled,
-    ];
-    for (const item of candidates) {
-      if (typeof item === 'boolean') return item;
-    }
+  private static isPriorityFeeEnabled(chainConfig: any): boolean {
+    if (typeof chainConfig?.priorityFeeEnabled === 'boolean') return chainConfig.priorityFeeEnabled;
     return false;
   }
 
@@ -115,7 +94,16 @@ export class RpcService {
         method: 'eth_sendBundle',
         params: [{ txs: [signedTx, tipTx], maxBlockNumber }],
       });
-    } catch {
+    } catch (e: any) {
+      const msg = String(e?.shortMessage || e?.message || e || '').toLowerCase();
+      const isMethodUnsupported =
+        msg.includes('method not found') ||
+        msg.includes('does not exist') ||
+        msg.includes('unsupported') ||
+        msg.includes('not supported');
+      if (!isMethodUnsupported) {
+        throw e;
+      }
       await (client as any).request({
         method: 'eth_sendMevBundle',
         params: [{ Txs: [signedTx, tipTx], maxBlockNumber }],
@@ -184,12 +172,12 @@ export class RpcService {
     const chainConfig = settings.chains[settings.chainId];
     const txSide = opts?.txSide;
     const bundleSignerContext = opts?.signerContext;
-    const priorityFeeEnabled = txSide ? this.isPriorityFeeEnabled(settings as any, chainConfig as any) : false;
+    const priorityFeeEnabled = txSide ? this.isPriorityFeeEnabled(chainConfig as any) : false;
     const priorityFeeBnb =
       txSide
         ? (typeof opts?.priorityFeeBnbOverride === 'string' && opts.priorityFeeBnbOverride.trim()
           ? opts.priorityFeeBnbOverride.trim()
-          : this.getPriorityFeeBnbValue(settings as any, chainConfig as any, txSide))
+          : this.getPriorityFeeBnbValue(chainConfig as any, txSide))
         : '0';
     let priorityFeeWei = 0n;
     try {
@@ -197,6 +185,7 @@ export class RpcService {
     } catch {
       priorityFeeWei = 0n;
     }
+    const bundlePriorityMode = !!txSide && priorityFeeEnabled && priorityFeeWei > 0n;
 
     const baseUrls = this.normalizeUrls(chainConfig.protectedRpcUrls ?? []);
     const buyUrls = this.normalizeUrls((chainConfig as any).protectedRpcUrlsBuy ?? []);
@@ -223,6 +212,20 @@ export class RpcService {
         promises.push(
           (async () => {
             try {
+              if (bundlePriorityMode && bundleSignerContext) {
+                const tipTx = await bundleSignerContext.account.signTransaction({
+                  to: this.bloxrouteDynamicFeeReceiver,
+                  value: priorityFeeWei,
+                  gas: this.bloxrouteDynamicFeeTxGas,
+                  gasPrice: bundleSignerContext.gasPrice,
+                  chain: bsc,
+                  chainId: bundleSignerContext.chainId,
+                  nonce: bundleSignerContext.nonce + 1,
+                  data: '0x',
+                });
+                await BloxRouterAPI.sendBscBundle([signedTx, tipTx]);
+                return { txHash: keccak256(signedTx) as `0x${string}`, via: 'bloxroute', isBundle: true };
+              }
               const txHash = await BloxRouterAPI.sendBscPrivateTx(signedTx);
               if (!txHash) throw new Error('BloxRoute did not return tx hash');
               return { txHash, via: 'bloxroute' };
@@ -263,7 +266,7 @@ export class RpcService {
                   return await this.sendBundleViaRpc(client, signedTx, tipTx);
                 })()
                 : await client.sendRawTransaction({ serializedTransaction: signedTx });
-              return { txHash, via: 'rpc', rpcUrl: url };
+              return { txHash, via: 'rpc', rpcUrl: url, isBundle: shouldUseBundle };
             } catch (e: any) {
               failures.push(`${url}: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
               console.error(`Error broadcasting tx to ${url}:`, e);

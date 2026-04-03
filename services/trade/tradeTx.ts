@@ -337,6 +337,7 @@ export async function sendTransaction(
       txHash: res.txHash,
       broadcastVia: res.via,
       broadcastUrl: res.rpcUrl,
+      isBundle: res.isBundle,
     };
   };
 
