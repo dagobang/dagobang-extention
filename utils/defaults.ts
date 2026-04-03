@@ -23,6 +23,18 @@ const BSC_MAINNET: ChainSettings = {
     'https://four.rpc.48.club',
     'https://debot.bsc.blockrazor.xyz'
   ],
+  protectedRpcUrlsBuy: [
+    'https://bscrpc.pancakeswap.finance',
+    'https://pancake.rpc.48.club',
+    'https://four.rpc.48.club',
+    'https://debot.bsc.blockrazor.xyz'
+  ],
+  protectedRpcUrlsSell: [
+    'https://bscrpc.pancakeswap.finance',
+    'https://pancake.rpc.48.club',
+    'https://four.rpc.48.club',
+    'https://debot.bsc.blockrazor.xyz'
+  ],
   antiMev: true,
   gasPreset: 'standard',
   buyGasPreset: 'standard',
@@ -38,6 +50,8 @@ const BSC_MAINNET: ChainSettings = {
   priorityFeeEnabled: false,
   buyPriorityFeeBnb: '0.00003',
   sellPriorityFeeBnb: '0.000025',
+  bloxrouteBuyEnabled: true,
+  bloxrouteSellEnabled: true,
 };
 
 const DEFAULT_AUTOTRADE: AutoTradeConfig = {

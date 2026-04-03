@@ -185,9 +185,27 @@ export function validateSettings(input: Settings): Settings | null {
           .map((x) => x.trim())
           .filter(Boolean)
           .filter(isAllowedProtectedRpcUrl);
+        const protectedRpcUrlsBuyRaw = ((cInput as any).protectedRpcUrlsBuy || [])
+          .map((x: string) => x.trim())
+          .filter(Boolean)
+          .filter(isAllowedProtectedRpcUrl);
+        const protectedRpcUrlsSellRaw = ((cInput as any).protectedRpcUrlsSell || [])
+          .map((x: string) => x.trim())
+          .filter(Boolean)
+          .filter(isAllowedProtectedRpcUrl);
+        const protectedRpcUrlsBuy = protectedRpcUrlsBuyRaw.length > 0 ? protectedRpcUrlsBuyRaw : undefined;
+        const protectedRpcUrlsSell = protectedRpcUrlsSellRaw.length > 0 ? protectedRpcUrlsSellRaw : undefined;
+        const bloxrouteBuyEnabled = typeof (cInput as any).bloxrouteBuyEnabled === 'boolean'
+          ? (cInput as any).bloxrouteBuyEnabled
+          : ((cDef as any).bloxrouteBuyEnabled ?? true);
+        const bloxrouteSellEnabled = typeof (cInput as any).bloxrouteSellEnabled === 'boolean'
+          ? (cInput as any).bloxrouteSellEnabled
+          : ((cDef as any).bloxrouteSellEnabled ?? true);
         chains[cid] = {
           rpcUrls: (cInput.rpcUrls || []).map((x) => x.trim()).filter(Boolean),
           protectedRpcUrls,
+          protectedRpcUrlsBuy,
+          protectedRpcUrlsSell,
           antiMev: !!cInput.antiMev && protectedRpcUrls.length > 0,
           gasPreset: ['slow', 'standard', 'fast', 'turbo'].includes(cInput.gasPreset) ? cInput.gasPreset : cDef.gasPreset,
           buyGasPreset,
@@ -203,6 +221,8 @@ export function validateSettings(input: Settings): Settings | null {
           priorityFeeEnabled,
           buyPriorityFeeBnb,
           sellPriorityFeeBnb,
+          bloxrouteBuyEnabled,
+          bloxrouteSellEnabled,
         };
         // Fallback for RPCs if empty
         if (chains[cid].rpcUrls.length === 0) {

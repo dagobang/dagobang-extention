@@ -7,9 +7,17 @@ type NetworkSettingsProps = SettingsDraftProps;
 
 export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: NetworkSettingsProps) {
   const chainId = settingsDraft.chainId;
+  const chainDraft = settingsDraft.chains[chainId];
+  const protectedRpcUrlsBuyDraft = (chainDraft.protectedRpcUrlsBuy ?? []).map((x) => String(x ?? '').trim()).filter(Boolean);
+  const protectedRpcUrlsSellDraft = (chainDraft.protectedRpcUrlsSell ?? []).map((x) => String(x ?? '').trim()).filter(Boolean);
   const protectedRpcUrlsDraft = settingsDraft.chains[chainId].protectedRpcUrls.map((x) => String(x ?? '').trim()).filter(Boolean);
-  const protectedRpcUrlsValidated = validateSettings(settingsDraft)?.chains[chainId].protectedRpcUrls ?? [];
+  const validatedChain = validateSettings(settingsDraft)?.chains[chainId];
+  const protectedRpcUrlsValidated = validatedChain?.protectedRpcUrls ?? [];
+  const protectedRpcUrlsBuyValidated = validatedChain?.protectedRpcUrlsBuy ?? [];
+  const protectedRpcUrlsSellValidated = validatedChain?.protectedRpcUrlsSell ?? [];
   const hasInvalidProtectedRpcUrls = protectedRpcUrlsValidated.length < protectedRpcUrlsDraft.length && !settingsDraft.bloxrouteAuthHeader;
+  const hasInvalidProtectedRpcUrlsBuy = protectedRpcUrlsBuyValidated.length < protectedRpcUrlsBuyDraft.length && !settingsDraft.bloxrouteAuthHeader;
+  const hasInvalidProtectedRpcUrlsSell = protectedRpcUrlsSellValidated.length < protectedRpcUrlsSellDraft.length && !settingsDraft.bloxrouteAuthHeader;
   const [bloxProbe, setBloxProbe] = useState<null | { status: 'reachable' | 'failed'; httpStatus?: number; message?: string; hasAuthHeader: boolean }>(null);
   const [bloxProbeLoading, setBloxProbeLoading] = useState(false);
   const bloxAuthDraft = useMemo(() => String(settingsDraft.bloxrouteAuthHeader ?? '').replace(/[\r\n]+/g, '').trim(), [settingsDraft.bloxrouteAuthHeader]);
@@ -99,6 +107,60 @@ export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: Network
         </label>
 
         <label className="block space-y-1">
+          <div className="text-[14px] text-zinc-400">{tt('popup.settings.protectedRpcUrlsBuy')}</div>
+          <textarea
+            rows={3}
+            aria-multiline={true}
+            className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-2 text-[14px] outline-none resize-y"
+            value={(settingsDraft.chains[settingsDraft.chainId].protectedRpcUrlsBuy ?? []).join('\n')}
+            onChange={(e) =>
+              setSettingsDraft((s) => ({
+                ...s,
+                chains: {
+                  ...s.chains,
+                  [s.chainId]: {
+                    ...s.chains[s.chainId],
+                    antiMev: true,
+                    protectedRpcUrlsBuy: e.target.value.split('\n'),
+                  },
+                },
+              }))
+            }
+          />
+          <div className="text-[11px] text-zinc-500">{tt('popup.settings.protectedRpcUrlsBuyHint')}</div>
+          {hasInvalidProtectedRpcUrlsBuy && (
+            <div className="text-[11px] text-red-400">{tt('popup.settings.protectedRpcUrlsInvalidWarning')}</div>
+          )}
+        </label>
+
+        <label className="block space-y-1">
+          <div className="text-[14px] text-zinc-400">{tt('popup.settings.protectedRpcUrlsSell')}</div>
+          <textarea
+            rows={3}
+            aria-multiline={true}
+            className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-2 text-[14px] outline-none resize-y"
+            value={(settingsDraft.chains[settingsDraft.chainId].protectedRpcUrlsSell ?? []).join('\n')}
+            onChange={(e) =>
+              setSettingsDraft((s) => ({
+                ...s,
+                chains: {
+                  ...s.chains,
+                  [s.chainId]: {
+                    ...s.chains[s.chainId],
+                    antiMev: true,
+                    protectedRpcUrlsSell: e.target.value.split('\n'),
+                  },
+                },
+              }))
+            }
+          />
+          <div className="text-[11px] text-zinc-500">{tt('popup.settings.protectedRpcUrlsSellHint')}</div>
+          {hasInvalidProtectedRpcUrlsSell && (
+            <div className="text-[11px] text-red-400">{tt('popup.settings.protectedRpcUrlsInvalidWarning')}</div>
+          )}
+        </label>
+
+        <label className="block space-y-1">
           <div className="text-[14px] text-zinc-400">{tt('popup.settings.bloxrouteAuthHeaderLabel')}</div>
           <input
             type="password"
@@ -117,6 +179,46 @@ export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: Network
             <a className="underline hover:text-zinc-300" href="https://portal.bloxroute.com/" target="_blank" rel="noreferrer">
               https://portal.bloxroute.com/
             </a>
+          </div>
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <label className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
+              <div className="text-[12px] text-zinc-300">{tt('popup.settings.bloxrouteBuyEnabled')}</div>
+              <input
+                type="checkbox"
+                checked={settingsDraft.chains[settingsDraft.chainId].bloxrouteBuyEnabled ?? true}
+                onChange={(e) =>
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    chains: {
+                      ...s.chains,
+                      [s.chainId]: {
+                        ...s.chains[s.chainId],
+                        bloxrouteBuyEnabled: e.target.checked,
+                      },
+                    },
+                  }))
+                }
+              />
+            </label>
+            <label className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
+              <div className="text-[12px] text-zinc-300">{tt('popup.settings.bloxrouteSellEnabled')}</div>
+              <input
+                type="checkbox"
+                checked={settingsDraft.chains[settingsDraft.chainId].bloxrouteSellEnabled ?? true}
+                onChange={(e) =>
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    chains: {
+                      ...s.chains,
+                      [s.chainId]: {
+                        ...s.chains[s.chainId],
+                        bloxrouteSellEnabled: e.target.checked,
+                      },
+                    },
+                  }))
+                }
+              />
+            </label>
           </div>
           <div className="flex gap-2 pt-2">
             <button

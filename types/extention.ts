@@ -17,6 +17,8 @@ export type GasGweiConfig = {
 export type ChainSettings = {
   rpcUrls: string[];
   protectedRpcUrls: string[];
+  protectedRpcUrlsBuy?: string[];
+  protectedRpcUrlsSell?: string[];
   antiMev: boolean;
   gasPreset: GasPreset;
   executionMode: ExecutionMode;
@@ -32,6 +34,8 @@ export type ChainSettings = {
   priorityFeeEnabled?: boolean;
   buyPriorityFeeBnb?: string;
   sellPriorityFeeBnb?: string;
+  bloxrouteBuyEnabled?: boolean;
+  bloxrouteSellEnabled?: boolean;
 };
 
 export type AutoTradeInteractionType = 'tweet' | 'reply' | 'quote' | 'retweet' | 'follow';

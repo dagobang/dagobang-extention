@@ -59,19 +59,11 @@ export class RpcService {
         chainConfig?.buyPriorityFeeBnb,
         chainConfig?.buyPriorityFee,
         chainConfig?.priorityFeeBuyBnb,
-        settings?.buyPriorityFeeBnb,
-        settings?.buyPriorityFee,
-        settings?.priorityFeeBuyBnb,
-        settings?.priorityFee?.buyBnb,
       ]
       : [
         chainConfig?.sellPriorityFeeBnb,
         chainConfig?.sellPriorityFee,
         chainConfig?.priorityFeeSellBnb,
-        settings?.sellPriorityFeeBnb,
-        settings?.sellPriorityFee,
-        settings?.priorityFeeSellBnb,
-        settings?.priorityFee?.sellBnb,
       ];
     for (const item of candidates) {
       if (typeof item !== 'string') continue;
@@ -200,7 +192,11 @@ export class RpcService {
       priorityFeeWei = 0n;
     }
 
-    const protectedUrls = this.normalizeUrls(chainConfig.protectedRpcUrls ?? []);
+    const baseUrls = this.normalizeUrls(chainConfig.protectedRpcUrls ?? []);
+    const buyUrls = this.normalizeUrls((chainConfig as any).protectedRpcUrlsBuy ?? []);
+    const sellUrls = this.normalizeUrls((chainConfig as any).protectedRpcUrlsSell ?? []);
+    const sideUrls = txSide === 'buy' ? buyUrls : txSide === 'sell' ? sellUrls : [];
+    const protectedUrls = sideUrls.length > 0 ? sideUrls : baseUrls;
     if (protectedUrls.length === 0 && !settings.bloxrouteAuthHeader) {
       throw new Error('No protected RPC URLs configured (required for broadcasting transactions)');
     }
@@ -210,7 +206,14 @@ export class RpcService {
       const failures: string[] = [];
 
       const bloxHeader = (settings.bloxrouteAuthHeader ?? '').trim();
-      if (includeBloxroute && this.bloxroutePrivateTxEnabled && bloxHeader) {
+      const bloxEnabledBySide =
+        txSide === 'buy'
+          ? ((chainConfig as any)?.bloxrouteBuyEnabled ?? true)
+          : txSide === 'sell'
+            ? ((chainConfig as any)?.bloxrouteSellEnabled ?? true)
+            : true;
+      const willUseBloxroute = includeBloxroute && this.bloxroutePrivateTxEnabled && bloxHeader && bloxEnabledBySide;
+      if (willUseBloxroute) {
         promises.push(
           (async () => {
             try {
