@@ -467,6 +467,12 @@ export function validateSettings(input: Settings): Settings | null {
         const buyAmountBnbRaw = typeof raw?.buyAmountBnb === 'string' ? raw.buyAmountBnb.trim() : '';
         const buyAmountBnb = buyAmountBnbRaw || '0';
         const buyGasGwei = clampStringNumber(raw?.buyGasGwei, '');
+        const buyBribeBnbRaw = clampStringNumber(raw?.buyBribeBnb, '');
+        const buyBribeNum = Number(buyBribeBnbRaw);
+        const buyBribeBnb =
+          buyBribeBnbRaw && Number.isFinite(buyBribeNum) && buyBribeNum >= 0 && (buyBribeNum === 0 || buyBribeNum >= 0.000025)
+            ? buyBribeBnbRaw
+            : '';
         const buyMethodRaw = typeof raw?.buyMethod === 'string' ? raw.buyMethod.trim().toLowerCase() : '';
         const buyMethod = tokenSnipeAllowedBuyMethods.includes(buyMethodRaw as any) ? buyMethodRaw : 'dagobang';
         const createdAtNum = Number(raw?.createdAt);
@@ -484,6 +490,7 @@ export function validateSettings(input: Settings): Settings | null {
           autoBuy: typeof raw?.autoBuy === 'boolean' ? raw.autoBuy : true,
           buyAmountBnb,
           buyGasGwei: buyGasGwei || undefined,
+          buyBribeBnb: buyBribeBnb || undefined,
           buyMethod: buyMethod as any,
           autoSell: typeof raw?.autoSell === 'boolean' ? raw.autoSell : true,
           createdAt,

@@ -270,7 +270,7 @@ export async function sendTransaction(
   value: bigint,
   gasPriceWei: bigint,
   chainId: number,
-  opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell' }
+  opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; priorityFeeBnbOverride?: string }
 ) {
   const trace = opts?.trace;
   const useAutoNonce = opts?.nonce === undefined;
@@ -323,6 +323,7 @@ export async function sendTransaction(
     const broadcastStart = Date.now();
     const res = await RpcService.broadcastTxDetailed(signed, {
       txSide: opts?.txSide,
+      priorityFeeBnbOverride: opts?.priorityFeeBnbOverride,
       signerContext: {
         account,
         chainId,

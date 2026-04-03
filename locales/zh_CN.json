@@ -295,6 +295,7 @@
       "autoBuy": "自动买入",
       "buyAmountBnbPlaceholder": "买入BNB",
       "buyGasGweiPlaceholder": "买入Gas(Gwei)",
+      "buyBribeBnbPlaceholder": "买入贿赂费(BNB)",
       "buyMethodTitle": "买入方式",
       "buyMethodAll": "全部",
       "buyMethodDagobang": "打狗棒",
@@ -308,6 +309,7 @@
       "saveSettings": "保存设置",
       "errorSaveFailed": "保存失败",
       "errorInvalidTokenAddress": "代币地址不合法",
+      "errorInvalidBuyBribeBnb": "买入贿赂费无效，若大于0则必须 >= 0.000025",
       "errorTargetUrlRequired": "请至少输入一个目标推文链接",
       "errorTargetRequired": "请至少输入一个目标推文链接或关键字",
       "taskList": {
@@ -331,6 +333,7 @@
         "buyAmount": "买入 {0}",
         "buyMethod": "方式 {0}",
         "buyGasGwei": "Gas {0} gwei",
+        "buyBribeBnb": "贿赂费 {0} BNB",
         "manualTag": "(手动)",
         "sellMode": "卖出 {0}",
         "modeAuto": "自动",

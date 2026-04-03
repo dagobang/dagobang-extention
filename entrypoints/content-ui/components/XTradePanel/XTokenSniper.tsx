@@ -40,6 +40,7 @@ const parseCommaOrLineList = (value: string) =>
     .filter(Boolean);
 
 const createTaskId = () => `token-task-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+const MIN_BRIBE_BNB = 0.000025;
 const TWEET_TYPE_OPTIONS: Array<{ value: 'tweet' | 'reply' | 'quote' | 'retweet' | 'follow'; label: string }> = [
   { value: 'tweet', label: 'tweet' },
   { value: 'reply', label: 'reply' },
@@ -119,6 +120,7 @@ export function XTokenSniperContent({
   const [autoBuyInput, setAutoBuyInput] = useState(true);
   const [buyAmountInput, setBuyAmountInput] = useState('0.01');
   const [buyGasGweiInput, setBuyGasGweiInput] = useState('');
+  const [buyBribeBnbInput, setBuyBribeBnbInput] = useState('');
   const [buyMethodInput, setBuyMethodInput] = useState<TokenSnipeBuyMethod>('dagobang');
   const [autoSellInput, setAutoSellInput] = useState(true);
 
@@ -251,6 +253,7 @@ export function XTokenSniperContent({
     setAutoBuyInput(true);
     setBuyAmountInput('0.01');
     setBuyGasGweiInput('');
+    setBuyBribeBnbInput('');
     setBuyMethodInput('dagobang');
     setAutoSellInput(true);
   };
@@ -272,6 +275,7 @@ export function XTokenSniperContent({
     setAutoBuyInput(task.autoBuy);
     setBuyAmountInput(task.buyAmountBnb);
     setBuyGasGweiInput(typeof task.buyGasGwei === 'string' ? task.buyGasGwei : '');
+    setBuyBribeBnbInput(typeof task.buyBribeBnb === 'string' ? task.buyBribeBnb : '');
     setBuyMethodInput(normalizeBuyMethod(task));
     setAutoSellInput(task.autoSell);
     setError('');
@@ -317,6 +321,14 @@ export function XTokenSniperContent({
       setError(tt('contentUi.tokenSniper.errorTargetRequired'));
       return;
     }
+    const buyBribeBnbRaw = buyBribeBnbInput.trim();
+    if (buyBribeBnbRaw) {
+      const bribeNum = Number(buyBribeBnbRaw);
+      if (!Number.isFinite(bribeNum) || bribeNum < 0 || (bribeNum > 0 && bribeNum < MIN_BRIBE_BNB)) {
+        setError(tt('contentUi.tokenSniper.errorInvalidBuyBribeBnb'));
+        return;
+      }
+    }
     const selectedTweetTypes = tweetTypesInput.length
       ? tweetTypesInput
       : TWEET_TYPE_OPTIONS.map((x) => x.value);
@@ -334,6 +346,7 @@ export function XTokenSniperContent({
       autoBuy: autoBuyInput,
       buyAmountBnb: buyAmountInput.trim() || '0',
       buyGasGwei: buyGasGweiInput.trim() || undefined,
+      buyBribeBnb: buyBribeBnbRaw || undefined,
       buyMethod: buyMethodInput,
       autoSell: autoSellInput,
       createdAt: currentTask?.createdAt ?? Date.now(),
@@ -521,6 +534,12 @@ export function XTokenSniperContent({
                 placeholder={tt('contentUi.tokenSniper.buyGasGweiPlaceholder')}
                 value={buyGasGweiInput}
                 onChange={(e) => setBuyGasGweiInput(e.target.value)}
+              />
+              <input
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
+                placeholder={tt('contentUi.tokenSniper.buyBribeBnbPlaceholder')}
+                value={buyBribeBnbInput}
+                onChange={(e) => setBuyBribeBnbInput(e.target.value)}
               />
               <div className="col-span-4 space-y-1">
                 <div className="text-[11px] text-zinc-400">{tt('contentUi.tokenSniper.buyMethodTitle')}</div>

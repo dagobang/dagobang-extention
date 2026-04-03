@@ -102,8 +102,10 @@ export function XTokenSniperTaskList(props: {
           const tweetTypes = normalizeTaskTweetTypes(task);
           const targetUrls = Array.isArray(task.targetUrls) ? task.targetUrls : [];
           const keywords = Array.isArray(task.keywords) ? task.keywords : [];
+          const shortAddressLabel = formatShortAddress(task.tokenAddress);
           const buyAmountLabel = `${task.buyAmountBnb || '0'} BNB`;
           const buyGasGweiLabel = typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() : '';
+          const buyBribeBnbLabel = typeof task.buyBribeBnb === 'string' ? String(task.buyBribeBnb).trim() : '';
           const buyMethodLabel = formatBuyMethodLabel(task, tt);
           const buyMethodBadgeClass = getBuyMethodBadgeClass(task);
           const buyState =
@@ -147,6 +149,7 @@ export function XTokenSniperTaskList(props: {
                       {tokenLabel}
                     </a>
                     <div className="truncate text-zinc-400">{task.tokenName || '-'}</div>
+                    <div className="shrink-0 text-zinc-500">{shortAddressLabel}</div>
                     <div className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${buyMethodBadgeClass}`}>
                       {buyMethodLabel}
                     </div>
@@ -165,8 +168,6 @@ export function XTokenSniperTaskList(props: {
                 </div>
                 <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-500">
                   <div className="min-w-0 flex flex-1 items-center gap-2 overflow-hidden">
-                    <span>{formatShortAddress(task.tokenAddress)}</span>
-                    <span>·</span>
                     <span>{ageLabel}</span>
                     <span>·</span>
                     <span>{formatTweetTypesLabel(tweetTypes, tt)}</span>
@@ -179,6 +180,14 @@ export function XTokenSniperTaskList(props: {
                         <span>·</span>
                         <span className={task.autoBuy ? 'text-emerald-300' : 'text-zinc-500'}>
                           {tt('contentUi.tokenSniper.taskList.buyGasGwei', [buyGasGweiLabel])}
+                        </span>
+                      </>
+                    ) : null}
+                    {buyBribeBnbLabel ? (
+                      <>
+                        <span>·</span>
+                        <span className={task.autoBuy ? 'text-emerald-300' : 'text-zinc-500'}>
+                          {tt('contentUi.tokenSniper.taskList.buyBribeBnb', [buyBribeBnbLabel])}
                         </span>
                       </>
                     ) : null}

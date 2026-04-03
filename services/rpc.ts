@@ -14,6 +14,7 @@ export type BroadcastTxSide = 'buy' | 'sell';
 
 export type BroadcastTxOptions = {
   txSide?: BroadcastTxSide;
+  priorityFeeBnbOverride?: string;
   signerContext?: {
     account: any;
     chainId: number;
@@ -184,7 +185,12 @@ export class RpcService {
     const txSide = opts?.txSide;
     const bundleSignerContext = opts?.signerContext;
     const priorityFeeEnabled = txSide ? this.isPriorityFeeEnabled(settings as any, chainConfig as any) : false;
-    const priorityFeeBnb = txSide ? this.getPriorityFeeBnbValue(settings as any, chainConfig as any, txSide) : '0';
+    const priorityFeeBnb =
+      txSide
+        ? (typeof opts?.priorityFeeBnbOverride === 'string' && opts.priorityFeeBnbOverride.trim()
+          ? opts.priorityFeeBnbOverride.trim()
+          : this.getPriorityFeeBnbValue(settings as any, chainConfig as any, txSide))
+        : '0';
     let priorityFeeWei = 0n;
     try {
       priorityFeeWei = parseEther(priorityFeeBnb);

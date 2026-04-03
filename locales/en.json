@@ -295,6 +295,7 @@
       "autoBuy": "Auto buy",
       "buyAmountBnbPlaceholder": "Buy BNB",
       "buyGasGweiPlaceholder": "Buy Gas (Gwei)",
+      "buyBribeBnbPlaceholder": "Buy bribe fee (BNB)",
       "buyMethodTitle": "Buy method",
       "buyMethodAll": "All",
       "buyMethodDagobang": "Dagobang",
@@ -308,6 +309,7 @@
       "saveSettings": "Save settings",
       "errorSaveFailed": "Save failed",
       "errorInvalidTokenAddress": "Invalid token address",
+      "errorInvalidBuyBribeBnb": "Invalid buy bribe fee; if greater than 0 it must be >= 0.000025",
       "errorTargetUrlRequired": "Please enter at least one target tweet URL",
       "errorTargetRequired": "Please enter at least one target tweet URL or keyword",
       "taskList": {
@@ -331,6 +333,7 @@
         "buyAmount": "Buy {0}",
         "buyMethod": "Method {0}",
         "buyGasGwei": "Gas {0} gwei",
+        "buyBribeBnb": "Bribe {0} BNB",
         "manualTag": " (manual)",
         "sellMode": "Sell {0}",
         "modeAuto": "Auto",

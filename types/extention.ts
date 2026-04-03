@@ -148,6 +148,7 @@ export type TokenSnipeTask = {
   autoBuy: boolean;
   buyAmountBnb: string;
   buyGasGwei?: string;
+  buyBribeBnb?: string;
   buyMethod?: TokenSnipeBuyMethod;
   autoSell: boolean;
   createdAt: number;
@@ -324,6 +325,7 @@ export type TxBuyInput = {
   slippageBps?: number;
   gasPreset?: GasPreset;
   gasPriceGwei?: string;
+  priorityFeeBnb?: string;
   deadlineSeconds?: number;
   tokenInfo?: TokenInfo;
 };
