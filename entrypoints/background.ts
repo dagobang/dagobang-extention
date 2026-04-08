@@ -421,6 +421,13 @@ export default defineBackground(() => {
             return { ok: true };
           }
 
+          case 'rpc:prewarm': {
+            try {
+              await RpcService.prewarm(msg.input);
+            } catch { }
+            return { ok: true };
+          }
+
           case 'tx:transferNative': {
             const settings = await SettingsService.get();
             const chainId = settings.chainId;

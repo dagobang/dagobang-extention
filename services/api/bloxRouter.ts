@@ -81,6 +81,33 @@ export class BloxRouterAPI {
     console.log('Bloxroute bundle hash:', bundleHash);
     return bundleHash;
   }
+
+  static async prewarm(opts?: { timeoutMs?: number }): Promise<void> {
+    const timeoutMs = Math.max(200, Number(opts?.timeoutMs ?? 1500));
+    const settings = await SettingsService.get();
+    const value = (settings as any).bloxrouteAuthHeader;
+    const authHeader = typeof value === "string" ? value.replace(/[\r\n]+/g, "").trim() : "";
+    if (!authHeader) return;
+    try {
+      await Promise.race([
+        fetch(this.BASE_URL_HTTPS, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: authHeader,
+          },
+          body: "{}",
+        }),
+        new Promise((_, reject) => {
+          const id = setTimeout(() => {
+            clearTimeout(id);
+            reject(new Error("bloxroute prewarm timeout"));
+          }, timeoutMs);
+        }),
+      ]);
+    } catch {
+    }
+  }
 }
 
 export default BloxRouterAPI;

@@ -56,6 +56,7 @@ export default function App() {
   const handleBuyRef = useRef<(amountStr: string) => void>(() => { });
   const handleSellRef = useRef<(pct: number) => void>(() => { });
   const prewarmedTurboRef = useRef<Set<string>>(new Set());
+  const prewarmedRpcRef = useRef<Set<string>>(new Set());
   const fastPollingRef = useRef<any>(null);
   const tokenRefreshSeqRef = useRef(0);
   const deleteSoundPlayedAtRef = useRef<Record<string, number>>({});
@@ -431,6 +432,26 @@ export default function App() {
     handleBuy(pendingQuickBuy.amount);
     setPendingQuickBuy(null);
   }, [pendingQuickBuy, tokenAddressNormalized, tokenInfo, settings]);
+
+  useEffect(() => {
+    if (!settings) return;
+    const chainId = settings.chainId ?? 56;
+    const chain = settings.chains[chainId];
+    if (!chain) return;
+    const key = [
+      chainId,
+      ...(chain.rpcUrls ?? []),
+      ...(chain.protectedRpcUrls ?? []),
+      ...(((chain as any).protectedRpcUrlsBuy ?? []) as string[]),
+      ...(((chain as any).protectedRpcUrlsSell ?? []) as string[]),
+    ].join('|');
+    if (prewarmedRpcRef.current.has(key)) return;
+    prewarmedRpcRef.current.add(key);
+    void call({
+      type: 'rpc:prewarm',
+      input: { timeoutMs: 1500 },
+    } as const).catch(() => { });
+  }, [settings]);
 
   useEffect(() => {
     if (!isUnlocked) return;

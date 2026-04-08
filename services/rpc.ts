@@ -31,6 +31,9 @@ export class RpcService {
   private static readonly bloxrouteDynamicFeeReceiver = '0x6374Ca2da5646C73Eb444aB99780495d61035f9b' as const;
   private static readonly bloxrouteDynamicFeeTxGas = 100000n;
   private static readonly clientByUrl = new Map<string, PublicClient>();
+  private static readonly prewarmWindowMs = 45_000;
+  private static readonly prewarmedAtByUrl = new Map<string, number>();
+  private static prewarmedAtBloxroute = 0;
 
   private static normalizeUrls(urls: string[]): string[] {
     const seen = new Set<string>();
@@ -153,6 +156,53 @@ export class RpcService {
     await client.getBlockNumber();
     const end = performance.now();
     return end - start;
+  }
+
+  static async prewarm(opts?: { urls?: string[]; force?: boolean; timeoutMs?: number }): Promise<void> {
+    const timeoutMs = Math.max(200, Number(opts?.timeoutMs ?? 1500));
+    const force = !!opts?.force;
+    const settings = await SettingsService.get();
+    const urls = (() => {
+      if (opts?.urls?.length) return this.normalizeUrls(opts.urls);
+      return [];
+    })();
+    const finalUrls = urls.length > 0
+      ? urls
+      : (() => {
+        const chain = settings.chains[settings.chainId];
+        const merged = [
+          ...(chain?.rpcUrls ?? []),
+          ...(chain?.protectedRpcUrls ?? []),
+          ...(((chain as any)?.protectedRpcUrlsBuy ?? []) as string[]),
+          ...(((chain as any)?.protectedRpcUrlsSell ?? []) as string[]),
+        ];
+        return this.normalizeUrls(merged);
+      })();
+    const now = Date.now();
+    if (force || now - this.prewarmedAtBloxroute >= this.prewarmWindowMs) {
+      this.prewarmedAtBloxroute = now;
+      await BloxRouterAPI.prewarm({ timeoutMs }).catch(() => null);
+    }
+    await this.getClient().catch(() => null);
+    const tasks = finalUrls.map(async (url) => {
+      const lastAt = this.prewarmedAtByUrl.get(url) ?? 0;
+      if (!force && now - lastAt < this.prewarmWindowMs) return;
+      this.prewarmedAtByUrl.set(url, now);
+      const client = this.getClientForUrl(url);
+      try {
+        await Promise.race([
+          client.getBlockNumber(),
+          new Promise((_, reject) => {
+            const id = setTimeout(() => {
+              clearTimeout(id);
+              reject(new Error('rpc prewarm timeout'));
+            }, timeoutMs);
+          }),
+        ]);
+      } catch {
+      }
+    });
+    await Promise.allSettled(tasks);
   }
 
   static async broadcastTx(signedTx: `0x${string}`, opts?: BroadcastTxOptions): Promise<`0x${string}`> {
