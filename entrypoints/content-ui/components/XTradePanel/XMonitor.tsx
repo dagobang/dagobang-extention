@@ -474,6 +474,53 @@ const renderRichText = (text?: string | null, keyPrefix = 'rt'): ReactNode => {
   return nodes;
 };
 
+const renderSignalMedia = (
+  media: Array<{ type: string; url: string }> | undefined,
+  keyPrefix: string,
+  options?: { maxCount?: number; imgHeightClass?: string },
+): ReactNode => {
+  if (!Array.isArray(media) || !media.length) return null;
+  const maxCount = typeof options?.maxCount === 'number' && options.maxCount > 0 ? Math.floor(options.maxCount) : 6;
+  const imgHeightClass = options?.imgHeightClass ?? 'h-28';
+  return (
+    <div className="mt-3 grid grid-cols-2 gap-2">
+      {media.slice(0, maxCount).map((m, idx) => {
+        const url = typeof (m as any)?.url === 'string' ? (m as any).url : null;
+        const type = typeof (m as any)?.type === 'string' ? String((m as any).type).toLowerCase() : 'unknown';
+        if (!url) return null;
+        if (type === 'video') {
+          return (
+            <video
+              key={`${keyPrefix}:${idx}`}
+              className="w-full rounded-lg border border-zinc-800 bg-zinc-900/40"
+              src={url}
+              controls
+              preload="none"
+            />
+          );
+        }
+        return (
+          <button
+            key={`${keyPrefix}:${idx}`}
+            type="button"
+            className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70"
+            onClick={() => window.open(url, '_blank')}
+            title={url}
+          >
+            <img
+              src={url}
+              alt=""
+              className={`${imgHeightClass} w-full object-cover`}
+              loading="lazy"
+              referrerPolicy="no-referrer"
+            />
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
 const getTypeMeta = (
   type: UnifiedTwitterSignal['tweetType'] | undefined,
   tt: (key: string, subs?: Array<string | number>) => string,
@@ -1002,6 +1049,51 @@ export function XMonitorContent({
 
               const quoteDisplayName = signal.quotedUserName || signal.quotedUserScreen || null;
               const quoteHandle = signal.quotedUserScreen ? `@${signal.quotedUserScreen}` : null;
+              const quotedMedia = Array.isArray((signal as any).quotedMedia)
+                ? ((signal as any).quotedMedia as Array<{ type: string; url: string }>)
+                : [];
+              const replySourceDisplayName =
+                signal.quotedUserName ||
+                signal.quotedUserScreen ||
+                (typeof (signal as any).sourceUserName === 'string' ? (signal as any).sourceUserName : null) ||
+                (typeof (signal as any).replyToUserName === 'string' ? (signal as any).replyToUserName : null) ||
+                (typeof (signal as any).sourceUserScreen === 'string' ? (signal as any).sourceUserScreen : null) ||
+                (typeof (signal as any).replyToUserScreen === 'string' ? (signal as any).replyToUserScreen : null) ||
+                null;
+              const replySourceHandleRaw =
+                signal.quotedUserScreen ||
+                (typeof (signal as any).sourceUserScreen === 'string' ? (signal as any).sourceUserScreen : null) ||
+                (typeof (signal as any).replyToUserScreen === 'string' ? (signal as any).replyToUserScreen : null) ||
+                null;
+              const replySourceHandle = replySourceHandleRaw ? `@${String(replySourceHandleRaw).replace(/^@/, '')}` : null;
+              const replySourceAvatar =
+                signal.quotedUserAvatar ||
+                (typeof (signal as any).sourceUserAvatar === 'string' ? (signal as any).sourceUserAvatar : null) ||
+                (typeof (signal as any).replyToUserAvatar === 'string' ? (signal as any).replyToUserAvatar : null) ||
+                null;
+              const replySourceText =
+                signal.quotedText ||
+                (typeof (signal as any).sourceText === 'string' ? (signal as any).sourceText : null) ||
+                (typeof (signal as any).replyToText === 'string' ? (signal as any).replyToText : null) ||
+                null;
+              const replySourceMedia = quotedMedia.length
+                ? quotedMedia
+                : Array.isArray((signal as any).sourceMedia)
+                  ? ((signal as any).sourceMedia as Array<{ type: string; url: string }>)
+                  : Array.isArray((signal as any).replyToMedia)
+                    ? ((signal as any).replyToMedia as Array<{ type: string; url: string }>)
+                    : [];
+              const replySourceTweetId =
+                signal.quotedTweetId ||
+                (typeof (signal as any).sourceTweetId === 'string' ? (signal as any).sourceTweetId : null) ||
+                (typeof (signal as any).replyToTweetId === 'string' ? (signal as any).replyToTweetId : null) ||
+                null;
+              const replySourceLink =
+                replySourceTweetId && replySourceHandleRaw
+                  ? `https://x.com/${String(replySourceHandleRaw).replace(/^@/, '')}/status/${replySourceTweetId}`
+                  : replySourceTweetId
+                    ? `https://x.com/i/web/status/${replySourceTweetId}`
+                    : quotedLink;
 
               const followDisplayName = signal.followedUserName || signal.followedUserScreen || null;
               const followHandle = signal.followedUserScreen ? `@${signal.followedUserScreen}` : null;
@@ -1102,6 +1194,52 @@ export function XMonitorContent({
                     <div className="mt-2 text-[14px] text-amber-300">{tt('contentUi.xMonitor.replyTo', [replyHandle])}</div>
                   ) : null}
 
+                  {signal.tweetType === 'reply' && (replySourceDisplayName || replySourceLink || replySourceText || replySourceMedia.length) ? (
+                    <div className="mt-2 rounded-lg border border-l-2 border-amber-500/60 border-zinc-800 bg-zinc-900/50 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-800 text-[10px] font-semibold text-zinc-300">
+                            {replySourceAvatar ? (
+                              <img
+                                src={replySourceAvatar}
+                                alt=""
+                                className="h-7 w-7 object-cover"
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <span>{replySourceDisplayName ? replySourceDisplayName.trim().charAt(0).toUpperCase() : '?'}</span>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              {replySourceDisplayName ? (
+                                <div className="truncate text-[14px] font-semibold text-zinc-100">{replySourceDisplayName}</div>
+                              ) : null}
+                              {replySourceHandle ? <div className="truncate text-[11px] text-zinc-400">{replySourceHandle}</div> : null}
+                            </div>
+                            <div className="text-[11px] text-zinc-500">{tt('contentUi.xMonitor.quotedTweet')}</div>
+                          </div>
+                        </div>
+                        {replySourceLink ? (
+                          <button
+                            type="button"
+                            className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-800"
+                            onClick={() => window.open(replySourceLink, '_blank')}
+                          >
+                            ↗
+                          </button>
+                        ) : null}
+                      </div>
+                      {replySourceText ? (
+                        <div className="dagobang-scrollbar mt-2 max-h-40 overflow-y-auto pr-1 whitespace-pre-wrap break-words text-[14px] text-zinc-200">
+                          {renderRichText(replySourceText, `${signal.id}:replySourceText`)}
+                        </div>
+                      ) : null}
+                      {renderSignalMedia(replySourceMedia, `${signal.id}:replySourceMedia`, { imgHeightClass: 'h-24', maxCount: 4 })}
+                    </div>
+                  ) : null}
+
                   {followDisplayName && (signal.tweetType === 'follow' || signal.tweetType === 'unfollow') ? (
                     <div className="mt-2 rounded-lg border border-l-2 border-emerald-500/60 border-zinc-800 bg-zinc-900/50 px-3 py-2">
                       <div className="flex items-center justify-between gap-2">
@@ -1190,6 +1328,7 @@ export function XMonitorContent({
                           {renderRichText(signal.quotedText, `${signal.id}:quotedText:quote`)}
                         </div>
                       ) : null}
+                      {renderSignalMedia(quotedMedia, `${signal.id}:quotedMedia:quote`, { imgHeightClass: 'h-24', maxCount: 4 })}
                     </div>
                   ) : null}
 
@@ -1235,6 +1374,7 @@ export function XMonitorContent({
                           {renderRichText(signal.quotedText, `${signal.id}:quotedText:repost`)}
                         </div>
                       ) : null}
+                      {renderSignalMedia(quotedMedia, `${signal.id}:quotedMedia:repost`, { imgHeightClass: 'h-24', maxCount: 4 })}
                       {signal.translatedText ? (
                         <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
                           <div className="text-[10px] text-zinc-500">{tt('contentUi.xMonitor.translation')}</div>
@@ -1254,43 +1394,7 @@ export function XMonitorContent({
                     </div>
                   ) : null}
 
-                  {Array.isArray(signal.media) && signal.media.length ? (
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      {signal.media.slice(0, 6).map((m, idx) => {
-                        const url = typeof (m as any)?.url === 'string' ? (m as any).url : null;
-                        const type = typeof (m as any)?.type === 'string' ? String((m as any).type).toLowerCase() : 'unknown';
-                        if (!url) return null;
-                        if (type === 'video') {
-                          return (
-                            <video
-                              key={`${signal.id}:m:${idx}`}
-                              className="w-full rounded-lg border border-zinc-800 bg-zinc-900/40"
-                              src={url}
-                              controls
-                              preload="none"
-                            />
-                          );
-                        }
-                        return (
-                          <button
-                            key={`${signal.id}:m:${idx}`}
-                            type="button"
-                            className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70"
-                            onClick={() => window.open(url, '_blank')}
-                            title={url}
-                          >
-                            <img
-                              src={url}
-                              alt=""
-                              className="h-28 w-full object-cover"
-                              loading="lazy"
-                              referrerPolicy="no-referrer"
-                            />
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
+                  {renderSignalMedia(signal.media, `${signal.id}:m`)}
 
                   {signal.translatedText && signal.tweetType !== 'repost' ? (
                     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">

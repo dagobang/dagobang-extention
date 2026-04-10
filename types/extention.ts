@@ -456,6 +456,7 @@ export type UnifiedTwitterSignal = {
   quotedUserName?: string;
   quotedUserAvatar?: string;
   quotedText?: string;
+  quotedMedia?: Array<{ type: string; url: string }>;
   followedUserScreen?: string;
   followedUserName?: string;
   followedUserAvatar?: string;

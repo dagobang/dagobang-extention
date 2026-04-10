@@ -36,6 +36,7 @@ type WsStatus = {
 type TwitterTranslationPatch = {
   eventId: string;
   translatedText?: string;
+  sourceTranslatedText?: string;
   translationLang?: string;
   updatedAtMs: number;
 };
@@ -50,6 +51,15 @@ const buildTranslatedText = (item: any): string | undefined => {
   return body ?? undefined;
 };
 
+const buildTranslatedSourceText = (item: any): string | undefined => {
+  const source = (payload: any): string | undefined => {
+    if (typeof payload?.sc === 'string') return payload.sc;
+    if (isObject(payload?.sc) && typeof payload.sc.t === 'string') return payload.sc.t;
+    return undefined;
+  };
+  return source(item);
+};
+
 const extractTranslationPatch = (payload: any, now: number): TwitterTranslationPatch | null => {
   if (!isObject(payload)) return null;
   const eventId =
@@ -59,10 +69,12 @@ const extractTranslationPatch = (payload: any, now: number): TwitterTranslationP
     null;
   if (!eventId) return null;
   const translatedText = buildTranslatedText(payload);
+  const sourceTranslatedText = buildTranslatedSourceText(payload);
   const translationLang = typeof (payload as any).l === 'string' ? (payload as any).l : undefined;
   return {
     eventId,
     translatedText,
+    sourceTranslatedText,
     translationLang,
     updatedAtMs: now,
   };
@@ -614,7 +626,7 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
     (isObject((item as any).sc) && typeof (item as any).sc.t === 'string' ? (item as any).sc.t : null) ??
     (typeof (item as any).sc === 'string' ? (item as any).sc : null) ??
     null;
-  const sourceText = sourceTextRaw && /^https?:\/\//i.test(sourceTextRaw) ? null : sourceTextRaw;
+  const sourceText = typeof sourceTextRaw === 'string' && sourceTextRaw.trim() ? sourceTextRaw : null;
   const followBio = isObject((item as any)?.f?.f) && typeof (item as any).f.f.d === 'string' ? (item as any).f.f.d : null;
   const text =
     tweetType === 'follow' || tweetType === 'unfollow'
@@ -626,7 +638,10 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
   const quotedUserScreen = sourceUser && typeof sourceUser.s === 'string' ? sourceUser.s : undefined;
   const quotedUserName = sourceUser && typeof sourceUser.n === 'string' ? sourceUser.n : undefined;
   const quotedUserAvatar = sourceUser && typeof sourceUser.a === 'string' ? sourceUser.a : undefined;
-  const quotedText = tweetType === 'quote' || tweetType === 'repost' ? sourceText ?? undefined : undefined;
+  const hasSourceTweet = tweetType === 'quote' || tweetType === 'repost' || tweetType === 'reply';
+  const quotedText = hasSourceTweet ? sourceText ?? undefined : undefined;
+  const sourceMedia = extractMedia((item as any).sc);
+  const quotedMedia = hasSourceTweet && sourceMedia.length ? sourceMedia : undefined;
 
   const followTarget = (item as any)?.f?.f;
   const followedUserScreen = followTarget && typeof followTarget.s === 'string' ? followTarget.s : undefined;
@@ -737,6 +752,7 @@ const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number
     quotedUserName,
     quotedUserAvatar,
     quotedText,
+    quotedMedia,
     followedUserScreen,
     followedUserName,
     followedUserAvatar,
@@ -1041,6 +1057,7 @@ export function initGmgnWsMonitor(options: {
         const merged: UnifiedTwitterSignal = {
           ...existing.signal,
           translatedText: patch.translatedText ?? existing.signal.translatedText,
+          quotedText: existing.signal.quotedText ?? patch.sourceTranslatedText ?? undefined,
           translationLang: patch.translationLang ?? existing.signal.translationLang,
           ts: Date.now(),
         };
@@ -1098,6 +1115,7 @@ export function initGmgnWsMonitor(options: {
           signal = {
             ...signal,
             translatedText: translation.translatedText ?? signal.translatedText,
+            quotedText: signal.quotedText ?? translation.sourceTranslatedText ?? undefined,
             translationLang: translation.translationLang ?? signal.translationLang,
           };
         }
