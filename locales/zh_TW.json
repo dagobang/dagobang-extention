@@ -723,6 +723,89 @@
         "networkError": "網路錯誤"
       }
     },
+    "review": {
+      "title": "交易復盤",
+      "empty": "暫無復盤記錄",
+      "placeholder": {
+        "search": "搜尋代幣 / 標籤 / 結論",
+        "reviewTitle": "復盤標題",
+        "tokenAddress": "代幣地址",
+        "tokenSymbol": "代幣符號",
+        "tags": "標籤（逗號分隔）",
+        "narrativeTags": "敘事標籤（如 二聖/官方/KOL/動物/Web2）",
+        "launchpad": "來源平台（如 fourmeme / pancake）",
+        "mistakes": "錯誤標籤（逗號分隔）",
+        "buyLogic": "買入邏輯（為何在這裡買）",
+        "sellLogic": "賣出邏輯（為何在這裡賣）",
+        "summary": "本次交易總結",
+        "lesson": "本次最大教訓",
+        "nextAction": "下一次改進動作"
+      },
+      "stats": {
+        "total": "歷史復盤：{0}"
+      },
+      "kpi": {
+        "avgExecution": "平均執行分",
+        "avgQuality": "平均質量分",
+        "avgEngagement": "平均互動分",
+        "quality": "質量",
+        "avgEmotion": "平均情緒分",
+        "avgPnl": "平均收益率",
+        "total": "記錄數"
+      },
+      "chart": {
+        "mistakes": "錯誤標籤分佈",
+        "executionTrend": "執行/情緒趨勢"
+      },
+      "metrics": {
+        "avgBuyPrice": "買入均價",
+        "avgSellPrice": "賣出均價",
+        "totalProfit": "總盈虧",
+        "totalProfitPnl": "收益率",
+        "totalBuys": "總買入次數",
+        "totalSells": "總賣出次數",
+        "totalBuyCost": "總買入金額",
+        "totalSellIncome": "總賣出金額",
+        "holdTime": "持幣時長",
+        "tokenPrice": "當前價格",
+        "liquidity": "流動性",
+        "likesCount": "點讚數",
+        "favoritesCount": "收藏數",
+        "commentsCount": "評論數",
+        "engagementScore": "互動分"
+      },
+      "form": {
+        "executionScore": "執行分 {0}",
+        "emotionScore": "情緒分 {0}",
+        "confidenceScore": "信心分 {0}",
+        "defaultTitleSuffix": "復盤"
+      },
+      "action": {
+        "refresh": "刷新",
+        "new": "新增",
+        "autofill": "自動填充",
+        "save": "儲存",
+        "saving": "儲存中",
+        "delete": "刪除",
+        "close": "關閉",
+        "maximize": "最大化",
+        "input": "輸入",
+        "analysis": "分析"
+      },
+      "toast": {
+        "fetchFailed": "載入復盤失敗",
+        "walletRequired": "缺少錢包地址",
+        "tokenRequired": "請填寫代幣地址",
+        "holdingNotFound": "未找到該代幣持倉資料",
+        "autofillSuccess": "自動填充成功",
+        "autofillFailed": "自動填充失敗",
+        "savedCloud": "已同步到 Supabase",
+        "savedLocal": "已儲存到本地快取",
+        "saveFailed": "儲存失敗",
+        "deleted": "刪除成功",
+        "deleteFailed": "刪除失敗"
+      }
+    },
     "status": {
       "txSent": "交易已送出"
     },

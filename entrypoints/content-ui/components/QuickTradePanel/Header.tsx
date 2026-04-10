@@ -8,6 +8,7 @@ import {
   AlarmClockCheck,
   Keyboard,
   Crosshair,
+  NotebookPen,
 } from 'lucide-react';
 import type { PointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
@@ -27,6 +28,8 @@ type HeaderProps = {
   rpcActive: boolean;
   onToggleDailyAnalysis: () => void;
   dailyAnalysisActive: boolean;
+  onToggleReview: () => void;
+  reviewActive: boolean;
   keyboardShortcutsEnabled: boolean;
   onToggleKeyboardShortcuts: () => void;
 };
@@ -45,6 +48,8 @@ export function Header({
   rpcActive,
   onToggleDailyAnalysis,
   dailyAnalysisActive,
+  onToggleReview,
+  reviewActive,
   keyboardShortcutsEnabled,
   onToggleKeyboardShortcuts,
 }: HeaderProps) {
@@ -152,6 +157,25 @@ export function Header({
           title='Daily Analysis'
         >
           <LineChart size={14} />
+        </button>
+
+        <button
+          type="button"
+          className={
+            reviewActive
+              ? 'flex items-center justify-center rounded-full bg-cyan-500/20 text-cyan-300 p-1'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-cyan-300 p-1 hover:border-cyan-400'
+          }
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleReview();
+          }}
+          title='Review'
+        >
+          <NotebookPen size={14} />
         </button>
 
         {!siteInfo.showBar && (

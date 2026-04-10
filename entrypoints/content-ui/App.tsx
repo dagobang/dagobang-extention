@@ -17,6 +17,7 @@ import { LimitTradePanel } from './components/LimitTradePanel';
 import { XTradePanel } from './components/XTradePanel';
 import { RpcPanel } from './components/RpcPanel';
 import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
+import { ReviewPanel } from './components/ReviewPanel';
 import { QuickTradePanel } from './components/QuickTradePanel';
 import { FloatingToolbar } from './components/FloatingToolbar';
 
@@ -72,6 +73,7 @@ export default function App() {
   const [showXTradePanel, setShowXTradePanel] = useState(false);
   const [showRpcPanel, setShowRpcPanel] = useState(false);
   const [showDailyAnalysisPanel, setShowDailyAnalysisPanel] = useState(false);
+  const [showReviewPanel, setShowReviewPanel] = useState(false);
   const dragging = useRef<null | { target: 'main'; startX: number; startY: number; baseX: number; baseY: number }>(null);
 
   const isUnlocked = !!state?.wallet.isUnlocked;
@@ -160,6 +162,12 @@ export default function App() {
     } catch {
     }
 
+    try {
+      const stored = window.localStorage.getItem('dagobang_review_panel_visible');
+      if (stored) setShowReviewPanel(stored === '1');
+    } catch {
+    }
+
   }, []);
 
   useEffect(() => {
@@ -174,7 +182,11 @@ export default function App() {
       );
     } catch {
     }
-  }, [showLimitTradePanel, showXTradePanel]);
+    try {
+      window.localStorage.setItem('dagobang_review_panel_visible', showReviewPanel ? '1' : '0');
+    } catch {
+    }
+  }, [showLimitTradePanel, showXTradePanel, showReviewPanel]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -1303,6 +1315,10 @@ export default function App() {
     setShowDailyAnalysisPanel((v) => !v);
   };
 
+  const handleToggleReviewPanel = () => {
+    setShowReviewPanel((v) => !v);
+  };
+
   const handleToggleXTradePanel = () => {
     if (!showXTradePanel) {
       setShowXTradePanel(true);
@@ -1339,6 +1355,8 @@ export default function App() {
               rpcActive={showRpcPanel}
               onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
               dailyAnalysisActive={showDailyAnalysisPanel}
+              onToggleReview={handleToggleReviewPanel}
+              reviewActive={showReviewPanel}
             />
           ) : (
             <QuickTradePanel
@@ -1376,6 +1394,8 @@ export default function App() {
               rpcActive={showRpcPanel}
               onToggleDailyAnalysis={handleToggleDailyAnalysisPanel}
               dailyAnalysisActive={showDailyAnalysisPanel}
+              onToggleReview={handleToggleReviewPanel}
+              reviewActive={showReviewPanel}
               keyboardShortcutsEnabled={keyboardShortcutsEnabled}
               onToggleKeyboardShortcuts={handleToggleKeyboardShortcuts}
               formattedNativeBalance={formattedNativeBalance}
@@ -1436,6 +1456,15 @@ export default function App() {
             onVisibleChange={setShowDailyAnalysisPanel}
             settings={settings}
             address={siteInfo?.walletAddress ?? address}
+          />
+
+          <ReviewPanel
+            visible={showReviewPanel}
+            onVisibleChange={setShowReviewPanel}
+            settings={settings}
+            address={siteInfo?.walletAddress ?? address}
+            tokenAddress={tokenAddressNormalized}
+            tokenSymbol={tokenSymbol}
           />
 
           <XTradePanel

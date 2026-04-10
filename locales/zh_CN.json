@@ -723,6 +723,89 @@
         "networkError": "网络错误"
       }
     },
+    "review": {
+      "title": "交易复盘",
+      "empty": "暂无复盘记录",
+      "placeholder": {
+        "search": "搜索代币 / 标签 / 结论",
+        "reviewTitle": "复盘标题",
+        "tokenAddress": "代币地址",
+        "tokenSymbol": "代币符号",
+        "tags": "标签（逗号分隔）",
+        "narrativeTags": "叙事标签（如 二圣/官方/KOL/动物/Web2）",
+        "launchpad": "来源平台（如 fourmeme / pancake）",
+        "mistakes": "错误标签（逗号分隔）",
+        "buyLogic": "买入逻辑（为什么在这里买）",
+        "sellLogic": "卖出逻辑（为什么在这里卖）",
+        "summary": "本次交易总结",
+        "lesson": "本次最大教训",
+        "nextAction": "下一次改进动作"
+      },
+      "stats": {
+        "total": "历史复盘：{0}"
+      },
+      "kpi": {
+        "avgExecution": "平均执行分",
+        "avgQuality": "平均质量分",
+        "avgEngagement": "平均互动分",
+        "quality": "质量",
+        "avgEmotion": "平均情绪分",
+        "avgPnl": "平均收益率",
+        "total": "记录数"
+      },
+      "chart": {
+        "mistakes": "错误标签分布",
+        "executionTrend": "执行/情绪趋势"
+      },
+      "metrics": {
+        "avgBuyPrice": "买入均价",
+        "avgSellPrice": "卖出均价",
+        "totalProfit": "总盈亏",
+        "totalProfitPnl": "收益率",
+        "totalBuys": "总买入次数",
+        "totalSells": "总卖出次数",
+        "totalBuyCost": "总买入金额",
+        "totalSellIncome": "总卖出金额",
+        "holdTime": "持币时长",
+        "tokenPrice": "当前价格",
+        "liquidity": "流动性",
+        "likesCount": "点赞数",
+        "favoritesCount": "收藏数",
+        "commentsCount": "评论数",
+        "engagementScore": "互动分"
+      },
+      "form": {
+        "executionScore": "执行分 {0}",
+        "emotionScore": "情绪分 {0}",
+        "confidenceScore": "信心分 {0}",
+        "defaultTitleSuffix": "复盘"
+      },
+      "action": {
+        "refresh": "刷新",
+        "new": "新建",
+        "autofill": "自动填充",
+        "save": "保存",
+        "saving": "保存中",
+        "delete": "删除",
+        "close": "关闭",
+        "maximize": "最大化",
+        "input": "输入",
+        "analysis": "分析"
+      },
+      "toast": {
+        "fetchFailed": "加载复盘失败",
+        "walletRequired": "缺少钱包地址",
+        "tokenRequired": "请填写代币地址",
+        "holdingNotFound": "未找到该代币持仓数据",
+        "autofillSuccess": "自动填充成功",
+        "autofillFailed": "自动填充失败",
+        "savedCloud": "已同步到 Supabase",
+        "savedLocal": "已保存到本地缓存",
+        "saveFailed": "保存失败",
+        "deleted": "删除成功",
+        "deleteFailed": "删除失败"
+      }
+    },
     "status": {
       "txSent": "交易已发送"
     },

@@ -215,6 +215,61 @@ export interface DailyProfitParams {
   end_at: number;
 }
 
+export interface TokenHoldingDetail {
+  balance: string;
+  usd_value: string;
+  accu_amount: string;
+  accu_cost: string;
+  accu_fee: string;
+  history_bought_amount: string;
+  history_bought_cost: string;
+  history_bought_fee: string;
+  history_transfer_in_amount: string;
+  history_transfer_in_cost: string;
+  history_sold_amount: string;
+  history_sold_income: string;
+  history_sold_fee: string;
+  history_transfer_out_amount: string;
+  history_transfer_out_income: string;
+  history_transfer_out_fee: string;
+  history_total_buys: number;
+  history_total_sells: number;
+  history_total_transfer_ins: number;
+  history_total_transfer_outs: number;
+  realized_profit: string;
+  realized_profit_pnl: string | null;
+  unrealized_profit: string;
+  unrealized_profit_pnl: string | null;
+  total_profit: string;
+  total_profit_pnl: string | null;
+  start_holding_at: number | null;
+  end_holding_at: number | null;
+  last_active_timestamp: number | null;
+  token: {
+    token_address: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+    logo?: string;
+    creation_timestamp?: number;
+    open_timestamp?: number;
+    is_honeypot?: boolean;
+    price?: string;
+    total_supply?: string;
+    max_supply?: string;
+    liquidity?: string;
+    launchpad?: string;
+    launchpad_platform?: string;
+  };
+}
+
+export interface TokenHoldingDetailResponse {
+  code: number;
+  reason: string;
+  message: string;
+  data: TokenHoldingDetail;
+}
+
 /**
  * Auto-extract GMGN authentication data when page loads
  */
@@ -849,6 +904,37 @@ export class GmgnAPI {
       return await response.json() as DailyProfitResponse;
     } catch (error) {
       console.error('Failed to fetch daily profits:', error);
+      throw error;
+    }
+  }
+
+  public static async getTokenHoldingDetail(
+    chain: string,
+    walletAddress: string,
+    tokenAddress: string
+  ): Promise<TokenHoldingDetail | null> {
+    if (!walletAddress || !tokenAddress || !chain) return null;
+    const normalizedChain = chain.toLowerCase();
+    const endpoint = `/wallet/${normalizedChain}/${walletAddress.toLowerCase()}/holding`;
+    const queryParams = {
+      worker: '0',
+      token_address: tokenAddress.toLowerCase()
+    };
+    const url = await this.buildApiUrl(endpoint, queryParams as any, this.PROFIT_BASE_URL);
+    const headers = await this.getHeaders();
+    try {
+      const response = await this.makeRequest(url, {
+        method: 'GET',
+        headers
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const result = await response.json() as TokenHoldingDetailResponse;
+      if (result.code === 0 && result.data) return result.data;
+      return null;
+    } catch (error) {
+      console.error('Failed to fetch token holding detail:', error);
       throw error;
     }
   }

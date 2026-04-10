@@ -16,6 +16,7 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.57.4",
     "@iconify/react": "6.0.2",
     "lucide-react": "0.562.0",
     "react": "19.2.3",
