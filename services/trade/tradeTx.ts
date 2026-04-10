@@ -241,11 +241,15 @@ function clearNonceState(chainId: number, address: `0x${string}`) {
   nonceState.delete(key);
 }
 
-function bumpNextNonce(chainId: number, address: `0x${string}`, delta: number) {
+function setNextNonceAtLeast(chainId: number, address: `0x${string}`, nextNonce: number) {
   const key = `${chainId}:${address.toLowerCase()}`;
   const state = nonceState.get(key);
-  if (!state) return;
-  state.nextNonce += Math.max(0, Math.floor(delta));
+  const safeNext = Math.max(0, Math.floor(nextNonce));
+  if (!state) {
+    nonceState.set(key, { nextNonce: safeNext, ts: Date.now() });
+    return;
+  }
+  if (state.nextNonce < safeNext) state.nextNonce = safeNext;
   state.ts = Date.now();
   nonceState.set(key, state);
 }
@@ -278,6 +282,45 @@ function isNonceRelatedError(e: any): boolean {
     msg.includes('nonce') ||
     msg.includes('replacement')
   );
+}
+
+function getNonceErrorKind(e: any): 'too_high' | 'too_low' | 'other' {
+  const texts: string[] = [];
+  const push = (v: any) => {
+    if (typeof v !== 'string') return;
+    const t = v.trim();
+    if (t) texts.push(t.toLowerCase());
+  };
+  push(e?.shortMessage);
+  push(e?.message);
+  push(e?.details);
+  push(e?.cause?.message);
+  push(e?.cause?.details);
+  if (Array.isArray(e?.metaMessages)) {
+    for (const x of e.metaMessages) push(x);
+  }
+  const msg = texts.join(' | ');
+  if (!msg) return 'other';
+  if (
+    msg.includes('nonce too high') ||
+    msg.includes('nonce is too high') ||
+    msg.includes('future transaction')
+  ) {
+    return 'too_high';
+  }
+  if (
+    msg.includes('nonce too low') ||
+    msg.includes('nonce is too low') ||
+    msg.includes('nonce has already been used') ||
+    msg.includes('already known') ||
+    msg.includes('known transaction') ||
+    msg.includes('replacement transaction underpriced') ||
+    msg.includes('transaction underpriced')
+  ) {
+    return 'too_low';
+  }
+  if (msg.includes('nonce') || msg.includes('replacement')) return 'other';
+  return 'other';
 }
 
 function isBroadcastParamError(e: any): boolean {
@@ -376,7 +419,7 @@ export async function sendTransaction(
     });
     trace?.(`${labelPrefix}broadcastTx`, Date.now() - broadcastStart);
     const consumed = res0.isBundle ? 2 : 1;
-    if (consumed > 1) bumpNextNonce(chainId, account.address, consumed - 1);
+    setNextNonceAtLeast(chainId, account.address, useNonce + consumed);
     return {
       txHash: res0.txHash,
       broadcastVia: res0.via,
@@ -396,6 +439,21 @@ export async function sendTransaction(
         trace?.('reserveNonceRetry', Date.now() - start);
         return await signAndBroadcast(retryNonce, 'retry:');
       } catch (e2) {
+        const nonceKind = getNonceErrorKind(e2);
+        if (useAutoNonce && opts?.txSide && nonceKind === 'too_high') {
+          clearNonceState(chainId, account.address);
+          const start = Date.now();
+          const protectedNonce = await RpcService.getProtectedPendingNonce({
+            chainId,
+            address: account.address,
+            txSide: opts.txSide,
+            prefer: 'min',
+          });
+          trace?.('reserveNonceRouteMin', Date.now() - start);
+          if (protectedNonce != null) {
+            return await signAndBroadcast(protectedNonce, 'routeRetry:');
+          }
+        }
         clearNonceState(chainId, account.address);
         throw e2;
       }

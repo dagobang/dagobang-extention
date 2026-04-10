@@ -85,6 +85,43 @@ export class RpcService {
     return null;
   }
 
+  private static getProtectedUrlsForSide(chainConfig: any, txSide?: BroadcastTxSide): string[] {
+    const baseUrls = this.normalizeUrls(chainConfig?.protectedRpcUrls ?? []);
+    const buyUrls = this.normalizeUrls((chainConfig as any)?.protectedRpcUrlsBuy ?? []);
+    const sellUrls = this.normalizeUrls((chainConfig as any)?.protectedRpcUrlsSell ?? []);
+    const sideUrls = txSide === 'buy' ? buyUrls : txSide === 'sell' ? sellUrls : [];
+    return sideUrls.length > 0 ? sideUrls : baseUrls;
+  }
+
+  static async getProtectedPendingNonce(input: {
+    chainId: number;
+    address: `0x${string}`;
+    txSide?: BroadcastTxSide;
+    prefer?: 'min' | 'max';
+  }): Promise<number | null> {
+    const settings = await SettingsService.get();
+    const chainConfig = settings.chains[input.chainId];
+    if (!chainConfig) return null;
+    const urls = this.getProtectedUrlsForSide(chainConfig, input.txSide);
+    if (urls.length === 0) return null;
+    const values = await Promise.allSettled(
+      urls.map(async (url) => {
+        const client = this.getClientForUrl(url);
+        return await client.getTransactionCount({ address: input.address, blockTag: 'pending' });
+      }),
+    );
+    const nonces: number[] = [];
+    for (const v of values) {
+      if (v.status !== 'fulfilled') continue;
+      const nonce = Number(v.value);
+      if (!Number.isFinite(nonce) || nonce < 0) continue;
+      nonces.push(Math.floor(nonce));
+    }
+    if (!nonces.length) return null;
+    if (input.prefer === 'max') return Math.max(...nonces);
+    return Math.min(...nonces);
+  }
+
   private static async sendBundleViaRpc(
     client: PublicClient,
     signedTx: `0x${string}`,
@@ -237,11 +274,7 @@ export class RpcService {
     }
     const bundlePriorityMode = !!txSide && priorityFeeEnabled && priorityFeeWei > 0n;
 
-    const baseUrls = this.normalizeUrls(chainConfig.protectedRpcUrls ?? []);
-    const buyUrls = this.normalizeUrls((chainConfig as any).protectedRpcUrlsBuy ?? []);
-    const sellUrls = this.normalizeUrls((chainConfig as any).protectedRpcUrlsSell ?? []);
-    const sideUrls = txSide === 'buy' ? buyUrls : txSide === 'sell' ? sellUrls : [];
-    const protectedUrls = sideUrls.length > 0 ? sideUrls : baseUrls;
+    const protectedUrls = this.getProtectedUrlsForSide(chainConfig, txSide);
     if (protectedUrls.length === 0 && !settings.bloxrouteAuthHeader) {
       throw new Error('No protected RPC URLs configured (required for broadcasting transactions)');
     }
