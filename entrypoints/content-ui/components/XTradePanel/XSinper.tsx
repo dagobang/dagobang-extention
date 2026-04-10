@@ -607,15 +607,15 @@ export function XSniperContent({
     if (field === 'earlyReversalPeakPct') return (twitterSnipe as any)?.rapidEarlyReversalPeakPct ?? '';
     if (field === 'earlyReversalDropPct') return (twitterSnipe as any)?.rapidEarlyReversalDropPct ?? '';
     if (field === 'emergencyStopLossPct') return (twitterSnipe as any)?.rapidEmergencyStopLossPct ?? '';
-    if (field === 'takeProfitSellPercent') return (twitterSnipe as any)?.rapidTakeProfitSellPercent ?? '';
-    if (field === 'stopLossSellPercent') return (twitterSnipe as any)?.rapidStopLossSellPercent ?? '';
-    if (field === 'trailingStopSellPercent') return (twitterSnipe as any)?.rapidTrailingStopSellPercent ?? '';
-    if (field === 'armProfitPct') return (twitterSnipe as any)?.rapidArmProfitPct ?? '';
-    if (field === 'protectFloorAfterArmPct') return (twitterSnipe as any)?.rapidProtectFloorAfterArmPct ?? '';
-    if (field === 'protectStep2PeakPct') return (twitterSnipe as any)?.rapidProtectStep2PeakPct ?? '';
-    if (field === 'protectStep2FloorPct') return (twitterSnipe as any)?.rapidProtectStep2FloorPct ?? '';
-    if (field === 'protectStep3PeakPct') return (twitterSnipe as any)?.rapidProtectStep3PeakPct ?? '';
-    if (field === 'protectStep3FloorPct') return (twitterSnipe as any)?.rapidProtectStep3FloorPct ?? '';
+    if (field === 'takeProfitSellPercent') return (twitterSnipe as any)?.rapidTakeProfitSellPercent ?? '25';
+    if (field === 'stopLossSellPercent') return (twitterSnipe as any)?.rapidStopLossSellPercent ?? '100';
+    if (field === 'trailingStopSellPercent') return (twitterSnipe as any)?.rapidTrailingStopSellPercent ?? '100';
+    if (field === 'armProfitPct') return (twitterSnipe as any)?.rapidArmProfitPct ?? '4';
+    if (field === 'protectFloorAfterArmPct') return (twitterSnipe as any)?.rapidProtectFloorAfterArmPct ?? '-1';
+    if (field === 'protectStep2PeakPct') return (twitterSnipe as any)?.rapidProtectStep2PeakPct ?? '12';
+    if (field === 'protectStep2FloorPct') return (twitterSnipe as any)?.rapidProtectStep2FloorPct ?? '2';
+    if (field === 'protectStep3PeakPct') return (twitterSnipe as any)?.rapidProtectStep3PeakPct ?? '25';
+    if (field === 'protectStep3FloorPct') return (twitterSnipe as any)?.rapidProtectStep3FloorPct ?? '8';
     return '';
   };
   const getRapidTypeFallbackValue = (field: string) => {

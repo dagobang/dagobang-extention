@@ -57,6 +57,15 @@ export type RapidExitByTypeConfig = Partial<Record<AutoTradeInteractionType, {
   earlyReversalDropPct?: string;
   emergencyStopLossPct?: string;
   sellPercent?: string;
+  takeProfitSellPercent?: string;
+  stopLossSellPercent?: string;
+  trailingStopSellPercent?: string;
+  armProfitPct?: string;
+  protectFloorAfterArmPct?: string;
+  protectStep2PeakPct?: string;
+  protectStep2FloorPct?: string;
+  protectStep3PeakPct?: string;
+  protectStep3FloorPct?: string;
 }>>;
 
 export type AutoTradeTriggerSound = {
@@ -118,6 +127,15 @@ export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
   rapidAuxWindow10sMs?: string;
   rapidAuxWindow30sMs?: string;
   rapidSellPercent?: string;
+  rapidTakeProfitSellPercent?: string;
+  rapidStopLossSellPercent?: string;
+  rapidTrailingStopSellPercent?: string;
+  rapidArmProfitPct?: string;
+  rapidProtectFloorAfterArmPct?: string;
+  rapidProtectStep2PeakPct?: string;
+  rapidProtectStep2FloorPct?: string;
+  rapidProtectStep3PeakPct?: string;
+  rapidProtectStep3FloorPct?: string;
   rapidByTweetTypeEnabled?: boolean;
   rapidByType?: RapidExitByTypeConfig;
   targetUsers: string[];
