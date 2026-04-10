@@ -607,6 +607,15 @@ export function XSniperContent({
     if (field === 'earlyReversalPeakPct') return (twitterSnipe as any)?.rapidEarlyReversalPeakPct ?? '';
     if (field === 'earlyReversalDropPct') return (twitterSnipe as any)?.rapidEarlyReversalDropPct ?? '';
     if (field === 'emergencyStopLossPct') return (twitterSnipe as any)?.rapidEmergencyStopLossPct ?? '';
+    if (field === 'takeProfitSellPercent') return (twitterSnipe as any)?.rapidTakeProfitSellPercent ?? '';
+    if (field === 'stopLossSellPercent') return (twitterSnipe as any)?.rapidStopLossSellPercent ?? '';
+    if (field === 'trailingStopSellPercent') return (twitterSnipe as any)?.rapidTrailingStopSellPercent ?? '';
+    if (field === 'armProfitPct') return (twitterSnipe as any)?.rapidArmProfitPct ?? '';
+    if (field === 'protectFloorAfterArmPct') return (twitterSnipe as any)?.rapidProtectFloorAfterArmPct ?? '';
+    if (field === 'protectStep2PeakPct') return (twitterSnipe as any)?.rapidProtectStep2PeakPct ?? '';
+    if (field === 'protectStep2FloorPct') return (twitterSnipe as any)?.rapidProtectStep2FloorPct ?? '';
+    if (field === 'protectStep3PeakPct') return (twitterSnipe as any)?.rapidProtectStep3PeakPct ?? '';
+    if (field === 'protectStep3FloorPct') return (twitterSnipe as any)?.rapidProtectStep3FloorPct ?? '';
     return '';
   };
   const getRapidTypeFallbackValue = (field: string) => {
