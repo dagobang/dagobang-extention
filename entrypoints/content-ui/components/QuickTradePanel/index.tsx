@@ -25,6 +25,8 @@ type QuickTradePanelProps = {
   rpcActive: boolean;
   onToggleDailyAnalysis: () => void;
   dailyAnalysisActive: boolean;
+  onToggleReview: () => void;
+  reviewActive: boolean;
   keyboardShortcutsEnabled: boolean;
   onToggleKeyboardShortcuts: () => void;
   formattedNativeBalance: string;
@@ -74,6 +76,8 @@ export function QuickTradePanel({
   rpcActive,
   onToggleDailyAnalysis,
   dailyAnalysisActive,
+  onToggleReview,
+  reviewActive,
   keyboardShortcutsEnabled,
   onToggleKeyboardShortcuts,
   formattedNativeBalance,
@@ -137,6 +141,8 @@ export function QuickTradePanel({
         rpcActive={rpcActive}
         onToggleDailyAnalysis={onToggleDailyAnalysis}
         dailyAnalysisActive={dailyAnalysisActive}
+        onToggleReview={onToggleReview}
+        reviewActive={reviewActive}
         keyboardShortcutsEnabled={keyboardShortcutsEnabled}
         onToggleKeyboardShortcuts={onToggleKeyboardShortcuts}
       />

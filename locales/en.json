@@ -723,6 +723,118 @@
         "networkError": "Network error"
       }
     },
+    "review": {
+      "title": "Trade Review",
+      "empty": "No review records",
+      "placeholder": {
+        "search": "Search token / tags / notes",
+        "reviewTitle": "Review title",
+        "tokenAddress": "Token address",
+        "tokenSymbol": "Token symbol",
+        "tags": "Tags (comma separated)",
+        "reviewTags": "Review tags (comma separated)",
+        "narrativeTags": "Narrative tags (e.g. KOL / Official / Animal / Web2)",
+        "launchpad": "Launchpad source",
+        "mistakes": "Mistakes (comma separated)",
+        "buyLogic": "Buy logic",
+        "sellLogic": "Sell logic",
+        "summary": "Trade summary",
+        "lesson": "Biggest lesson",
+        "nextAction": "Next action"
+      },
+      "stats": {
+        "total": "Reviews: {0}"
+      },
+      "kpi": {
+        "avgExecution": "Avg Execution",
+        "avgQuality": "Avg Quality",
+        "avgEngagement": "Avg Engagement",
+        "quality": "Quality",
+        "avgEmotion": "Avg Emotion",
+        "avgPnl": "Avg Return",
+        "winRate": "Win Rate",
+        "avgHoldHours": "Avg Hold (h)",
+        "total": "Records"
+      },
+      "chart": {
+        "mistakes": "Mistake Distribution",
+        "executionTrend": "Execution / Emotion Trend",
+        "narrativeDist": "Narrative Tag Distribution",
+        "reviewTagPnl": "Review Tag PnL",
+        "executionPnl": "Execution vs PnL"
+      },
+      "insight": {
+        "bestNarrative": "Best Narrative Tag",
+        "weakNarrative": "Weak Narrative Tag",
+        "bestReviewTag": "Best Review Tag"
+      },
+      "metrics": {
+        "avgBuyPrice": "Avg Buy Price",
+        "avgSellPrice": "Avg Sell Price",
+        "buySellAvgPrice": "Buy/Sell Avg Price",
+        "buySellMarketCap": "Buy/Sell Market Cap",
+        "buySellCount": "Buy/Sell Count",
+        "buySellAmount": "Buy/Sell Amount",
+        "totalProfit": "Total Profit",
+        "totalProfitPnl": "PnL %",
+        "totalBuys": "Total Buys",
+        "totalSells": "Total Sells",
+        "totalBuyCost": "Total Buy Cost",
+        "totalSellIncome": "Total Sell Income",
+        "holdTime": "Hold Duration",
+        "tokenPrice": "Current Price",
+        "marketCap": "Market Cap",
+        "liquidity": "Liquidity",
+        "likesCount": "Likes",
+        "favoritesCount": "Favorites",
+        "commentsCount": "Comments",
+        "engagementScore": "Engagement"
+      },
+      "form": {
+        "reviewTitle": "Review Title",
+        "tokenAddress": "Token Address",
+        "tokenSymbol": "Token Symbol",
+        "reviewTags": "Review Tags",
+        "narrativeTags": "Narrative Tags",
+        "buyLogic": "Buy Logic",
+        "sellLogic": "Sell Logic",
+        "summary": "Trade Summary",
+        "lessonLearned": "Biggest Lesson",
+        "nextAction": "Next Action",
+        "executionScore": "Execution {0}",
+        "emotionScore": "Emotion {0}",
+        "confidenceScore": "Confidence {0}",
+        "overviewCard": "Overview",
+        "buyCard": "Buy",
+        "sellCard": "Sell",
+        "defaultTitleSuffix": "Review"
+      },
+      "action": {
+        "refresh": "Refresh",
+        "new": "New",
+        "autofill": "Autofill",
+        "save": "Save",
+        "saving": "Saving",
+        "delete": "Delete",
+        "close": "Close",
+        "maximize": "Maximize",
+        "input": "Input",
+        "analysis": "Analysis"
+      },
+      "toast": {
+        "fetchFailed": "Failed to load reviews",
+        "walletRequired": "Wallet address is required",
+        "tokenRequired": "Token address is required",
+        "holdingNotFound": "Holding data not found",
+        "autofillSuccess": "Autofill success",
+        "autofillFailed": "Autofill failed",
+        "savedCloud": "Saved to Supabase",
+        "savedLocal": "Saved to local cache",
+        "saveFailed": "Save failed",
+        "deleted": "Deleted",
+        "deleteFailed": "Delete failed"
+      }
+    },
     "status": {
       "txSent": "Tx Sent"
     },

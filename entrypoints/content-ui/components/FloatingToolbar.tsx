@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AlarmClockCheck, Crosshair, GripHorizontal, LineChart, SatelliteDish } from 'lucide-react';
+import { AlarmClockCheck, Crosshair, GripHorizontal, LineChart, NotebookPen, SatelliteDish } from 'lucide-react';
 import type { Settings } from '@/types/extention';
 import type { SiteInfo } from '@/utils/sites';
 import { Logo } from '@/components/Logo';
@@ -15,6 +15,8 @@ export type FloatingToolbarProps = {
   rpcActive: boolean;
   onToggleDailyAnalysis: () => void;
   dailyAnalysisActive: boolean;
+  onToggleReview: () => void;
+  reviewActive: boolean;
 };
 
 function clampToolbarPos(pos: { x: number; y: number }, toolbarWidth: number) {
@@ -36,9 +38,11 @@ export function FloatingToolbar({
   rpcActive,
   onToggleDailyAnalysis,
   dailyAnalysisActive,
+  onToggleReview,
+  reviewActive,
 }: FloatingToolbarProps) {
   const showToolbar = settings?.ui?.showToolbar ?? true;
-  const toolbarWidth = 294;
+  const toolbarWidth = 326;
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
     const defaultX = Math.max(0, width - toolbarWidth);
@@ -153,6 +157,10 @@ export function FloatingToolbar({
 
       <ToolBtn active={dailyAnalysisActive} title="Daily Analysis" onClick={onToggleDailyAnalysis}>
         <LineChart size={14} />
+      </ToolBtn>
+
+      <ToolBtn active={reviewActive} title="Review" onClick={onToggleReview}>
+        <NotebookPen size={14} />
       </ToolBtn>
     </div>
   );
