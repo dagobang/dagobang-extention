@@ -58,7 +58,7 @@ export function Header({
       className="flex-shrink-0 flex cursor-grab items-center justify-between px-3 py-2 border-b border-zinc-800/50"
       onPointerDown={onDragStart}
     >
-      <div className="flex items-center gap-2 text-zinc-400">
+      <div className="flex items-center gap-1 text-zinc-400">
 
         <div className="flex items-center">
           <Logo size={{ width: '24px', height: '24px' }} />
@@ -125,8 +125,8 @@ export function Header({
           type="button"
           className={
             rpcActive
-              ? 'flex items-center justify-center rounded-full bg-sky-500/20 text-sky-300 px-2 py-1 text-[11px] font-semibold'
-              : 'flex items-center justify-center rounded-full border border-zinc-700 text-sky-300 px-2 py-1 text-[11px] hover:border-sky-400'
+              ? 'flex items-center justify-center rounded-full bg-sky-500/20 text-sky-300 p-1'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-sky-300 p-1 hover:border-sky-400'
           }
           onPointerDown={(e) => {
             e.stopPropagation();
@@ -182,7 +182,7 @@ export function Header({
           isEditing ? (
             <Check
               size={14}
-              className="cursor-pointer text-emerald-500 hover:text-emerald-400"
+              className="cursor-pointer text-emerald-500 hover:text-emerald-400 ml-2"
               onClick={(e) => {
                 e.stopPropagation();
                 onEditToggle();
@@ -191,18 +191,13 @@ export function Header({
           ) : (
             <Pencil
               size={14}
-              className="cursor-pointer hover:text-zinc-200"
+              className="cursor-pointer hover:text-zinc-200 ml-2"
               onClick={(e) => {
                 e.stopPropagation();
                 onEditToggle();
               }}
             />
           ))}
-      </div>
-
-      {/* Drag Handle */}
-      <div className="-translate-x-1/2 text-zinc-600">
-        <GripHorizontal size={16} />
       </div>
 
       <div className="flex items-center gap-2">

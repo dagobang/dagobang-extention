@@ -122,21 +122,15 @@ export function FloatingToolbar({
     <div
       className="fixed z-[2147483647] select-none rounded-full border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/30 font-sans flex items-center gap-2 px-3 py-2"
       style={{ left: pos.x, top: pos.y, width: `${toolbarWidth}px` }}
+      onPointerDown={(e) => {
+        dragging.current = {
+          startX: e.clientX,
+          startY: e.clientY,
+          baseX: posRef.current.x,
+          baseY: posRef.current.y,
+        };
+      }}
     >
-      <div
-        className="cursor-grab text-zinc-600"
-        onPointerDown={(e) => {
-          dragging.current = {
-            startX: e.clientX,
-            startY: e.clientY,
-            baseX: posRef.current.x,
-            baseY: posRef.current.y,
-          };
-        }}
-      >
-        <GripHorizontal size={16} />
-      </div>
-
       <div className="flex items-center">
         <Logo size={{ width: '20px', height: '20px' }} />
       </div>
