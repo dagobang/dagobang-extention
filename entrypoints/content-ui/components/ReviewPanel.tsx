@@ -4,6 +4,7 @@ import { X, RefreshCw, Save, Trash2, Search, Cloud, HardDrive, Sparkles } from '
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import type { Settings } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
+import { parseCurrentUrl, parsePlatformTokenLink } from '@/utils/sites';
 import GmgnAPI from '@/hooks/GmgnAPI';
 import type { ReviewMetrics, TradeReview, TradeReviewUpsertInput } from '@/types/review';
 import { ReviewService } from '@/services/review';
@@ -48,6 +49,11 @@ function parseListInput(input: string) {
     .split(/[,\n，]/g)
     .map((i) => i.trim())
     .filter(Boolean);
+}
+
+function shortAddress(addr: string) {
+  if (!addr || addr.length < 10) return addr || '-';
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 function toDraft(initial?: Partial<DraftState>): DraftState {
@@ -128,6 +134,7 @@ export function ReviewPanel({
   const [saving, setSaving] = useState(false);
   const [dataSource, setDataSource] = useState<'cloud' | 'local'>('local');
   const [viewMode, setViewMode] = useState<'input' | 'analysis'>('input');
+  const [showCapMode, setShowCapMode] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftState>(() => toDraft({
     tokenAddress: tokenAddress || '',
@@ -220,6 +227,9 @@ export function ReviewPanel({
       const soldIncome = Number(detail.history_sold_income || 0);
       const avgBuyPrice = boughtAmount > 0 ? boughtCost / boughtAmount : 0;
       const avgSellPrice = soldAmount > 0 ? soldIncome / soldAmount : 0;
+      const tokenPrice = Number(detail.token?.price || 0);
+      const totalSupply = Number(detail.token?.total_supply || 0);
+      const marketCap = tokenPrice > 0 && totalSupply > 0 ? tokenPrice * totalSupply : 0;
       const holdDurationSec = (detail.end_holding_at && detail.start_holding_at)
         ? Math.max(0, detail.end_holding_at - detail.start_holding_at)
         : null;
@@ -255,6 +265,9 @@ export function ReviewPanel({
           holdEndAt: detail.end_holding_at,
           lastActiveTimestamp: detail.last_active_timestamp,
           tokenPrice: detail.token?.price || '',
+          totalSupply: detail.token?.total_supply || '',
+          tokenLogo: detail.token?.logo || '',
+          marketCap: marketCap > 0 ? String(marketCap) : '0',
           liquidity: detail.token?.liquidity || '',
           avgBuyPrice: avgBuyPrice > 0 ? String(avgBuyPrice) : '0',
           avgSellPrice: avgSellPrice > 0 ? String(avgSellPrice) : '0',
@@ -323,11 +336,11 @@ export function ReviewPanel({
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  const chartMistakes = useMemo(() => {
+  const chartNarrative = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const item of reviews) {
-      for (const m of item.mistakes) {
-        const key = m.trim();
+      for (const tag of item.narrativeTags || []) {
+        const key = tag.trim();
         if (!key) continue;
         counts[key] = (counts[key] || 0) + 1;
       }
@@ -338,14 +351,36 @@ export function ReviewPanel({
       .slice(0, 8);
   }, [reviews]);
 
+  const chartReviewTagPnl = useMemo(() => {
+    const stats: Record<string, { sum: number; count: number }> = {};
+    for (const item of reviews) {
+      const pnl = Number(item.metrics?.totalProfitPnl || 0) * 100;
+      if (!Number.isFinite(pnl)) continue;
+      for (const tag of item.tags || []) {
+        const key = tag.trim();
+        if (!key) continue;
+        if (!stats[key]) stats[key] = { sum: 0, count: 0 };
+        stats[key].sum += pnl;
+        stats[key].count += 1;
+      }
+    }
+    return Object.entries(stats)
+      .map(([name, v]) => ({
+        name,
+        avgPnl: v.count > 0 ? v.sum / v.count : 0,
+        count: v.count,
+      }))
+      .sort((a, b) => Math.abs(b.avgPnl) - Math.abs(a.avgPnl))
+      .slice(0, 8);
+  }, [reviews]);
+
   const chartExecution = useMemo(() => {
     return reviews
       .slice(0, 12)
       .map((r) => ({
         name: r.tokenSymbol || r.tokenAddress.slice(0, 6),
         execution: r.executionScore,
-        emotion: r.emotionScore,
-        confidence: r.confidenceScore,
+        pnl: Number(r.metrics?.totalProfitPnl || 0) * 100,
       }))
       .reverse();
   }, [reviews]);
@@ -355,10 +390,42 @@ export function ReviewPanel({
     const avgExecution = total ? Math.round(reviews.reduce((acc, cur) => acc + cur.executionScore, 0) / total) : 0;
     const avgEmotion = total ? Math.round(reviews.reduce((acc, cur) => acc + cur.emotionScore, 0) / total) : 0;
     const avgQuality = total ? Math.round(reviews.reduce((acc, cur) => acc + Number(cur.qualityScore || 0), 0) / total) : 0;
-    const avgEngagement = total ? Math.round(reviews.reduce((acc, cur) => acc + Number(cur.engagementScore || 0), 0) / total) : 0;
     const pnlList = reviews.map((r) => Number(r.metrics?.totalProfitPnl || 0)).filter((n) => Number.isFinite(n));
     const avgPnl = pnlList.length ? pnlList.reduce((a, b) => a + b, 0) / pnlList.length : 0;
-    return { total, avgExecution, avgEmotion, avgPnl, avgQuality, avgEngagement };
+    const winRate = pnlList.length ? (pnlList.filter((n) => n > 0).length / pnlList.length) * 100 : 0;
+    const holdSecs = reviews.map((r) => Number(r.metrics?.holdDurationSec || 0)).filter((n) => Number.isFinite(n) && n > 0);
+    const avgHoldHours = holdSecs.length ? holdSecs.reduce((a, b) => a + b, 0) / holdSecs.length / 3600 : 0;
+    return { total, avgExecution, avgEmotion, avgPnl, avgQuality, winRate, avgHoldHours };
+  }, [reviews]);
+
+  const insightSummary = useMemo(() => {
+    const calcTagPnl = (pick: (r: TradeReview) => string[]) => {
+      const stats: Record<string, { sum: number; count: number }> = {};
+      for (const item of reviews) {
+        const pnl = Number(item.metrics?.totalProfitPnl || 0) * 100;
+        if (!Number.isFinite(pnl)) continue;
+        for (const tag of pick(item)) {
+          const key = String(tag || '').trim();
+          if (!key) continue;
+          if (!stats[key]) stats[key] = { sum: 0, count: 0 };
+          stats[key].sum += pnl;
+          stats[key].count += 1;
+        }
+      }
+      const list = Object.entries(stats).map(([name, v]) => ({
+        name,
+        avgPnl: v.count > 0 ? v.sum / v.count : 0,
+      }));
+      list.sort((a, b) => b.avgPnl - a.avgPnl);
+      return list;
+    };
+    const narrative = calcTagPnl((r) => r.narrativeTags || []);
+    const reviewTag = calcTagPnl((r) => r.tags || []);
+    return {
+      bestNarrative: narrative[0] || null,
+      weakNarrative: narrative.length ? narrative[narrative.length - 1] : null,
+      bestReviewTag: reviewTag[0] || null,
+    };
   }, [reviews]);
 
   const tagSuggestions = useMemo(() => {
@@ -379,9 +446,39 @@ export function ReviewPanel({
     return {
       tags: collect((r) => r.tags || []),
       narrative: collect((r) => r.narrativeTags || []),
-      mistakes: collect((r) => r.mistakes || []),
     };
   }, [reviews]);
+
+  const defaultQuickOptions = useMemo(() => {
+    if (locale === 'en') {
+      return {
+        narrative: ['Official', 'KOL', 'Animal', 'Web2', 'Meme', 'AI'],
+        review: ['Early Entry', 'Late Entry', 'Good Exit', 'Bad Exit', 'FOMO', 'Stop Loss'],
+      };
+    }
+    return {
+      narrative: ['官方', 'KOL', '动物', 'Web2', 'AI', '社区驱动'],
+      review: ['早进场', '晚进场', '止盈到位', '止损迟疑', 'FOMO', '追高'],
+    };
+  }, [locale]);
+
+  const quickTagOptions = useMemo(() => {
+    const mergeUnique = (base: string[], extra: string[]) => {
+      const set = new Set<string>();
+      const merged: string[] = [];
+      for (const item of [...base, ...extra]) {
+        const v = String(item || '').trim();
+        if (!v || set.has(v)) continue;
+        set.add(v);
+        merged.push(v);
+      }
+      return merged.slice(0, 12);
+    };
+    return {
+      narrative: mergeUnique(defaultQuickOptions.narrative, tagSuggestions.narrative),
+      review: mergeUnique(defaultQuickOptions.review, tagSuggestions.tags),
+    };
+  }, [defaultQuickOptions, tagSuggestions]);
 
   const handleSave = async () => {
     if (!address) {
@@ -408,7 +505,7 @@ export function ReviewPanel({
         reviewTitle: draft.reviewTitle.trim() || `${draft.tokenSymbol || tokenAddr.slice(0, 6)} ${tt('contentUi.review.form.defaultTitleSuffix')}`,
         tags: parseListInput(draft.tagsText),
         narrativeTags: parseListInput(draft.narrativeTagsText),
-        mistakes: parseListInput(draft.mistakesText),
+        mistakes: [],
         emotionScore: Math.min(100, Math.max(0, Math.round(draft.emotionScore))),
         executionScore: Math.min(100, Math.max(0, Math.round(draft.executionScore))),
         confidenceScore: Math.min(100, Math.max(0, Math.round(draft.confidenceScore))),
@@ -448,24 +545,11 @@ export function ReviewPanel({
     }
   };
 
-  const appendTagValue = (field: 'tagsText' | 'narrativeTagsText' | 'mistakesText', value: string) => {
+  const appendTagValue = (field: 'tagsText' | 'narrativeTagsText', value: string) => {
     setDraft((prev) => {
       const current = parseListInput(String(prev[field] || ''));
       if (current.includes(value)) return prev;
       return { ...prev, [field]: [...current, value].join(', ') } as DraftState;
-    });
-  };
-
-  const updateEngagementMetric = (field: 'likesCount' | 'favoritesCount' | 'commentsCount', value: string) => {
-    const normalized = Math.max(0, Math.floor(Number(value || 0)));
-    setDraft((prev) => {
-      const base = { ...(prev.metrics || {}), [field]: normalized };
-      const likes = Math.max(0, Math.floor(Number(base.likesCount || 0)));
-      const favorites = Math.max(0, Math.floor(Number(base.favoritesCount || 0)));
-      const comments = Math.max(0, Math.floor(Number(base.commentsCount || 0)));
-      const engagementScore = Math.max(0, Math.min(100, Math.round(likes * 1 + favorites * 2 + comments * 3)));
-      const nextMetrics = { ...base, engagementScore };
-      return { ...prev, metrics: nextMetrics };
     });
   };
 
@@ -503,6 +587,20 @@ export function ReviewPanel({
   const sourceBadge = dataSource === 'cloud'
     ? <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-1 text-emerald-300"><Cloud size={12} />Supabase</span>
     : <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-1 text-amber-300"><HardDrive size={12} />Local</span>;
+  const totalSupplyNum = Number(draft.metrics?.totalSupply || 0);
+  const avgBuyNum = Number(draft.metrics?.avgBuyPrice || 0);
+  const avgSellNum = Number(draft.metrics?.avgSellPrice || 0);
+  const buyCap = totalSupplyNum > 0 && avgBuyNum > 0 ? avgBuyNum * totalSupplyNum : 0;
+  const sellCap = totalSupplyNum > 0 && avgSellNum > 0 ? avgSellNum * totalSupplyNum : 0;
+  const tokenDetailLink = useMemo(() => {
+    try {
+      const info = parseCurrentUrl(window.location.href);
+      if (!info || !draft.tokenAddress) return '';
+      return parsePlatformTokenLink(info, draft.tokenAddress);
+    } catch {
+      return '';
+    }
+  }, [draft.tokenAddress]);
 
   if (!visible) return null;
 
@@ -634,160 +732,164 @@ export function ReviewPanel({
             <>
             <div className="grid grid-cols-2 gap-1.5">
               <div className="col-span-2 flex items-center gap-2">
-                <input
-                  value={draft.reviewTitle}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, reviewTitle: e.target.value }))}
-                  placeholder={tt('contentUi.review.placeholder.reviewTitle')}
-                  className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500"
-                />
+                <div className="w-full">
+                  <div className="text-zinc-500/75 text-[11px] mb-0.5">{tt('contentUi.review.form.reviewTitle')}</div>
+                  <input
+                    value={draft.reviewTitle}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, reviewTitle: e.target.value }))}
+                    placeholder={tt('contentUi.review.placeholder.reviewTitle')}
+                    className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
               </div>
 
-              <input
-                value={draft.tokenAddress}
-                onChange={(e) => setDraft((prev) => ({ ...prev, tokenAddress: e.target.value }))}
-                placeholder={tt('contentUi.review.placeholder.tokenAddress')}
-                className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
+              <div className="col-span-2">
+                <div className="text-zinc-500/75 text-[11px] mb-0.5">{tt('contentUi.review.form.tokenSymbol')}</div>
+                <div className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 flex items-center gap-2 min-w-0">
+                  {draft.metrics?.tokenLogo ? (
+                    <img src={draft.metrics.tokenLogo} alt={draft.tokenSymbol || 'token'} className="w-6 h-6 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full bg-zinc-700/70 flex items-center justify-center text-[10px] text-zinc-200 shrink-0">
+                      {(draft.tokenSymbol || '?').slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex items-center gap-1.5 text-zinc-200 truncate">
+                    {tokenDetailLink ? (
+                      <a
+                        href={tokenDetailLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-cyan-300 hover:text-cyan-200 underline-offset-2 hover:underline shrink-0"
+                      >
+                        {draft.tokenSymbol || '-'}
+                      </a>
+                    ) : (
+                      <span className="text-cyan-300 shrink-0">{draft.tokenSymbol || '-'}</span>
+                    )}
+                    <span className="text-zinc-400">·</span>
+                    <span className="truncate">{draft.tokenName || '-'}</span>
+                    <span className="text-zinc-500">·</span>
+                    <span className="text-zinc-400 shrink-0">{shortAddress(draft.tokenAddress || '')}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="col-span-2 rounded-md border border-zinc-800 bg-zinc-900/35 p-1.5">
+                <div className="grid grid-cols-3 gap-x-3 gap-y-1">
+                  <div>
+                    <button
+                      type="button"
+                      className="text-zinc-500/75 text-[11px] hover:text-zinc-300 transition-colors"
+                      onClick={() => setShowCapMode((v) => !v)}
+                    >
+                      {showCapMode ? tt('contentUi.review.metrics.buySellMarketCap') : tt('contentUi.review.metrics.buySellAvgPrice')}
+                    </button>
+                    <div className="text-zinc-100">
+                      {showCapMode
+                        ? `${formatUsd(buyCap)} / ${formatUsd(sellCap)}`
+                        : `${formatUsd(draft.metrics?.avgBuyPrice)} / ${formatUsd(draft.metrics?.avgSellPrice)}`}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-zinc-500/75 text-[11px]">{tt('contentUi.review.metrics.buySellCount')}</div>
+                    <div className="text-zinc-100">{formatNum(draft.metrics?.historyTotalBuys, 0)} / {formatNum(draft.metrics?.historyTotalSells, 0)}</div>
+                  </div>
+                  <div>
+                    <div className="text-zinc-500/75 text-[11px]">{tt('contentUi.review.metrics.buySellAmount')}</div>
+                    <div className="text-zinc-100">{formatUsd(draft.metrics?.historyBoughtCost)} / {formatUsd(draft.metrics?.historySoldIncome)}</div>
+                  </div>
+                </div>
+                <div className="mt-1 flex items-center justify-between">
+                  <div className={`${Number(draft.metrics?.totalProfit || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                    {tt('contentUi.review.metrics.totalProfit')}: {formatUsd(draft.metrics?.totalProfit)} ({formatNum(Number(draft.metrics?.totalProfitPnl || 0) * 100, 2)}%)
+                  </div>
+                  <div className="text-zinc-400">{tt('contentUi.review.metrics.holdTime')}: {formatDuration(draft.metrics?.holdDurationSec)}</div>
+                </div>
+              </div>
+
               <div>
+                <div className="text-zinc-500/75 text-[11px] mb-0.5">{tt('contentUi.review.form.reviewTags')}</div>
                 <input
-                  value={draft.tokenSymbol}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, tokenSymbol: e.target.value }))}
-                  placeholder={tt('contentUi.review.placeholder.tokenSymbol')}
+                  value={draft.tagsText}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, tagsText: e.target.value }))}
+                  placeholder={tt('contentUi.review.placeholder.reviewTags')}
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <div className="text-zinc-500/75 text-[11px] mb-0.5">{tt('contentUi.review.form.narrativeTags')}</div>
+                <input
+                  value={draft.narrativeTagsText}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, narrativeTagsText: e.target.value }))}
+                  placeholder={tt('contentUi.review.placeholder.narrativeTags')}
                   className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
-              <div className="col-span-2 grid grid-cols-4 gap-1.5 rounded-md border border-zinc-800 bg-zinc-900/40 p-1.5">
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.avgBuyPrice')}</div>
-                  <div className="text-zinc-100">{formatUsd(draft.metrics?.avgBuyPrice)}</div>
+              <div className="col-span-2 grid grid-cols-2 gap-1.5">
+                <div className="flex flex-wrap gap-1">
+                  {quickTagOptions.review.map((tag) => (
+                    <button key={`tg-${tag}`} type="button" onClick={() => appendTagValue('tagsText', tag)} className="rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-emerald-500 hover:text-emerald-300">
+                      {tag}
+                    </button>
+                  ))}
                 </div>
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.avgSellPrice')}</div>
-                  <div className="text-zinc-100">{formatUsd(draft.metrics?.avgSellPrice)}</div>
-                </div>
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.totalProfit')}</div>
-                  <div className={`${Number(draft.metrics?.totalProfit || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-                    {formatUsd(draft.metrics?.totalProfit)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.totalProfitPnl')}</div>
-                  <div className={`${Number(draft.metrics?.totalProfitPnl || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-                    {formatNum(Number(draft.metrics?.totalProfitPnl || 0) * 100, 2)}%
-                  </div>
-                </div>
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.totalBuys')}</div>
-                  <div className="text-zinc-100">{formatNum(draft.metrics?.historyTotalBuys, 0)}</div>
-                </div>
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.totalSells')}</div>
-                  <div className="text-zinc-100">{formatNum(draft.metrics?.historyTotalSells, 0)}</div>
-                </div>
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.totalBuyCost')}</div>
-                  <div className="text-zinc-100">{formatUsd(draft.metrics?.historyBoughtCost)}</div>
-                </div>
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.totalSellIncome')}</div>
-                  <div className="text-zinc-100">{formatUsd(draft.metrics?.historySoldIncome)}</div>
-                </div>
-                <div className="col-span-2">
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.holdTime')}</div>
-                  <div className="text-zinc-100">
-                    {formatTime(draft.holdStartAt)} ~ {formatTime(draft.holdEndAt)} ({formatDuration(draft.metrics?.holdDurationSec)})
-                  </div>
-                </div>
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.tokenPrice')}</div>
-                  <div className="text-zinc-100">{formatUsd(draft.metrics?.tokenPrice)}</div>
-                </div>
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.liquidity')}</div>
-                  <div className="text-zinc-100">{formatUsd(draft.metrics?.liquidity)}</div>
-                </div>
-                <div>
-                  <div className="text-zinc-500">{tt('contentUi.review.metrics.engagementScore')}</div>
-                  <div className="text-cyan-300">{formatNum(draft.metrics?.engagementScore ?? 0, 0)}</div>
+                <div className="flex flex-wrap gap-1">
+                  {quickTagOptions.narrative.map((tag) => (
+                    <button key={`nt-${tag}`} type="button" onClick={() => appendTagValue('narrativeTagsText', tag)} className="rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-cyan-500 hover:text-cyan-300">
+                      {tag}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <input
-                value={draft.tagsText}
-                onChange={(e) => setDraft((prev) => ({ ...prev, tagsText: e.target.value }))}
-                placeholder={tt('contentUi.review.placeholder.tags')}
-                className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
-              <input
-                value={draft.mistakesText}
-                onChange={(e) => setDraft((prev) => ({ ...prev, mistakesText: e.target.value }))}
-                placeholder={tt('contentUi.review.placeholder.mistakes')}
-                className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
-
-              <div className="col-span-2 flex flex-wrap gap-1">
-                {tagSuggestions.tags.map((tag) => (
-                  <button key={`tg-${tag}`} type="button" onClick={() => appendTagValue('tagsText', tag)} className="rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-emerald-500 hover:text-emerald-300">
-                    {tag}
-                  </button>
-                ))}
+              <div className="col-span-2">
+                <div className="text-zinc-500/75 text-[11px] mb-0.5">{tt('contentUi.review.form.buyLogic')}</div>
+                <textarea
+                  value={draft.buyLogic}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, buyLogic: e.target.value }))}
+                  placeholder={tt('contentUi.review.placeholder.buyLogic')}
+                  className="w-full h-[44px] rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
+                />
               </div>
 
-              <input
-                value={draft.narrativeTagsText}
-                onChange={(e) => setDraft((prev) => ({ ...prev, narrativeTagsText: e.target.value }))}
-                placeholder={tt('contentUi.review.placeholder.narrativeTags')}
-                className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
-              <div />
-
-              <div className="col-span-2 flex flex-wrap gap-1">
-                {tagSuggestions.narrative.map((tag) => (
-                  <button key={`nt-${tag}`} type="button" onClick={() => appendTagValue('narrativeTagsText', tag)} className="rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-cyan-500 hover:text-cyan-300">
-                    {tag}
-                  </button>
-                ))}
-                {tagSuggestions.mistakes.map((tag) => (
-                  <button key={`mk-${tag}`} type="button" onClick={() => appendTagValue('mistakesText', tag)} className="rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-rose-500 hover:text-rose-300">
-                    {tag}
-                  </button>
-                ))}
+              <div className="col-span-2">
+                <div className="text-zinc-500/75 text-[11px] mb-0.5">{tt('contentUi.review.form.sellLogic')}</div>
+                <textarea
+                  value={draft.sellLogic}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, sellLogic: e.target.value }))}
+                  placeholder={tt('contentUi.review.placeholder.sellLogic')}
+                  className="w-full h-[44px] rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
+                />
               </div>
 
-              <textarea
-                value={draft.buyLogic}
-                onChange={(e) => setDraft((prev) => ({ ...prev, buyLogic: e.target.value }))}
-                placeholder={tt('contentUi.review.placeholder.buyLogic')}
-                className="col-span-2 h-[44px] rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
-
-              <textarea
-                value={draft.sellLogic}
-                onChange={(e) => setDraft((prev) => ({ ...prev, sellLogic: e.target.value }))}
-                placeholder={tt('contentUi.review.placeholder.sellLogic')}
-                className="col-span-2 h-[44px] rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
-
-              <textarea
-                value={draft.summary}
-                onChange={(e) => setDraft((prev) => ({ ...prev, summary: e.target.value }))}
-                placeholder={tt('contentUi.review.placeholder.summary')}
-                className="col-span-2 h-[44px] rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
-              <textarea
-                value={draft.lessonLearned}
-                onChange={(e) => setDraft((prev) => ({ ...prev, lessonLearned: e.target.value }))}
-                placeholder={tt('contentUi.review.placeholder.lesson')}
-                className="col-span-2 h-[44px] rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
-              <textarea
-                value={draft.nextAction}
-                onChange={(e) => setDraft((prev) => ({ ...prev, nextAction: e.target.value }))}
-                placeholder={tt('contentUi.review.placeholder.nextAction')}
-                className="col-span-2 h-[42px] rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
+              <div className="col-span-2">
+                <div className="text-zinc-500/75 text-[11px] mb-0.5">{tt('contentUi.review.form.summary')}</div>
+                <textarea
+                  value={draft.summary}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, summary: e.target.value }))}
+                  placeholder={tt('contentUi.review.placeholder.summary')}
+                  className="w-full h-[44px] rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div className="col-span-2">
+                <div className="text-zinc-500/75 text-[11px] mb-0.5">{tt('contentUi.review.form.lessonLearned')}</div>
+                <textarea
+                  value={draft.lessonLearned}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, lessonLearned: e.target.value }))}
+                  placeholder={tt('contentUi.review.placeholder.lesson')}
+                  className="w-full h-[44px] rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div className="col-span-2">
+                <div className="text-zinc-500/75 text-[11px] mb-0.5">{tt('contentUi.review.form.nextAction')}</div>
+                <textarea
+                  value={draft.nextAction}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, nextAction: e.target.value }))}
+                  placeholder={tt('contentUi.review.placeholder.nextAction')}
+                  className="w-full h-[42px] rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
 
               <div className="col-span-2 grid grid-cols-3 gap-1.5">
                 <div className="rounded-md border border-zinc-800 bg-zinc-900/60 p-1.5">
@@ -851,11 +953,11 @@ export function ReviewPanel({
             <>
             <div className="mt-1 grid grid-cols-2 gap-2">
               <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2 h-[180px]">
-                <div className="text-zinc-300 mb-1">{tt('contentUi.review.chart.mistakes')}</div>
+                <div className="text-zinc-300 mb-1">{tt('contentUi.review.chart.narrativeDist')}</div>
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={chartMistakes} dataKey="value" nameKey="name" outerRadius={58} labelLine={false}>
-                      {chartMistakes.map((_, idx) => (
+                    <Pie data={chartNarrative} dataKey="value" nameKey="name" outerRadius={58} labelLine={false}>
+                      {chartNarrative.map((_, idx) => (
                         <Cell key={`m-${idx}`} fill={COLORS[idx % COLORS.length]} />
                       ))}
                     </Pie>
@@ -864,19 +966,31 @@ export function ReviewPanel({
                 </ResponsiveContainer>
               </div>
               <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2 h-[180px]">
-                <div className="text-zinc-300 mb-1">{tt('contentUi.review.chart.executionTrend')}</div>
+                <div className="text-zinc-300 mb-1">{tt('contentUi.review.chart.reviewTagPnl')}</div>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartExecution}>
+                  <BarChart data={chartReviewTagPnl}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                     <XAxis dataKey="name" stroke="#a1a1aa" tick={{ fontSize: 10 }} />
-                    <YAxis stroke="#a1a1aa" domain={[0, 100]} tick={{ fontSize: 10 }} />
+                    <YAxis stroke="#a1a1aa" tick={{ fontSize: 10 }} />
                     <Tooltip />
-                    <Bar dataKey="execution" fill="#10b981" />
-                    <Bar dataKey="emotion" fill="#f59e0b" />
-                    <Bar dataKey="confidence" fill="#60a5fa" />
+                    <Bar dataKey="avgPnl" fill="#22c55e" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+            </div>
+
+            <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-900/40 p-2 h-[170px]">
+              <div className="text-zinc-300 mb-1">{tt('contentUi.review.chart.executionPnl')}</div>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartExecution}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                  <XAxis dataKey="name" stroke="#a1a1aa" tick={{ fontSize: 10 }} />
+                  <YAxis stroke="#a1a1aa" tick={{ fontSize: 10 }} />
+                  <Tooltip />
+                  <Bar dataKey="execution" fill="#10b981" />
+                  <Bar dataKey="pnl" fill="#60a5fa" />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
 
             <div className="mt-3 grid grid-cols-6 gap-2">
@@ -889,22 +1003,43 @@ export function ReviewPanel({
                 <div className="text-cyan-300 text-[14px] font-semibold">{summary.avgQuality}</div>
               </div>
               <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2">
-                <div className="text-zinc-500">{tt('contentUi.review.kpi.avgEngagement')}</div>
-                <div className="text-sky-300 text-[14px] font-semibold">{summary.avgEngagement}</div>
+                <div className="text-zinc-500">{tt('contentUi.review.kpi.winRate')}</div>
+                <div className="text-sky-300 text-[14px] font-semibold">{summary.winRate.toFixed(1)}%</div>
               </div>
               <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2">
                 <div className="text-zinc-500">{tt('contentUi.review.kpi.avgEmotion')}</div>
                 <div className="text-amber-300 text-[14px] font-semibold">{summary.avgEmotion}</div>
               </div>
               <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2">
-                <div className="text-zinc-500">{tt('contentUi.review.kpi.avgPnl')}</div>
-                <div className={`text-[14px] font-semibold ${summary.avgPnl >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-                  {(summary.avgPnl * 100).toFixed(2)}%
+                <div className="text-zinc-500">{tt('contentUi.review.kpi.avgHoldHours')}</div>
+                <div className="text-zinc-100 text-[14px] font-semibold">
+                  {summary.avgHoldHours.toFixed(1)}h
                 </div>
               </div>
               <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2">
                 <div className="text-zinc-500">{tt('contentUi.review.kpi.total')}</div>
                 <div className="text-zinc-100 text-[14px] font-semibold">{summary.total}</div>
+              </div>
+            </div>
+
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2">
+                <div className="text-zinc-500">{tt('contentUi.review.insight.bestNarrative')}</div>
+                <div className="text-emerald-300 font-semibold">
+                  {insightSummary.bestNarrative ? `${insightSummary.bestNarrative.name} (${insightSummary.bestNarrative.avgPnl.toFixed(1)}%)` : '-'}
+                </div>
+              </div>
+              <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2">
+                <div className="text-zinc-500">{tt('contentUi.review.insight.weakNarrative')}</div>
+                <div className="text-rose-300 font-semibold">
+                  {insightSummary.weakNarrative ? `${insightSummary.weakNarrative.name} (${insightSummary.weakNarrative.avgPnl.toFixed(1)}%)` : '-'}
+                </div>
+              </div>
+              <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2">
+                <div className="text-zinc-500">{tt('contentUi.review.insight.bestReviewTag')}</div>
+                <div className="text-cyan-300 font-semibold">
+                  {insightSummary.bestReviewTag ? `${insightSummary.bestReviewTag.name} (${insightSummary.bestReviewTag.avgPnl.toFixed(1)}%)` : '-'}
+                </div>
               </div>
             </div>
             </>

@@ -732,6 +732,7 @@
         "tokenAddress": "Token address",
         "tokenSymbol": "Token symbol",
         "tags": "Tags (comma separated)",
+        "reviewTags": "Review tags (comma separated)",
         "narrativeTags": "Narrative tags (e.g. KOL / Official / Animal / Web2)",
         "launchpad": "Launchpad source",
         "mistakes": "Mistakes (comma separated)",
@@ -751,15 +752,29 @@
         "quality": "Quality",
         "avgEmotion": "Avg Emotion",
         "avgPnl": "Avg Return",
+        "winRate": "Win Rate",
+        "avgHoldHours": "Avg Hold (h)",
         "total": "Records"
       },
       "chart": {
         "mistakes": "Mistake Distribution",
-        "executionTrend": "Execution / Emotion Trend"
+        "executionTrend": "Execution / Emotion Trend",
+        "narrativeDist": "Narrative Tag Distribution",
+        "reviewTagPnl": "Review Tag PnL",
+        "executionPnl": "Execution vs PnL"
+      },
+      "insight": {
+        "bestNarrative": "Best Narrative Tag",
+        "weakNarrative": "Weak Narrative Tag",
+        "bestReviewTag": "Best Review Tag"
       },
       "metrics": {
         "avgBuyPrice": "Avg Buy Price",
         "avgSellPrice": "Avg Sell Price",
+        "buySellAvgPrice": "Buy/Sell Avg Price",
+        "buySellMarketCap": "Buy/Sell Market Cap",
+        "buySellCount": "Buy/Sell Count",
+        "buySellAmount": "Buy/Sell Amount",
         "totalProfit": "Total Profit",
         "totalProfitPnl": "PnL %",
         "totalBuys": "Total Buys",
@@ -768,6 +783,7 @@
         "totalSellIncome": "Total Sell Income",
         "holdTime": "Hold Duration",
         "tokenPrice": "Current Price",
+        "marketCap": "Market Cap",
         "liquidity": "Liquidity",
         "likesCount": "Likes",
         "favoritesCount": "Favorites",
@@ -775,9 +791,22 @@
         "engagementScore": "Engagement"
       },
       "form": {
+        "reviewTitle": "Review Title",
+        "tokenAddress": "Token Address",
+        "tokenSymbol": "Token Symbol",
+        "reviewTags": "Review Tags",
+        "narrativeTags": "Narrative Tags",
+        "buyLogic": "Buy Logic",
+        "sellLogic": "Sell Logic",
+        "summary": "Trade Summary",
+        "lessonLearned": "Biggest Lesson",
+        "nextAction": "Next Action",
         "executionScore": "Execution {0}",
         "emotionScore": "Emotion {0}",
         "confidenceScore": "Confidence {0}",
+        "overviewCard": "Overview",
+        "buyCard": "Buy",
+        "sellCard": "Sell",
         "defaultTitleSuffix": "Review"
       },
       "action": {

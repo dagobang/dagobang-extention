@@ -24,6 +24,9 @@ export type ReviewMetrics = {
   holdEndAt?: number | null;
   lastActiveTimestamp?: number | null;
   tokenPrice?: string;
+  totalSupply?: string;
+  tokenLogo?: string;
+  marketCap?: string;
   liquidity?: string;
   avgBuyPrice?: string;
   avgSellPrice?: string;

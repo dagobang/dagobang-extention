@@ -732,6 +732,7 @@
         "tokenAddress": "代币地址",
         "tokenSymbol": "代币符号",
         "tags": "标签（逗号分隔）",
+        "reviewTags": "复盘标签（逗号分隔）",
         "narrativeTags": "叙事标签（如 二圣/官方/KOL/动物/Web2）",
         "launchpad": "来源平台（如 fourmeme / pancake）",
         "mistakes": "错误标签（逗号分隔）",
@@ -751,15 +752,29 @@
         "quality": "质量",
         "avgEmotion": "平均情绪分",
         "avgPnl": "平均收益率",
+        "winRate": "胜率",
+        "avgHoldHours": "平均持仓(h)",
         "total": "记录数"
       },
       "chart": {
         "mistakes": "错误标签分布",
-        "executionTrend": "执行/情绪趋势"
+        "executionTrend": "执行/情绪趋势",
+        "narrativeDist": "叙事标签分布",
+        "reviewTagPnl": "复盘标签收益表现",
+        "executionPnl": "执行分与收益对比"
+      },
+      "insight": {
+        "bestNarrative": "最佳叙事标签",
+        "weakNarrative": "弱势叙事标签",
+        "bestReviewTag": "最佳复盘标签"
       },
       "metrics": {
         "avgBuyPrice": "买入均价",
         "avgSellPrice": "卖出均价",
+        "buySellAvgPrice": "买入/卖均价",
+        "buySellMarketCap": "买入/卖市值",
+        "buySellCount": "买入/卖出次数",
+        "buySellAmount": "买入/卖出金额",
         "totalProfit": "总盈亏",
         "totalProfitPnl": "收益率",
         "totalBuys": "总买入次数",
@@ -768,6 +783,7 @@
         "totalSellIncome": "总卖出金额",
         "holdTime": "持币时长",
         "tokenPrice": "当前价格",
+        "marketCap": "市值",
         "liquidity": "流动性",
         "likesCount": "点赞数",
         "favoritesCount": "收藏数",
@@ -775,9 +791,22 @@
         "engagementScore": "互动分"
       },
       "form": {
+        "reviewTitle": "复盘标题",
+        "tokenAddress": "代币地址",
+        "tokenSymbol": "代币符号",
+        "reviewTags": "复盘标签",
+        "narrativeTags": "叙事标签",
+        "buyLogic": "买入逻辑",
+        "sellLogic": "卖出逻辑",
+        "summary": "本次交易总结",
+        "lessonLearned": "本次最大教训",
+        "nextAction": "下一次改进动作",
         "executionScore": "执行分 {0}",
         "emotionScore": "情绪分 {0}",
         "confidenceScore": "信心分 {0}",
+        "overviewCard": "概览",
+        "buyCard": "买入",
+        "sellCard": "卖出",
         "defaultTitleSuffix": "复盘"
       },
       "action": {

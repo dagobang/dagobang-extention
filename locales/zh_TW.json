@@ -732,6 +732,7 @@
         "tokenAddress": "代幣地址",
         "tokenSymbol": "代幣符號",
         "tags": "標籤（逗號分隔）",
+        "reviewTags": "復盤標籤（逗號分隔）",
         "narrativeTags": "敘事標籤（如 二聖/官方/KOL/動物/Web2）",
         "launchpad": "來源平台（如 fourmeme / pancake）",
         "mistakes": "錯誤標籤（逗號分隔）",
@@ -751,15 +752,29 @@
         "quality": "質量",
         "avgEmotion": "平均情緒分",
         "avgPnl": "平均收益率",
+        "winRate": "勝率",
+        "avgHoldHours": "平均持倉(h)",
         "total": "記錄數"
       },
       "chart": {
         "mistakes": "錯誤標籤分佈",
-        "executionTrend": "執行/情緒趨勢"
+        "executionTrend": "執行/情緒趨勢",
+        "narrativeDist": "敘事標籤分佈",
+        "reviewTagPnl": "復盤標籤收益表現",
+        "executionPnl": "執行分與收益對比"
+      },
+      "insight": {
+        "bestNarrative": "最佳敘事標籤",
+        "weakNarrative": "弱勢敘事標籤",
+        "bestReviewTag": "最佳復盤標籤"
       },
       "metrics": {
         "avgBuyPrice": "買入均價",
         "avgSellPrice": "賣出均價",
+        "buySellAvgPrice": "買入/賣均價",
+        "buySellMarketCap": "買入/賣市值",
+        "buySellCount": "買入/賣出次數",
+        "buySellAmount": "買入/賣出金額",
         "totalProfit": "總盈虧",
         "totalProfitPnl": "收益率",
         "totalBuys": "總買入次數",
@@ -768,6 +783,7 @@
         "totalSellIncome": "總賣出金額",
         "holdTime": "持幣時長",
         "tokenPrice": "當前價格",
+        "marketCap": "市值",
         "liquidity": "流動性",
         "likesCount": "點讚數",
         "favoritesCount": "收藏數",
@@ -775,9 +791,22 @@
         "engagementScore": "互動分"
       },
       "form": {
+        "reviewTitle": "復盤標題",
+        "tokenAddress": "代幣地址",
+        "tokenSymbol": "代幣符號",
+        "reviewTags": "復盤標籤",
+        "narrativeTags": "敘事標籤",
+        "buyLogic": "買入邏輯",
+        "sellLogic": "賣出邏輯",
+        "summary": "本次交易總結",
+        "lessonLearned": "本次最大教訓",
+        "nextAction": "下一次改進動作",
         "executionScore": "執行分 {0}",
         "emotionScore": "情緒分 {0}",
         "confidenceScore": "信心分 {0}",
+        "overviewCard": "概覽",
+        "buyCard": "買入",
+        "sellCard": "賣出",
         "defaultTitleSuffix": "復盤"
       },
       "action": {
