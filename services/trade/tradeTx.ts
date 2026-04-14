@@ -2,19 +2,8 @@ import { decodeAbiParameters } from 'viem';
 import { bsc } from 'viem/chains';
 import { RpcService } from '../rpc';
 import type { ChainSettings, GasPreset } from '../../types/extention';
-
-function parseGweiToWei(value: string): bigint {
-  const trimmed = value.trim();
-  if (!trimmed) return 0n;
-  const match = trimmed.match(/^(\d+)(?:\.(\d+))?$/);
-  if (!match) return 0n;
-  const intPart = match[1] || '0';
-  const fracPartRaw = match[2] || '';
-  const fracPadded = (fracPartRaw + '000000000').slice(0, 9);
-  const intBig = BigInt(intPart);
-  const fracBig = BigInt(fracPadded);
-  return intBig * 1000000000n + fracBig;
-}
+import { classifyBroadcastError, collectErrorText, extractNextNonceHintFromText, getNonceErrorKindFromText } from '../../utils/txErrorClassify';
+import { parseGweiToWei } from '../../utils/dexUtils';
 
 export function getGasPriceWei(chainSettings: ChainSettings, preset: GasPreset, side: 'buy' | 'sell'): bigint {
   const baseConfig = side === 'buy' ? chainSettings.buyGasGwei : chainSettings.sellGasGwei;
@@ -141,7 +130,7 @@ function extractRevertReasonFromError(e: any) {
 const nonceLocked = new Set<string>();
 const nonceLockQueue = new Map<string, Array<() => void>>();
 const nonceState = new Map<string, { nextNonce: number; ts: number }>();
-const NONCE_CACHE_WINDOW_MS = 60_000;
+const NONCE_CACHE_WINDOW_MS = 300_000;
 const txFlowLocked = new Set<string>();
 const txFlowQueue = new Map<string, Array<() => void>>();
 
@@ -222,15 +211,41 @@ async function reserveNonce(client: any, chainId: number, address: `0x${string}`
   }
 }
 
-export async function prewarmNonce(client: any, chainId: number, address: `0x${string}`): Promise<void> {
+export async function prewarmNonce(
+  client: any,
+  chainId: number,
+  address: `0x${string}`,
+  opts?: { force?: boolean }
+): Promise<number> {
   const key = `${chainId}:${address.toLowerCase()}`;
   const release = await acquireNonceLock(key);
   try {
     const now = Date.now();
     const state = nonceState.get(key);
-    if (state && now - state.ts < NONCE_CACHE_WINDOW_MS) return;
-    const nonce = await client.getTransactionCount({ address, blockTag: 'pending' });
-    nonceState.set(key, { nextNonce: nonce, ts: now });
+    if (!opts?.force && state && now - state.ts < NONCE_CACHE_WINDOW_MS) {
+      // Sliding expiration: page-level prewarm keeps hot nonce cache alive.
+      state.ts = now;
+      nonceState.set(key, state);
+      return state.nextNonce;
+    }
+    const pendingNonce = await client.getTransactionCount({ address, blockTag: 'pending' });
+    let nextNonce = pendingNonce;
+    if (opts?.force) {
+      try {
+        const observed = await RpcService.getObservedPendingNonce({
+          chainId,
+          address,
+          prefer: 'max',
+          scope: 'both',
+        });
+        if (observed != null && observed > nextNonce) {
+          nextNonce = observed;
+        }
+      } catch {
+      }
+    }
+    nonceState.set(key, { nextNonce, ts: now });
+    return nextNonce;
   } finally {
     release();
   }
@@ -255,93 +270,29 @@ function setNextNonceAtLeast(chainId: number, address: `0x${string}`, nextNonce:
 }
 
 function isNonceRelatedError(e: any): boolean {
-  const texts: string[] = [];
-  const push = (v: any) => {
-    if (typeof v !== 'string') return;
-    const t = v.trim();
-    if (t) texts.push(t.toLowerCase());
-  };
-  push(e?.shortMessage);
-  push(e?.message);
-  push(e?.details);
-  push(e?.cause?.message);
-  push(e?.cause?.details);
-  if (Array.isArray(e?.metaMessages)) {
-    for (const x of e.metaMessages) push(x);
-  }
-  const msg = texts.join(' | ');
+  const msg = collectErrorText(e, true);
   if (!msg) return false;
-  return (
-    msg.includes('nonce too low') ||
-    msg.includes('nonce is too low') ||
-    msg.includes('nonce has already been used') ||
-    msg.includes('already known') ||
-    msg.includes('known transaction') ||
-    msg.includes('replacement transaction underpriced') ||
-    msg.includes('transaction underpriced') ||
-    msg.includes('nonce') ||
-    msg.includes('replacement')
-  );
+  return classifyBroadcastError(msg) === 'nonce' || msg.includes('nonce');
 }
 
 function getNonceErrorKind(e: any): 'too_high' | 'too_low' | 'other' {
-  const texts: string[] = [];
-  const push = (v: any) => {
-    if (typeof v !== 'string') return;
-    const t = v.trim();
-    if (t) texts.push(t.toLowerCase());
-  };
-  push(e?.shortMessage);
-  push(e?.message);
-  push(e?.details);
-  push(e?.cause?.message);
-  push(e?.cause?.details);
-  if (Array.isArray(e?.metaMessages)) {
-    for (const x of e.metaMessages) push(x);
-  }
-  const msg = texts.join(' | ');
+  const msg = collectErrorText(e, true);
   if (!msg) return 'other';
-  if (
-    msg.includes('nonce too high') ||
-    msg.includes('nonce is too high') ||
-    msg.includes('future transaction')
-  ) {
-    return 'too_high';
-  }
-  if (
-    msg.includes('nonce too low') ||
-    msg.includes('nonce is too low') ||
-    msg.includes('nonce has already been used') ||
-    msg.includes('already known') ||
-    msg.includes('known transaction') ||
-    msg.includes('replacement transaction underpriced') ||
-    msg.includes('transaction underpriced')
-  ) {
-    return 'too_low';
-  }
-  if (msg.includes('nonce') || msg.includes('replacement')) return 'other';
-  return 'other';
+  return getNonceErrorKindFromText(msg);
 }
 
 function isBroadcastParamError(e: any): boolean {
-  const texts: string[] = [];
-  const push = (v: any) => {
-    if (typeof v !== 'string') return;
-    const t = v.trim();
-    if (t) texts.push(t.toLowerCase());
-  };
-  push(e?.shortMessage);
-  push(e?.message);
-  push(e?.details);
-  push(e?.cause?.message);
-  if (Array.isArray(e?.metaMessages)) {
-    for (const x of e.metaMessages) push(x);
-  }
-  const msg = texts.join(' | ');
+  const msg = collectErrorText(e, true);
   if (!msg) return false;
   if (msg.includes('failed to broadcast transaction to any rpc endpoint')) return true;
   if (msg.includes('missing or invalid parameters')) return true;
   return false;
+}
+
+function extractNextNonceHint(e: any): number | null {
+  const msg = collectErrorText(e, false);
+  if (!msg) return null;
+  return extractNextNonceHintFromText(msg);
 }
 
 export async function sendTransaction(
@@ -433,30 +384,85 @@ export async function sendTransaction(
   } catch (e: any) {
     if (useAutoNonce && (isNonceRelatedError(e) || isBroadcastParamError(e))) {
       clearNonceState(chainId, account.address);
+      const retryTrace: string[] = [];
+      const toErrMsg = (err: any) => String(err?.shortMessage || err?.message || err || 'unknown error');
+      const attemptObserved = async (prefer: 'min' | 'max', scope: 'protected' | 'both') => {
+        const start = Date.now();
+        const observedNonce = await RpcService.getObservedPendingNonce({
+          chainId,
+          address: account.address,
+          txSide: opts?.txSide,
+          prefer,
+          scope,
+        });
+        trace?.('observeNonce', Date.now() - start);
+        if (observedNonce == null) {
+          retryTrace.push(`observe:scope=${scope},prefer=${prefer},nonce=null`);
+          return null;
+        }
+        retryTrace.push(`observe:scope=${scope},prefer=${prefer},nonce=${observedNonce}`);
+        return await signAndBroadcast(observedNonce, 'observe:');
+      };
+
+      let lastErr: any = e;
+      const firstKind = getNonceErrorKind(e);
+      retryTrace.push(`firstErrorKind=${firstKind},msg=${toErrMsg(e)}`);
+      const hintedFromFirst = extractNextNonceHint(e);
+      if (hintedFromFirst != null) {
+        try {
+          retryTrace.push(`hint:firstNonce=${hintedFromFirst}`);
+          return await signAndBroadcast(hintedFromFirst, 'hint:first:');
+        } catch (ex) {
+          lastErr = ex;
+          retryTrace.push(`hint:firstFailed,kind=${getNonceErrorKind(ex)},msg=${toErrMsg(ex)}`);
+        }
+      }
+
+      const preferObserved: 'min' | 'max' = firstKind === 'too_high' ? 'min' : 'max';
+      const scopeObserved: 'protected' | 'both' = firstKind === 'too_high' ? 'protected' : 'both';
+      try {
+        const observed = await attemptObserved(preferObserved, scopeObserved);
+        if (observed) return observed;
+      } catch (ex) {
+        lastErr = ex;
+        retryTrace.push(`observe:firstFailed,kind=${getNonceErrorKind(ex)},msg=${toErrMsg(ex)}`);
+      }
+
       try {
         const start = Date.now();
         const retryNonce = await reserveNonce(client, chainId, account.address);
         trace?.('reserveNonceRetry', Date.now() - start);
+        retryTrace.push(`retry:reservedNonce=${retryNonce}`);
         return await signAndBroadcast(retryNonce, 'retry:');
       } catch (e2) {
-        const nonceKind = getNonceErrorKind(e2);
-        if (useAutoNonce && opts?.txSide && nonceKind === 'too_high') {
-          clearNonceState(chainId, account.address);
-          const start = Date.now();
-          const protectedNonce = await RpcService.getProtectedPendingNonce({
-            chainId,
-            address: account.address,
-            txSide: opts.txSide,
-            prefer: 'min',
-          });
-          trace?.('reserveNonceRouteMin', Date.now() - start);
-          if (protectedNonce != null) {
-            return await signAndBroadcast(protectedNonce, 'routeRetry:');
-          }
-        }
-        clearNonceState(chainId, account.address);
-        throw e2;
+        lastErr = e2;
+        retryTrace.push(`retry:failed,kind=${getNonceErrorKind(e2)},msg=${toErrMsg(e2)}`);
       }
+
+      const hintedNonce = extractNextNonceHint(lastErr);
+      if (hintedNonce != null) {
+        try {
+          retryTrace.push(`hint:nonce=${hintedNonce}`);
+          return await signAndBroadcast(hintedNonce, 'hint:');
+        } catch (ex) {
+          lastErr = ex;
+          retryTrace.push(`hint:failed,kind=${getNonceErrorKind(ex)},msg=${toErrMsg(ex)}`);
+        }
+      }
+
+      const observedKind = getNonceErrorKind(lastErr);
+      const prefer: 'min' | 'max' = observedKind === 'too_high' ? 'min' : 'max';
+      const scope: 'protected' | 'both' = observedKind === 'too_high' ? 'protected' : 'both';
+      try {
+        const r = await attemptObserved(prefer, scope);
+        if (r) return r;
+      } catch (ex) {
+        lastErr = ex;
+        retryTrace.push(`observe:failed,kind=${getNonceErrorKind(ex)},msg=${toErrMsg(ex)}`);
+      }
+
+      clearNonceState(chainId, account.address);
+      throw new Error(`Auto nonce recovery failed. attempts=${retryTrace.join(' | ')} ; last=${toErrMsg(lastErr)}`);
     }
 
     clearNonceState(chainId, account.address);

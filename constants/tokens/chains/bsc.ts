@@ -57,6 +57,13 @@ export const bscTokens = {
     'Aster',
     'https://asterdex.com/',
   ),
+  form: new ERC20Token(
+    ChainId.BNB,
+    '0x5b73A93b4E5e4f1FD27D8b3F8C97D69908b5E284',
+    18,
+    'FORM',
+    'FORM',
+  ),
 }
 
 export const bscBridgeTokenAddresses = [
@@ -67,6 +74,7 @@ export const bscBridgeTokenAddresses = [
   bscTokens.u.address,
   bscTokens.aster.address,
   bscTokens.usd1.address,
+  bscTokens.form.address,
 ] as const;
 
 export type BscBnbBridgePoolConfig =

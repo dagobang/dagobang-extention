@@ -36,6 +36,7 @@ export function getBridgeTokenDexPreference(chainId: ChainId, address: string): 
     if (addr === bscTokens.u.address.toLowerCase()) return 'v3';
     if (addr === bscTokens.aster.address.toLowerCase()) return 'v3';
     if (addr === bscTokens.usd1.address.toLowerCase()) return 'v3';
+    if (addr === bscTokens.form.address.toLowerCase()) return 'v2';
     return null;
 }
 

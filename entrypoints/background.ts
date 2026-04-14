@@ -22,6 +22,8 @@ import BloxRouterAPI from '@/services/api/bloxRouter';
 import { isAddress, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { getGasPriceWei, sendTransaction } from '@/services/trade/tradeTx';
+import { classifyBroadcastError, collectErrorText } from '@/utils/txErrorClassify';
+import type { TxBuyInput } from '@/types/extention';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
@@ -97,6 +99,7 @@ export default defineBackground(() => {
 
   const AutoTrade = createXSniperTrade({ onStateChanged: broadcastStateChange });
   const TokenSniperTrade = createTokenSniperTrade({ onStateChanged: broadcastStateChange });
+  const buyInputByTxHash = new Map<`0x${string}`, { input: TxBuyInput; receiptRetried: boolean }>();
 
   browser.runtime.onInstalled.addListener(() => {
     console.log('Extension installed');
@@ -421,6 +424,13 @@ export default defineBackground(() => {
             return { ok: true };
           }
 
+          case 'trade:refreshNonce': {
+            try {
+              await TradeService.refreshNonce(msg.input);
+            } catch { }
+            return { ok: true };
+          }
+
           case 'rpc:prewarm': {
             try {
               await RpcService.prewarm(msg.input);
@@ -481,9 +491,16 @@ export default defineBackground(() => {
           }
 
           case 'tx:buy': {
-            try {
-              const rsp = await TradeService.buy(msg.input);
-              broadcastTradeSuccess(
+            const isNonceLikeError = (err: any) => {
+              const msg = collectErrorText(err, true);
+              return classifyBroadcastError(msg) === 'nonce' || msg.includes('nonce');
+            };
+            const returnBuySuccess = async (rsp: any) => {
+              const txHash = (rsp as any)?.txHash as `0x${string}` | undefined;
+              if (txHash) {
+                buyInputByTxHash.set(txHash, { input: msg.input, receiptRetried: false });
+              }
+              await broadcastTradeSuccess(
                 {
                   type: 'bg:tradeSuccess',
                   source: 'tx:buy',
@@ -494,18 +511,110 @@ export default defineBackground(() => {
                 },
                 sender?.tab?.id ?? null,
               );
-              broadcastStateChange();
+              await broadcastStateChange();
               return { ok: true, ...rsp };
+            };
+            try {
+              const rsp = await TradeService.buy(msg.input);
+              return await returnBuySuccess(rsp);
             } catch (e: any) {
+              let lastErr: any = e;
+              console.warn('[nonce.repair][buy.submit.failed]', {
+                chainId: msg.input.chainId,
+                token: msg.input.tokenAddress,
+                error: String(e?.shortMessage || e?.message || e || ''),
+                nonceLike: isNonceLikeError(e),
+              });
+              if (isNonceLikeError(e)) {
+                try {
+                  const refreshedNonce = await TradeService.refreshNonce({ chainId: msg.input.chainId });
+                  console.info('[nonce.repair][buy.submit.retry]', {
+                    chainId: msg.input.chainId,
+                    token: msg.input.tokenAddress,
+                    refreshedNonce,
+                  });
+                  const rsp = await TradeService.buy(msg.input);
+                  console.info('[nonce.repair][buy.submit.retry.success]', {
+                    chainId: msg.input.chainId,
+                    token: msg.input.tokenAddress,
+                    txHash: (rsp as any)?.txHash,
+                  });
+                  return await returnBuySuccess(rsp);
+                } catch (ex: any) {
+                  lastErr = ex;
+                  console.warn('[nonce.repair][buy.submit.retry.failed]', {
+                    chainId: msg.input.chainId,
+                    token: msg.input.tokenAddress,
+                    error: String(ex?.shortMessage || ex?.message || ex || ''),
+                  });
+                }
+              }
+              const reason = extractRevertReasonFromError(lastErr);
+              if (!reason || reason.toLowerCase().includes('zero_input')) {
+                debugLogTxError('tx:buy failed', lastErr, { input: msg.input as any });
+              }
+              return { ok: false, revertReason: reason ?? undefined, error: serializeTxError(lastErr) };
+            }
+          }
+
+          case 'tx:buyWithReceiptAuto': {
+            const returnBuySuccess = async (rsp: any) => {
+              const txHash = (rsp as any)?.txHash as `0x${string}` | undefined;
+              if (txHash) {
+                buyInputByTxHash.set(txHash, { input: msg.input, receiptRetried: false });
+              }
+              await broadcastTradeSuccess(
+                {
+                  type: 'bg:tradeSuccess',
+                  source: 'tx:buy',
+                  side: 'buy',
+                  chainId: msg.input.chainId,
+                  tokenAddress: msg.input.tokenAddress,
+                  txHash: (rsp as any)?.txHash,
+                },
+                sender?.tab?.id ?? null,
+              );
+              await broadcastStateChange();
+              return { ok: true, ...rsp };
+            };
+            try {
+              const rsp = await TradeService.buyWithReceiptAndNonceRecovery(msg.input, {
+                maxRetry: 1,
+                timeoutMs: 5_000,
+                onRetry: async (ctx) => {
+                  await broadcastTradeSuccess(
+                    {
+                      type: 'bg:tradeRetrying',
+                      side: 'buy',
+                      chainId: msg.input.chainId,
+                      tokenAddress: msg.input.tokenAddress,
+                      attempt: ctx.attempt,
+                      reason: ctx.reason,
+                    },
+                    sender?.tab?.id ?? null,
+                  );
+                },
+              });
+              return await returnBuySuccess(rsp);
+            } catch (e: any) {
+              console.warn('[trade.buy.auto.failed]', {
+                chainId: msg.input.chainId,
+                token: msg.input.tokenAddress,
+                error: String(e?.shortMessage || e?.message || e || ''),
+              });
               const reason = extractRevertReasonFromError(e);
               if (!reason || reason.toLowerCase().includes('zero_input')) {
-                debugLogTxError('tx:buy failed', e, { input: msg.input as any });
+                debugLogTxError('tx:buyWithReceiptAuto failed', e, { input: msg.input as any });
               }
               return { ok: false, revertReason: reason ?? undefined, error: serializeTxError(e) };
             }
           }
 
           case 'tx:sell': {
+            const isNonceLikeError = (err: any) => {
+              const msg = collectErrorText(err, true);
+              return classifyBroadcastError(msg) === 'nonce' || msg.includes('nonce');
+            };
             try {
               const rsp = await TradeService.sell(msg.input);
               broadcastTradeSuccess(
@@ -522,9 +631,115 @@ export default defineBackground(() => {
               broadcastStateChange();
               return { ok: true, ...rsp };
             } catch (e: any) {
+              let lastErr: any = e;
+              console.warn('[nonce.repair][sell.submit.failed]', {
+                chainId: msg.input.chainId,
+                token: msg.input.tokenAddress,
+                error: String(e?.shortMessage || e?.message || e || ''),
+                nonceLike: isNonceLikeError(e),
+              });
+              if (isNonceLikeError(e)) {
+                try {
+                  const refreshedNonce = await TradeService.refreshNonce({ chainId: msg.input.chainId });
+                  console.info('[nonce.repair][sell.submit.retry]', {
+                    chainId: msg.input.chainId,
+                    token: msg.input.tokenAddress,
+                    refreshedNonce,
+                  });
+                  const rsp = await TradeService.sell(msg.input);
+                  console.info('[nonce.repair][sell.submit.retry.success]', {
+                    chainId: msg.input.chainId,
+                    token: msg.input.tokenAddress,
+                    txHash: (rsp as any)?.txHash,
+                  });
+                  broadcastTradeSuccess(
+                    {
+                      type: 'bg:tradeSuccess',
+                      source: 'tx:sell',
+                      side: 'sell',
+                      chainId: msg.input.chainId,
+                      tokenAddress: msg.input.tokenAddress,
+                      txHash: (rsp as any)?.txHash,
+                    },
+                    sender?.tab?.id ?? null,
+                  );
+                  broadcastStateChange();
+                  return { ok: true, ...rsp };
+                } catch (ex: any) {
+                  lastErr = ex;
+                  console.warn('[nonce.repair][sell.submit.retry.failed]', {
+                    chainId: msg.input.chainId,
+                    token: msg.input.tokenAddress,
+                    error: String(ex?.shortMessage || ex?.message || ex || ''),
+                  });
+                }
+              }
+              const reason = extractRevertReasonFromError(lastErr);
+              if (!reason || reason.toLowerCase().includes('zero_input')) {
+                debugLogTxError('tx:sell failed', lastErr, { input: msg.input as any });
+              }
+              return { ok: false, revertReason: reason ?? undefined, error: serializeTxError(lastErr) };
+            }
+          }
+
+          case 'tx:sellWithReceiptAuto': {
+            const flowId = `bg-sell-auto:${msg.input.chainId}:${msg.input.tokenAddress.toLowerCase()}:${Date.now().toString(36)}`;
+            const start = Date.now();
+            console.log('[bg.sell.auto][start]', { flowId, chainId: msg.input.chainId, token: msg.input.tokenAddress });
+            try {
+              const rsp = await TradeService.sellWithReceiptAndAutoRecovery(msg.input, {
+                maxRetry: 1,
+                timeoutMs: 8_000,
+                onRetry: async (ctx) => {
+                  const reason = ctx.allowanceRepaired ? 'allowance' : (ctx.nonceLike ? 'nonce' : 'other');
+                  console.log('[bg.sell.auto][retry]', {
+                    flowId,
+                    attempt: ctx.attempt,
+                    reason,
+                    elapsedMs: Date.now() - start,
+                  });
+                  await broadcastTradeSuccess(
+                    {
+                      type: 'bg:tradeRetrying',
+                      side: 'sell',
+                      chainId: msg.input.chainId,
+                      tokenAddress: msg.input.tokenAddress,
+                      attempt: ctx.attempt,
+                      reason,
+                    },
+                    sender?.tab?.id ?? null,
+                  );
+                },
+              });
+              console.log('[bg.sell.auto][success]', {
+                flowId,
+                txHash: (rsp as any)?.txHash,
+                elapsedMs: Date.now() - start,
+              });
+              broadcastTradeSuccess(
+                {
+                  type: 'bg:tradeSuccess',
+                  source: 'tx:sell',
+                  side: 'sell',
+                  chainId: msg.input.chainId,
+                  tokenAddress: msg.input.tokenAddress,
+                  txHash: (rsp as any)?.txHash,
+                },
+                sender?.tab?.id ?? null,
+              );
+              broadcastStateChange();
+              return { ok: true, ...rsp };
+            } catch (e: any) {
+              console.warn('[trade.sell.auto.failed]', {
+                flowId,
+                chainId: msg.input.chainId,
+                token: msg.input.tokenAddress,
+                elapsedMs: Date.now() - start,
+                error: String(e?.shortMessage || e?.message || e || ''),
+              });
               const reason = extractRevertReasonFromError(e);
               if (!reason || reason.toLowerCase().includes('zero_input')) {
-                debugLogTxError('tx:sell failed', e, { input: msg.input as any });
+                debugLogTxError('tx:sellWithReceiptAuto failed', e, { input: msg.input as any });
               }
               return { ok: false, revertReason: reason ?? undefined, error: serializeTxError(e) };
             }
@@ -542,6 +757,11 @@ export default defineBackground(() => {
             return txHash ? { ok: true, txHash } : { ok: true };
           }
 
+          case 'tx:checkSellAllowanceInsufficient': {
+            const check = await TradeService.checkSellAllowanceInsufficient(msg.chainId, msg.tokenAddress, msg.tokenInfo);
+            return { ok: true, insufficient: check.insufficient, checked: check.checked };
+          }
+
           case 'tx:bloxroutePrivate': {
             try {
               const txHash = await BloxRouterAPI.sendBscPrivateTx(msg.signedTx);
@@ -552,20 +772,64 @@ export default defineBackground(() => {
           }
 
           case 'tx:waitForReceipt': {
-            const client = await RpcService.getClient();
             try {
-              const receipt = await client.waitForTransactionReceipt({ hash: msg.hash });
+              const receipt = await RpcService.waitForTransactionReceiptAny(msg.hash, { chainId: msg.chainId, timeoutMs: 20_000 });
               const ok = receipt.status === 'success';
-              const blockNumber = Number(receipt.blockNumber);
-              const txHash = receipt.transactionHash;
-              const status = receipt.status;
-              const revertReason = !ok ? await tryGetReceiptRevertReason(client, msg.hash, receipt.blockNumber) : null;
+              let finalTxHash = receipt.transactionHash;
+              let finalStatus = receipt.status;
+              let finalBlockNumber = Number(receipt.blockNumber);
+              const client = await RpcService.getClient();
+              let revertReason = !ok ? await tryGetReceiptRevertReason(client, msg.hash, receipt.blockNumber) : null;
+
+              if (!ok) {
+                const tracked = buyInputByTxHash.get(msg.hash);
+                const reasonText = String(revertReason || '');
+                const isNonceLike = classifyBroadcastError(reasonText.toLowerCase()) === 'nonce' || reasonText.toLowerCase().includes('nonce');
+                console.warn('[nonce.repair][buy.receipt.failed]', {
+                  chainId: msg.chainId,
+                  txHash: msg.hash,
+                  tracked: !!tracked,
+                  receiptRetried: tracked?.receiptRetried ?? false,
+                  isNonceLike,
+                  revertReason: reasonText,
+                });
+                if (tracked && !tracked.receiptRetried && isNonceLike) {
+                  tracked.receiptRetried = true;
+                  buyInputByTxHash.set(msg.hash, tracked);
+                  const refreshedNonce = await TradeService.refreshNonce({ chainId: tracked.input.chainId });
+                  console.info('[nonce.repair][buy.receipt.retry]', {
+                    chainId: tracked.input.chainId,
+                    oldTxHash: msg.hash,
+                    refreshedNonce,
+                  });
+                  const retryRsp = await TradeService.buy(tracked.input);
+                  const retryHash = retryRsp.txHash as `0x${string}`;
+                  console.info('[nonce.repair][buy.receipt.retry.sent]', {
+                    chainId: tracked.input.chainId,
+                    oldTxHash: msg.hash,
+                    retryHash,
+                  });
+                  buyInputByTxHash.set(retryHash, { input: tracked.input, receiptRetried: true });
+                  const retryReceipt = await RpcService.waitForTransactionReceiptAny(retryHash, { chainId: tracked.input.chainId, timeoutMs: 20_000, txSide: 'buy' });
+                  finalTxHash = retryReceipt.transactionHash;
+                  finalStatus = retryReceipt.status;
+                  finalBlockNumber = Number(retryReceipt.blockNumber);
+                  revertReason = retryReceipt.status === 'success'
+                    ? null
+                    : await tryGetReceiptRevertReason(client, retryHash, retryReceipt.blockNumber);
+                }
+              }
+
+              if (finalStatus === 'success') {
+                buyInputByTxHash.delete(msg.hash);
+                buyInputByTxHash.delete(finalTxHash);
+              }
               broadcastStateChange();
               return {
-                ok,
-                blockNumber,
-                txHash,
-                status,
+                ok: finalStatus === 'success',
+                blockNumber: finalBlockNumber,
+                txHash: finalTxHash,
+                status: finalStatus,
                 revertReason: revertReason ?? undefined,
               };
             } catch (e: any) {

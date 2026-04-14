@@ -577,8 +577,11 @@ export type BgRequest =
   | { type: 'ai:generateLogo'; prompt: string; size?: string; apiKey: string }
   | { type: 'rpc:prewarm'; input?: { urls?: string[]; force?: boolean; timeoutMs?: number } }
   | { type: 'trade:prewarmTurbo'; input: { chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo } }
+  | { type: 'trade:refreshNonce'; input: { chainId: number } }
   | { type: 'tx:buy'; input: TxBuyInput }
+  | { type: 'tx:buyWithReceiptAuto'; input: TxBuyInput }
   | { type: 'tx:sell'; input: TxSellInput }
+  | { type: 'tx:sellWithReceiptAuto'; input: TxSellInput }
   | { type: 'tx:approve'; chainId: number; tokenAddress: `0x${string}`; spender: `0x${string}`; amountWei: string }
   | {
     type: 'tx:transferNative';
@@ -590,6 +593,7 @@ export type BgRequest =
   }
   | { type: 'tx:waitForReceipt'; hash: `0x${string}`; chainId: number }
   | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
+  | { type: 'tx:checkSellAllowanceInsufficient'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
   | { type: 'twitter:signal'; payload: UnifiedTwitterSignal }
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
@@ -653,6 +657,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true }
   : T extends { type: 'trade:prewarmTurbo' }
   ? { ok: true }
+  : T extends { type: 'trade:refreshNonce' }
+  ? { ok: true }
   : T extends { type: 'tx:approve' }
   ? { ok: true; txHash: `0x${string}` }
   : T extends { type: 'tx:buy' }
@@ -660,7 +666,17 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
     | { ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
+  : T extends { type: 'tx:buyWithReceiptAuto' }
+  ? (
+    | { ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+    | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
+  )
   : T extends { type: 'tx:sell' }
+  ? (
+    | { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+    | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
+  )
+  : T extends { type: 'tx:sellWithReceiptAuto' }
   ? (
     | { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
@@ -678,6 +694,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   }
   : T extends { type: 'tx:approveMaxForSellIfNeeded' }
   ? { ok: true; txHash?: `0x${string}` }
+  : T extends { type: 'tx:checkSellAllowanceInsufficient' }
+  ? { ok: true; insufficient: boolean; checked?: Array<{ token: string; spender: string; allowance: string }> }
   : T extends { type: 'tx:bloxroutePrivate' }
   ? { ok: true; txHash?: `0x${string}` }
   : T extends { type: 'twitter:signal' }

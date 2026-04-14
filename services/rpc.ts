@@ -2,6 +2,8 @@ import { createPublicClient, http, fallback, keccak256, parseEther, type PublicC
 import { bsc } from 'viem/chains';
 import { SettingsService } from './settings';
 import BloxRouterAPI from '@/services/api/bloxRouter';
+import { classifyBroadcastError } from '@/utils/txErrorClassify';
+import { isAllowanceLikeText } from '@/utils/txErrorClassify';
 
 export type BroadcastTxVia = 'bloxroute' | 'rpc';
 export type BroadcastTxResult = {
@@ -86,23 +88,60 @@ export class RpcService {
   }
 
   private static getProtectedUrlsForSide(chainConfig: any, txSide?: BroadcastTxSide): string[] {
-    const baseUrls = this.normalizeUrls(chainConfig?.protectedRpcUrls ?? []);
-    const buyUrls = this.normalizeUrls((chainConfig as any)?.protectedRpcUrlsBuy ?? []);
-    const sellUrls = this.normalizeUrls((chainConfig as any)?.protectedRpcUrlsSell ?? []);
-    const sideUrls = txSide === 'buy' ? buyUrls : txSide === 'sell' ? sellUrls : [];
-    return sideUrls.length > 0 ? sideUrls : baseUrls;
+    const groups = this.getRpcUrlGroups(chainConfig);
+    const sideUrls = txSide === 'buy' ? groups.protectedBuy : txSide === 'sell' ? groups.protectedSell : [];
+    return sideUrls.length > 0 ? sideUrls : groups.protectedBase;
   }
 
-  static async getProtectedPendingNonce(input: {
+  private static getRpcUrlGroups(chainConfig: any): {
+    public: string[];
+    protectedBase: string[];
+    protectedBuy: string[];
+    protectedSell: string[];
+  } {
+    return {
+      public: this.normalizeUrls(chainConfig?.rpcUrls ?? []),
+      protectedBase: this.normalizeUrls(chainConfig?.protectedRpcUrls ?? []),
+      protectedBuy: this.normalizeUrls((chainConfig as any)?.protectedRpcUrlsBuy ?? []),
+      protectedSell: this.normalizeUrls((chainConfig as any)?.protectedRpcUrlsSell ?? []),
+    };
+  }
+
+  private static getUrlsByScope(
+    chainConfig: any,
+    txSide: BroadcastTxSide | undefined,
+    scope: 'protected' | 'public' | 'both',
+    opts?: { includeAllProtectedWhenNoSide?: boolean }
+  ): string[] {
+    const groups = this.getRpcUrlGroups(chainConfig);
+    const includeAllProtectedWhenNoSide = !!opts?.includeAllProtectedWhenNoSide;
+    const protectedUrls = txSide
+      ? this.getProtectedUrlsForSide(chainConfig, txSide)
+      : includeAllProtectedWhenNoSide
+        ? this.normalizeUrls([...groups.protectedBase, ...groups.protectedBuy, ...groups.protectedSell])
+        : groups.protectedBase;
+    if (scope === 'protected') return protectedUrls;
+    if (scope === 'public') return groups.public;
+    return this.normalizeUrls([...protectedUrls, ...groups.public]);
+  }
+
+  private static mergeRpcUrlsForReceipt(chainConfig: any, txSide?: BroadcastTxSide): string[] {
+    // Receipt polling should never miss tx hashes sent via side-specific protected routes.
+    // When txSide is unknown, include all protected pools to maximize observability.
+    return this.getUrlsByScope(chainConfig, txSide, 'both', { includeAllProtectedWhenNoSide: true });
+  }
+
+  static async getObservedPendingNonce(input: {
     chainId: number;
     address: `0x${string}`;
     txSide?: BroadcastTxSide;
     prefer?: 'min' | 'max';
+    scope?: 'protected' | 'public' | 'both';
   }): Promise<number | null> {
     const settings = await SettingsService.get();
     const chainConfig = settings.chains[input.chainId];
     if (!chainConfig) return null;
-    const urls = this.getProtectedUrlsForSide(chainConfig, input.txSide);
+    const urls = this.getUrlsByScope(chainConfig, input.txSide, input.scope ?? 'both', { includeAllProtectedWhenNoSide: true });
     if (urls.length === 0) return null;
     const values = await Promise.allSettled(
       urls.map(async (url) => {
@@ -118,8 +157,44 @@ export class RpcService {
       nonces.push(Math.floor(nonce));
     }
     if (!nonces.length) return null;
-    if (input.prefer === 'max') return Math.max(...nonces);
-    return Math.min(...nonces);
+    if (input.prefer === 'min') return Math.min(...nonces);
+    return Math.max(...nonces);
+  }
+
+  static async waitForTransactionReceiptAny(
+    hash: `0x${string}`,
+    opts?: { chainId?: number; txSide?: BroadcastTxSide; timeoutMs?: number }
+  ): Promise<any> {
+    const timeoutMs = Math.max(5_000, Number(opts?.timeoutMs ?? 20_000));
+    const settings = await SettingsService.get();
+    const chainId = opts?.chainId ?? settings.chainId;
+    const chainConfig = settings.chains[chainId];
+    const urls = this.mergeRpcUrlsForReceipt(chainConfig, opts?.txSide);
+    if (urls.length === 0) {
+      const client = await this.getClient();
+      return await (client as any).waitForTransactionReceipt({ hash, timeout: timeoutMs });
+    }
+
+    const tasks = urls.map(async (url) => {
+      const client = this.getClientForUrl(url) as any;
+      return await client.waitForTransactionReceipt({ hash, timeout: timeoutMs });
+    });
+
+    try {
+      return await Promise.any(tasks);
+    } catch {
+      // One last direct receipt probe across all routes in case polling timeout was hit right before inclusion.
+      const probes = await Promise.allSettled(
+        urls.map(async (url) => {
+          const client = this.getClientForUrl(url) as any;
+          return await client.getTransactionReceipt({ hash });
+        }),
+      );
+      for (const item of probes) {
+        if (item.status === 'fulfilled' && item.value) return item.value;
+      }
+      throw new Error(`Transaction receipt wait timeout after ${timeoutMs}ms`);
+    }
   }
 
   private static async sendBundleViaRpc(
@@ -282,6 +357,24 @@ export class RpcService {
     const tryBroadcast = async (urls: string[], includeBloxroute: boolean) => {
       const bundleFailures: string[] = [];
       const rawFailures: string[] = [];
+      const isDeterministicSellAllowanceFailure = (detail: string) => txSide === 'sell' && isAllowanceLikeText(detail);
+      const extractErrText = (e: any) => {
+        const texts: string[] = [];
+        const push = (v: any) => {
+          if (typeof v !== 'string') return;
+          const t = v.trim();
+          if (t) texts.push(t);
+        };
+        push(e?.shortMessage);
+        push(e?.message);
+        push(e?.details);
+        push(e?.cause?.message);
+        push(e?.cause?.details);
+        if (Array.isArray(e?.metaMessages)) {
+          for (const x of e.metaMessages) push(x);
+        }
+        return texts.join(' | ') || String(e || 'unknown error');
+      };
       const bloxHeader = (settings.bloxrouteAuthHeader ?? '').trim();
       const bloxEnabledBySide =
         txSide === 'buy'
@@ -291,35 +384,27 @@ export class RpcService {
             : true;
       const willUseBloxroute = includeBloxroute && this.bloxroutePrivateTxEnabled && bloxHeader && bloxEnabledBySide;
       if (bundlePriorityMode && bundleSignerContext) {
-        const bundlePromises: Array<Promise<BroadcastTxResult>> = [];
-        if (willUseBloxroute) {
-          bundlePromises.push(
-            (async () => {
-              try {
-                const tipTx = await bundleSignerContext.account.signTransaction({
-                  to: this.bloxrouteDynamicFeeReceiver,
-                  value: priorityFeeWei,
-                  gas: this.bloxrouteDynamicFeeTxGas,
-                  gasPrice: bundleSignerContext.gasPrice,
-                  chain: bsc,
-                  chainId: bundleSignerContext.chainId,
-                  nonce: bundleSignerContext.nonce + 1,
-                  data: '0x',
-                });
-                await BloxRouterAPI.sendBscBundle([signedTx, tipTx]);
-                return { txHash: keccak256(signedTx) as `0x${string}`, via: 'bloxroute', isBundle: true };
-              } catch (e: any) {
-                bundleFailures.push(`bloxroute: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
-                console.error('Error broadcasting tx via BloxRoute bundle:', e);
-                throw e;
-              }
-            })(),
-          );
-        }
+        const rpcBundlePromises: Array<Promise<BroadcastTxResult>> = [];
+        let rpcBundleNonceError: string | null = null;
+        let rpcBundleDeterministicError: string | null = null;
+        const runBloxBundle = async () => {
+          const tipTx = await bundleSignerContext.account.signTransaction({
+            to: this.bloxrouteDynamicFeeReceiver,
+            value: priorityFeeWei,
+            gas: this.bloxrouteDynamicFeeTxGas,
+            gasPrice: bundleSignerContext.gasPrice,
+            chain: bsc,
+            chainId: bundleSignerContext.chainId,
+            nonce: bundleSignerContext.nonce + 1,
+            data: '0x',
+          });
+          await BloxRouterAPI.sendBscBundle([signedTx, tipTx]);
+          return { txHash: keccak256(signedTx) as `0x${string}`, via: 'bloxroute', isBundle: true } as BroadcastTxResult;
+        };
         for (const url of urls) {
           const tipReceiver = this.getBundleTipReceiver(url);
           if (!tipReceiver) continue;
-          bundlePromises.push(
+          rpcBundlePromises.push(
             (async () => {
               const client = this.getClientForUrl(url);
               try {
@@ -336,62 +421,109 @@ export class RpcService {
                 const txHash = await this.sendBundleViaRpc(client, signedTx, tipTx);
                 return { txHash, via: 'rpc', rpcUrl: url, isBundle: true };
               } catch (e: any) {
-                bundleFailures.push(`${url}: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
+                const detail = extractErrText(e);
+                bundleFailures.push(`${url}: ${detail}`);
+                if (!rpcBundleNonceError && classifyBroadcastError(detail) === 'nonce') {
+                  rpcBundleNonceError = `${url}: ${detail}`;
+                }
+                if (!rpcBundleDeterministicError && isDeterministicSellAllowanceFailure(detail)) {
+                  rpcBundleDeterministicError = `${url}: ${detail}`;
+                }
                 console.error(`Error broadcasting tx bundle to ${url}:`, e);
                 throw e;
               }
             })(),
           );
         }
-        if (bundlePromises.length === 0) {
+        if (rpcBundlePromises.length === 0 && !willUseBloxroute) {
           throw new Error('Priority fee enabled but no bundle-capable route available. Configure blockrazor/bloxroute bundle route or disable priority fee.');
         }
-        try {
-          return await Promise.any(bundlePromises);
-        } catch {
-          const detail = bundleFailures.length ? ` Details: ${bundleFailures.join(' | ')}` : '';
-          throw new Error(`Failed to broadcast transaction via bundle routes.${detail}`);
+        if (rpcBundlePromises.length > 0) {
+          try {
+            return await Promise.any(rpcBundlePromises);
+          } catch {
+          }
         }
+        if (rpcBundleDeterministicError) {
+          throw new Error(`Bundle deterministic sell failure detected. ${rpcBundleDeterministicError}`);
+        }
+        if (rpcBundleNonceError) {
+          throw new Error(`Bundle nonce mismatch detected. ${rpcBundleNonceError}`);
+        }
+        if (willUseBloxroute) {
+          try {
+            return await runBloxBundle();
+          } catch (e: any) {
+            const detail = extractErrText(e);
+            bundleFailures.push(`bloxroute: ${detail}`);
+            console.error('Error broadcasting tx via BloxRoute bundle:', e);
+          }
+        }
+        const detail = bundleFailures.length ? ` Details: ${bundleFailures.join(' | ')}` : '';
+        throw new Error(`Failed to broadcast transaction via bundle routes.${detail}`);
       }
 
-      const rawPromises: Array<Promise<BroadcastTxResult>> = [];
-      if (willUseBloxroute) {
-        rawPromises.push(
-          (async () => {
-            try {
-              const txHash = await BloxRouterAPI.sendBscPrivateTx(signedTx);
-              if (!txHash) throw new Error('BloxRoute did not return tx hash');
-              return { txHash, via: 'bloxroute' };
-            } catch (e: any) {
-              rawFailures.push(`bloxroute: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
-              console.error('Error broadcasting tx via BloxRoute:', e);
-              throw e;
-            }
-          })(),
-        );
-      }
+      let rawDeterministicError: string | null = null;
+      const runBloxRaw = async (): Promise<BroadcastTxResult> => {
+        const txHash = await BloxRouterAPI.sendBscPrivateTx(signedTx);
+        if (!txHash) throw new Error('BloxRoute did not return tx hash');
+        return { txHash, via: 'bloxroute' };
+      };
 
+      const rpcRawPromises: Array<Promise<BroadcastTxResult>> = [];
       for (const url of urls) {
-        rawPromises.push(
+        rpcRawPromises.push(
           (async () => {
             const client = this.getClientForUrl(url);
             try {
               const txHash = await client.sendRawTransaction({ serializedTransaction: signedTx });
               return { txHash, via: 'rpc', rpcUrl: url, isBundle: false };
             } catch (e: any) {
-              rawFailures.push(`${url}: ${String(e?.shortMessage || e?.message || e || 'unknown error')}`);
-              console.error(`Error broadcasting tx to ${url}:`, e);
-              const msg = String(e?.shortMessage || e?.message || '').toLowerCase();
-              const isAlreadyKnown =
-                msg.includes('already known') ||
-                msg.includes('known transaction') ||
-                msg.includes('already imported') ||
-                msg.includes('already exists') ||
-                msg.includes('already in mempool');
-              if (isAlreadyKnown) {
-                const txHash = keccak256(signedTx) as `0x${string}`;
-                return { txHash, via: 'rpc', rpcUrl: url };
+              const detail = extractErrText(e);
+              rawFailures.push(`${url}: ${detail}`);
+              if (!rawDeterministicError && isDeterministicSellAllowanceFailure(detail)) {
+                rawDeterministicError = `${url}: ${detail}`;
               }
+              console.error(`Error broadcasting tx to ${url}:`, e);
+              if (classifyBroadcastError(detail) === 'already_known') {
+                const txHash = keccak256(signedTx) as `0x${string}`;
+                return { txHash, via: 'rpc', rpcUrl: url } as BroadcastTxResult;
+              }
+              throw e;
+            }
+          })(),
+        );
+      }
+      if (txSide === 'sell') {
+        try {
+          return await Promise.any(rpcRawPromises);
+        } catch {
+          if (rawDeterministicError) {
+            throw new Error(`Raw deterministic sell failure detected. ${rawDeterministicError}`);
+          }
+          if (willUseBloxroute) {
+            try {
+              return await runBloxRaw();
+            } catch (e: any) {
+              const detail = extractErrText(e);
+              rawFailures.push(`bloxroute: ${detail}`);
+              console.error('Error broadcasting tx via BloxRoute:', e);
+            }
+          }
+          const detail = rawFailures.length ? ` Details: ${rawFailures.join(' | ')}` : '';
+          throw new Error(`Failed to broadcast transaction to any raw route.${detail}`);
+        }
+      }
+      const rawPromises: Array<Promise<BroadcastTxResult>> = [...rpcRawPromises];
+      if (willUseBloxroute) {
+        rawPromises.push(
+          (async () => {
+            try {
+              return await runBloxRaw();
+            } catch (e: any) {
+              const detail = extractErrText(e);
+              rawFailures.push(`bloxroute: ${detail}`);
+              console.error('Error broadcasting tx via BloxRoute:', e);
               throw e;
             }
           })(),

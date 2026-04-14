@@ -62,17 +62,24 @@ export const createLimitOrderExecutor = (deps: {
   onOrdersChanged: () => void;
   onOrderSubmitted?: (input: { order: LimitOrder; txHash: `0x${string}` }) => void;
 }) => {
-  const ensureTxSuccess = async (txHash: `0x${string}`) => {
+  const ensureTxSuccess = async (
+    txHash: `0x${string}`,
+    chainId: number,
+    txSide?: 'buy' | 'sell',
+    phase?: 'buy_submit' | 'sell_submit'
+  ) => {
     try {
-      const client = await RpcService.getClient();
-      const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+      const receipt = await RpcService.waitForTransactionReceiptAny(txHash, { chainId, txSide, timeoutMs: 20_000 });
       if (receipt.status !== 'success') {
+        const client = await RpcService.getClient();
         const reason = await tryGetReceiptRevertReason(client, txHash, receipt.blockNumber);
         throw new Error(reason ?? 'Transaction failed');
       }
     } catch (e: any) {
       const reason = extractRevertReasonFromError(e);
-      throw new Error(reason ?? (typeof e?.message === 'string' ? e.message : String(e)));
+      const msg = reason ?? (typeof e?.message === 'string' ? e.message : String(e));
+      const prefix = phase ? `[${phase}] ` : '';
+      throw new Error(`${prefix}${msg}`);
     }
   };
 
@@ -80,18 +87,15 @@ export const createLimitOrderExecutor = (deps: {
     if (!order.tokenInfo) throw new Error('Token info required');
     if (order.side === 'buy') {
       if (!order.buyBnbAmountWei) throw new Error('Buy amount required');
-      const res = await TradeService.buy({
+      const res = await TradeService.buyWithReceiptAndNonceRecovery({
         chainId: order.chainId,
         tokenAddress: order.tokenAddress,
         bnbAmountWei: order.buyBnbAmountWei,
         tokenInfo: order.tokenInfo,
-      });
+      }, { maxRetry: 1 });
       const txHash = res.txHash as `0x${string}`;
       await patchLimitOrder(order.id, { txHash });
       deps.onOrderSubmitted?.({ order, txHash });
-      await ensureTxSuccess(txHash);
-
-      await TradeService.approveMaxForSellIfNeeded(order.chainId, order.tokenAddress, order.tokenInfo);
 
       try {
         const settings = await SettingsService.get();
@@ -162,21 +166,18 @@ export const createLimitOrderExecutor = (deps: {
     const amountIn = rawAmountIn > balance ? balance : rawAmountIn;
     if (amountIn <= 0n) throw new Error('No balance');
 
-    const approveTx = await TradeService.approveMaxForSellIfNeeded(order.chainId, order.tokenAddress, order.tokenInfo);
-    if (approveTx) {
-      await ensureTxSuccess(approveTx);
-    }
-
-    const { txHash } = await TradeService.sell({
+    const sellInput = {
       chainId: order.chainId,
       tokenAddress: order.tokenAddress,
       tokenAmountWei: amountIn.toString(),
       tokenInfo: order.tokenInfo,
       sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
-    });
+    } as const;
+
+    const firstSell = await TradeService.sellWithReceiptAndAutoRecovery(sellInput, { maxRetry: 1, timeoutMs: 20_000 });
+    let { txHash } = firstSell;
     await patchLimitOrder(order.id, { txHash });
     deps.onOrderSubmitted?.({ order, txHash });
-    await ensureTxSuccess(txHash);
 
     try {
       const type = normalizeLimitOrderType(order.orderType, order.side);

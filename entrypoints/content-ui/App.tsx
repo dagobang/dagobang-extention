@@ -700,6 +700,31 @@ export default function App() {
         ensureTradeSuccessAudioReady();
         if (message?.side === 'buy') playTradeBuySound();
         else playTradeSellSound();
+        return;
+      }
+      if (message.type === 'bg:tradeRetrying') {
+        console.log('[ui.trade.retrying]', {
+          side: message?.side,
+          chainId: message?.chainId,
+          token: message?.tokenAddress,
+          attempt: message?.attempt,
+          reason: message?.reason,
+          ts: Date.now(),
+        });
+        const side = message?.side === 'sell' ? '卖出' : '买入';
+        const attempt = Number(message?.attempt || 1);
+        const reasonRaw = String(message?.reason || '');
+        const text = reasonRaw === 'allowance'
+          ? `${side}检测到授权不足，正在自动补授权并重试（第${attempt}次）...`
+          : reasonRaw === 'nonce'
+            ? `${side}检测到 Nonce 冲突，正在自动修复并重试（第${attempt}次）...`
+            : `${side}失败，正在自动重试（第${attempt}次）...`;
+        toast(text, {
+          id: `trade-retrying:${side}:${String(message?.tokenAddress || '').toLowerCase()}`,
+          icon: '🔁',
+          duration: 3000,
+        });
+        return;
       }
     };
     browser.runtime.onMessage.addListener(listener);
@@ -904,11 +929,18 @@ export default function App() {
       const sym = tokenSymbol ?? '';
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: '🔄' });
       const startTime = Date.now();
+      let buyLoadingClosed = false;
 
       const mainTrade = (async () => {
+        const buyInput = {
+          chainId: settings.chainId,
+          tokenAddress: tokenAddressNormalized,
+          bnbAmountWei: amountIn.toString(),
+          tokenInfo: tokenInfo ?? undefined,
+        } as const;
         const res = await call({
-          type: 'tx:buy',
-          input: { chainId: settings.chainId, tokenAddress: tokenAddressNormalized, bnbAmountWei: amountIn.toString(), tokenInfo: tokenInfo ?? undefined },
+          type: 'tx:buyWithReceiptAuto',
+          input: buyInput,
         } as const);
         if (!res.ok) {
           const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
@@ -921,6 +953,7 @@ export default function App() {
         setPendingBuyTokenMinOutWei(tokenMinOutWei);
         const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl, res.isBundle);
         toast.success(t('contentUi.toast.buySuccessTime', locale, [sym, elapsed.toFixed(2), provider]), { id: toastId, icon: '✅' });
+        buyLoadingClosed = true;
 
         if (tokenInfo) {
           void call({
@@ -933,20 +966,7 @@ export default function App() {
 
         await Promise.all([refreshToken(true), refreshAll()]);
         startFastPolling();
-
-        const receipt = await call({
-          type: 'tx:waitForReceipt',
-          hash: res.txHash,
-          chainId: settings.chainId
-        });
-        if (!receipt.ok) {
-          const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
-          throw new Error(detail || 'Transaction failed');
-        }
-        toast.success(t('contentUi.toast.buyDone', locale, [sym, amountStr]), { icon: '✅' });
         setPendingBuyTokenMinOutWei(null);
-
-        await Promise.all([refreshToken(true), refreshAll()]);
 
         try {
           const config = settings.advancedAutoSell;
@@ -993,7 +1013,10 @@ export default function App() {
         } catch (e) {
           console.error('auto sell xsniper create orders failed', e);
         }
-      })();
+      })().catch((e: any) => {
+        if (!buyLoadingClosed) toast.dismiss(toastId);
+        throw e;
+      });
 
       let gmgnTrade: Promise<unknown> | null = null;
       if (gmgnBuyEnabled && siteInfo?.platform === 'gmgn') {
@@ -1039,75 +1062,70 @@ export default function App() {
       }
       if (!isTurbo && amountWei <= 0n) throw new Error('Invalid amount');
 
-      if (tokenInfo) {
-        const approveRes = await call({
-          type: 'tx:approveMaxForSellIfNeeded',
-          chainId: settings.chainId,
-          tokenAddress: tokenAddressNormalized,
-          tokenInfo,
-        } as const);
-        if (approveRes.txHash) {
-          const receipt = await call({
-            type: 'tx:waitForReceipt',
-            hash: approveRes.txHash,
-            chainId: settings.chainId
-          } as const);
-          if (!receipt.ok) {
-            const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
-            throw new Error(detail || 'Transaction failed');
-          }
-        }
-      }
-
       ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: '🔄' });
       const startTime = Date.now();
+      let sellLoadingClosed = false;
 
       const percentBps = Math.max(1, Math.min(10000, Math.floor(pct * 100)));
+      const sellReqStartedAt = Date.now();
+      console.log('[ui.sell.auto][request.start]', {
+        chainId,
+        token: tokenAddressNormalized,
+        percentBps,
+        isTurbo,
+        ts: sellReqStartedAt,
+      });
       const mainTrade = (async () => {
+        const sellInput = {
+          chainId,
+          tokenAddress: tokenAddressNormalized,
+          tokenAmountWei: isTurbo ? '0' : amountWei.toString(),
+          sellPercentBps: isTurbo ? percentBps : undefined,
+          expectedTokenInWei: isTurbo ? (pendingBuyTokenMinOutWei ?? undefined) : undefined,
+          tokenInfo: tokenInfo ?? undefined
+        } as const;
         const res = await call({
-          type: 'tx:sell',
-          input: {
-            chainId,
-            tokenAddress: tokenAddressNormalized,
-            tokenAmountWei: isTurbo ? '0' : amountWei.toString(),
-            sellPercentBps: isTurbo ? percentBps : undefined,
-            expectedTokenInWei: isTurbo ? (pendingBuyTokenMinOutWei ?? undefined) : undefined,
-            tokenInfo: tokenInfo ?? undefined
-          },
+          type: 'tx:sellWithReceiptAuto',
+          input: sellInput,
         } as const);
+        console.log('[ui.sell.auto][request.response]', {
+          chainId,
+          token: tokenAddressNormalized,
+          ok: !!res?.ok,
+          elapsedMs: Date.now() - sellReqStartedAt,
+          ts: Date.now(),
+        });
         if (!res.ok) {
-          const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
-          throw new Error(detail || 'Transaction failed');
+          const detail = res.revertReason || res.error?.shortMessage || res.error?.message || 'Transaction failed';
+          throw new Error(detail);
         }
 
         const elapsed = (Date.now() - startTime) / 1000;
         setTxHash(res.txHash);
         const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl, res.isBundle);
         toast.success(t('contentUi.toast.sellSuccessTime', locale, [sym, elapsed.toFixed(2), provider]), { id: toastId, icon: '✅' });
-
+        sellLoadingClosed = true;
         await Promise.all([refreshToken(true), refreshAll()]);
         startFastPolling();
-
-        const receipt = await call({
-          type: 'tx:waitForReceipt',
-          hash: res.txHash,
-          chainId: settings.chainId
-        });
-        if (!receipt.ok) {
-          const detail = receipt.revertReason || receipt.error?.shortMessage || receipt.error?.message;
-          throw new Error(detail || 'Transaction failed');
-        }
-        toast.success(t('contentUi.toast.sellDone', locale, [sym, pct]), { icon: '✅' });
-        await Promise.all([refreshToken(true), refreshAll()]);
         setPendingBuyTokenMinOutWei(null);
 
         // Cancel limit order if exists
         if (percentBps === 10000) {
           await call({ type: 'limitOrder:cancelAll', chainId, tokenAddress: tokenAddressNormalized } as const);
         }
-      })();
+      })().catch((e: any) => {
+        console.warn('[ui.sell.auto][request.failed]', {
+          chainId,
+          token: tokenAddressNormalized,
+          elapsedMs: Date.now() - sellReqStartedAt,
+          error: String(e?.message || e || ''),
+          ts: Date.now(),
+        });
+        if (!sellLoadingClosed) toast.dismiss(toastId);
+        throw e;
+      });
 
       let gmgnTrade: Promise<unknown> | null = null;
       if (gmgnSellEnabled && siteInfo?.platform === 'gmgn' && amountWei > 0n) {

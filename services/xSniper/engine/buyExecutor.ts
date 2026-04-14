@@ -451,12 +451,12 @@ export const tryAutoBuyOnce = async (input: {
     let rsp: any;
     let tokenInfoForTrade = tokenInfo;
     try {
-      rsp = await TradeService.buy({
+      rsp = await TradeService.buyWithReceiptAndNonceRecovery({
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         bnbAmountWei: amountWei.toString(),
         tokenInfo: tokenInfoForTrade,
-      } as any);
+      } as any, { maxRetry: 1 });
     } catch {
     }
     if (!rsp) {

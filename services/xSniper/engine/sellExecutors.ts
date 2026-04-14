@@ -154,19 +154,16 @@ export const createSellExecutors = (deps: {
       try {
         await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
       } catch {}
-      try {
-        await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
-      } catch {}
       let rsp: any;
       let tokenInfoForTrade = tokenInfo;
       try {
-        rsp = await TradeService.sell({
+        rsp = await TradeService.sellWithReceiptAndAutoRecovery({
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
           tokenAmountWei: amountWei.toString(),
           tokenInfo: tokenInfoForTrade,
           sellPercentBps: bps,
-        } as any);
+        } as any, { maxRetry: 1, timeoutMs: 20_000 });
       } catch {
       }
       if (!rsp) {
@@ -178,13 +175,14 @@ export const createSellExecutors = (deps: {
         });
         return;
       }
+      const finalTxHash = (rsp as any)?.txHash as `0x${string}`;
       void deps.broadcastToActiveTabs({
         type: 'bg:tradeSuccess',
         source: 'xsniper',
         side: 'sell',
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
-        txHash: (rsp as any)?.txHash,
+        txHash: finalTxHash,
       });
 
       deps.emitRecord({
@@ -193,7 +191,7 @@ export const createSellExecutors = (deps: {
         tokenSymbol: tokenInfoForTrade.symbol ? String(tokenInfoForTrade.symbol) : baseRecord.tokenSymbol,
         tokenName: tokenInfoForTrade.name ? String(tokenInfoForTrade.name) : baseRecord.tokenName,
         sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
-        txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
+        txHash: finalTxHash as any,
       });
       deps.cleanupPosKey(posKey);
     } finally {
@@ -305,19 +303,16 @@ export const createSellExecutors = (deps: {
       try {
         await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
       } catch {}
-      try {
-        await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo);
-      } catch {}
       let rsp: any;
       let tokenInfoForTrade = tokenInfo;
       try {
-        rsp = await TradeService.sell({
+        rsp = await TradeService.sellWithReceiptAndAutoRecovery({
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
           tokenAmountWei: amountWei.toString(),
           tokenInfo: tokenInfoForTrade,
           sellPercentBps: bps,
-        } as any);
+        } as any, { maxRetry: 1, timeoutMs: 20_000 });
       } catch {
       }
       if (!rsp) {
@@ -329,13 +324,14 @@ export const createSellExecutors = (deps: {
         });
         return;
       }
+      const finalTxHash = (rsp as any)?.txHash as `0x${string}`;
       void deps.broadcastToActiveTabs({
         type: 'bg:tradeSuccess',
         source: 'xsniper',
         side: 'sell',
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
-        txHash: (rsp as any)?.txHash,
+        txHash: finalTxHash,
       });
 
       deps.emitRecord({
@@ -344,7 +340,7 @@ export const createSellExecutors = (deps: {
         tokenSymbol: tokenInfoForTrade.symbol ? String(tokenInfoForTrade.symbol) : baseRecord.tokenSymbol,
         tokenName: tokenInfoForTrade.name ? String(tokenInfoForTrade.name) : baseRecord.tokenName,
         sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
-        txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
+        txHash: finalTxHash as any,
       });
     } finally {
       rapidSellInFlight.delete(dedupeKey);

@@ -1,4 +1,4 @@
-import { encodeAbiParameters, encodeFunctionData, erc20Abi, parseAbi, parseAbiParameters } from 'viem';
+import { encodeFunctionData, erc20Abi } from 'viem';
 import { RpcService } from '../rpc';
 import { WalletService } from '../wallet';
 import { SettingsService } from '../settings';
@@ -12,35 +12,53 @@ import { dagobangAbi } from '@/constants/contracts/abi';
 import { Address, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadline, getRouterSwapDesc, getSlippageBps, getV3FeeForDesc } from './tradeTypes';
 import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInDex, resolveBridgeHopExactIn, resolveDexExactIn } from './tradeDex';
 import { getGasPriceWei, prewarmNonce, sendTransaction } from './tradeTx';
+import { getSellSpenders, hasInsufficientSellAllowance, type SellAllowanceCheckResult } from './sellAllowance';
+import { encodeFourMemeBuyTokenData, encodeFourMemeUint256, tryFourMemeBuyEstimatedAmount, tryFourMemeSellEstimatedFunds } from './tradeFourMeme';
 import { formatBroadcastProvider } from '@/utils/format';
-import { getDexPoolPrefer } from '@/utils/dexUtils';
-
-function parseGweiToWei(value: string): bigint {
-  const trimmed = value.trim();
-  if (!trimmed) return 0n;
-  const match = trimmed.match(/^(\d+)(?:\.(\d+))?$/);
-  if (!match) return 0n;
-  const intPart = match[1] || '0';
-  const fracPartRaw = match[2] || '';
-  const fracPadded = (fracPartRaw + '000000000').slice(0, 9);
-  const intBig = BigInt(intPart);
-  const fracBig = BigInt(fracPadded);
-  return intBig * 1000000000n + fracBig;
-}
-
-const tokenManagerHelper3Abi = parseAbi([
-  'function tryBuy(address token, uint256 amount, uint256 funds) view returns (address tokenManager, address quote, uint256 estimatedAmount, uint256 estimatedCost, uint256 estimatedFee, uint256 amountMsgValue, uint256 amountApproval, uint256 amountFunds)',
-  'function trySell(address token, uint256 amount) view returns (address tokenManager, address quote, uint256 funds, uint256 fee)',
-]);
-
-const abiParamsUint256 = parseAbiParameters('uint256');
-const abiParamsFourMemeBuyTokenParams = parseAbiParameters(
-  'uint256 origin, address token, address to, uint256 amount, uint256 maxFunds, uint256 funds, uint256 minAmount'
-);
-const abiParamsFourMemeBuyTokenWrapper = parseAbiParameters('bytes args, uint256 time, bytes signature');
+import { getDexPoolPrefer, parseGweiToWei } from '@/utils/dexUtils';
+import { classifyBroadcastError, collectErrorText, isAllowanceLikeText } from '@/utils/txErrorClassify';
+import { tryGetReceiptRevertReason } from '@/services/tx/errors';
 
 export class TradeService {
   private static sellInFlightByToken = new Set<string>();
+  private static readonly approveInFlightByKey = new Map<string, Promise<`0x${string}`>>();
+  private static readonly fastApproveRetryMaxWaitMs = 800;
+  private static readonly fastApproveRetryPollMs = 200;
+
+  private static makeApproveKey(chainId: number, owner: string, token: string, spender: string) {
+    return `${chainId}:${owner.toLowerCase()}:${token.toLowerCase()}:${spender.toLowerCase()}`;
+  }
+
+  private static async approveMaxForSpenderIfNeeded(input: {
+    chainId: number;
+    tokenAddress: string;
+    owner: `0x${string}`;
+    spender: string;
+    maxUint256: bigint;
+    client: any;
+  }): Promise<`0x${string}` | null> {
+    const allowance = await input.client.readContract({
+      address: input.tokenAddress as `0x${string}`,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [input.owner, input.spender as `0x${string}`]
+    });
+    if (allowance >= input.maxUint256 / 2n) return null;
+
+    const key = this.makeApproveKey(input.chainId, input.owner, input.tokenAddress, input.spender);
+    const inFlight = this.approveInFlightByKey.get(key);
+    if (inFlight) return await inFlight;
+
+    const task = (async () => await this.approve(input.chainId, input.tokenAddress, input.spender, input.maxUint256.toString()))();
+    this.approveInFlightByKey.set(key, task);
+    try {
+      return await task;
+    } finally {
+      const cur = this.approveInFlightByKey.get(key);
+      if (cur === task) this.approveInFlightByKey.delete(key);
+    }
+  }
+
 
   static async quoteBestExactIn(
     chainId: number,
@@ -122,6 +140,108 @@ export class TradeService {
     await Promise.allSettled(warmTasks);
   }
 
+  static async refreshNonce(input: { chainId: number }): Promise<number> {
+    const client = await RpcService.getClient();
+    const account = await WalletService.getSigner();
+    const nextNonce = await prewarmNonce(client, input.chainId, account.address, { force: true });
+    console.info('[nonce.refresh]', {
+      chainId: input.chainId,
+      address: account.address,
+      nextNonce,
+    });
+    return nextNonce;
+  }
+
+  private static isNonceLikeError(e: any): boolean {
+    const msg = collectErrorText(e, true);
+    return classifyBroadcastError(msg) === 'nonce' || msg.includes('nonce');
+  }
+
+  private static isAllowanceLikeError(e: any): boolean {
+    const msg = collectErrorText(e, true);
+    return isAllowanceLikeText(msg);
+  }
+
+  private static async ensureTxSuccess(
+    txHash: `0x${string}`,
+    chainId: number,
+    txSide: 'buy' | 'sell',
+    timeoutMs: number
+  ) {
+    const receipt = await RpcService.waitForTransactionReceiptAny(txHash, {
+      chainId,
+      txSide,
+      timeoutMs,
+    });
+    if (receipt.status === 'success') return;
+    let revertReason: string | null = null;
+    try {
+      const client = await RpcService.getClient();
+      revertReason = await tryGetReceiptRevertReason(client, txHash, receipt.blockNumber);
+    } catch {
+    }
+    throw new Error(revertReason || `${txSide} receipt reverted`);
+  }
+
+  private static async repairSellAllowanceIfNeeded(input: {
+    chainId: number;
+    tokenAddress: string;
+    tokenInfo: TokenInfo;
+    timeoutMs?: number;
+  }): Promise<boolean> {
+    const allowanceCheck = await this.checkSellAllowanceInsufficient(input.chainId, input.tokenAddress, input.tokenInfo);
+    if (!allowanceCheck.insufficient) return false;
+    const approveTx = await this.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, input.tokenInfo);
+    if (approveTx) {
+      await this.waitApproveFastForRetry(input.chainId, approveTx);
+    }
+    return true;
+  }
+
+  private static async waitApproveFastForRetry(chainId: number, approveTx: `0x${string}`): Promise<void> {
+    // Fast path for allowance recovery:
+    // poll receipt briefly and continue as soon as approve is visible/success.
+    // keep total wait short to preserve sniping speed.
+    const client = await RpcService.getClient();
+    const deadline = Date.now() + this.fastApproveRetryMaxWaitMs;
+    const start = Date.now();
+    let polls = 0;
+    console.log('[trade.sell.approve.fastwait][start]', {
+      chainId,
+      approveTx,
+      maxWaitMs: this.fastApproveRetryMaxWaitMs,
+      pollMs: this.fastApproveRetryPollMs,
+    });
+    while (Date.now() < deadline) {
+      polls += 1;
+      try {
+        const receipt = await (client as any).getTransactionReceipt({ hash: approveTx });
+        if (receipt?.status === 'reverted') {
+          throw new Error('approve receipt reverted');
+        }
+        if (receipt?.status === 'success') {
+          console.log('[trade.sell.approve.fastwait][success]', {
+            chainId,
+            approveTx,
+            polls,
+            elapsedMs: Date.now() - start,
+          });
+          return;
+        }
+      } catch {
+      }
+      const remain = deadline - Date.now();
+      if (remain <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(this.fastApproveRetryPollMs, remain)));
+    }
+    console.log('[trade.sell.approve.fastwait][timeout]', {
+      chainId,
+      approveTx,
+      polls,
+      elapsedMs: Date.now() - start,
+    });
+  }
+
   private static isInnerDisk(tokenInfo: TokenInfo): boolean {
     if (tokenInfo.launchpad) {
       // Assuming 'status' 1 means Trading (Outer), anything else (0/2?) is Inner/Launchpad
@@ -157,61 +277,6 @@ export class TradeService {
     return null;
   }
 
-  private static getTokenManagerHelper3Address(chainId: number): Address {
-    const contracts = DeployAddress[chainId as ChainId] || {};
-    return (contracts[ContractNames.TokenManagerHelper3]?.address || ZERO_ADDRESS) as Address;
-  }
-
-  private static async tryFourMemeBuyEstimatedAmount(client: any, chainId: number, token: Address, funds: bigint) {
-    const helperAddress = this.getTokenManagerHelper3Address(chainId);
-    if (helperAddress === ZERO_ADDRESS) return null;
-    const res = await client.readContract({
-      address: helperAddress,
-      abi: tokenManagerHelper3Abi,
-      functionName: 'tryBuy',
-      args: [token, 0n, funds],
-    });
-    const estimatedAmount = res[2] as bigint;
-    return { estimatedAmount };
-  }
-
-  private static async tryFourMemeSellEstimatedFunds(client: any, chainId: number, token: Address, amount: bigint) {
-    const helperAddress = this.getTokenManagerHelper3Address(chainId);
-    if (helperAddress === ZERO_ADDRESS) return null;
-    const res = await client.readContract({
-      address: helperAddress,
-      abi: tokenManagerHelper3Abi,
-      functionName: 'trySell',
-      args: [token, amount],
-    });
-    const tokenManager = res[0] as Address;
-    const funds = res[2] as bigint;
-    const fee = res[3] as bigint;
-    return { tokenManager, funds, fee };
-  }
-
-  private static encodeFourMemeUint256(value: bigint) {
-    return encodeAbiParameters(abiParamsUint256, [value]) as `0x${string}`;
-  }
-
-  private static encodeFourMemeBuyTokenData(input: {
-    token: Address;
-    to: Address;
-    funds: bigint;
-    minAmount: bigint;
-  }) {
-    const args = encodeAbiParameters(abiParamsFourMemeBuyTokenParams, [
-      0n,
-      input.token,
-      input.to,
-      0n,
-      0n,
-      input.funds,
-      input.minAmount,
-    ]);
-    return encodeAbiParameters(abiParamsFourMemeBuyTokenWrapper, [args, 0n, '0x']) as `0x${string}`;
-  }
-
   static async buy(input: TxBuyInput) {
     const settings = await SettingsService.get();
     const routerAddress = DeployAddress[input.chainId as ChainId]?.DagobangRouter?.address;
@@ -229,9 +294,10 @@ export class TradeService {
     const chainSettings = settings.chains[input.chainId];
     const gasPreset = input.gasPreset ?? chainSettings.buyGasPreset ?? chainSettings.gasPreset;
     const gasPriceFromInput = typeof input.gasPriceGwei === 'string' ? parseGweiToWei(input.gasPriceGwei) : 0n;
-    const gasPriceWei = gasPriceFromInput > 0n
+    const configuredGasPriceWei = gasPriceFromInput > 0n
       ? gasPriceFromInput
       : getGasPriceWei(chainSettings, gasPreset, 'buy');
+    const gasPriceWei = configuredGasPriceWei;
 
     const perfEnabled = isTurbo;
     const perfStart = perfEnabled ? Date.now() : 0;
@@ -250,8 +316,6 @@ export class TradeService {
       : undefined;
 
     const isInner = this.isInnerDisk(tokenInfo);
-    const platformLower = tokenInfo.launchpad_platform?.toLowerCase() || '';
-    const isInnerFourMeme = isInner && platformLower.includes('fourmeme');
     const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
 
     const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
@@ -316,7 +380,7 @@ export class TradeService {
         if (!isTurbo) {
           try {
             const est = await timeStep('fourmeme:tryBuy', () =>
-              this.tryFourMemeBuyEstimatedAmount(client, input.chainId, tokenOut as Address, fundsForEstimate)
+              tryFourMemeBuyEstimatedAmount(client, input.chainId, tokenOut as Address, fundsForEstimate)
             );
             if (est && est.estimatedAmount > 0n) {
               const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
@@ -330,14 +394,14 @@ export class TradeService {
 
         const wantEncodedBuy = tokenInfo.aiCreator === true && currentRouterToken === ZERO_ADDRESS;
         if (wantEncodedBuy) {
-          dataForDesc = this.encodeFourMemeBuyTokenData({
+          dataForDesc = encodeFourMemeBuyTokenData({
             token: tokenOut as Address,
             to,
             funds: amountIn,
             minAmount,
           });
         } else {
-          dataForDesc = this.encodeFourMemeUint256(minAmount);
+          dataForDesc = encodeFourMemeUint256(minAmount);
         }
       }
 
@@ -431,7 +495,139 @@ export class TradeService {
     return { txHash, tokenMinOutWei: minOut.toString(), broadcastVia, broadcastUrl, isBundle };
   }
 
-  static async approveMaxForSellIfNeeded(chainId: number, tokenAddress: string, tokenInfo: TokenInfo) {
+  static async buyWithReceiptAndNonceRecovery(
+    input: TxBuyInput,
+    opts?: { timeoutMs?: number; maxRetry?: number; onRetry?: (ctx: { side: 'buy'; attempt: number; reason: 'nonce' }) => void | Promise<void> }
+  ) {
+    const timeoutMs = opts?.timeoutMs ?? 20_000;
+    const maxRetry = opts?.maxRetry ?? 1;
+    let lastErr: any;
+
+    for (let attempt = 0; attempt <= maxRetry; attempt++) {
+      try {
+        const rsp = await this.buy(input);
+        await this.ensureTxSuccess(rsp.txHash, input.chainId, 'buy', timeoutMs);
+        return rsp;
+      } catch (e: any) {
+        lastErr = e;
+        if (attempt >= maxRetry || !this.isNonceLikeError(e)) break;
+        await opts?.onRetry?.({ side: 'buy', attempt: attempt + 1, reason: 'nonce' });
+        await this.refreshNonce({ chainId: input.chainId });
+      }
+    }
+    throw lastErr;
+  }
+
+  static async sellWithReceiptAndAutoRecovery(
+    input: TxSellInput,
+    opts?: {
+      timeoutMs?: number;
+      maxRetry?: number;
+      onRetry?: (ctx: { side: 'sell'; attempt: number; nonceLike: boolean; allowanceRepaired: boolean }) => void | Promise<void>;
+    }
+  ) {
+    if (!input.tokenInfo) throw new Error('Token info required');
+    const flowId = `sell-auto:${input.chainId}:${input.tokenAddress.toLowerCase()}:${Date.now().toString(36)}`;
+    const flowStart = Date.now();
+    console.log('[trade.sell.auto][start]', {
+      flowId,
+      chainId: input.chainId,
+      token: input.tokenAddress,
+      maxRetry: opts?.maxRetry ?? 1,
+      timeoutMs: opts?.timeoutMs ?? 20_000,
+    });
+    const timeoutMs = opts?.timeoutMs ?? 20_000;
+    const maxRetry = opts?.maxRetry ?? 1;
+    let lastErr: any;
+
+    for (let attempt = 0; attempt <= maxRetry; attempt++) {
+      const attemptNo = attempt + 1;
+      const attemptStart = Date.now();
+      console.log('[trade.sell.auto][attempt.start]', { flowId, attempt: attemptNo });
+      try {
+        const rsp = await this.sell(input, {
+          traceId: flowId,
+          attempt: attemptNo,
+          onAllowanceRepairStart: async () => {
+            console.log('[trade.sell.auto][allowance.repair.start]', { flowId, attempt: attemptNo });
+            await opts?.onRetry?.({
+              side: 'sell',
+              attempt: attemptNo,
+              nonceLike: false,
+              allowanceRepaired: true,
+            });
+          },
+        });
+        await this.ensureTxSuccess(rsp.txHash, input.chainId, 'sell', timeoutMs);
+        console.log('[trade.sell.auto][attempt.success]', {
+          flowId,
+          attempt: attemptNo,
+          txHash: rsp.txHash,
+          elapsedMs: Date.now() - attemptStart,
+          totalElapsedMs: Date.now() - flowStart,
+        });
+        return rsp;
+      } catch (e: any) {
+        lastErr = e;
+        console.warn('[trade.sell.auto][attempt.failed]', {
+          flowId,
+          attempt: attemptNo,
+          elapsedMs: Date.now() - attemptStart,
+          error: String(e?.shortMessage || e?.message || e || ''),
+        });
+        if (attempt >= maxRetry) break;
+        const nonceLike = this.isNonceLikeError(e);
+        const allowanceLike = this.isAllowanceLikeError(e);
+        if (nonceLike || allowanceLike) {
+          console.log('[trade.sell.auto][retry.signal]', {
+            flowId,
+            attempt: attemptNo,
+            nonceLike,
+            allowanceLike,
+          });
+          await opts?.onRetry?.({
+            side: 'sell',
+            attempt: attemptNo,
+            nonceLike,
+            allowanceRepaired: allowanceLike,
+          });
+        }
+        let allowanceRepaired = false;
+        try {
+          allowanceRepaired = await this.repairSellAllowanceIfNeeded({
+            chainId: input.chainId,
+            tokenAddress: input.tokenAddress,
+            tokenInfo: input.tokenInfo,
+            timeoutMs,
+          });
+        } catch (repairErr: any) {
+          lastErr = repairErr;
+          console.warn('[trade.sell.auto][repair.failed]', {
+            flowId,
+            attempt: attemptNo,
+            error: String(repairErr?.shortMessage || repairErr?.message || repairErr || ''),
+          });
+          break;
+        }
+        if (!nonceLike && !allowanceRepaired && !this.isAllowanceLikeError(e)) break;
+        console.log('[trade.sell.auto][nonce.refresh]', { flowId, attempt: attemptNo, allowanceRepaired, nonceLike });
+        await this.refreshNonce({ chainId: input.chainId });
+      }
+    }
+    console.warn('[trade.sell.auto][final.failed]', {
+      flowId,
+      totalElapsedMs: Date.now() - flowStart,
+      error: String(lastErr?.shortMessage || lastErr?.message || lastErr || ''),
+    });
+    throw lastErr;
+  }
+
+  static async approveMaxForSellIfNeeded(
+    chainId: number,
+    tokenAddress: string,
+    tokenInfo: TokenInfo,
+    opts?: { extraSpenders?: string[] }
+  ) {
     const routerAddress = DeployAddress[chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
 
@@ -439,45 +635,87 @@ export class TradeService {
     const client = await RpcService.getClient();
 
     const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
-    const platform = tokenInfo.launchpad_platform?.toLowerCase();
-    const launchpadConfig = platform ? this.getLaunchpadConfig(tokenInfo, chainId) : null;
-
-    const spenders: string[] = [routerAddress];
-    if (launchpadConfig?.manager && launchpadConfig.manager !== ZERO_ADDRESS && launchpadConfig.manager.toLowerCase() !== routerAddress.toLowerCase()) {
-      spenders.push(launchpadConfig.manager);
-    }
-
-    let lastTxHash: `0x${string}` | null = null;
-    for (const spender of spenders) {
-      const allowance = await client.readContract({
-        address: tokenAddress as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'allowance',
-        args: [account.address, spender as `0x${string}`]
-      });
-      if (allowance >= maxUint256 / 2n) continue;
-      lastTxHash = await this.approve(chainId, tokenAddress, spender, maxUint256.toString());
-    }
-
+    const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
     const isInner = this.isInnerDisk(tokenInfo);
     const isInnerFourMeme = isInner && platform.includes('fourmeme');
+
+    const spenders = getSellSpenders({
+      chainId,
+      tokenInfo,
+      routerAddress,
+      extraSpenders: opts?.extraSpenders,
+      getLaunchpadManager: (ti, cid) => {
+        const platform = ti.launchpad_platform?.toLowerCase() || '';
+        const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
+        return cfg?.manager ?? null;
+      },
+    });
+    let lastTxHash: `0x${string}` | null = null;
+    for (const spender of spenders) {
+      const txHash = await this.approveMaxForSpenderIfNeeded({
+        chainId,
+        tokenAddress,
+        owner: account.address,
+        spender,
+        maxUint256,
+        client,
+      });
+      if (txHash) lastTxHash = txHash;
+    }
+
     const bridgeToken = isInnerFourMeme ? getBridgeToken(chainId, tokenInfo.quote_token_address) : null;
     if (bridgeToken && bridgeToken !== ZERO_ADDRESS) {
-      const allowance = await client.readContract({
-        address: bridgeToken as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'allowance',
-        args: [account.address, routerAddress as `0x${string}`]
+      const txHash = await this.approveMaxForSpenderIfNeeded({
+        chainId,
+        tokenAddress: bridgeToken,
+        owner: account.address,
+        spender: routerAddress,
+        maxUint256,
+        client,
       });
-      if (allowance < maxUint256 / 2n) {
-        lastTxHash = await this.approve(chainId, bridgeToken, routerAddress, maxUint256.toString());
-      }
+      if (txHash) lastTxHash = txHash;
     }
 
     return lastTxHash;
   }
 
-  static async sell(input: TxSellInput) {
+  static async checkSellAllowanceInsufficient(
+    chainId: number,
+    tokenAddress: string,
+    tokenInfo: TokenInfo,
+    opts?: { extraSpenders?: string[] }
+  ): Promise<SellAllowanceCheckResult> {
+    const routerAddress = DeployAddress[chainId as ChainId]?.DagobangRouter?.address;
+    if (!routerAddress) throw new Error('Router address not set');
+    const account = await WalletService.getSigner();
+    const client = await RpcService.getClient();
+    const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
+    return await hasInsufficientSellAllowance({
+      chainId,
+      tokenAddress,
+      tokenInfo,
+      owner: account.address,
+      client,
+      maxUint256,
+      routerAddress,
+      extraSpenders: opts?.extraSpenders,
+      getLaunchpadManager: (ti, cid) => {
+        const platform = ti.launchpad_platform?.toLowerCase() || '';
+        const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
+        return cfg?.manager ?? null;
+      },
+      isInnerDisk: (ti) => this.isInnerDisk(ti),
+    });
+  }
+
+  static async sell(
+    input: TxSellInput,
+    runtimeOpts?: {
+      onAllowanceRepairStart?: (ctx: { chainId: number; tokenAddress: string }) => void | Promise<void>;
+      traceId?: string;
+      attempt?: number;
+    }
+  ) {
     const sellLockKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
     if (this.sellInFlightByToken.has(sellLockKey)) {
       throw new Error('SELL_IN_FLIGHT');
@@ -501,7 +739,8 @@ export class TradeService {
       if (!isTurbo && amountIn <= 0n) throw new Error('Invalid amount');
       const chainSettings = settings.chains[input.chainId];
       const gasPreset = input.gasPreset ?? chainSettings.sellGasPreset ?? chainSettings.gasPreset;
-      const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
+      const configuredGasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
+      const gasPriceWei = configuredGasPriceWei;
 
       const perfEnabled = isTurbo;
       const perfStart = perfEnabled ? Date.now() : 0;
@@ -532,6 +771,7 @@ export class TradeService {
       let estimatedOut = 0n;
       let minFundsForSell = 0n;
       let sellTokenManager: Address | null = null;
+      let sellManagerForRoute: Address = launchpadConfig?.manager ?? ZERO_ADDRESS;
 
       if (isInner && launchpadConfig) {
         const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
@@ -545,15 +785,18 @@ export class TradeService {
           }
           try {
             const est = await timeStep('fourmeme:trySell', () =>
-              this.tryFourMemeSellEstimatedFunds(client, input.chainId, sellToken, amountIn)
+              tryFourMemeSellEstimatedFunds(client, input.chainId, sellToken, amountIn)
             );
             if (est && est.funds > 0n) {
               sellTokenManager = est.tokenManager ?? null;
+              if (sellTokenManager && sellTokenManager !== ZERO_ADDRESS) {
+                sellManagerForRoute = sellTokenManager;
+              }
               const netFunds = est.funds > est.fee ? (est.funds - est.fee) : 0n;
               if (netFunds > 0n) {
                 minFunds = applySlippage(netFunds, slippageBps);
                 if (minFunds > 0n) {
-                  dataForSell = this.encodeFourMemeUint256(minFunds);
+                  dataForSell = encodeFourMemeUint256(minFunds);
                   minFundsForSell = minFunds;
                 }
                 if (!bridgeToken) {
@@ -571,7 +814,7 @@ export class TradeService {
           swapType: launchpadConfig.sellType,
           tokenIn: sellToken,
           tokenOut: innerTokenOut,
-          poolAddress: launchpadConfig.manager,
+          poolAddress: sellManagerForRoute,
           fee: 0,
           data: dataForSell,
         }));
@@ -699,7 +942,6 @@ export class TradeService {
         }
       }
 
-      const lastTokenOut = descs.length > 0 ? descs[descs.length - 1]!.tokenOut : ZERO_ADDRESS;
       let minOut = 0n;
       if (estimatedOut > 0n) {
         const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
@@ -707,7 +949,8 @@ export class TradeService {
       }
       if (isInnerFourMeme && !bridgeToken && minFundsForSell > 0n) {
         const v2Manager = (DeployAddress[input.chainId as ChainId]?.[ContractNames.FourMemeTokenManagerV2]?.address || ZERO_ADDRESS) as Address;
-        const isV2 = sellTokenManager && v2Manager !== ZERO_ADDRESS && sellTokenManager.toLowerCase() === v2Manager.toLowerCase();
+        const managerToCheck = sellTokenManager ?? sellManagerForRoute;
+        const isV2 = managerToCheck && v2Manager !== ZERO_ADDRESS && managerToCheck.toLowerCase() === v2Manager.toLowerCase();
         if (isV2) {
           minOut = 0n;
         }
@@ -739,9 +982,84 @@ export class TradeService {
         });
 
       const txOpts = { skipEstimateGas: true, gasLimit: 900000n, trace, txSide: 'sell' as const };
-      const { txHash, broadcastVia, broadcastUrl, isBundle } = await timeStep('sendTransaction', () =>
-        this.sendTransaction(client, account, routerAddress, data, 0n, gasPriceWei, input.chainId, txOpts)
-      );
+      const traceId = runtimeOpts?.traceId;
+      const attempt = runtimeOpts?.attempt;
+      console.log('[trade.sell.submit]', {
+        chainId: input.chainId,
+        token: input.tokenAddress,
+        isTurbo,
+        percentBps: isTurbo ? percentBps : undefined,
+        amountIn: isTurbo ? undefined : amountIn.toString(),
+        routeManager: sellManagerForRoute,
+        routeCount: descs.length,
+        traceId,
+        attempt,
+      });
+      let allowanceRetried = false;
+      let sent: { txHash: `0x${string}`; broadcastVia?: 'rpc' | 'bloxroute'; broadcastUrl?: string; isBundle?: boolean };
+      try {
+        sent = await timeStep('sendTransaction', () =>
+          this.sendTransaction(client, account, routerAddress, data, 0n, gasPriceWei, input.chainId, txOpts)
+        );
+      } catch (e: any) {
+        const errText = collectErrorText(e, true);
+        const maybeAllowanceIssue = isAllowanceLikeText(errText);
+        console.warn('[trade.sell.send.failed]', {
+          chainId: input.chainId,
+          token: input.tokenAddress,
+          maybeAllowanceIssue,
+          errText,
+          routeManager: sellManagerForRoute,
+        });
+        if (!maybeAllowanceIssue) throw e;
+        console.log('[trade.sell.allowance.repair.trigger]', {
+          chainId: input.chainId,
+          token: input.tokenAddress,
+          traceId,
+          attempt,
+        });
+        await runtimeOpts?.onAllowanceRepairStart?.({
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+        });
+        const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
+        const allowanceCheck: SellAllowanceCheckResult = await hasInsufficientSellAllowance({
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          tokenInfo,
+          owner: account.address,
+          client,
+          maxUint256,
+          routerAddress,
+          extraSpenders: [sellManagerForRoute],
+          getLaunchpadManager: (ti, cid) => {
+            const platform = ti.launchpad_platform?.toLowerCase() || '';
+            const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
+            return cfg?.manager ?? null;
+          },
+          isInnerDisk: (ti) => this.isInnerDisk(ti),
+        });
+        console.log('[trade.sell.allowance.check]', {
+          chainId: input.chainId,
+          token: input.tokenAddress,
+          insufficient: allowanceCheck.insufficient,
+          checked: allowanceCheck.checked,
+        });
+        if (!allowanceCheck.insufficient) throw e;
+        const approveTx = await this.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo, {
+          extraSpenders: [sellManagerForRoute],
+        });
+        if (approveTx) {
+          console.log('[trade.sell.retry.approve]', { chainId: input.chainId, token: input.tokenAddress, approveTx });
+          await this.waitApproveFastForRetry(input.chainId, approveTx);
+        }
+        console.log('[trade.sell.retry.send]', { chainId: input.chainId, token: input.tokenAddress });
+        allowanceRetried = true;
+        sent = await timeStep('sendTransactionRetryAfterApprove', () =>
+          this.sendTransaction(client, account, routerAddress, data, 0n, gasPriceWei, input.chainId, txOpts)
+        );
+      }
+      const { txHash, broadcastVia, broadcastUrl, isBundle } = sent;
       if (perfEnabled) {
         const totalMs = Date.now() - perfStart;
         console.log('[trade.sell.turbo] timing ms', {
@@ -749,7 +1067,7 @@ export class TradeService {
           broadcastProvider: formatBroadcastProvider(broadcastVia, broadcastUrl, isBundle)
         });
       }
-      return { txHash, broadcastVia, broadcastUrl, isBundle };
+      return { txHash, broadcastVia, broadcastUrl, isBundle, allowanceRetried };
     };
     try {
       return await run();
@@ -763,9 +1081,14 @@ export class TradeService {
     const account = await WalletService.getSigner();
     const client = await RpcService.getClient();
     const chainSettings = settings.chains[chainId];
-    const approveGasGwei = chainSettings.approveGasGwei ?? '0.06';
-    let gasPriceWei = parseGweiToWei(approveGasGwei);
-    if (gasPriceWei <= 0n) gasPriceWei = parseGweiToWei('0.06');
+    const approveGasGwei = typeof chainSettings.approveGasGwei === 'string' ? chainSettings.approveGasGwei.trim() : '';
+    let configuredGasPriceWei = approveGasGwei ? parseGweiToWei(approveGasGwei) : 0n;
+    if (configuredGasPriceWei <= 0n) {
+      const preset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;
+      configuredGasPriceWei = getGasPriceWei(chainSettings, preset, 'sell');
+    }
+    if (configuredGasPriceWei <= 0n) configuredGasPriceWei = parseGweiToWei('0.12');
+    const gasPriceWei = configuredGasPriceWei;
 
     const data = encodeFunctionData({
       abi: erc20Abi,
@@ -773,7 +1096,16 @@ export class TradeService {
       args: [spender as `0x${string}`, BigInt(amountWei)]
     });
 
-    const { txHash } = await this.sendTransaction(client, account, tokenAddress, data, 0n, gasPriceWei, chainId);
+    const { txHash } = await this.sendTransaction(
+      client,
+      account,
+      tokenAddress,
+      data,
+      0n,
+      gasPriceWei,
+      chainId,
+      { skipEstimateGas: true, gasLimit: 900000n }
+    );
     return txHash;
   }
 

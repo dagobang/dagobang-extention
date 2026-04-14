@@ -14,6 +14,8 @@ declare global {
   const asAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').asAddress
   const browser: typeof import('wxt/browser').browser
   const call: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/messaging').call
+  const classifyBroadcastError: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').classifyBroadcastError
+  const collectErrorText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').collectErrorText
   const createIframeUi: typeof import('wxt/utils/content-script-ui/iframe').createIframeUi
   const createIntegratedUi: typeof import('wxt/utils/content-script-ui/integrated').createIntegratedUi
   const createShadowRootUi: typeof import('wxt/utils/content-script-ui/shadow-root').createShadowRootUi
@@ -31,6 +33,7 @@ declare global {
   const extractGmgnUserFields: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractGmgnUserFields
   const extractGmgnWsConnectionInfo: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractGmgnWsConnectionInfo
   const extractMedia: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractMedia
+  const extractNextNonceHintFromText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').extractNextNonceHintFromText
   const extractNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractNumber
   const extractText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractText
   const extractTimestampMs: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractTimestampMs
@@ -48,7 +51,9 @@ declare global {
   const formatShortAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatShortAddress
   const formatTime: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatTime
   const getDexPoolPrefer: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/dexUtils').getDexPoolPrefer
+  const getNonceErrorKindFromText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').getNonceErrorKindFromText
   const injectScript: typeof import('wxt/utils/inject-script').injectScript
+  const isAllowanceLikeText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').isAllowanceLikeText
   const isHexPrivateKey: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').isHexPrivateKey
   const isObject: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').isObject
   const loadContractAbi: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi').loadContractAbi
@@ -58,6 +63,7 @@ declare global {
   const parseCurrentUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrl
   const parseCurrentUrlFull: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrlFull
   const parseGmgnEnvelope: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').parseGmgnEnvelope
+  const parseGweiToWei: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/dexUtils').parseGweiToWei
   const parseNumberLoose: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').parseNumberLoose
   const parsePlatformTokenLink: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parsePlatformTokenLink
   const storage: typeof import('wxt/utils/storage').storage
@@ -125,4 +131,7 @@ declare global {
   // @ts-ignore
   export type { SiteInfo } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites')
+  // @ts-ignore
+  export type { BroadcastErrorClass } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify'
+  import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify')
 }

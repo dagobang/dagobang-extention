@@ -4,8 +4,13 @@ import type { BgRequest, BgResponse } from '../types/extention';
 export async function call<T extends BgRequest>(req: T): Promise<BgResponse<T>> {
   try {
     const p = browser.runtime.sendMessage(req);
-    // Longer timeout for transaction waiting
-    const timeoutMs = (req.type === 'tx:waitForReceipt' || req.type === 'ai:generateLogo')
+    // Longer timeout for transaction flows that include auto-repair/retry.
+    const timeoutMs = (
+      req.type === 'tx:waitForReceipt' ||
+      req.type === 'tx:buyWithReceiptAuto' ||
+      req.type === 'tx:sellWithReceiptAuto' ||
+      req.type === 'ai:generateLogo'
+    )
       ? 60000
       : req.type === 'twitter:signal'
         ? 20000

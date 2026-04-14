@@ -591,14 +591,14 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
           const buyTasks: Array<Promise<void>> = [];
           if (shouldDagobangBuy) {
             buyTasks.push((async () => {
-              const rsp = await TradeService.buy({
+              const rsp = await TradeService.buyWithReceiptAndNonceRecovery({
                 chainId: task.chain,
                 tokenAddress: task.tokenAddress,
                 bnbAmountWei: amountWei,
                 gasPriceGwei: typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() : undefined,
                 priorityFeeBnb: typeof task.buyBribeBnb === 'string' ? String(task.buyBribeBnb).trim() : undefined,
                 tokenInfo: tokenInfo as any,
-              } as any);
+              } as any, { maxRetry: 1 });
               const txHash = typeof (rsp as any)?.txHash === 'string' ? String((rsp as any).txHash) : '';
               if (txHash) buyTxHash = txHash;
               dagobangOk = true;
