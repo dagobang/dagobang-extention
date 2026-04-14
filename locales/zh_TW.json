@@ -857,6 +857,13 @@
       "toggleGas": "切換燃氣價格",
       "toggleSlippage": "切換滑點"
     },
+    "priorityFee": {
+      "none": "無",
+      "slow": "慢",
+      "standard": "標準",
+      "fast": "快",
+      "toggle": "切換賄賂費預設"
+    },
     "approve": {
       "title": "預授權",
       "button": "授權"

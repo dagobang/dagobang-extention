@@ -7,6 +7,13 @@ const DEFAULT_GAS_GWEI: GasGweiConfig = {
   turbo: '5',
 };
 
+const DEFAULT_PRIORITY_FEE_PRESETS = {
+  none: '0',
+  slow: '0.000025',
+  standard: '0.00004',
+  fast: '0.0001',
+} as const;
+
 const BSC_MAINNET: ChainSettings = {
   rpcUrls: [
     'https://0.48.club',
@@ -47,9 +54,10 @@ const BSC_MAINNET: ChainSettings = {
   buyGasGwei: DEFAULT_GAS_GWEI,
   sellGasGwei: DEFAULT_GAS_GWEI,
   approveGasGwei: '0.06',
-  priorityFeeEnabled: false,
-  buyPriorityFeeBnb: '0.00003',
-  sellPriorityFeeBnb: '0.000025',
+  buyPriorityFeePreset: 'standard',
+  sellPriorityFeePreset: 'standard',
+  buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  sellPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
   bloxrouteBuyEnabled: true,
   bloxrouteSellEnabled: true,
 };

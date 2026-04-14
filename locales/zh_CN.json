@@ -857,6 +857,13 @@
       "toggleGas": "切换燃气价格",
       "toggleSlippage": "切换滑点"
     },
+    "priorityFee": {
+      "none": "无",
+      "slow": "慢",
+      "standard": "标准",
+      "fast": "快",
+      "toggle": "切换贿赂费预设"
+    },
     "approve": {
       "title": "预授权",
       "button": "授权"

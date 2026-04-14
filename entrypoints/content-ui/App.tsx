@@ -21,6 +21,15 @@ import { ReviewPanel } from './components/ReviewPanel';
 import { QuickTradePanel } from './components/QuickTradePanel';
 import { FloatingToolbar } from './components/FloatingToolbar';
 
+const PRIORITY_FEE_PRESETS = ['none', 'slow', 'standard', 'fast'] as const;
+type PriorityFeePreset = (typeof PRIORITY_FEE_PRESETS)[number];
+const DEFAULT_PRIORITY_FEE_PRESET_VALUES = {
+  none: '0',
+  slow: '0.000025',
+  standard: '0.00004',
+  fast: '0.0001',
+} as const;
+
 export default function App() {
   const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(() => parseCurrentUrl(window.location.href));
   const [busy, setBusy] = useState(false);
@@ -918,6 +927,20 @@ export default function App() {
     }, 500);
   };
 
+  const resolvePriorityFee = (side: 'buy' | 'sell') => {
+    if (!settings) return undefined;
+    const chainSettings = settings.chains[settings.chainId];
+    const selectedPreset = side === 'buy'
+      ? ((chainSettings.buyPriorityFeePreset ?? 'standard') as PriorityFeePreset)
+      : ((chainSettings.sellPriorityFeePreset ?? 'standard') as PriorityFeePreset);
+    const presetValues = side === 'buy'
+      ? (chainSettings.buyPriorityFeePresets ?? DEFAULT_PRIORITY_FEE_PRESET_VALUES)
+      : (chainSettings.sellPriorityFeePresets ?? DEFAULT_PRIORITY_FEE_PRESET_VALUES);
+    const value = presetValues[selectedPreset] ?? DEFAULT_PRIORITY_FEE_PRESET_VALUES[selectedPreset];
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    return normalized || '0';
+  };
+
   const handleBuy = (amountStr: string) => {
     withBusy(async () => {
       if (!settings) throw new Error('Settings not ready');
@@ -936,6 +959,7 @@ export default function App() {
           chainId: settings.chainId,
           tokenAddress: tokenAddressNormalized,
           bnbAmountWei: amountIn.toString(),
+          priorityFeeBnb: resolvePriorityFee('buy'),
           tokenInfo: tokenInfo ?? undefined,
         } as const;
         const res = await call({
@@ -1084,6 +1108,7 @@ export default function App() {
           tokenAmountWei: isTurbo ? '0' : amountWei.toString(),
           sellPercentBps: isTurbo ? percentBps : undefined,
           expectedTokenInWei: isTurbo ? (pendingBuyTokenMinOutWei ?? undefined) : undefined,
+          priorityFeeBnb: resolvePriorityFee('sell'),
           tokenInfo: tokenInfo ?? undefined
         } as const;
         const res = await call({
@@ -1241,6 +1266,52 @@ export default function App() {
           [chainId]: {
             ...currentChainSettings,
             slippageBps: next,
+          },
+        },
+      },
+    }).then(refreshAll);
+  };
+
+  const handleToggleBuyPriorityFeePreset = () => {
+    if (!settings) return;
+    const chainId = settings.chainId;
+    const currentChainSettings = settings.chains[chainId];
+    const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).buyPriorityFeePreset)
+      ? (currentChainSettings as any).buyPriorityFeePreset as PriorityFeePreset
+      : 'standard';
+    const next = PRIORITY_FEE_PRESETS[(PRIORITY_FEE_PRESETS.indexOf(current) + 1) % PRIORITY_FEE_PRESETS.length];
+    call({
+      type: 'settings:set',
+      settings: {
+        ...settings,
+        chains: {
+          ...settings.chains,
+          [chainId]: {
+            ...currentChainSettings,
+            buyPriorityFeePreset: next,
+          },
+        },
+      },
+    }).then(refreshAll);
+  };
+
+  const handleToggleSellPriorityFeePreset = () => {
+    if (!settings) return;
+    const chainId = settings.chainId;
+    const currentChainSettings = settings.chains[chainId];
+    const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).sellPriorityFeePreset)
+      ? (currentChainSettings as any).sellPriorityFeePreset as PriorityFeePreset
+      : 'standard';
+    const next = PRIORITY_FEE_PRESETS[(PRIORITY_FEE_PRESETS.indexOf(current) + 1) % PRIORITY_FEE_PRESETS.length];
+    call({
+      type: 'settings:set',
+      settings: {
+        ...settings,
+        chains: {
+          ...settings.chains,
+          [chainId]: {
+            ...currentChainSettings,
+            sellPriorityFeePreset: next,
           },
         },
       },
@@ -1424,6 +1495,8 @@ export default function App() {
               onToggleMode={handleToggleMode}
               onToggleBuyGas={handleToggleBuyGas}
               onToggleSellGas={handleToggleSellGas}
+              onToggleBuyPriorityFeePreset={handleToggleBuyPriorityFeePreset}
+              onToggleSellPriorityFeePreset={handleToggleSellPriorityFeePreset}
               onToggleSlippage={handleToggleSlippage}
               onUpdateBuyPreset={handleUpdateBuyPreset}
               draftBuyPresets={draftBuyPresets}

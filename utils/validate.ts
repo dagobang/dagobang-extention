@@ -152,6 +152,7 @@ export function validateSettings(input: Settings): Settings | null {
         const inputBuyGasPreset = (cInput as any).buyGasPreset as any;
         const inputSellGasPreset = (cInput as any).sellGasPreset as any;
         const allowedGasPresets = ['slow', 'standard', 'fast', 'turbo'] as const;
+        const allowedPriorityFeePresets = ['none', 'slow', 'standard', 'fast'] as const;
         const buyGasGwei = {
           slow: typeof inputBuyGas?.slow === 'string' && inputBuyGas.slow.trim() ? inputBuyGas.slow.trim() : cDef.buyGasGwei.slow,
           standard: typeof inputBuyGas?.standard === 'string' && inputBuyGas.standard.trim() ? inputBuyGas.standard.trim() : cDef.buyGasGwei.standard,
@@ -168,15 +169,60 @@ export function validateSettings(input: Settings): Settings | null {
           typeof (cInput as any).approveGasGwei === 'string' && (cInput as any).approveGasGwei.trim()
             ? (cInput as any).approveGasGwei.trim()
             : (cDef as any).approveGasGwei ?? '0.06';
-        const priorityFeeEnabled = typeof (cInput as any).priorityFeeEnabled === 'boolean'
-          ? (cInput as any).priorityFeeEnabled
-          : !!(cDef as any).priorityFeeEnabled;
-        const buyPriorityFeeBnb = typeof (cInput as any).buyPriorityFeeBnb === 'string'
+        const defaultPriorityFeePresets = {
+          none: '0',
+          slow: '0.000025',
+          standard: '0.00004',
+          fast: '0.0001',
+        };
+        const normalizePriorityFeePresetConfig = (
+          raw: any,
+          fallback: typeof defaultPriorityFeePresets,
+          legacyValue?: string,
+        ) => ({
+          none: typeof raw?.none === 'string' ? raw.none.trim() : fallback.none,
+          slow: typeof raw?.slow === 'string' ? raw.slow.trim() : fallback.slow,
+          standard: typeof raw?.standard === 'string'
+            ? raw.standard.trim()
+            : (legacyValue && legacyValue.trim() ? legacyValue.trim() : fallback.standard),
+          fast: typeof raw?.fast === 'string' ? raw.fast.trim() : fallback.fast,
+        });
+        const inputBuyPriorityFeeBnb = typeof (cInput as any).buyPriorityFeeBnb === 'string'
           ? (cInput as any).buyPriorityFeeBnb.trim()
-          : ((cDef as any).buyPriorityFeeBnb ?? '0');
-        const sellPriorityFeeBnb = typeof (cInput as any).sellPriorityFeeBnb === 'string'
+          : '';
+        const inputSellPriorityFeeBnb = typeof (cInput as any).sellPriorityFeeBnb === 'string'
           ? (cInput as any).sellPriorityFeeBnb.trim()
-          : ((cDef as any).sellPriorityFeeBnb ?? '0');
+          : '';
+        const defaultBuyPriorityFeePreset = allowedPriorityFeePresets.includes((cDef as any).buyPriorityFeePreset)
+          ? (cDef as any).buyPriorityFeePreset
+          : 'standard';
+        const defaultSellPriorityFeePreset = allowedPriorityFeePresets.includes((cDef as any).sellPriorityFeePreset)
+          ? (cDef as any).sellPriorityFeePreset
+          : 'standard';
+        const buyPriorityFeePreset = (allowedPriorityFeePresets.includes((cInput as any).buyPriorityFeePreset)
+          ? (cInput as any).buyPriorityFeePreset
+          : defaultBuyPriorityFeePreset) as (typeof allowedPriorityFeePresets)[number];
+        const sellPriorityFeePreset = (allowedPriorityFeePresets.includes((cInput as any).sellPriorityFeePreset)
+          ? (cInput as any).sellPriorityFeePreset
+          : defaultSellPriorityFeePreset) as (typeof allowedPriorityFeePresets)[number];
+        const defaultBuyPriorityFeePresets = normalizePriorityFeePresetConfig(
+          (cDef as any).buyPriorityFeePresets,
+          defaultPriorityFeePresets,
+        );
+        const defaultSellPriorityFeePresets = normalizePriorityFeePresetConfig(
+          (cDef as any).sellPriorityFeePresets,
+          defaultPriorityFeePresets,
+        );
+        const buyPriorityFeePresets = normalizePriorityFeePresetConfig(
+          (cInput as any).buyPriorityFeePresets,
+          defaultBuyPriorityFeePresets,
+          inputBuyPriorityFeeBnb,
+        );
+        const sellPriorityFeePresets = normalizePriorityFeePresetConfig(
+          (cInput as any).sellPriorityFeePresets,
+          defaultSellPriorityFeePresets,
+          inputSellPriorityFeeBnb,
+        );
         const defaultBuyGasPreset = (cDef as any).buyGasPreset ?? cDef.gasPreset;
         const defaultSellGasPreset = (cDef as any).sellGasPreset ?? cDef.gasPreset;
         const buyGasPreset = allowedGasPresets.includes(inputBuyGasPreset) ? inputBuyGasPreset : defaultBuyGasPreset;
@@ -218,9 +264,10 @@ export function validateSettings(input: Settings): Settings | null {
           buyGasGwei,
           sellGasGwei,
           approveGasGwei,
-          priorityFeeEnabled,
-          buyPriorityFeeBnb,
-          sellPriorityFeeBnb,
+          buyPriorityFeePreset,
+          sellPriorityFeePreset,
+          buyPriorityFeePresets,
+          sellPriorityFeePresets,
           bloxrouteBuyEnabled,
           bloxrouteSellEnabled,
         };

@@ -981,7 +981,13 @@ export class TradeService {
           ]
         });
 
-      const txOpts = { skipEstimateGas: true, gasLimit: 900000n, trace, txSide: 'sell' as const };
+      const txOpts = {
+        skipEstimateGas: true,
+        gasLimit: 900000n,
+        trace,
+        txSide: 'sell' as const,
+        priorityFeeBnbOverride: typeof input.priorityFeeBnb === 'string' ? input.priorityFeeBnb.trim() : undefined,
+      };
       const traceId = runtimeOpts?.traceId;
       const attempt = runtimeOpts?.attempt;
       console.log('[trade.sell.submit]', {

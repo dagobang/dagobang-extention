@@ -36,6 +36,12 @@ export class RpcService {
   private static readonly prewarmWindowMs = 45_000;
   private static readonly prewarmedAtByUrl = new Map<string, number>();
   private static prewarmedAtBloxroute = 0;
+  private static readonly defaultPriorityFeePresets = {
+    none: '0',
+    slow: '0.000025',
+    standard: '0.00004',
+    fast: '0.0001',
+  } as const;
 
   private static normalizeUrls(urls: string[]): string[] {
     const seen = new Set<string>();
@@ -62,16 +68,20 @@ export class RpcService {
     return client;
   }
 
-  private static getPriorityFeeBnbValue(chainConfig: any, side: BroadcastTxSide): string {
-    const value = side === 'buy' ? chainConfig?.buyPriorityFeeBnb : chainConfig?.sellPriorityFeeBnb;
-    if (typeof value !== 'string') return '0';
-    const normalized = value.trim();
-    return normalized || '0';
-  }
-
-  private static isPriorityFeeEnabled(chainConfig: any): boolean {
-    if (typeof chainConfig?.priorityFeeEnabled === 'boolean') return chainConfig.priorityFeeEnabled;
-    return false;
+  private static resolvePriorityFeeBnb(chainConfig: any, side: BroadcastTxSide, override?: string): string {
+    if (typeof override === 'string' && override.trim()) return override.trim();
+    const rawPreset = side === 'buy' ? chainConfig?.buyPriorityFeePreset : chainConfig?.sellPriorityFeePreset;
+    const preset = (rawPreset === 'none' || rawPreset === 'slow' || rawPreset === 'standard' || rawPreset === 'fast'
+      ? rawPreset
+      : 'standard') as 'none' | 'slow' | 'standard' | 'fast';
+    const rawPresets = side === 'buy' ? chainConfig?.buyPriorityFeePresets : chainConfig?.sellPriorityFeePresets;
+    const presets = {
+      none: typeof rawPresets?.none === 'string' ? rawPresets.none.trim() : this.defaultPriorityFeePresets.none,
+      slow: typeof rawPresets?.slow === 'string' ? rawPresets.slow.trim() : this.defaultPriorityFeePresets.slow,
+      standard: typeof rawPresets?.standard === 'string' ? rawPresets.standard.trim() : this.defaultPriorityFeePresets.standard,
+      fast: typeof rawPresets?.fast === 'string' ? rawPresets.fast.trim() : this.defaultPriorityFeePresets.fast,
+    };
+    return presets[preset as keyof typeof presets] || '0';
   }
 
   private static getBundleTipReceiver(url: string): `0x${string}` | null {
@@ -334,12 +344,9 @@ export class RpcService {
     const chainConfig = settings.chains[settings.chainId];
     const txSide = opts?.txSide;
     const bundleSignerContext = opts?.signerContext;
-    const priorityFeeEnabled = txSide ? this.isPriorityFeeEnabled(chainConfig as any) : false;
     const priorityFeeBnb =
       txSide
-        ? (typeof opts?.priorityFeeBnbOverride === 'string' && opts.priorityFeeBnbOverride.trim()
-          ? opts.priorityFeeBnbOverride.trim()
-          : this.getPriorityFeeBnbValue(chainConfig as any, txSide))
+        ? this.resolvePriorityFeeBnb(chainConfig as any, txSide, opts?.priorityFeeBnbOverride)
         : '0';
     let priorityFeeWei = 0n;
     try {
@@ -347,7 +354,7 @@ export class RpcService {
     } catch {
       priorityFeeWei = 0n;
     }
-    const bundlePriorityMode = !!txSide && priorityFeeEnabled && priorityFeeWei > 0n;
+    const bundlePriorityMode = !!txSide && priorityFeeWei > 0n;
 
     const protectedUrls = this.getProtectedUrlsForSide(chainConfig, txSide);
     if (protectedUrls.length === 0 && !settings.bloxrouteAuthHeader) {
@@ -436,7 +443,7 @@ export class RpcService {
           );
         }
         if (rpcBundlePromises.length === 0 && !willUseBloxroute) {
-          throw new Error('Priority fee enabled but no bundle-capable route available. Configure blockrazor/bloxroute bundle route or disable priority fee.');
+          throw new Error('Priority fee preset is active but no bundle-capable route available. Configure blockrazor/bloxroute bundle route or switch preset to none.');
         }
         if (rpcBundlePromises.length > 0) {
           try {

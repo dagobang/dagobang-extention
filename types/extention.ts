@@ -1,6 +1,7 @@
 import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "./token";
 
 export type GasPreset = 'slow' | 'standard' | 'fast' | 'turbo';
+export type PriorityFeePreset = 'none' | 'slow' | 'standard' | 'fast';
 
 export type ExecutionMode = 'default' | 'turbo';
 
@@ -12,6 +13,13 @@ export type GasGweiConfig = {
   standard: string;
   fast: string;
   turbo: string;
+};
+
+export type PriorityFeePresetConfig = {
+  none: string;
+  slow: string;
+  standard: string;
+  fast: string;
 };
 
 export type ChainSettings = {
@@ -31,9 +39,10 @@ export type ChainSettings = {
   approveGasGwei: string;
   buyGasPreset: GasPreset;
   sellGasPreset: GasPreset;
-  priorityFeeEnabled?: boolean;
-  buyPriorityFeeBnb?: string;
-  sellPriorityFeeBnb?: string;
+  buyPriorityFeePreset?: PriorityFeePreset;
+  sellPriorityFeePreset?: PriorityFeePreset;
+  buyPriorityFeePresets?: PriorityFeePresetConfig;
+  sellPriorityFeePresets?: PriorityFeePresetConfig;
   bloxrouteBuyEnabled?: boolean;
   bloxrouteSellEnabled?: boolean;
 };
@@ -357,6 +366,7 @@ export type TxSellInput = {
   poolFee?: number;
   slippageBps?: number;
   gasPreset?: GasPreset;
+  priorityFeeBnb?: string;
   deadlineSeconds?: number;
   tokenInfo?: TokenInfo;
 };

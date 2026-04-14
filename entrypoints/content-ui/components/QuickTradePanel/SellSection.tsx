@@ -11,6 +11,7 @@ type SellSectionProps = {
   settings: Settings | null;
   onToggleMode: () => void;
   onToggleGas: () => void;
+  onTogglePriorityFeePreset: () => void;
   onToggleSlippage: () => void;
   onApprove: () => void;
   isEditing: boolean;
@@ -33,6 +34,7 @@ export function SellSection({
   settings,
   onToggleMode,
   onToggleGas,
+  onTogglePriorityFeePreset,
   onToggleSlippage,
   onApprove,
   isEditing,
@@ -64,6 +66,17 @@ export function SellSection({
   const gasValue =
     (chainSettings?.sellGasGwei && chainSettings.sellGasGwei[gasPreset]) ||
     defaultGasGwei[gasPreset as keyof typeof defaultGasGwei];
+  const priorityPresets = chainSettings?.sellPriorityFeePresets ?? {
+    none: '0',
+    slow: '0.000025',
+    standard: '0.00004',
+    fast: '0.0001',
+  };
+  const priorityPreset = (['none', 'slow', 'standard', 'fast'] as const).includes((chainSettings as any)?.sellPriorityFeePreset)
+    ? (chainSettings as any).sellPriorityFeePreset as 'none' | 'slow' | 'standard' | 'fast'
+    : 'standard';
+  const priorityValue = priorityPresets[priorityPreset] ?? '0';
+  const priorityPresetLabel = t(`contentUi.priorityFee.${priorityPreset}`, locale);
 
   return (
     <div className="p-3">
@@ -130,13 +143,19 @@ export function SellSection({
           </div>
           <div
             className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-            title={t('contentUi.slippage.toggleGas', locale)}
+            title={`${t('contentUi.slippage.toggleGas', locale)}: ${t(`popup.settings.gas.${gasPreset}`, locale)} ${gasValue} gwei`}
             onClick={onToggleGas}
           >
             <Fuel size={10} />
-            <span>
-              {t(`popup.settings.gas.${gasPreset}`, locale)} {gasValue} gwei
-            </span>
+            <span className="whitespace-nowrap">{t(`popup.settings.gas.${gasPreset}`, locale)}</span>
+          </div>
+          <div
+            className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
+            title={`${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityValue} BNB`}
+            onClick={onTogglePriorityFeePreset}
+          >
+            <span className="text-[10px] font-semibold">PF</span>
+            <span className="whitespace-nowrap">{priorityPresetLabel}</span>
           </div>
 
           <div

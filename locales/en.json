@@ -857,6 +857,13 @@
       "toggleGas": "Toggle gas price",
       "toggleSlippage": "Toggle slippage"
     },
+    "priorityFee": {
+      "none": "None",
+      "slow": "Slow",
+      "standard": "Standard",
+      "fast": "Fast",
+      "toggle": "Toggle bribe fee preset"
+    },
     "approve": {
       "title": "Approve",
       "button": "Approve"
