@@ -505,9 +505,15 @@ export class TradeService {
 
     for (let attempt = 0; attempt <= maxRetry; attempt++) {
       try {
+        const attemptStart = Date.now();
+        const submitStart = Date.now();
         const rsp = await this.buy(input);
+        const submitElapsedMs = Date.now() - submitStart;
+        const receiptStart = Date.now();
         await this.ensureTxSuccess(rsp.txHash, input.chainId, 'buy', timeoutMs);
-        return rsp;
+        const receiptElapsedMs = Date.now() - receiptStart;
+        const totalElapsedMs = Date.now() - attemptStart;
+        return { ...rsp, submitElapsedMs, receiptElapsedMs, totalElapsedMs };
       } catch (e: any) {
         lastErr = e;
         if (attempt >= maxRetry || !this.isNonceLikeError(e)) break;
@@ -545,6 +551,7 @@ export class TradeService {
       const attemptStart = Date.now();
       console.log('[trade.sell.auto][attempt.start]', { flowId, attempt: attemptNo });
       try {
+        const submitStart = Date.now();
         const rsp = await this.sell(input, {
           traceId: flowId,
           attempt: attemptNo,
@@ -558,15 +565,21 @@ export class TradeService {
             });
           },
         });
+        const submitElapsedMs = Date.now() - submitStart;
+        const receiptStart = Date.now();
         await this.ensureTxSuccess(rsp.txHash, input.chainId, 'sell', timeoutMs);
+        const receiptElapsedMs = Date.now() - receiptStart;
+        const totalElapsedMs = Date.now() - attemptStart;
         console.log('[trade.sell.auto][attempt.success]', {
           flowId,
           attempt: attemptNo,
           txHash: rsp.txHash,
-          elapsedMs: Date.now() - attemptStart,
+          elapsedMs: totalElapsedMs,
           totalElapsedMs: Date.now() - flowStart,
+          submitElapsedMs,
+          receiptElapsedMs,
         });
-        return rsp;
+        return { ...rsp, submitElapsedMs, receiptElapsedMs, totalElapsedMs };
       } catch (e: any) {
         lastErr = e;
         console.warn('[trade.sell.auto][attempt.failed]', {

@@ -40,9 +40,10 @@ export function CustomToaster({ position = 'top-center' }: CustomToasterProps) {
                 background: 'transparent',
                 boxShadow: 'none',
                 color: 'inherit',
+                pointerEvents: 'auto',
             }}>
                 {({ icon, message }) => (
-                    <div className="flex items-center gap-2 w-full">
+                    <div className="flex items-center gap-2 w-full pointer-events-auto">
                         <div className="flex-shrink-0">
                             {icon}
                         </div>

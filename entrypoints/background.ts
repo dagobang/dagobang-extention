@@ -558,6 +558,7 @@ export default defineBackground(() => {
           }
 
           case 'tx:buyWithReceiptAuto': {
+            const startedAt = Date.now();
             const returnBuySuccess = async (rsp: any) => {
               const txHash = (rsp as any)?.txHash as `0x${string}` | undefined;
               if (txHash) {
@@ -575,7 +576,11 @@ export default defineBackground(() => {
                 sender?.tab?.id ?? null,
               );
               await broadcastStateChange();
-              return { ok: true, ...rsp };
+              return {
+                ok: true,
+                ...rsp,
+                totalElapsedMs: typeof rsp?.totalElapsedMs === 'number' ? rsp.totalElapsedMs : (Date.now() - startedAt),
+              };
             };
             try {
               const rsp = await TradeService.buyWithReceiptAndNonceRecovery(msg.input, {
@@ -728,7 +733,11 @@ export default defineBackground(() => {
                 sender?.tab?.id ?? null,
               );
               broadcastStateChange();
-              return { ok: true, ...rsp };
+              return {
+                ok: true,
+                ...rsp,
+                totalElapsedMs: typeof rsp?.totalElapsedMs === 'number' ? rsp.totalElapsedMs : (Date.now() - start),
+              };
             } catch (e: any) {
               console.warn('[trade.sell.auto.failed]', {
                 flowId,

@@ -436,6 +436,12 @@ export type TxWaitForReceiptError = {
   data?: unknown;
 };
 
+export type TxTimingMetrics = {
+  submitElapsedMs?: number;
+  receiptElapsedMs?: number;
+  totalElapsedMs?: number;
+};
+
 export type UnifiedSignalToken = {
   tokenAddress: string;
   chain?: string;
@@ -678,7 +684,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   )
   : T extends { type: 'tx:buyWithReceiptAuto' }
   ? (
-    | { ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+    | ({ ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
   : T extends { type: 'tx:sell' }
@@ -688,7 +694,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   )
   : T extends { type: 'tx:sellWithReceiptAuto' }
   ? (
-    | { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+    | ({ ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
   : T extends { type: 'tx:transferNative' }

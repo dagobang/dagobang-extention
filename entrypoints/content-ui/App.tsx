@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
+import { SatelliteDish } from 'lucide-react';
 import { parseEther, zeroAddress } from 'viem';
 import type { BgGetStateResponse, Settings, TradeSuccessSoundPreset } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
@@ -941,6 +942,56 @@ export default function App() {
     return normalized || '0';
   };
 
+  const tradingLoadingIcon = (
+    <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-300 border-t-transparent" />
+  );
+
+  const formatTradeTiming = (res: { submitElapsedMs?: number; receiptElapsedMs?: number }) => {
+    const submitMs = Number(res.submitElapsedMs ?? 0);
+    const receiptMs = Number(res.receiptElapsedMs ?? 0);
+    const formatSec = (ms: number) => `${(ms / 1000).toFixed(2)}s`;
+    if (locale === 'en') {
+      return {
+        submitLabel: 'RPC',
+        submitValue: formatSec(submitMs),
+        receiptLabel: 'On-chain',
+        receiptValue: formatSec(receiptMs),
+      };
+    }
+    return {
+      submitLabel: 'RPC',
+      submitValue: formatSec(submitMs),
+      receiptLabel: '上链',
+      receiptValue: formatSec(receiptMs),
+    };
+  };
+
+  const renderTradeSuccessToast = (input: {
+    side: 'buy' | 'sell';
+    symbol: string;
+    provider: string;
+    timing: { submitLabel: string; submitValue: string; receiptLabel: string; receiptValue: string };
+  }) => {
+    const title = locale === 'en'
+      ? `[${input.symbol}] ${input.side === 'buy' ? 'Buy' : 'Sell'} succeeded (${input.provider})`
+      : `[${input.symbol}] ${input.side === 'buy' ? '买入成功' : '卖出成功'}（${input.provider}）`;
+    return (
+      <div className="space-y-1">
+        <div className="font-medium">{title}</div>
+        <div className="flex items-center gap-2 text-[12px] opacity-90 whitespace-nowrap">
+          <span className="inline-flex items-center gap-1">
+            <SatelliteDish size={12} className="text-cyan-300" />
+            <span>
+              {input.timing.submitLabel} <span className="font-semibold text-cyan-300">{input.timing.submitValue}</span>
+            </span>
+          </span>
+          <span className="opacity-50">|</span>
+          <span>⛓️ {input.timing.receiptLabel} <span className="font-semibold text-emerald-300">{input.timing.receiptValue}</span></span>
+        </div>
+      </div>
+    );
+  };
+
   const handleBuy = (amountStr: string) => {
     withBusy(async () => {
       if (!settings) throw new Error('Settings not ready');
@@ -950,8 +1001,7 @@ export default function App() {
       if (BigInt(nativeBalanceWei || '0') < amountIn) throw new Error('Insufficient balance');
       ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
-      const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: '🔄' });
-      const startTime = Date.now();
+      const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon });
       let buyLoadingClosed = false;
 
       const mainTrade = (async () => {
@@ -972,11 +1022,11 @@ export default function App() {
         }
         const tokenMinOutWei = res.tokenMinOutWei ?? null;
 
-        const elapsed = (Date.now() - startTime) / 1000;
         setTxHash(res.txHash);
         setPendingBuyTokenMinOutWei(tokenMinOutWei);
         const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl, res.isBundle);
-        toast.success(t('contentUi.toast.buySuccessTime', locale, [sym, elapsed.toFixed(2), provider]), { id: toastId, icon: '✅' });
+        const timing = formatTradeTiming(res);
+        toast.success(renderTradeSuccessToast({ side: 'buy', symbol: sym, provider, timing }), { id: toastId, icon: '✅' });
         buyLoadingClosed = true;
 
         if (tokenInfo) {
@@ -1088,8 +1138,7 @@ export default function App() {
 
       ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
-      const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: '🔄' });
-      const startTime = Date.now();
+      const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon });
       let sellLoadingClosed = false;
 
       const percentBps = Math.max(1, Math.min(10000, Math.floor(pct * 100)));
@@ -1127,10 +1176,10 @@ export default function App() {
           throw new Error(detail);
         }
 
-        const elapsed = (Date.now() - startTime) / 1000;
         setTxHash(res.txHash);
         const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl, res.isBundle);
-        toast.success(t('contentUi.toast.sellSuccessTime', locale, [sym, elapsed.toFixed(2), provider]), { id: toastId, icon: '✅' });
+        const timing = formatTradeTiming(res);
+        toast.success(renderTradeSuccessToast({ side: 'sell', symbol: sym, provider, timing }), { id: toastId, icon: '✅' });
         sellLoadingClosed = true;
         await Promise.all([refreshToken(true), refreshAll()]);
         startFastPolling();
