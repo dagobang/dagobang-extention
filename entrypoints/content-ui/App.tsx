@@ -707,9 +707,38 @@ export default function App() {
         return;
       }
       if (message.type === 'bg:tradeSuccess') {
+        const source = String(message?.source || '');
+        const isAutoSource = source === 'limitOrder' || source === 'xsniper' || source === 'tokenSniper';
+        if (!isAutoSource) return;
+        const side = message?.side === 'sell' ? 'sell' : 'buy';
+        const rawAddr = typeof message?.tokenAddress === 'string' ? message.tokenAddress : '';
+        const symbol = tokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
+        const provider = formatBroadcastProvider(message?.broadcastVia, message?.broadcastUrl, message?.isBundle);
+        const timing = formatTradeTiming({
+          submitElapsedMs: Number(message?.submitElapsedMs ?? 0),
+          receiptElapsedMs: Number(message?.receiptElapsedMs ?? 0),
+        });
+        toast.success(renderTradeSuccessToast({ side, symbol, provider, timing, stage: 'confirmed' }), {
+          id: getTradeToastId(side, rawAddr),
+          icon: '✅',
+        });
+        return;
+      }
+      if (message.type === 'bg:tradeSubmitted') {
         ensureTradeSuccessAudioReady();
         if (message?.side === 'buy') playTradeBuySound();
         else playTradeSellSound();
+        const side = message?.side === 'sell' ? 'sell' : 'buy';
+        const rawAddr = typeof message?.tokenAddress === 'string' ? message.tokenAddress : '';
+        const symbol = tokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
+        const provider = locale === 'en' ? 'Submitted' : '已提交';
+        const timing = formatTradeTiming({ submitElapsedMs: Number(message?.submitElapsedMs ?? 0) }, true);
+        const flowToastId = getTradeToastId(side, rawAddr);
+        toast.success(renderTradeSuccessToast({ side, symbol, provider, timing, stage: 'submitted' }), {
+          id: flowToastId,
+          icon: <SatelliteDish size={14} className="text-cyan-300" />,
+          duration: 4200,
+        });
         return;
       }
       if (message.type === 'bg:tradeRetrying') {
@@ -749,6 +778,8 @@ export default function App() {
     playTradeBuySound,
     playTradeSellSound,
     tokenBalanceRefreshThrottleMs,
+    locale,
+    tokenSymbol,
   ]);
 
   useEffect(() => {
@@ -946,23 +977,24 @@ export default function App() {
     <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-300 border-t-transparent" />
   );
 
-  const formatTradeTiming = (res: { submitElapsedMs?: number; receiptElapsedMs?: number }) => {
+  const formatTradeTiming = (res: { submitElapsedMs?: number; receiptElapsedMs?: number }, pendingReceipt = false) => {
     const submitMs = Number(res.submitElapsedMs ?? 0);
     const receiptMs = Number(res.receiptElapsedMs ?? 0);
     const formatSec = (ms: number) => `${(ms / 1000).toFixed(2)}s`;
+    const submitValue = submitMs > 0 ? formatSec(submitMs) : (locale === 'en' ? 'Submitted' : '已提交');
     if (locale === 'en') {
       return {
         submitLabel: 'RPC',
-        submitValue: formatSec(submitMs),
+        submitValue,
         receiptLabel: 'On-chain',
-        receiptValue: formatSec(receiptMs),
+        receiptValue: pendingReceipt ? 'Pending...' : formatSec(receiptMs),
       };
     }
     return {
       submitLabel: 'RPC',
-      submitValue: formatSec(submitMs),
+      submitValue,
       receiptLabel: '上链',
-      receiptValue: formatSec(receiptMs),
+      receiptValue: pendingReceipt ? '上链中...' : formatSec(receiptMs),
     };
   };
 
@@ -971,10 +1003,12 @@ export default function App() {
     symbol: string;
     provider: string;
     timing: { submitLabel: string; submitValue: string; receiptLabel: string; receiptValue: string };
+    stage?: 'submitted' | 'confirmed';
   }) => {
+    const isSubmitted = input.stage === 'submitted';
     const title = locale === 'en'
-      ? `[${input.symbol}] ${input.side === 'buy' ? 'Buy' : 'Sell'} succeeded (${input.provider})`
-      : `[${input.symbol}] ${input.side === 'buy' ? '买入成功' : '卖出成功'}（${input.provider}）`;
+      ? `[${input.symbol}] ${input.side === 'buy' ? 'Buy' : 'Sell'} ${isSubmitted ? 'submitted' : 'succeeded'} (${input.provider})`
+      : `[${input.symbol}] ${input.side === 'buy' ? (isSubmitted ? '买入已提交' : '买入成功') : (isSubmitted ? '卖出已提交' : '卖出成功')}（${input.provider}）`;
     return (
       <div className="space-y-1">
         <div className="font-medium">{title}</div>
@@ -992,6 +1026,9 @@ export default function App() {
     );
   };
 
+  const getTradeToastId = (side: 'buy' | 'sell', tokenAddress?: string | null) =>
+    `trade-flow:${side}:${String(tokenAddress || '').toLowerCase()}`;
+
   const handleBuy = (amountStr: string) => {
     withBusy(async () => {
       if (!settings) throw new Error('Settings not ready');
@@ -1001,7 +1038,8 @@ export default function App() {
       if (BigInt(nativeBalanceWei || '0') < amountIn) throw new Error('Insufficient balance');
       ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
-      const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon });
+      const flowToastId = getTradeToastId('buy', tokenAddressNormalized);
+      const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
       let buyLoadingClosed = false;
 
       const mainTrade = (async () => {
@@ -1026,7 +1064,7 @@ export default function App() {
         setPendingBuyTokenMinOutWei(tokenMinOutWei);
         const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl, res.isBundle);
         const timing = formatTradeTiming(res);
-        toast.success(renderTradeSuccessToast({ side: 'buy', symbol: sym, provider, timing }), { id: toastId, icon: '✅' });
+        toast.success(renderTradeSuccessToast({ side: 'buy', symbol: sym, provider, timing, stage: 'confirmed' }), { id: flowToastId, icon: '✅' });
         buyLoadingClosed = true;
 
         if (tokenInfo) {
@@ -1088,7 +1126,7 @@ export default function App() {
           console.error('auto sell xsniper create orders failed', e);
         }
       })().catch((e: any) => {
-        if (!buyLoadingClosed) toast.dismiss(toastId);
+        if (!buyLoadingClosed) toast.dismiss(flowToastId);
         throw e;
       });
 
@@ -1138,7 +1176,8 @@ export default function App() {
 
       ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
-      const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon });
+      const flowToastId = getTradeToastId('sell', tokenAddressNormalized);
+      const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
       let sellLoadingClosed = false;
 
       const percentBps = Math.max(1, Math.min(10000, Math.floor(pct * 100)));
@@ -1179,7 +1218,7 @@ export default function App() {
         setTxHash(res.txHash);
         const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl, res.isBundle);
         const timing = formatTradeTiming(res);
-        toast.success(renderTradeSuccessToast({ side: 'sell', symbol: sym, provider, timing }), { id: toastId, icon: '✅' });
+        toast.success(renderTradeSuccessToast({ side: 'sell', symbol: sym, provider, timing, stage: 'confirmed' }), { id: flowToastId, icon: '✅' });
         sellLoadingClosed = true;
         await Promise.all([refreshToken(true), refreshAll()]);
         startFastPolling();
@@ -1197,7 +1236,7 @@ export default function App() {
           error: String(e?.message || e || ''),
           ts: Date.now(),
         });
-        if (!sellLoadingClosed) toast.dismiss(toastId);
+        if (!sellLoadingClosed) toast.dismiss(flowToastId);
         throw e;
       });
 

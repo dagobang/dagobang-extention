@@ -79,7 +79,19 @@ export default defineBackground(() => {
       broadcastStateChange();
       limitOrderScanner?.scheduleFromStorage().catch(() => { });
     },
-    onOrderSubmitted: ({ order, txHash }) => {
+    onOrderTxSubmitted: ({ order, txHash, submitElapsedMs }) => {
+      broadcastTradeSuccess({
+        type: 'bg:tradeSubmitted',
+        source: 'limitOrder',
+        id: order.id,
+        side: order.side,
+        chainId: order.chainId,
+        tokenAddress: order.tokenAddress,
+        txHash,
+        submitElapsedMs,
+      });
+    },
+    onOrderSubmitted: ({ order, txHash, submitElapsedMs, receiptElapsedMs, totalElapsedMs, broadcastVia, broadcastUrl, isBundle }) => {
       broadcastTradeSuccess({
         type: 'bg:tradeSuccess',
         source: 'limitOrder',
@@ -88,6 +100,12 @@ export default defineBackground(() => {
         chainId: order.chainId,
         tokenAddress: order.tokenAddress,
         txHash,
+        submitElapsedMs,
+        receiptElapsedMs,
+        totalElapsedMs,
+        broadcastVia,
+        broadcastUrl,
+        isBundle,
       });
     },
   });
@@ -586,6 +604,19 @@ export default defineBackground(() => {
               const rsp = await TradeService.buyWithReceiptAndNonceRecovery(msg.input, {
                 maxRetry: 1,
                 timeoutMs: 5_000,
+                onSubmitted: async (ctx) => {
+                  await broadcastTradeSuccess(
+                    {
+                      type: 'bg:tradeSubmitted',
+                      side: 'buy',
+                      chainId: msg.input.chainId,
+                      tokenAddress: msg.input.tokenAddress,
+                      txHash: ctx.txHash,
+                      submitElapsedMs: ctx.submitElapsedMs,
+                    },
+                    sender?.tab?.id ?? null,
+                  );
+                },
                 onRetry: async (ctx) => {
                   await broadcastTradeSuccess(
                     {
@@ -695,6 +726,19 @@ export default defineBackground(() => {
               const rsp = await TradeService.sellWithReceiptAndAutoRecovery(msg.input, {
                 maxRetry: 1,
                 timeoutMs: 8_000,
+                onSubmitted: async (ctx) => {
+                  await broadcastTradeSuccess(
+                    {
+                      type: 'bg:tradeSubmitted',
+                      side: 'sell',
+                      chainId: msg.input.chainId,
+                      tokenAddress: msg.input.tokenAddress,
+                      txHash: ctx.txHash,
+                      submitElapsedMs: ctx.submitElapsedMs,
+                    },
+                    sender?.tab?.id ?? null,
+                  );
+                },
                 onRetry: async (ctx) => {
                   const reason = ctx.allowanceRepaired ? 'allowance' : (ctx.nonceLike ? 'nonce' : 'other');
                   console.log('[bg.sell.auto][retry]', {

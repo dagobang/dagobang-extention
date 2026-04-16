@@ -60,7 +60,17 @@ export const tickLimitOrdersForToken = async (input: {
 
 export const createLimitOrderExecutor = (deps: {
   onOrdersChanged: () => void;
-  onOrderSubmitted?: (input: { order: LimitOrder; txHash: `0x${string}` }) => void;
+  onOrderTxSubmitted?: (input: { order: LimitOrder; txHash: `0x${string}`; submitElapsedMs?: number }) => void;
+  onOrderSubmitted?: (input: {
+    order: LimitOrder;
+    txHash: `0x${string}`;
+    submitElapsedMs?: number;
+    receiptElapsedMs?: number;
+    totalElapsedMs?: number;
+    broadcastVia?: 'bloxroute' | 'rpc';
+    broadcastUrl?: string;
+    isBundle?: boolean;
+  }) => void;
 }) => {
   const ensureTxSuccess = async (
     txHash: `0x${string}`,
@@ -92,10 +102,24 @@ export const createLimitOrderExecutor = (deps: {
         tokenAddress: order.tokenAddress,
         bnbAmountWei: order.buyBnbAmountWei,
         tokenInfo: order.tokenInfo,
-      }, { maxRetry: 1 });
+      }, {
+        maxRetry: 1,
+        onSubmitted: (ctx) => {
+          deps.onOrderTxSubmitted?.({ order, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs });
+        },
+      });
       const txHash = res.txHash as `0x${string}`;
       await patchLimitOrder(order.id, { txHash });
-      deps.onOrderSubmitted?.({ order, txHash });
+      deps.onOrderSubmitted?.({
+        order,
+        txHash,
+        submitElapsedMs: (res as any)?.submitElapsedMs,
+        receiptElapsedMs: (res as any)?.receiptElapsedMs,
+        totalElapsedMs: (res as any)?.totalElapsedMs,
+        broadcastVia: (res as any)?.broadcastVia,
+        broadcastUrl: (res as any)?.broadcastUrl,
+        isBundle: (res as any)?.isBundle,
+      });
 
       try {
         const settings = await SettingsService.get();
@@ -174,10 +198,25 @@ export const createLimitOrderExecutor = (deps: {
       sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
     } as const;
 
-    const firstSell = await TradeService.sellWithReceiptAndAutoRecovery(sellInput, { maxRetry: 1, timeoutMs: 20_000 });
+    const firstSell = await TradeService.sellWithReceiptAndAutoRecovery(sellInput, {
+      maxRetry: 1,
+      timeoutMs: 20_000,
+      onSubmitted: (ctx) => {
+        deps.onOrderTxSubmitted?.({ order, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs });
+      },
+    });
     let { txHash } = firstSell;
     await patchLimitOrder(order.id, { txHash });
-    deps.onOrderSubmitted?.({ order, txHash });
+    deps.onOrderSubmitted?.({
+      order,
+      txHash,
+      submitElapsedMs: (firstSell as any)?.submitElapsedMs,
+      receiptElapsedMs: (firstSell as any)?.receiptElapsedMs,
+      totalElapsedMs: (firstSell as any)?.totalElapsedMs,
+      broadcastVia: (firstSell as any)?.broadcastVia,
+      broadcastUrl: (firstSell as any)?.broadcastUrl,
+      isBundle: (firstSell as any)?.isBundle,
+    });
 
     try {
       const type = normalizeLimitOrderType(order.orderType, order.side);

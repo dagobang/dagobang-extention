@@ -163,7 +163,21 @@ export const createSellExecutors = (deps: {
           tokenAmountWei: amountWei.toString(),
           tokenInfo: tokenInfoForTrade,
           sellPercentBps: bps,
-        } as any, { maxRetry: 1, timeoutMs: 20_000 });
+        } as any, {
+          maxRetry: 1,
+          timeoutMs: 20_000,
+          onSubmitted: async (ctx) => {
+            await deps.broadcastToActiveTabs({
+              type: 'bg:tradeSubmitted',
+              source: 'xsniper',
+              side: 'sell',
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              txHash: ctx.txHash,
+              submitElapsedMs: ctx.submitElapsedMs,
+            });
+          },
+        });
       } catch {
       }
       if (!rsp) {
@@ -183,6 +197,12 @@ export const createSellExecutors = (deps: {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         txHash: finalTxHash,
+        submitElapsedMs: (rsp as any)?.submitElapsedMs,
+        receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
+        totalElapsedMs: (rsp as any)?.totalElapsedMs,
+        broadcastVia: (rsp as any)?.broadcastVia,
+        broadcastUrl: (rsp as any)?.broadcastUrl,
+        isBundle: (rsp as any)?.isBundle,
       });
 
       deps.emitRecord({
@@ -312,7 +332,21 @@ export const createSellExecutors = (deps: {
           tokenAmountWei: amountWei.toString(),
           tokenInfo: tokenInfoForTrade,
           sellPercentBps: bps,
-        } as any, { maxRetry: 1, timeoutMs: 20_000 });
+        } as any, {
+          maxRetry: 1,
+          timeoutMs: 20_000,
+          onSubmitted: async (ctx) => {
+            await deps.broadcastToActiveTabs({
+              type: 'bg:tradeSubmitted',
+              source: 'xsniper',
+              side: 'sell',
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              txHash: ctx.txHash,
+              submitElapsedMs: ctx.submitElapsedMs,
+            });
+          },
+        });
       } catch {
       }
       if (!rsp) {
@@ -332,6 +366,12 @@ export const createSellExecutors = (deps: {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         txHash: finalTxHash,
+        submitElapsedMs: (rsp as any)?.submitElapsedMs,
+        receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
+        totalElapsedMs: (rsp as any)?.totalElapsedMs,
+        broadcastVia: (rsp as any)?.broadcastVia,
+        broadcastUrl: (rsp as any)?.broadcastUrl,
+        isBundle: (rsp as any)?.isBundle,
       });
 
       deps.emitRecord({

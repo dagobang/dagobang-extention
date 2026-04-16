@@ -585,6 +585,12 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
           const attemptedDagobang = shouldDagobangBuy;
           const attemptedGmgn = shouldGmgnBuy;
           let buyTxHash: string | undefined;
+          let submitElapsedMs: number | undefined;
+          let receiptElapsedMs: number | undefined;
+          let totalElapsedMs: number | undefined;
+          let broadcastVia: 'bloxroute' | 'rpc' | undefined;
+          let broadcastUrl: string | undefined;
+          let isBundle: boolean | undefined;
           let dagobangOk = false;
           let gmgnOk = false;
           let gmgnError = '';
@@ -598,9 +604,28 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                 gasPriceGwei: typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() : undefined,
                 priorityFeeBnb: typeof task.buyBribeBnb === 'string' ? String(task.buyBribeBnb).trim() : undefined,
                 tokenInfo: tokenInfo as any,
-              } as any, { maxRetry: 1 });
+              } as any, {
+                maxRetry: 1,
+                onSubmitted: async (ctx) => {
+                  await broadcastToTabs({
+                    type: 'bg:tradeSubmitted',
+                    source: 'tokenSniper',
+                    side: 'buy',
+                    chainId: task.chain,
+                    tokenAddress: task.tokenAddress,
+                    txHash: ctx.txHash,
+                    submitElapsedMs: ctx.submitElapsedMs,
+                  });
+                },
+              });
               const txHash = typeof (rsp as any)?.txHash === 'string' ? String((rsp as any).txHash) : '';
               if (txHash) buyTxHash = txHash;
+              submitElapsedMs = (rsp as any)?.submitElapsedMs;
+              receiptElapsedMs = (rsp as any)?.receiptElapsedMs;
+              totalElapsedMs = (rsp as any)?.totalElapsedMs;
+              broadcastVia = (rsp as any)?.broadcastVia;
+              broadcastUrl = (rsp as any)?.broadcastUrl;
+              isBundle = (rsp as any)?.isBundle;
               dagobangOk = true;
             })());
           }
@@ -672,6 +697,12 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
               chainId: task.chain,
               tokenAddress: task.tokenAddress,
               txHash: buyTxHash,
+              submitElapsedMs,
+              receiptElapsedMs,
+              totalElapsedMs,
+              broadcastVia,
+              broadcastUrl,
+              isBundle,
             });
           }
           if (gmgnOk) {

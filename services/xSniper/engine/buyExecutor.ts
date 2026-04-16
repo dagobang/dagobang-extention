@@ -456,7 +456,20 @@ export const tryAutoBuyOnce = async (input: {
         tokenAddress: input.tokenAddress,
         bnbAmountWei: amountWei.toString(),
         tokenInfo: tokenInfoForTrade,
-      } as any, { maxRetry: 1 });
+      } as any, {
+        maxRetry: 1,
+        onSubmitted: async (ctx) => {
+          await input.broadcastToActiveTabs({
+            type: 'bg:tradeSubmitted',
+            source: 'xsniper',
+            side: 'buy',
+            chainId: input.chainId,
+            tokenAddress: input.tokenAddress,
+            txHash: ctx.txHash,
+            submitElapsedMs: ctx.submitElapsedMs,
+          });
+        },
+      });
     } catch {
     }
     if (!rsp) {
@@ -479,6 +492,12 @@ export const tryAutoBuyOnce = async (input: {
       chainId: input.chainId,
       tokenAddress: input.tokenAddress,
       txHash: (rsp as any)?.txHash,
+      submitElapsedMs: (rsp as any)?.submitElapsedMs,
+      receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
+      totalElapsedMs: (rsp as any)?.totalElapsedMs,
+      broadcastVia: (rsp as any)?.broadcastVia,
+      broadcastUrl: (rsp as any)?.broadcastUrl,
+      isBundle: (rsp as any)?.isBundle,
     });
 
     const entryPriceUsd = await input.getEntryPriceUsd(

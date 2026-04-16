@@ -497,7 +497,12 @@ export class TradeService {
 
   static async buyWithReceiptAndNonceRecovery(
     input: TxBuyInput,
-    opts?: { timeoutMs?: number; maxRetry?: number; onRetry?: (ctx: { side: 'buy'; attempt: number; reason: 'nonce' }) => void | Promise<void> }
+    opts?: {
+      timeoutMs?: number;
+      maxRetry?: number;
+      onRetry?: (ctx: { side: 'buy'; attempt: number; reason: 'nonce' }) => void | Promise<void>;
+      onSubmitted?: (ctx: { side: 'buy'; txHash: `0x${string}`; submitElapsedMs: number }) => void | Promise<void>;
+    }
   ) {
     const timeoutMs = opts?.timeoutMs ?? 20_000;
     const maxRetry = opts?.maxRetry ?? 1;
@@ -509,6 +514,7 @@ export class TradeService {
         const submitStart = Date.now();
         const rsp = await this.buy(input);
         const submitElapsedMs = Date.now() - submitStart;
+        await opts?.onSubmitted?.({ side: 'buy', txHash: rsp.txHash, submitElapsedMs });
         const receiptStart = Date.now();
         await this.ensureTxSuccess(rsp.txHash, input.chainId, 'buy', timeoutMs);
         const receiptElapsedMs = Date.now() - receiptStart;
@@ -530,6 +536,7 @@ export class TradeService {
       timeoutMs?: number;
       maxRetry?: number;
       onRetry?: (ctx: { side: 'sell'; attempt: number; nonceLike: boolean; allowanceRepaired: boolean }) => void | Promise<void>;
+      onSubmitted?: (ctx: { side: 'sell'; txHash: `0x${string}`; submitElapsedMs: number }) => void | Promise<void>;
     }
   ) {
     if (!input.tokenInfo) throw new Error('Token info required');
@@ -566,6 +573,7 @@ export class TradeService {
           },
         });
         const submitElapsedMs = Date.now() - submitStart;
+        await opts?.onSubmitted?.({ side: 'sell', txHash: rsp.txHash, submitElapsedMs });
         const receiptStart = Date.now();
         await this.ensureTxSuccess(rsp.txHash, input.chainId, 'sell', timeoutMs);
         const receiptElapsedMs = Date.now() - receiptStart;
