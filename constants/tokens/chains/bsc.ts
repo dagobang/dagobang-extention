@@ -75,6 +75,7 @@ export const bscBridgeTokenAddresses = [
   bscTokens.aster.address,
   bscTokens.usd1.address,
   bscTokens.form.address,
+  bscTokens.币安人生.address,
 ] as const;
 
 export type BscBnbBridgePoolConfig =

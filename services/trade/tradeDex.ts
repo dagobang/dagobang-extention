@@ -30,7 +30,7 @@ function seedV3PoolCache(chainId: number, tokenIn: Address, tokenOut: Address, f
   v3PoolCache.set(`${chainId}:${b}:${a}:${fee}`, { ts: now, pool });
 }
 
-export function getBridgeToken(chainId: number, quoteTokenAddress?: string): Address | null {
+export function getBridgeToken(chainId: number, tokenAddress: string, quoteTokenAddress?: string): Address | null {
   if (!quoteTokenAddress) return null;
   const trimmed = quoteTokenAddress.trim();
   if (!/^(0x|0X)[a-fA-F0-9]{40}$/.test(trimmed)) return null;
@@ -41,6 +41,7 @@ export function getBridgeToken(chainId: number, quoteTokenAddress?: string): Add
     return null;
   }
 
+  if (tokenAddress.toLowerCase() === addr.toLowerCase()) return null;
   if (addr.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return null;
   const wNative = toQuoteToken(chainId, ZERO_ADDRESS);
   if (addr.toLowerCase() === wNative.toLowerCase()) return null;

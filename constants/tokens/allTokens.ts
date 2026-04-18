@@ -37,6 +37,7 @@ export function getBridgeTokenDexPreference(chainId: ChainId, address: string): 
     if (addr === bscTokens.aster.address.toLowerCase()) return 'v3';
     if (addr === bscTokens.usd1.address.toLowerCase()) return 'v3';
     if (addr === bscTokens.form.address.toLowerCase()) return 'v2';
+    if (addr === bscTokens.币安人生.address.toLowerCase()) return 'v2';
     return null;
 }
 

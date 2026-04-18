@@ -18,6 +18,7 @@ import { formatBroadcastProvider } from '@/utils/format';
 import { getDexPoolPrefer, parseGweiToWei } from '@/utils/dexUtils';
 import { classifyBroadcastError, collectErrorText, isAllowanceLikeText } from '@/utils/txErrorClassify';
 import { tryGetReceiptRevertReason } from '@/services/tx/errors';
+import { token } from 'viem/tempo/actions';
 
 export class TradeService {
   private static sellInFlightByToken = new Set<string>();
@@ -83,7 +84,7 @@ export class TradeService {
     await prewarmNonce(client, input.chainId, account.address);
 
     const token = input.tokenAddress;
-    const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
+    const bridgeToken = getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
     const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
     const dexPrefer = getDexPoolPrefer(tokenInfo.dex_type);
     const tokenPrefer = dexPrefer === 'v2' || dexPrefer === 'v3' ? dexPrefer : (bridgePrefer ?? 'v2');
@@ -318,7 +319,7 @@ export class TradeService {
     const isInner = this.isInnerDisk(tokenInfo);
     const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
 
-    const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
+    const bridgeToken = getBridgeToken(input.chainId, tokenInfo.address, tokenInfo.quote_token_address);
     console.log('input.tokenInfo', tokenInfo, isInner, launchpadConfig)
     console.log('bridgeToken', bridgeToken);
     const descs: SwapDescLike[] = [];
@@ -684,7 +685,7 @@ export class TradeService {
       if (txHash) lastTxHash = txHash;
     }
 
-    const bridgeToken = isInnerFourMeme ? getBridgeToken(chainId, tokenInfo.quote_token_address) : null;
+    const bridgeToken = isInnerFourMeme ? getBridgeToken(chainId, tokenInfo.address, tokenInfo.quote_token_address) : null;
     if (bridgeToken && bridgeToken !== ZERO_ADDRESS) {
       const txHash = await this.approveMaxForSpenderIfNeeded({
         chainId,
@@ -783,7 +784,7 @@ export class TradeService {
       const platformLower = tokenInfo.launchpad_platform?.toLowerCase() || '';
       const isInnerFourMeme = isInner && platformLower.includes('fourmeme');
       const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
-      const bridgeToken = getBridgeToken(input.chainId, tokenInfo.quote_token_address);
+      const bridgeToken = getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
       const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
       console.log('sell input.tokenInfo', tokenInfo, isInner, launchpadConfig)
       console.log('sell bridgeToken', bridgeToken, bridgePrefer);
