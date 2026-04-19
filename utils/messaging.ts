@@ -9,6 +9,8 @@ export async function call<T extends BgRequest>(req: T): Promise<BgResponse<T>> 
       req.type === 'tx:waitForReceipt' ||
       req.type === 'tx:buyWithReceiptAuto' ||
       req.type === 'tx:sellWithReceiptAuto' ||
+      req.type === 'telegram:quickBuy' ||
+      req.type === 'telegram:quickSell' ||
       req.type === 'ai:generateLogo'
     )
       ? 60000

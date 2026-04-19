@@ -276,6 +276,27 @@ export type UiSettings = {
   limitTradePanelOnlyOnTokenPage?: boolean;
 };
 
+export type TelegramSettings = {
+  enabled?: boolean;
+  botToken?: string;
+  chatId?: string;
+  userId?: string;
+  enforceUserId?: boolean;
+  pollIntervalMs?: number;
+  notifyTradeSubmitted?: boolean;
+  notifyTradeSuccess?: boolean;
+  notifyTradeRetrying?: boolean;
+  notifyLimitOrder?: boolean;
+  notifyQuickTrade?: boolean;
+};
+
+export type TelegramPollStatus = {
+  enabled: boolean;
+  running: boolean;
+  lastPollAtMs: number | null;
+  lastError?: string | null;
+};
+
 export type Settings = {
   chainId: 56;
   chains: Record<number, ChainSettings>;
@@ -296,6 +317,7 @@ export type Settings = {
   limitOrderScanIntervalMs?: number;
   tokenBalancePollIntervalMs?: number;
   ui?: UiSettings;
+  telegram?: TelegramSettings;
   autoTrade: AutoTradeConfig;
   advancedAutoSell: AdvancedAutoSellConfig;
 };
@@ -611,6 +633,10 @@ export type BgRequest =
   | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
   | { type: 'tx:checkSellAllowanceInsufficient'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
+  | { type: 'telegram:test' }
+  | { type: 'telegram:getStatus' }
+  | { type: 'telegram:quickBuy'; tokenAddress: `0x${string}`; amountBnb: string }
+  | { type: 'telegram:quickSell'; tokenAddress: `0x${string}`; sellPercent: number }
   | { type: 'twitter:signal'; payload: UnifiedTwitterSignal }
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
   | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
@@ -714,6 +740,20 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; insufficient: boolean; checked?: Array<{ token: string; spender: string; allowance: string }> }
   : T extends { type: 'tx:bloxroutePrivate' }
   ? { ok: true; txHash?: `0x${string}` }
+  : T extends { type: 'telegram:test' }
+  ? { ok: true; sent: boolean }
+  : T extends { type: 'telegram:getStatus' }
+  ? ({ ok: true } & TelegramPollStatus)
+  : T extends { type: 'telegram:quickBuy' }
+  ? (
+    | ({ ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
+    | { ok: false; error?: TxWaitForReceiptError | { message: string } }
+  )
+  : T extends { type: 'telegram:quickSell' }
+  ? (
+    | ({ ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
+    | { ok: false; error?: TxWaitForReceiptError | { message: string } }
+  )
   : T extends { type: 'twitter:signal' }
   ? { ok: true }
   : T extends { type: 'limitOrder:list' }

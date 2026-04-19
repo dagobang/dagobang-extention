@@ -270,6 +270,7 @@ export function LimitTradePanel({
       window.localStorage.setItem('dagobang_limit_order_price_display_mode_v1', priceDisplayMode);
     } catch {
     }
+    void browser.storage.local.set({ dagobang_limit_order_price_display_mode_v1: priceDisplayMode });
   }, [priceDisplayMode]);
 
   useEffect(() => {

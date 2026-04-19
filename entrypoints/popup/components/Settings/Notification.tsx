@@ -1,12 +1,7 @@
 import { Play } from 'lucide-react';
-import { normalizeLocale, type Locale } from '@/utils/i18n';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import { TRADE_SUCCESS_SOUND_PRESETS, type TradeSuccessSoundPreset } from '@/types/extention';
 import type { SettingsDraftProps } from './types';
-
-type NotificationProps = SettingsDraftProps & {
-  onLocaleChange: (locale: Locale) => void;
-};
 
 const OFF_VALUE = '__off__';
 
@@ -14,7 +9,7 @@ function isPreset(v: any): v is TradeSuccessSoundPreset {
   return TRADE_SUCCESS_SOUND_PRESETS.includes(v);
 }
 
-export function Notification({ settingsDraft, setSettingsDraft, tt, onLocaleChange }: NotificationProps) {
+export function Notification({ settingsDraft, setSettingsDraft, tt }: SettingsDraftProps) {
   const tradeSuccessSoundEnabled = !!settingsDraft.tradeSuccessSoundEnabled;
   const tradeSuccessSoundPresetBuy = isPreset(settingsDraft.tradeSuccessSoundPresetBuy) ? settingsDraft.tradeSuccessSoundPresetBuy : 'Bell';
   const tradeSuccessSoundPresetSell = isPreset(settingsDraft.tradeSuccessSoundPresetSell) ? settingsDraft.tradeSuccessSoundPresetSell : 'Coins';

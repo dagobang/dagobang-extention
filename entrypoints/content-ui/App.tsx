@@ -654,6 +654,20 @@ export default function App() {
   useEffect(() => {
     if (!siteInfo) return;
     const listener = (message: any) => {
+      if (message.type === 'bg:gmgn:getTokenHoldings') {
+        return (async () => {
+          if (siteInfo?.platform !== 'gmgn') return { ok: false, error: 'not_gmgn_page' };
+          try {
+            const chain = typeof message?.chain === 'string' ? message.chain : 'bsc';
+            const walletAddress = typeof message?.walletAddress === 'string' ? message.walletAddress : '';
+            if (!walletAddress) return { ok: false, error: 'invalid_wallet_address' };
+            const holdings = await GmgnAPI.getTokenHoldings(chain, walletAddress);
+            return { ok: true, holdings };
+          } catch (e: any) {
+            return { ok: false, error: String(e?.message || e || 'gmgn_holdings_query_failed') };
+          }
+        })();
+      }
       if (message.type === 'bg:tokenSniper:gmgnWalletAddress') {
         return (async () => {
           if (siteInfo?.platform !== 'gmgn') return { ok: false, error: 'not_gmgn_page' };

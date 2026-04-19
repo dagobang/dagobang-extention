@@ -19,11 +19,13 @@ import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import FourmemeAPI from '@/services/api/fourmeme';
 import BloxRouterAPI from '@/services/api/bloxRouter';
-import { isAddress, parseEther } from 'viem';
+import { formatUnits, isAddress, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { getGasPriceWei, sendTransaction } from '@/services/trade/tradeTx';
 import { classifyBroadcastError, collectErrorText } from '@/utils/txErrorClassify';
 import type { TxBuyInput } from '@/types/extention';
+import { createTelegramNotifier } from '@/services/telegram/notifier';
+import { createTelegramController } from '@/services/telegram/controller';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
@@ -57,6 +59,29 @@ export default defineBackground(() => {
     await broadcastToTabs({ type: 'bg:stateChanged' });
   };
 
+  const requestGmgnHoldingsFromContent = async (chain: string, walletAddress: string): Promise<any[]> => {
+    try {
+      const tabs = await browser.tabs.query({});
+      for (const tab of tabs) {
+        if (!tab.id) continue;
+        try {
+          const rsp = await browser.tabs.sendMessage(tab.id, {
+            type: 'bg:gmgn:getTokenHoldings',
+            chain,
+            walletAddress,
+          });
+          if (rsp?.ok && Array.isArray(rsp?.holdings)) {
+            return rsp.holdings;
+          }
+        } catch {
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  };
+
   const broadcastTradeSuccess = async (payload: any, tabId?: number | null) => {
     if (typeof tabId === 'number' && tabId > 0) {
       browser.tabs.sendMessage(tabId, payload).catch(() => { });
@@ -71,7 +96,46 @@ export default defineBackground(() => {
     } catch {
       broadcastToTabs(payload);
     }
+    try {
+      if (payload?.type === 'bg:tradeSubmitted') {
+        await telegramNotifier.notifyTradeSubmitted({
+          source: payload?.source,
+          side: payload?.side,
+          tokenAddress: payload?.tokenAddress,
+          txHash: payload?.txHash,
+          submitElapsedMs: payload?.submitElapsedMs,
+        });
+      } else if (payload?.type === 'bg:tradeSuccess') {
+        await telegramNotifier.notifyTradeSuccess({
+          source: payload?.source,
+          side: payload?.side,
+          tokenAddress: payload?.tokenAddress,
+          txHash: payload?.txHash,
+          submitElapsedMs: payload?.submitElapsedMs,
+          receiptElapsedMs: payload?.receiptElapsedMs,
+        });
+      } else if (payload?.type === 'bg:tradeRetrying') {
+        await telegramNotifier.notifyRetrying({
+          side: payload?.side,
+          tokenAddress: payload?.tokenAddress,
+          attempt: payload?.attempt,
+          reason: payload?.reason,
+        });
+      }
+    } catch {
+    }
   };
+
+  const telegramNotifier = createTelegramNotifier({
+    getSettings: SettingsService.get,
+  });
+  const telegramController = createTelegramController({
+    broadcastTradeSuccess: (payload) => broadcastTradeSuccess(payload),
+    broadcastStateChange,
+    notifier: telegramNotifier,
+    fetchGmgnHoldings: requestGmgnHoldingsFromContent,
+  });
+  telegramController.start();
 
   let limitOrderScanner: ReturnType<typeof createLimitOrderScanner> | null = null;
   const limitOrderExecutor = createLimitOrderExecutor({
@@ -90,6 +154,13 @@ export default defineBackground(() => {
         txHash,
         submitElapsedMs,
       });
+      void telegramNotifier.notifyLimitOrderResult({
+        stage: 'submitted',
+        orderId: order.id,
+        side: order.side,
+        tokenAddress: order.tokenAddress,
+        txHash,
+      });
     },
     onOrderSubmitted: ({ order, txHash, submitElapsedMs, receiptElapsedMs, totalElapsedMs, broadcastVia, broadcastUrl, isBundle }) => {
       broadcastTradeSuccess({
@@ -106,6 +177,13 @@ export default defineBackground(() => {
         broadcastVia,
         broadcastUrl,
         isBundle,
+      });
+      void telegramNotifier.notifyLimitOrderResult({
+        stage: 'success',
+        orderId: order.id,
+        side: order.side,
+        tokenAddress: order.tokenAddress,
+        txHash,
       });
     },
   });
@@ -822,6 +900,22 @@ export default defineBackground(() => {
             } catch {
               return { ok: true };
             }
+          }
+
+          case 'telegram:test': {
+            return await telegramController.test();
+          }
+
+          case 'telegram:getStatus': {
+            return { ok: true, ...(await telegramController.getStatus()) };
+          }
+
+          case 'telegram:quickBuy': {
+            return await telegramController.runQuickBuy(msg.tokenAddress, msg.amountBnb);
+          }
+
+          case 'telegram:quickSell': {
+            return await telegramController.runQuickSell(msg.tokenAddress, msg.sellPercent);
           }
 
           case 'tx:waitForReceipt': {

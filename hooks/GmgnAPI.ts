@@ -35,7 +35,7 @@ export interface MultiTokenInfoResponse {
   }>;
 }
 
-interface TokenHolding {
+export interface GmgnTokenHolding {
   chain_wallet: string;
   token_address: string;
   wallet_address: string;
@@ -49,7 +49,7 @@ interface TokenHoldingsResponse {
   reason: string;
   message: string;
   data: {
-    holdings: TokenHolding[];
+    holdings: GmgnTokenHolding[];
   };
 }
 
@@ -791,9 +791,52 @@ export class GmgnAPI {
    * @param tokenAddress Token address
    * @returns Promise<string | undefined> Token balance or undefined if not found
    */
-  public static async getTokenHolding(chain: string, walletAddress: string, tokenAddress: string): Promise<string | undefined> {
+  public static async getTokenHoldings(chain: string, walletAddress: string): Promise<GmgnTokenHolding[]> {
     if (!walletAddress) {
-      return undefined;
+      return [];
+    }
+
+    const endpoint = '/wallets/holding';
+    const queryParams = {
+      worker: '0',
+      chain,
+      wallet_addresses: walletAddress.toLowerCase()
+    };
+
+    const url = await this.buildApiUrl(endpoint, queryParams, this.HOLDINGS_BASE_URL);
+    const headers = await this.getHeaders();
+
+    try {
+      const response = await this.makeRequest(url, {
+        method: 'GET',
+        headers
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json() as TokenHoldingsResponse;
+      if (
+        result.code === 0 &&
+        result.data &&
+        Array.isArray(result.data.holdings)
+      ) {
+        return result.data.holdings;
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Failed to fetch token holdings:', error);
+      throw error;
+    }
+  }
+
+  public static async getTokenHolding(chain: string, walletAddress: string, tokenAddress?: string): Promise<string | undefined> {
+    if (!walletAddress) return undefined;
+    if (!tokenAddress) {
+      const holdings = await this.getTokenHoldings(chain, walletAddress);
+      return holdings?.[0]?.balance;
     }
 
     const endpoint = '/wallets/holding';

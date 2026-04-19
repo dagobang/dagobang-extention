@@ -300,6 +300,46 @@ export function validateSettings(input: Settings): Settings | null {
     ? (input as any).bloxrouteAuthHeader.trim()
     : defaults.bloxrouteAuthHeader ?? '';
 
+  const inputTelegram = (input as any).telegram as any;
+  const defaultTelegram = (defaults as any).telegram as any;
+  const telegramEnabled = typeof inputTelegram?.enabled === 'boolean'
+    ? inputTelegram.enabled
+    : !!defaultTelegram?.enabled;
+  const telegramBotToken = typeof inputTelegram?.botToken === 'string'
+    ? inputTelegram.botToken.trim()
+    : (defaultTelegram?.botToken ?? '');
+  const telegramChatId = typeof inputTelegram?.chatId === 'string'
+    ? inputTelegram.chatId.trim()
+    : (defaultTelegram?.chatId ?? '');
+  const telegramUserId = typeof inputTelegram?.userId === 'string'
+    ? inputTelegram.userId.trim()
+    : (defaultTelegram?.userId ?? '');
+  const telegramEnforceUserId = typeof inputTelegram?.enforceUserId === 'boolean'
+    ? inputTelegram.enforceUserId
+    : (defaultTelegram?.enforceUserId ?? false);
+  const inputTelegramPollIntervalMs = Number(inputTelegram?.pollIntervalMs);
+  const defaultTelegramPollIntervalMs = Number(defaultTelegram?.pollIntervalMs);
+  const telegramPollIntervalMs = Number.isFinite(inputTelegramPollIntervalMs) && inputTelegramPollIntervalMs >= 1000 && inputTelegramPollIntervalMs <= 10000
+    ? Math.floor(inputTelegramPollIntervalMs)
+    : (Number.isFinite(defaultTelegramPollIntervalMs) && defaultTelegramPollIntervalMs >= 1000
+      ? Math.floor(defaultTelegramPollIntervalMs)
+      : 2000);
+  const telegramNotifyTradeSubmitted = typeof inputTelegram?.notifyTradeSubmitted === 'boolean'
+    ? inputTelegram.notifyTradeSubmitted
+    : (defaultTelegram?.notifyTradeSubmitted ?? true);
+  const telegramNotifyTradeSuccess = typeof inputTelegram?.notifyTradeSuccess === 'boolean'
+    ? inputTelegram.notifyTradeSuccess
+    : (defaultTelegram?.notifyTradeSuccess ?? true);
+  const telegramNotifyTradeRetrying = typeof inputTelegram?.notifyTradeRetrying === 'boolean'
+    ? inputTelegram.notifyTradeRetrying
+    : (defaultTelegram?.notifyTradeRetrying ?? true);
+  const telegramNotifyLimitOrder = typeof inputTelegram?.notifyLimitOrder === 'boolean'
+    ? inputTelegram.notifyLimitOrder
+    : (defaultTelegram?.notifyLimitOrder ?? true);
+  const telegramNotifyQuickTrade = typeof inputTelegram?.notifyQuickTrade === 'boolean'
+    ? inputTelegram.notifyQuickTrade
+    : (defaultTelegram?.notifyQuickTrade ?? true);
+
   const inputAutoTrade = (input as any).autoTrade as Partial<AutoTradeConfig> | undefined;
   const defaultAutoTrade = defaults.autoTrade;
   const wsMonitorEnabled = typeof (inputAutoTrade as any)?.wsMonitorEnabled === 'boolean'
@@ -642,6 +682,19 @@ export function validateSettings(input: Settings): Settings | null {
     ui: {
       showToolbar,
       limitTradePanelOnlyOnTokenPage,
+    },
+    telegram: {
+      enabled: telegramEnabled,
+      botToken: telegramBotToken,
+      chatId: telegramChatId,
+      userId: telegramUserId,
+      enforceUserId: telegramEnforceUserId,
+      pollIntervalMs: telegramPollIntervalMs,
+      notifyTradeSubmitted: telegramNotifyTradeSubmitted,
+      notifyTradeSuccess: telegramNotifyTradeSuccess,
+      notifyTradeRetrying: telegramNotifyTradeRetrying,
+      notifyLimitOrder: telegramNotifyLimitOrder,
+      notifyQuickTrade: telegramNotifyQuickTrade,
     },
     tradeSuccessSoundEnabled,
     tradeSuccessSoundPresetBuy,

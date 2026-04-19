@@ -66,7 +66,9 @@ export async function hasInsufficientSellAllowance(input: {
 
   const platform = input.tokenInfo.launchpad_platform?.toLowerCase() || '';
   const isInnerFourMeme = input.isInnerDisk(input.tokenInfo) && platform.includes('fourmeme');
-  const bridgeToken = isInnerFourMeme ? getBridgeToken(input.chainId, input.tokenInfo.quote_token_address) : null;
+  const bridgeToken = isInnerFourMeme
+    ? getBridgeToken(input.chainId, input.tokenInfo.address, input.tokenInfo.quote_token_address)
+    : null;
   if (bridgeToken && bridgeToken !== ZERO_ADDRESS) {
     const allowance = await input.client.readContract({
       address: bridgeToken as `0x${string}`,

@@ -10,6 +10,7 @@ import { NetworkSettings } from './Settings/NetworkSettings';
 import { TradeSettings } from './Settings/TradeSettings';
 import { GasSettings } from './Settings/GasSettings';
 import { Notification } from './Settings/Notification';
+import { TelegramSettings } from './Settings/TelegramSettings';
 import { SecuritySettings } from './Settings/SecuritySettings';
 import { UiSettings } from './Settings/UiSettings';
 import type { SettingsSectionId } from './Settings/types';
@@ -61,6 +62,7 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
     trade: tt('popup.settings.trade'),
     gas: tt('popup.settings.gasPreset'),
     notification: tt('popup.settings.notification'),
+    telegram: tt('popup.settings.telegram'),
     security: tt('popup.settings.security'),
     ui: tt('popup.settings.ui'),
   };
@@ -87,15 +89,8 @@ export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBa
         {section === 'network' && <NetworkSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'trade' && <TradeSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'gas' && <GasSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
-        {section === 'notification' && (
-          <Notification
-            settingsDraft={settingsDraft}
-            setSettingsDraft={setSettingsDraft}
-            tt={tt}
-            busy={busy}
-            onLocaleChange={onLocaleChange}
-          />
-        )}
+        {section === 'notification' && <Notification settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
+        {section === 'telegram' && <TelegramSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'ui' && <UiSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'security' && <SecuritySettings tt={tt} busy={busy} withBusy={withBusy} onBackup={onBackup} onRefresh={onRefresh} />}
 
