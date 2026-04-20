@@ -82,6 +82,28 @@ export default defineBackground(() => {
     }
   };
 
+  const requestGmgnHoldingDetailFromContent = async (chain: string, walletAddress: string, tokenAddress: string): Promise<any | null> => {
+    try {
+      const tabs = await browser.tabs.query({});
+      for (const tab of tabs) {
+        if (!tab.id) continue;
+        try {
+          const rsp = await browser.tabs.sendMessage(tab.id, {
+            type: 'bg:gmgn:getTokenHoldingDetail',
+            chain,
+            walletAddress,
+            tokenAddress,
+          });
+          if (rsp?.ok && rsp?.detail) return rsp.detail;
+        } catch {
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
   const broadcastTradeSuccess = async (payload: any, tabId?: number | null) => {
     if (typeof tabId === 'number' && tabId > 0) {
       browser.tabs.sendMessage(tabId, payload).catch(() => { });
@@ -134,6 +156,7 @@ export default defineBackground(() => {
     broadcastStateChange,
     notifier: telegramNotifier,
     fetchGmgnHoldings: requestGmgnHoldingsFromContent,
+    fetchGmgnHoldingDetail: requestGmgnHoldingDetailFromContent,
   });
   telegramController.start();
 

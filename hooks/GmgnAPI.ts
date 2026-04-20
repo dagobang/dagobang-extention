@@ -36,11 +36,27 @@ export interface MultiTokenInfoResponse {
 }
 
 export interface GmgnTokenHolding {
-  chain_wallet: string;
   token_address: string;
-  wallet_address: string;
+  symbol?: string;
+  token_symbol?: string;
   balance: string;
-  price: string;
+  price?: string;
+  usd_value?: string;
+  total_profit?: string;
+  unrealized_profit?: string;
+  realized_profit?: string;
+  total_profit_pnl?: string | null;
+  unrealized_profit_pnl?: string | null;
+  accu_cost?: string;
+  history_bought_cost?: string;
+  history_bought_amount?: string;
+  token?: {
+    token_address?: string;
+    symbol?: string;
+    name?: string;
+    decimals?: number;
+    price?: string;
+  };
   [key: string]: any;
 }
 
@@ -48,9 +64,7 @@ interface TokenHoldingsResponse {
   code: number;
   reason: string;
   message: string;
-  data: {
-    holdings: GmgnTokenHolding[];
-  };
+  data?: any;
 }
 
 interface WalletBalance {
@@ -796,14 +810,20 @@ export class GmgnAPI {
       return [];
     }
 
-    const endpoint = '/wallets/holding';
+    const endpoint = `/wallet/${chain.toLowerCase()}/${walletAddress.toLowerCase()}/holdings`;
     const queryParams = {
       worker: '0',
-      chain,
-      wallet_addresses: walletAddress.toLowerCase()
+      hide_closed: true,
+      hide_airdrop: true,
+      hide_abnormal: false,
+      limit: 20,
+      showsmall: true,
+      sellout: true,
+      order_by: 'last_active_timestamp',
+      direction: 'desc'
     };
 
-    const url = await this.buildApiUrl(endpoint, queryParams, this.HOLDINGS_BASE_URL);
+    const url = await this.buildApiUrl(endpoint, queryParams as any, this.PROFIT_BASE_URL);
     const headers = await this.getHeaders();
 
     try {
@@ -817,12 +837,38 @@ export class GmgnAPI {
       }
 
       const result = await response.json() as TokenHoldingsResponse;
-      if (
-        result.code === 0 &&
-        result.data &&
-        Array.isArray(result.data.holdings)
-      ) {
-        return result.data.holdings;
+      if (result.code === 0 && result.data) {
+        // 1) pf holdings: /wallet/{chain}/{wallet}/holdings => data.list[]
+        if (Array.isArray((result.data as any)?.list)) {
+          const list = (result.data as any).list as any[];
+          return list
+            .map((item) => {
+              const tokenAddr = String(item?.token?.token_address || item?.token_address || '').toLowerCase();
+              if (!tokenAddr) return null;
+              return {
+                token_address: tokenAddr,
+                symbol: String(item?.token?.symbol || item?.symbol || ''),
+                token_symbol: String(item?.token?.symbol || item?.symbol || ''),
+                balance: String(item?.balance ?? '0'),
+                price: String(item?.token?.price ?? item?.price ?? ''),
+                usd_value: String(item?.usd_value ?? ''),
+                total_profit: String(item?.total_profit ?? ''),
+                unrealized_profit: String(item?.unrealized_profit ?? ''),
+                realized_profit: String(item?.realized_profit ?? ''),
+                total_profit_pnl: item?.total_profit_pnl ?? null,
+                unrealized_profit_pnl: item?.unrealized_profit_pnl ?? null,
+                accu_cost: String(item?.accu_cost ?? ''),
+                history_bought_cost: String(item?.history_bought_cost ?? ''),
+                history_bought_amount: String(item?.history_bought_amount ?? ''),
+                token: item?.token,
+              } as GmgnTokenHolding;
+            })
+            .filter(Boolean) as GmgnTokenHolding[];
+        }
+        // 2) fallback: old /wallets/holding style
+        if (Array.isArray((result.data as any)?.holdings)) {
+          return (result.data as any).holdings as GmgnTokenHolding[];
+        }
       }
 
       return [];
@@ -839,15 +885,13 @@ export class GmgnAPI {
       return holdings?.[0]?.balance;
     }
 
-    const endpoint = '/wallets/holding';
+    const endpoint = `/wallet/${chain.toLowerCase()}/${walletAddress.toLowerCase()}/holding`;
     const queryParams = {
       worker: '0',
-      chain,
-      token_address: tokenAddress.toLowerCase(),
-      wallet_addresses: walletAddress.toLowerCase()
+      token_address: tokenAddress.toLowerCase()
     };
 
-    const url = await this.buildApiUrl(endpoint, queryParams, this.HOLDINGS_BASE_URL);
+    const url = await this.buildApiUrl(endpoint, queryParams as any, this.PROFIT_BASE_URL);
     const headers = await this.getHeaders();
 
     try {
@@ -861,13 +905,13 @@ export class GmgnAPI {
       }
 
       const result = await response.json() as TokenHoldingsResponse;
-      if (
-        result.code === 0 &&
-        result.data &&
-        Array.isArray(result.data.holdings) &&
-        result.data.holdings.length > 0
-      ) {
-        return result.data.holdings[0].balance;
+      if (result.code === 0 && result.data) {
+        if (typeof result.data === 'object' && !Array.isArray(result.data)) {
+          return String(result.data?.balance ?? '0');
+        }
+        if (Array.isArray((result.data as any)?.holdings) && (result.data as any).holdings.length > 0) {
+          return (result.data as any).holdings[0].balance;
+        }
       }
 
       return undefined;

@@ -668,6 +668,21 @@ export default function App() {
           }
         })();
       }
+      if (message.type === 'bg:gmgn:getTokenHoldingDetail') {
+        return (async () => {
+          if (siteInfo?.platform !== 'gmgn') return { ok: false, error: 'not_gmgn_page' };
+          try {
+            const chain = typeof message?.chain === 'string' ? message.chain : 'bsc';
+            const walletAddress = typeof message?.walletAddress === 'string' ? message.walletAddress : '';
+            const tokenAddress = typeof message?.tokenAddress === 'string' ? message.tokenAddress : '';
+            if (!walletAddress || !tokenAddress) return { ok: false, error: 'invalid_params' };
+            const detail = await GmgnAPI.getTokenHoldingDetail(chain, walletAddress, tokenAddress);
+            return { ok: true, detail };
+          } catch (e: any) {
+            return { ok: false, error: String(e?.message || e || 'gmgn_holding_detail_query_failed') };
+          }
+        })();
+      }
       if (message.type === 'bg:tokenSniper:gmgnWalletAddress') {
         return (async () => {
           if (siteInfo?.platform !== 'gmgn') return { ok: false, error: 'not_gmgn_page' };

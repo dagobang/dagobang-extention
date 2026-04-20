@@ -24,6 +24,7 @@ export function createTelegramController(deps: {
   broadcastStateChange: () => Promise<void>;
   notifier?: TelegramNotifierLike;
   fetchGmgnHoldings?: (chain: string, walletAddress: string) => Promise<any[]>;
+  fetchGmgnHoldingDetail?: (chain: string, walletAddress: string, tokenAddress: string) => Promise<any | null>;
 }) {
   const getTelegramConfigFromSettings = async (): Promise<TelegramApiConfig | null> => {
     const settings = await SettingsService.get();
@@ -111,6 +112,12 @@ export function createTelegramController(deps: {
     if (!s) return 'Token';
     return s.length > max ? `${s.slice(0, max)}..` : s;
   };
+  const formatHoldingAmount = (raw: string) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return raw;
+    if (Math.abs(n) >= 1000) return formatCountShort(n) ?? String(n);
+    return n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') || '0';
+  };
 
   const buildTokenActionKeyboard = (tokenAddress: `0x${string}`, buyPresets: string[], sellPresets: string[]) => {
     const buyBase = buyPresets && buyPresets.length ? buyPresets : ['0.1', '0.5', '1', '2'];
@@ -182,7 +189,7 @@ export function createTelegramController(deps: {
     try {
       const byHttp = await FourmemeAPI.getTokenInfo('bsc', tokenAddress);
       if (byHttp) return byHttp;
-    } catch {}
+    } catch { }
     try {
       const meta = await TokenService.getMeta(tokenAddress);
       return {
@@ -320,6 +327,19 @@ export function createTelegramController(deps: {
   };
 
   const sendHoldings = async (chainId: number, walletAddress: `0x${string}`) => {
+    const pickNum = (obj: any, keys: string[]) => {
+      for (const k of keys) {
+        const v = Number(obj?.[k]);
+        if (Number.isFinite(v)) return v;
+      }
+      return null as number | null;
+    };
+    const formatPnlPercent = (ratio: number | null) => {
+      if (ratio == null || !Number.isFinite(ratio)) return '-';
+      const pct = ratio * 100;
+      const sign = pct > 0 ? '+' : '';
+      return `${sign}${pct.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`;
+    };
     const chainCode = chainId === 56 ? 'bsc' : String(chainId);
     try {
       const gmgnHoldings = await deps.fetchGmgnHoldings?.(chainCode, walletAddress);
@@ -328,30 +348,46 @@ export function createTelegramController(deps: {
           .map((h: any) => {
             const tokenAddress = String(h?.token_address || '').toLowerCase();
             if (!/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) return null;
-            const symbol = String(h?.symbol || h?.token_symbol || 'TOKEN');
+            const symbol = String(h?.symbol || h?.token_symbol || h?.token?.symbol || 'TOKEN');
             const balanceNum = Number(h?.balance ?? 0);
-            const priceNum = Number(h?.price ?? 0);
-            const usd = Number.isFinite(balanceNum) && Number.isFinite(priceNum) ? balanceNum * priceNum : 0;
+            const priceNum = Number(h?.price ?? h?.token?.price ?? 0);
+            const usdValue = pickNum(h, ['usd_value', 'value_usd']);
+            const usd = usdValue != null
+              ? usdValue
+              : (Number.isFinite(balanceNum) && Number.isFinite(priceNum) ? balanceNum * priceNum : 0);
+            const totalCostUsdRaw = pickNum(h, ['accu_cost', 'history_bought_cost', 'total_cost_usd', 'cost_usd', 'total_cost', 'cost', 'buy_amount_usd', 'buy_value_usd']);
+            const costUsd = totalCostUsdRaw;
+            let pnlUsd = pickNum(h, ['total_profit', 'unrealized_profit', 'realized_profit', 'pnl_usd', 'unrealized_pnl_usd', 'profit_usd', 'pnl', 'profit']);
+            if (pnlUsd == null && totalCostUsdRaw != null && Number.isFinite(usd)) {
+              pnlUsd = usd - totalCostUsdRaw;
+            }
+            const pnlRatio = pickNum(h, ['total_profit_pnl', 'unrealized_profit_pnl', 'pnl_ratio', 'profit_pnl']);
             return {
               tokenAddress: tokenAddress as `0x${string}`,
               symbol,
               amountText: Number.isFinite(balanceNum) ? String(balanceNum) : '-',
               usd: Number.isFinite(usd) ? usd : 0,
+              costUsd,
+              pnlUsd,
+              pnlRatio,
             };
           })
-          .filter(Boolean) as Array<{ tokenAddress: `0x${string}`; symbol: string; amountText: string; usd: number }>;
+          .filter(Boolean) as Array<{ tokenAddress: `0x${string}`; symbol: string; amountText: string; usd: number; costUsd: number | null; pnlUsd: number | null; pnlRatio: number | null }>;
 
         if (normalized.length > 0) {
           normalized.sort((a, b) => (b.usd || 0) - (a.usd || 0));
           const top = normalized.slice(0, 12);
           const totalUsd = normalized.reduce((s, r) => s + (Number.isFinite(r.usd) ? r.usd : 0), 0);
           const lines = top.map((r, i) => {
-            const amountShort = formatCountShort(Number(r.amountText)) ?? r.amountText;
-            return `${i + 1}) ${compactTokenLabel(r.symbol, 10)} | ${amountShort} | ${formatUsd(r.usd)} | ${shortAddress(r.tokenAddress)}`;
+            const amountShort = formatHoldingAmount(r.amountText);
+            const pnlText = r.pnlUsd != null ? formatUsd(r.pnlUsd) : '-';
+            const pnlPct = formatPnlPercent(r.pnlRatio);
+            const pnlIcon = (r.pnlUsd ?? 0) > 0 || (r.pnlRatio ?? 0) > 0 ? '🟢' : (r.pnlUsd ?? 0) < 0 || (r.pnlRatio ?? 0) < 0 ? '🔴' : '⚪';
+            return `${i + 1}) ${compactTokenLabel(r.symbol, 10)} | ${amountShort} | 持仓${formatUsd(r.usd)} | ${pnlIcon}PnL ${pnlText} (${pnlPct})`;
           });
-          const viewRows = top.slice(0, 6).map((r, i) => ([{ text: `� 查看#${i + 1} ${compactTokenLabel(r.symbol, 8)}`, callbackData: `act:token:${r.tokenAddress}` }]));
+          const viewRows = top.slice(0, 6).map((r, i) => ([{ text: `🔍 查看#${i + 1} ${compactTokenLabel(r.symbol, 8)}`, callbackData: `act:token:${r.tokenAddress}` }]));
           await sendTelegramReply(
-            ['💼 当前持仓', `地址: ${walletAddress}`, `总估值: ${formatUsd(totalUsd)}`, `显示: ${top.length}/${normalized.length} (GMGN)`, '', ...lines].join('\n'),
+            ['💼 持仓', `地址: ${shortAddress(walletAddress)}`, `总估值: ${formatUsd(totalUsd)}`, `显示: ${top.length}/${normalized.length}`, '', ...lines].join('\n'),
             { inlineKeyboard: [...viewRows, [{ text: '🔄 刷新持仓', callbackData: 'act:holdings' }, { text: '↩️ 菜单', callbackData: 'act:menu' }]] }
           );
           return;
@@ -408,12 +444,12 @@ export function createTelegramController(deps: {
     const top = rows.slice(0, 12);
     const totalUsd = rows.reduce((s, r) => s + (Number.isFinite(r.usd) ? r.usd : 0), 0);
     const lines = top.map((r, i) => {
-      const amountShort = formatCountShort(Number(r.amountText)) ?? r.amountText;
-      return `${i + 1}) ${compactTokenLabel(r.symbol, 10)} | ${amountShort} | ${formatUsd(r.usd)} | ${shortAddress(r.tokenAddress)}`;
+      const amountShort = formatHoldingAmount(r.amountText);
+      return `${i + 1}) ${compactTokenLabel(r.symbol, 10)} | ${amountShort} | 持仓${formatUsd(r.usd)} | ⚪PnL - (-)`;
     });
-    const viewRows = top.slice(0, 6).map((r, i) => ([{ text: `� 查看#${i + 1} ${compactTokenLabel(r.symbol, 8)}`, callbackData: `act:token:${r.tokenAddress}` }]));
+    const viewRows = top.slice(0, 6).map((r, i) => ([{ text: `🔍 查看#${i + 1} ${compactTokenLabel(r.symbol, 8)}`, callbackData: `act:token:${r.tokenAddress}` }]));
     await sendTelegramReply(
-      ['💼 当前持仓', `地址: ${walletAddress}`, `总估值: ${formatUsd(totalUsd)}`, `显示: ${top.length}/${rows.length}`, '', ...lines].join('\n'),
+      ['💼 持仓', `钱包: ${walletAddress}`, `总估值: ${formatUsd(totalUsd)}`, `显示: ${top.length}/${rows.length}`, '', ...lines].join('\n'),
       { inlineKeyboard: [...viewRows, [{ text: '🔄 刷新持仓', callbackData: 'act:holdings' }, { text: '↩️ 菜单', callbackData: 'act:menu' }]] }
     );
   };
@@ -514,7 +550,7 @@ export function createTelegramController(deps: {
           const pageStart = (currentPage - 1) * perPage;
           const visible = actionable.slice(pageStart, pageStart + perPage);
           if (!orders.length) {
-            await sendTelegramReply('当前无挂单记录', { inlineKeyboard: buildMainMenuKeyboard() });
+            await sendTelegramReply('无挂单记录', { inlineKeyboard: buildMainMenuKeyboard() });
             return;
           }
           const lines = visible.map((o, idx) => {
@@ -535,7 +571,7 @@ export function createTelegramController(deps: {
           if (currentPage < totalPages) navRow.push({ text: `下一页(${currentPage + 1}) ➡️`, callbackData: `act:ordersp:${currentPage + 1}` });
           if (navRow.length) keyboard.push(navRow);
           keyboard.push([{ text: '🔄 刷新', callbackData: `act:ordersp:${currentPage}` }, { text: '↩️ 菜单', callbackData: 'act:menu' }]);
-          await sendTelegramReply(['📋 挂单面板', `🌐 链: ${settings.chainId}`, `📊 等待 ${open.length} | 触发中 ${triggered.length} | 已执行 ${executed.length} | 失败 ${failed.length}`, `🧾 显示: ${pageStart + (visible.length ? 1 : 0)}-${pageStart + visible.length}/${actionable.length} | 第 ${currentPage}/${totalPages} 页`, '', lines.join('\n')].join('\n\n'), { inlineKeyboard: keyboard });
+          await sendTelegramReply(['📋 挂单面板', `📊 等待 ${open.length} | 触发中 ${triggered.length} | 已执行 ${executed.length} | 失败 ${failed.length}`, `🧾 显示: ${pageStart + (visible.length ? 1 : 0)}-${pageStart + visible.length}/${actionable.length} | 第 ${currentPage}/${totalPages} 页`, '', lines.join('\n')].join('\n'), { inlineKeyboard: keyboard });
           return;
         }
         if (isTokenAction) {
@@ -560,8 +596,72 @@ export function createTelegramController(deps: {
           });
           const chainSettings = (settings.chains as any)?.[settings.chainId];
           const tokenOrderButtons = tokenOrders.slice(0, 6).map((o, idx) => ([{ text: `❌ 取消挂单#${idx + 1}`, callbackData: `act:cancel:${o.id}` }]));
+          const balanceNum = Number(snapshot.balanceAmount);
+          const balanceShort = Number.isFinite(balanceNum)
+            ? formatHoldingAmount(snapshot.balanceAmount)
+            : snapshot.balanceAmount;
+          const pickNum = (obj: any, keys: string[]) => {
+            for (const k of keys) {
+              const v = Number(obj?.[k]);
+              if (Number.isFinite(v)) return v;
+            }
+            return null as number | null;
+          };
+          const formatPnlPercent = (ratio: number | null) => {
+            if (ratio == null || !Number.isFinite(ratio)) return '-';
+            const pct = ratio * 100;
+            const sign = pct > 0 ? '+' : '';
+            return `${sign}${pct.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`;
+          };
+          let holdingPnlText = '⚪PnL - (-)';
+          if (snapshot.holderAddress) {
+            const chainCode = settings.chainId === 56 ? 'bsc' : String(settings.chainId);
+            try {
+              const detail = await deps.fetchGmgnHoldingDetail?.(chainCode, snapshot.holderAddress, tokenAddress);
+              if (detail) {
+                const usdValue = pickNum(detail, ['usd_value', 'value_usd']);
+                const totalCostUsdRaw = pickNum(detail, ['accu_cost', 'history_bought_cost', 'total_cost_usd', 'cost_usd', 'total_cost', 'cost', 'buy_amount_usd', 'buy_value_usd']);
+                const pnlUsdRaw = pickNum(detail, ['total_profit', 'unrealized_profit', 'realized_profit', 'pnl_usd', 'unrealized_pnl_usd', 'profit_usd', 'pnl', 'profit']);
+                const pnlRatio = pickNum(detail, ['total_profit_pnl', 'unrealized_profit_pnl', 'pnl_ratio', 'profit_pnl']);
+                const pnlUsd = pnlUsdRaw != null
+                  ? pnlUsdRaw
+                  : (usdValue != null && totalCostUsdRaw != null ? usdValue - totalCostUsdRaw : null);
+                const pnlText = pnlUsd != null ? formatUsd(pnlUsd) : '-';
+                const pnlPct = formatPnlPercent(pnlRatio);
+                const pnlIcon = (pnlUsd ?? 0) > 0 || (pnlRatio ?? 0) > 0 ? '🟢' : (pnlUsd ?? 0) < 0 || (pnlRatio ?? 0) < 0 ? '🔴' : '⚪';
+                holdingPnlText = `${pnlIcon}PnL ${pnlText} (${pnlPct})`;
+              }
+            } catch {
+            }
+          }
+          const isTurboMode = String(chainSettings?.executionMode || 'default') === 'turbo';
+          const modeText = isTurboMode ? 'Turbo' : '普通';
+          const buyPf = String(chainSettings?.buyPriorityFeePreset || '无');
+          const sellPf = String(chainSettings?.sellPriorityFeePreset || '无');
+          const settingsLine = [
+            `模式${modeText}`,
+            isTurboMode ? '无滑点保护❌' : `滑点${formatPercent(Number(chainSettings?.slippageBps ?? 0) / 100)}`,
+            `买:${String(chainSettings?.buyGasPreset || chainSettings?.gasPreset || '-')}`,
+            `卖:${String(chainSettings?.sellGasPreset || chainSettings?.gasPreset || '-')}`,
+            `PF 买:${buyPf}/卖:${sellPf}`,
+            `防夹${chainSettings?.antiMev === true ? '✅' : '❌'}`,
+          ].join(' | ');
           await sendTelegramReply(
-            [`💎 ${snapshot.name} (${snapshot.symbol})`, `${snapshot.tokenAddress}`, '', `📈 当前价格 ${formatPrice(snapshot.priceUsd)} | 市值 ${formatUsd(snapshot.marketCapUsd)}`, `🌐 链: ${snapshot.chainId}`, '', '💼 持仓信息', snapshot.holderAddress ? `地址: ${snapshot.holderAddress}` : '地址: 钱包未解锁', `数量: ${snapshot.balanceAmount} ${snapshot.symbol}`, `估值: ${formatUsd(snapshot.balanceUsd)}`, '', '⚙️ 当前交易设置', `滑点: ${formatPercent(Number(chainSettings?.slippageBps ?? 0) / 100)}`, `买入优先级: ${String(chainSettings?.buyGasPreset || chainSettings?.gasPreset || '-')}`, `卖出优先级: ${String(chainSettings?.sellGasPreset || chainSettings?.gasPreset || '-')}`, `防夹: ${chainSettings?.antiMev === true ? '开启 ✅' : '关闭 ❌'}`, '', `📋 该代币挂单列表 (${tokenOrders.length})`, ...(tokenOrderLines.length ? tokenOrderLines : ['暂无挂单'])].join('\n'),
+            [
+              `💎 ${snapshot.name} (${snapshot.symbol})`,
+              `${snapshot.tokenAddress}`,
+              '',
+              `📈 价格 ${formatPrice(snapshot.priceUsd)} | 市值 ${formatUsd(snapshot.marketCapUsd)}`,
+              '',
+              snapshot.holderAddress
+                ? `💼 持仓: ${shortAddress(snapshot.holderAddress)} | ${balanceShort} ${snapshot.symbol} | ${formatUsd(snapshot.balanceUsd)} | ${holdingPnlText}`
+                : '💼 持仓: 钱包未解锁',
+              '',
+              `⚙️ 设置: ${settingsLine}`,
+              '',
+              `📋 该代币挂单列表 (${tokenOrders.length})`,
+              ...(tokenOrderLines.length ? tokenOrderLines : ['暂无挂单']),
+            ].join('\n'),
             { inlineKeyboard: [...tokenOrderButtons, ...buildTokenActionKeyboard(snapshot.tokenAddress, chainSettings?.buyPresets ?? [], chainSettings?.sellPresets ?? [])] }
           );
           return;
