@@ -329,10 +329,22 @@ export function createTelegramController(deps: {
   const sendHoldings = async (chainId: number, walletAddress: `0x${string}`) => {
     const pickNum = (obj: any, keys: string[]) => {
       for (const k of keys) {
-        const v = Number(obj?.[k]);
-        if (Number.isFinite(v)) return v;
+        const v = k.includes('.') ? k.split('.').reduce<any>((acc, p) => (acc == null ? undefined : acc[p]), obj) : obj?.[k];
+        const n = Number(v);
+        if (Number.isFinite(n)) return n;
       }
       return null as number | null;
+    };
+    const toNum = (v: any) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const calcMarketCapFromHolding = (h: any) => {
+      const priceNum = toNum(h?.price ?? h?.token?.price);
+      if (priceNum == null || priceNum <= 0) return null;
+      const totalSupply = toNum(h?.token?.max_supply ?? h?.token?.total_supply ?? h?.max_supply ?? h?.total_supply);
+      if (totalSupply == null || totalSupply <= 0) return null;
+      return totalSupply * priceNum;
     };
     const formatPnlPercent = (ratio: number | null) => {
       if (ratio == null || !Number.isFinite(ratio)) return '-';
@@ -355,6 +367,7 @@ export function createTelegramController(deps: {
             const usd = usdValue != null
               ? usdValue
               : (Number.isFinite(balanceNum) && Number.isFinite(priceNum) ? balanceNum * priceNum : 0);
+            const marketCap = calcMarketCapFromHolding(h);
             const totalCostUsdRaw = pickNum(h, ['accu_cost', 'history_bought_cost', 'total_cost_usd', 'cost_usd', 'total_cost', 'cost', 'buy_amount_usd', 'buy_value_usd']);
             const costUsd = totalCostUsdRaw;
             let pnlUsd = pickNum(h, ['total_profit', 'unrealized_profit', 'realized_profit', 'pnl_usd', 'unrealized_pnl_usd', 'profit_usd', 'pnl', 'profit']);
@@ -367,12 +380,13 @@ export function createTelegramController(deps: {
               symbol,
               amountText: Number.isFinite(balanceNum) ? String(balanceNum) : '-',
               usd: Number.isFinite(usd) ? usd : 0,
+              marketCapUsd: marketCap,
               costUsd,
               pnlUsd,
               pnlRatio,
             };
           })
-          .filter(Boolean) as Array<{ tokenAddress: `0x${string}`; symbol: string; amountText: string; usd: number; costUsd: number | null; pnlUsd: number | null; pnlRatio: number | null }>;
+          .filter(Boolean) as Array<{ tokenAddress: `0x${string}`; symbol: string; amountText: string; usd: number; marketCapUsd: number | null; costUsd: number | null; pnlUsd: number | null; pnlRatio: number | null }>;
 
         if (normalized.length > 0) {
           normalized.sort((a, b) => (b.usd || 0) - (a.usd || 0));
@@ -383,7 +397,7 @@ export function createTelegramController(deps: {
             const pnlText = r.pnlUsd != null ? formatUsd(r.pnlUsd) : '-';
             const pnlPct = formatPnlPercent(r.pnlRatio);
             const pnlIcon = (r.pnlUsd ?? 0) > 0 || (r.pnlRatio ?? 0) > 0 ? '🟢' : (r.pnlUsd ?? 0) < 0 || (r.pnlRatio ?? 0) < 0 ? '🔴' : '⚪';
-            return `${i + 1}) ${compactTokenLabel(r.symbol, 10)} | ${amountShort} | 持仓${formatUsd(r.usd)} | ${pnlIcon}PnL ${pnlText} (${pnlPct})`;
+            return `${i + 1}) ${compactTokenLabel(r.symbol, 10)} | ${amountShort} | 持仓${formatUsd(r.usd)} | 市值${formatUsd(r.marketCapUsd)} | ${pnlIcon}PnL ${pnlText} (${pnlPct})`;
           });
           const viewRows = top.slice(0, 6).map((r, i) => ([{ text: `🔍 查看#${i + 1} ${compactTokenLabel(r.symbol, 8)}`, callbackData: `act:token:${r.tokenAddress}` }]));
           await sendTelegramReply(
@@ -445,7 +459,7 @@ export function createTelegramController(deps: {
     const totalUsd = rows.reduce((s, r) => s + (Number.isFinite(r.usd) ? r.usd : 0), 0);
     const lines = top.map((r, i) => {
       const amountShort = formatHoldingAmount(r.amountText);
-      return `${i + 1}) ${compactTokenLabel(r.symbol, 10)} | ${amountShort} | 持仓${formatUsd(r.usd)} | ⚪PnL - (-)`;
+      return `${i + 1}) ${compactTokenLabel(r.symbol, 10)} | ${amountShort} | 持仓${formatUsd(r.usd)} | 市值- | ⚪PnL - (-)`;
     });
     const viewRows = top.slice(0, 6).map((r, i) => ([{ text: `🔍 查看#${i + 1} ${compactTokenLabel(r.symbol, 8)}`, callbackData: `act:token:${r.tokenAddress}` }]));
     await sendTelegramReply(
