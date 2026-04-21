@@ -368,36 +368,6 @@ export function validateSettings(input: Settings): Settings | null {
     const list = raw.filter((x) => allowedInteractionTypes.includes(x as any));
     return list.length ? (list as any) : fallback;
   };
-  const normalizeRapidByType = (value: any, fallback: any) => {
-    const inputMap = value && typeof value === 'object' ? value : {};
-    const fallbackMap = fallback && typeof fallback === 'object' ? fallback : {};
-    const nextMap: Record<string, any> = {};
-    for (const key of allowedInteractionTypes) {
-      const rawNode = (inputMap as any)[key];
-      const fallbackNode = (fallbackMap as any)[key];
-      const source = rawNode && typeof rawNode === 'object' ? rawNode : {};
-      const base = fallbackNode && typeof fallbackNode === 'object' ? fallbackNode : {};
-      nextMap[key] = {
-        enabled: typeof source.enabled === 'boolean'
-          ? source.enabled
-          : (typeof base.enabled === 'boolean' ? base.enabled : true),
-        takeProfitPct: clampStringNumber(source.takeProfitPct, base.takeProfitPct ?? ''),
-        stopLossPct: clampStringNumber(source.stopLossPct, base.stopLossPct ?? ''),
-        maxHoldSeconds: clampStringNumber(source.maxHoldSeconds, base.maxHoldSeconds ?? ''),
-        trailActivatePct: clampStringNumber(source.trailActivatePct, base.trailActivatePct ?? ''),
-        trailDropPct: clampStringNumber(source.trailDropPct, base.trailDropPct ?? ''),
-        minHoldMsForTakeProfit: clampStringNumber(source.minHoldMsForTakeProfit, base.minHoldMsForTakeProfit ?? ''),
-        minHoldMsForStopLoss: clampStringNumber(source.minHoldMsForStopLoss, base.minHoldMsForStopLoss ?? ''),
-        minHoldMsForTrail: clampStringNumber(source.minHoldMsForTrail, base.minHoldMsForTrail ?? ''),
-        runnerStopLossGraceMs: clampStringNumber(source.runnerStopLossGraceMs, base.runnerStopLossGraceMs ?? ''),
-        earlyReversalPeakPct: clampStringNumber(source.earlyReversalPeakPct, base.earlyReversalPeakPct ?? ''),
-        earlyReversalDropPct: clampStringNumber(source.earlyReversalDropPct, base.earlyReversalDropPct ?? ''),
-        emergencyStopLossPct: clampStringNumber(source.emergencyStopLossPct, base.emergencyStopLossPct ?? ''),
-        sellPercent: clampStringNumber(source.sellPercent, base.sellPercent ?? ''),
-      };
-    }
-    return nextMap;
-  };
   const normalizeTwitterSnipeCore = (rawInput: any, fallbackInput: any) => ({
     enabled: typeof rawInput?.enabled === 'boolean'
       ? rawInput.enabled
@@ -443,25 +413,32 @@ export function validateSettings(input: Settings): Settings | null {
     rapidExitEnabled: typeof (rawInput as any)?.rapidExitEnabled === 'boolean'
       ? (rawInput as any).rapidExitEnabled
       : !!(fallbackInput as any)?.rapidExitEnabled,
-    rapidTakeProfitPct: clampStringNumber((rawInput as any)?.rapidTakeProfitPct, (fallbackInput as any)?.rapidTakeProfitPct),
-    rapidStopLossPct: clampStringNumber((rawInput as any)?.rapidStopLossPct, (fallbackInput as any)?.rapidStopLossPct),
-    rapidMaxHoldSeconds: clampStringNumber((rawInput as any)?.rapidMaxHoldSeconds, (fallbackInput as any)?.rapidMaxHoldSeconds),
-    rapidTrailActivatePct: clampStringNumber((rawInput as any)?.rapidTrailActivatePct, (fallbackInput as any)?.rapidTrailActivatePct),
-    rapidTrailDropPct: clampStringNumber((rawInput as any)?.rapidTrailDropPct, (fallbackInput as any)?.rapidTrailDropPct),
-    rapidMinHoldMsForTakeProfit: clampStringNumber((rawInput as any)?.rapidMinHoldMsForTakeProfit, (fallbackInput as any)?.rapidMinHoldMsForTakeProfit),
-    rapidMinHoldMsForStopLoss: clampStringNumber((rawInput as any)?.rapidMinHoldMsForStopLoss, (fallbackInput as any)?.rapidMinHoldMsForStopLoss),
-    rapidMinHoldMsForTrail: clampStringNumber((rawInput as any)?.rapidMinHoldMsForTrail, (fallbackInput as any)?.rapidMinHoldMsForTrail),
-    rapidRunnerStopLossGraceMs: clampStringNumber((rawInput as any)?.rapidRunnerStopLossGraceMs, (fallbackInput as any)?.rapidRunnerStopLossGraceMs),
-    rapidEarlyReversalPeakPct: clampStringNumber((rawInput as any)?.rapidEarlyReversalPeakPct, (fallbackInput as any)?.rapidEarlyReversalPeakPct),
-    rapidEarlyReversalDropPct: clampStringNumber((rawInput as any)?.rapidEarlyReversalDropPct, (fallbackInput as any)?.rapidEarlyReversalDropPct),
+    rapidHoldSeconds: clampStringNumber((rawInput as any)?.rapidHoldSeconds, (fallbackInput as any)?.rapidHoldSeconds),
+    rapidEvalStepSec: clampStringNumber((rawInput as any)?.rapidEvalStepSec, (fallbackInput as any)?.rapidEvalStepSec),
+    rapidLookbackSec: clampStringNumber((rawInput as any)?.rapidLookbackSec, (fallbackInput as any)?.rapidLookbackSec),
+    rapidEmergencyConfirmSteps: clampStringNumber((rawInput as any)?.rapidEmergencyConfirmSteps, (fallbackInput as any)?.rapidEmergencyConfirmSteps),
     rapidEmergencyStopLossPct: clampStringNumber((rawInput as any)?.rapidEmergencyStopLossPct, (fallbackInput as any)?.rapidEmergencyStopLossPct),
-    rapidAuxWindow10sMs: clampStringNumber((rawInput as any)?.rapidAuxWindow10sMs, (fallbackInput as any)?.rapidAuxWindow10sMs),
-    rapidAuxWindow30sMs: clampStringNumber((rawInput as any)?.rapidAuxWindow30sMs, (fallbackInput as any)?.rapidAuxWindow30sMs),
-    rapidSellPercent: clampStringNumber((rawInput as any)?.rapidSellPercent, (fallbackInput as any)?.rapidSellPercent),
-    rapidByTweetTypeEnabled: typeof (rawInput as any)?.rapidByTweetTypeEnabled === 'boolean'
-      ? (rawInput as any).rapidByTweetTypeEnabled
-      : ((fallbackInput as any)?.rapidByTweetTypeEnabled !== false),
-    rapidByType: normalizeRapidByType((rawInput as any)?.rapidByType, (fallbackInput as any)?.rapidByType),
+    rapidRouteCut1Pct: clampStringNumber((rawInput as any)?.rapidRouteCut1Pct, (fallbackInput as any)?.rapidRouteCut1Pct),
+    rapidRouteCut2Pct: clampStringNumber((rawInput as any)?.rapidRouteCut2Pct, (fallbackInput as any)?.rapidRouteCut2Pct),
+    rapidExit20Sec: clampStringNumber((rawInput as any)?.rapidExit20Sec, (fallbackInput as any)?.rapidExit20Sec),
+    rapidStage1Sec: clampStringNumber((rawInput as any)?.rapidStage1Sec, (fallbackInput as any)?.rapidStage1Sec),
+    rapidStage2Sec: clampStringNumber((rawInput as any)?.rapidStage2Sec, (fallbackInput as any)?.rapidStage2Sec),
+    rapidStage3Sec: clampStringNumber((rawInput as any)?.rapidStage3Sec, (fallbackInput as any)?.rapidStage3Sec),
+    rapidStage4Sec: clampStringNumber((rawInput as any)?.rapidStage4Sec, (fallbackInput as any)?.rapidStage4Sec),
+    rapidStage1ProfitPct: clampStringNumber((rawInput as any)?.rapidStage1ProfitPct, (fallbackInput as any)?.rapidStage1ProfitPct),
+    rapidStage2ProfitPct: clampStringNumber((rawInput as any)?.rapidStage2ProfitPct, (fallbackInput as any)?.rapidStage2ProfitPct),
+    rapidStage3ProfitPct: clampStringNumber((rawInput as any)?.rapidStage3ProfitPct, (fallbackInput as any)?.rapidStage3ProfitPct),
+    rapidStage4ProfitPct: clampStringNumber((rawInput as any)?.rapidStage4ProfitPct, (fallbackInput as any)?.rapidStage4ProfitPct),
+    rapidStage1SellPct: clampStringNumber((rawInput as any)?.rapidStage1SellPct, (fallbackInput as any)?.rapidStage1SellPct),
+    rapidStage2SellPct: clampStringNumber((rawInput as any)?.rapidStage2SellPct, (fallbackInput as any)?.rapidStage2SellPct),
+    rapidStage3SellPct: clampStringNumber((rawInput as any)?.rapidStage3SellPct, (fallbackInput as any)?.rapidStage3SellPct),
+    rapidStage4SellPct: clampStringNumber((rawInput as any)?.rapidStage4SellPct, (fallbackInput as any)?.rapidStage4SellPct),
+    rapidRunnerArmProfitPct: clampStringNumber((rawInput as any)?.rapidRunnerArmProfitPct, (fallbackInput as any)?.rapidRunnerArmProfitPct),
+    rapidRunnerPeakCut1Pct: clampStringNumber((rawInput as any)?.rapidRunnerPeakCut1Pct, (fallbackInput as any)?.rapidRunnerPeakCut1Pct),
+    rapidRunnerPeakCut2Pct: clampStringNumber((rawInput as any)?.rapidRunnerPeakCut2Pct, (fallbackInput as any)?.rapidRunnerPeakCut2Pct),
+    rapidRunnerDrawdown1Pct: clampStringNumber((rawInput as any)?.rapidRunnerDrawdown1Pct, (fallbackInput as any)?.rapidRunnerDrawdown1Pct),
+    rapidRunnerDrawdown2Pct: clampStringNumber((rawInput as any)?.rapidRunnerDrawdown2Pct, (fallbackInput as any)?.rapidRunnerDrawdown2Pct),
+    rapidRunnerDrawdown3Pct: clampStringNumber((rawInput as any)?.rapidRunnerDrawdown3Pct, (fallbackInput as any)?.rapidRunnerDrawdown3Pct),
     deleteTweetSellPercent: clampStringNumber(rawInput?.deleteTweetSellPercent, fallbackInput.deleteTweetSellPercent),
     deleteTweetPlaySound: typeof rawInput?.deleteTweetPlaySound === 'boolean'
       ? rawInput.deleteTweetPlaySound

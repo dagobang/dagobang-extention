@@ -236,11 +236,11 @@ export const createSellExecutors = (deps: {
     };
   }) => {
     const percent = Math.max(0, Math.min(100, Number(input.percent)));
-    if (!Number.isFinite(percent) || percent <= 0) return;
+    if (!Number.isFinite(percent) || percent <= 0) return false;
     const bps = Math.floor(percent * 100);
-    if (!(bps > 0)) return;
+    if (!(bps > 0)) return false;
     const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${input.reason}:${bps}`;
-    if (rapidSellInFlight.has(dedupeKey)) return;
+    if (rapidSellInFlight.has(dedupeKey)) return false;
     rapidSellInFlight.add(dedupeKey);
     try {
       const now = Date.now();
@@ -277,13 +277,13 @@ export const createSellExecutors = (deps: {
           id: `${now2}-${Math.random().toString(16).slice(2)}`,
           marketCapUsd: latestAfterDelay != null && Number.isFinite(latestAfterDelay) && latestAfterDelay > 0 ? latestAfterDelay : baseRecord.marketCapUsd,
         });
-        return;
+        return true;
       }
 
       const status = await WalletService.getStatus();
       if (status.locked || !status.address) {
         deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'wallet_locked' });
-        return;
+        return false;
       }
 
       const settings = await SettingsService.get();
@@ -293,7 +293,7 @@ export const createSellExecutors = (deps: {
         (await deps.buildGenericTokenInfo(input.chainId, input.tokenAddress));
       if (!tokenInfo) {
         deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'token_info_missing' });
-        return;
+        return false;
       }
 
       let amountWei = 0n;
@@ -306,7 +306,7 @@ export const createSellExecutors = (deps: {
         }
         if (balanceWei <= 0n) {
           deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'no_balance' });
-          return;
+          return false;
         }
         amountWei = calcSellAmountWei({
           balanceWei,
@@ -316,7 +316,7 @@ export const createSellExecutors = (deps: {
         });
         if (amountWei <= 0n) {
           deps.emitRecord({ ...baseRecord, dryRun: false, sellTokenAmountWei: '0', reason: 'invalid_amount' });
-          return;
+          return false;
         }
       }
 
@@ -356,7 +356,7 @@ export const createSellExecutors = (deps: {
           sellTokenAmountWei: amountWei.toString(),
           reason: 'sell_submit_failed',
         });
-        return;
+        return false;
       }
       const finalTxHash = (rsp as any)?.txHash as `0x${string}`;
       void deps.broadcastToActiveTabs({
@@ -382,6 +382,9 @@ export const createSellExecutors = (deps: {
         sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
         txHash: finalTxHash as any,
       });
+      return true;
+    } catch {
+      return false;
     } finally {
       rapidSellInFlight.delete(dedupeKey);
     }

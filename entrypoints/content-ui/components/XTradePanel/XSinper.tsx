@@ -51,10 +51,6 @@ const normalizeAutoTrade = (input: AutoTradeConfig | null | undefined) => {
     twitterSnipe: {
       ...defaults.twitterSnipe,
       ...(input as any).twitterSnipe,
-      rapidByType: {
-        ...((defaults.twitterSnipe as any)?.rapidByType ?? {}),
-        ...(((input as any).twitterSnipe as any)?.rapidByType ?? {}),
-      },
     },
   };
   return {
@@ -80,10 +76,6 @@ const buildNormalizedPresetStrategy = (raw: any) => {
   const next = {
     ...base,
     ...(raw && typeof raw === 'object' ? raw : {}),
-    rapidByType: {
-      ...((base as any).rapidByType ?? {}),
-      ...(((raw && typeof raw === 'object' ? raw : {}) as any).rapidByType ?? {}),
-    },
   };
   next.targetUsers = Array.isArray(next.targetUsers)
     ? next.targetUsers.map((x: any) => String(x).trim()).filter(Boolean)
@@ -594,62 +586,6 @@ export function XSniperContent({
     }
   };
   const rapidExitEnabled = (twitterSnipe as any)?.rapidExitEnabled !== false;
-  const getRapidUnifiedValue = (field: string) => {
-    if (field === 'takeProfitPct') return (twitterSnipe as any)?.rapidTakeProfitPct ?? '';
-    if (field === 'stopLossPct') return (twitterSnipe as any)?.rapidStopLossPct ?? '';
-    if (field === 'trailActivatePct') return (twitterSnipe as any)?.rapidTrailActivatePct ?? '';
-    if (field === 'trailDropPct') return (twitterSnipe as any)?.rapidTrailDropPct ?? '';
-    if (field === 'sellPercent') return (twitterSnipe as any)?.rapidSellPercent ?? '';
-    if (field === 'minHoldMsForStopLoss') return (twitterSnipe as any)?.rapidMinHoldMsForStopLoss ?? '';
-    if (field === 'minHoldMsForTakeProfit') return (twitterSnipe as any)?.rapidMinHoldMsForTakeProfit ?? '';
-    if (field === 'minHoldMsForTrail') return (twitterSnipe as any)?.rapidMinHoldMsForTrail ?? '';
-    if (field === 'runnerStopLossGraceMs') return (twitterSnipe as any)?.rapidRunnerStopLossGraceMs ?? '';
-    if (field === 'earlyReversalPeakPct') return (twitterSnipe as any)?.rapidEarlyReversalPeakPct ?? '';
-    if (field === 'earlyReversalDropPct') return (twitterSnipe as any)?.rapidEarlyReversalDropPct ?? '';
-    if (field === 'emergencyStopLossPct') return (twitterSnipe as any)?.rapidEmergencyStopLossPct ?? '';
-    if (field === 'takeProfitSellPercent') return (twitterSnipe as any)?.rapidTakeProfitSellPercent ?? '25';
-    if (field === 'stopLossSellPercent') return (twitterSnipe as any)?.rapidStopLossSellPercent ?? '100';
-    if (field === 'trailingStopSellPercent') return (twitterSnipe as any)?.rapidTrailingStopSellPercent ?? '100';
-    if (field === 'armProfitPct') return (twitterSnipe as any)?.rapidArmProfitPct ?? '4';
-    if (field === 'protectFloorAfterArmPct') return (twitterSnipe as any)?.rapidProtectFloorAfterArmPct ?? '-1';
-    if (field === 'protectStep2PeakPct') return (twitterSnipe as any)?.rapidProtectStep2PeakPct ?? '12';
-    if (field === 'protectStep2FloorPct') return (twitterSnipe as any)?.rapidProtectStep2FloorPct ?? '2';
-    if (field === 'protectStep3PeakPct') return (twitterSnipe as any)?.rapidProtectStep3PeakPct ?? '25';
-    if (field === 'protectStep3FloorPct') return (twitterSnipe as any)?.rapidProtectStep3FloorPct ?? '8';
-    return '';
-  };
-  const getRapidTypeFallbackValue = (field: string) => {
-    const v = getRapidUnifiedValue(field);
-    return v == null ? '' : String(v);
-  };
-  const getRapidTypeValue = (tweetType: AutoTradeInteractionType, field: string) => {
-    const map = ((twitterSnipe as any)?.rapidByType ?? {}) as Record<string, any>;
-    const node = map[tweetType];
-    const value = node && typeof node === 'object' ? node[field] : undefined;
-    if (value == null) return getRapidTypeFallbackValue(field);
-    return String(value);
-  };
-  const getRapidTypeEnabled = (tweetType: AutoTradeInteractionType) => {
-    const map = ((twitterSnipe as any)?.rapidByType ?? {}) as Record<string, any>;
-    const node = map[tweetType];
-    if (!node || typeof node !== 'object' || node.enabled == null) return true;
-    return node.enabled !== false;
-  };
-  const updateRapidTypeValue = (tweetType: AutoTradeInteractionType, field: string, value: string | boolean) => {
-    const currentMap = (((twitterSnipe as any)?.rapidByType ?? {}) as Record<string, any>);
-    const currentNode = currentMap[tweetType] && typeof currentMap[tweetType] === 'object'
-      ? currentMap[tweetType]
-      : {};
-    updateTwitterSnipe({
-      rapidByType: {
-        ...currentMap,
-        [tweetType]: {
-          ...currentNode,
-          [field]: value,
-        },
-      },
-    } as any);
-  };
   const toggleConfigSection = (key: string) => {
     setConfigSectionOpen((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -758,10 +694,6 @@ export function XSniperContent({
               tt={tt}
               onToggle={() => toggleConfigSection('rapid')}
               updateTwitterSnipe={updateTwitterSnipe}
-              getRapidTypeEnabled={getRapidTypeEnabled}
-              getRapidTypeValue={getRapidTypeValue}
-              getRapidTypeFallbackValue={getRapidTypeFallbackValue}
-              updateRapidTypeValue={updateRapidTypeValue}
             />
             <XSniperSoundSection
               open={configSectionOpen.sell}
