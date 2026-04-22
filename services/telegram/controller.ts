@@ -80,6 +80,13 @@ export function createTelegramController(deps: {
     if (v == null || !Number.isFinite(v)) return '-';
     return `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
   };
+  const xSniperSellReasonLabel = (reason: unknown) => {
+    const raw = String(reason || '').trim();
+    if (raw === 'rapid_take_profit') return '里程碑止盈';
+    if (raw === 'rapid_stop_loss') return '硬止损';
+    if (raw === 'rapid_trailing_stop') return '地板清仓';
+    return raw || '未知';
+  };
   const clampPercent = (value: unknown) => {
     const n = Number(value);
     if (!Number.isFinite(n)) return 0;
@@ -445,6 +452,45 @@ export function createTelegramController(deps: {
       entryMcap != null && athMcap != null && Number.isFinite(entryMcap) && entryMcap > 0
         ? ((athMcap / entryMcap) - 1) * 100
         : null;
+    const reasonStats = (() => {
+      const acc = {
+        tpCount: 0,
+        tpPct: 0,
+        slCount: 0,
+        slPct: 0,
+        floorCount: 0,
+        floorPct: 0,
+        otherCount: 0,
+        otherPct: 0,
+      };
+      for (const s of sellRecords) {
+        const pct = clampPercent(s.sellPercent);
+        const reason = String(s.reason || '').trim();
+        if (reason === 'rapid_take_profit') {
+          acc.tpCount += 1;
+          acc.tpPct += pct;
+          continue;
+        }
+        if (reason === 'rapid_stop_loss') {
+          acc.slCount += 1;
+          acc.slPct += pct;
+          continue;
+        }
+        if (reason === 'rapid_trailing_stop') {
+          acc.floorCount += 1;
+          acc.floorPct += pct;
+          continue;
+        }
+        acc.otherCount += 1;
+        acc.otherPct += pct;
+      }
+      return acc;
+    })();
+    const latestSell = sellRecords.length
+      ? sellRecords
+        .slice()
+        .sort((a, b) => (Number(a.tsMs) || 0) - (Number(b.tsMs) || 0))[sellRecords.length - 1]
+      : null;
 
     const mode = parent.dryRun ? '🧪 DryRun' : '✅ 实盘';
     const screen = String(parent.userScreen || '').trim();
@@ -458,6 +504,10 @@ export function createTelegramController(deps: {
         `代币: ${symbol}`,
         `地址: ${shortAddress(parent.tokenAddress)}`,
         `仓位: 已卖 ${weighted.soldPct.toFixed(1)}% | 剩余 ${weighted.remainPct.toFixed(1)}%`,
+        `里程碑卖出: 止盈 ${reasonStats.tpCount}次/${reasonStats.tpPct.toFixed(1)}% | 止损 ${reasonStats.slCount}次/${reasonStats.slPct.toFixed(1)}% | 地板 ${reasonStats.floorCount}次/${reasonStats.floorPct.toFixed(1)}%`,
+        latestSell
+          ? `最近卖出: ${xSniperSellReasonLabel(latestSell.reason)} ${latestSell.sellPercent != null ? `${clampPercent(latestSell.sellPercent).toFixed(1)}%` : ''}`.trim()
+          : '最近卖出: -',
         `PnL(MCap): ${formatPnlPct(pnlPct)} | ATH PnL: ${formatPnlPct(pnlAthPct)}`,
         `市值: 入场 ${formatUsd(entryMcap)} | 当前 ${formatUsd(latestMcap)} | ATH ${formatUsd(athMcap)}`,
         `买入: ${parent.buyAmountBnb != null ? `${parent.buyAmountBnb} BNB` : '-'} | 入场价: ${formatPrice(parent.entryPriceUsd)}`,

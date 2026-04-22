@@ -71,7 +71,13 @@ const resolveReasonLabel = (tt: (key: string, subs?: Array<string | number>) => 
   if (!raw) return '-';
   const key = `contentUi.autoTradeStrategy.snipeHistoryReasonCode.${raw}`;
   const translated = tt(key);
-  return translated === key ? raw : translated;
+  if (translated !== key) return translated;
+  const fallbackMap: Record<string, string> = {
+    rapid_take_profit: '里程碑分批止盈',
+    rapid_stop_loss: '硬止损',
+    rapid_trailing_stop: '地板清仓',
+  };
+  return fallbackMap[raw] ?? raw;
 };
 
 const getEvalPoint = (record: XSniperBuyRecord, key: keyof XSniperBuyRecord): XSniperEvalPoint | null => {

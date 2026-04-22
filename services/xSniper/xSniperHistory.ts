@@ -82,6 +82,8 @@ export const maybeUpdateXSniperHistoryEvaluations = async (input: {
   marketCapUsd?: number;
   holders?: number;
 }) => {
+  const inputTokenAddress = String(input.tokenAddress || '').toLowerCase();
+  if (!inputTokenAddress) return;
   const curMcap = typeof input.marketCapUsd === 'number' && Number.isFinite(input.marketCapUsd) ? input.marketCapUsd : null;
   const curHolders = typeof input.holders === 'number' && Number.isFinite(input.holders) ? input.holders : null;
   if (curMcap == null && curHolders == null) return;
@@ -90,7 +92,7 @@ export const maybeUpdateXSniperHistoryEvaluations = async (input: {
     for (let i = 0; i < historyList.length; i++) {
       const r = historyList[i];
       if (!r || r.side !== 'buy') continue;
-      if (r.tokenAddress !== input.tokenAddress) continue;
+      if (String(r.tokenAddress || '').toLowerCase() !== inputTokenAddress) continue;
       if (typeof r.tsMs !== 'number' || r.tsMs <= 0) continue;
       const ageMs = input.nowMs - r.tsMs;
       const entryMcap = typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) ? r.marketCapUsd : null;
