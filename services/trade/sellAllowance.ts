@@ -65,7 +65,7 @@ export async function hasInsufficientSellAllowance(input: {
   }
 
   const platform = input.tokenInfo.launchpad_platform?.toLowerCase() || '';
-  const isInnerFourMeme = input.isInnerDisk(input.tokenInfo) && platform.includes('fourmeme');
+  const isInnerFourMeme = input.isInnerDisk(input.tokenInfo) && platform.includes('four');
   const bridgeToken = isInnerFourMeme
     ? getBridgeToken(input.chainId, input.tokenInfo.address, input.tokenInfo.quote_token_address)
     : null;

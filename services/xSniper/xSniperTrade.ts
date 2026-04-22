@@ -13,7 +13,12 @@ import { tryAutoBuyOnce as tryAutoBuyOnceFromMod } from '@/services/xSniper/engi
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import { maybeUpdateXSniperHistoryEvaluations } from '@/services/xSniper/xSniperHistory';
 
-export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
+export const createXSniperTrade = (deps: {
+  onStateChanged: () => void;
+  telegramNotifier?: {
+    notifyXSniperOrderCard?: (record: XSniperBuyRecord) => Promise<any>;
+  };
+}) => {
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
   const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
 
@@ -69,6 +74,9 @@ export const createXSniperTrade = (deps: { onStateChanged: () => void }) => {
   const emitRecord = (record: XSniperBuyRecord) => {
     void pushXSniperHistory(record);
     void broadcastToTabs({ type: 'bg:xsniper:buy', record });
+    if (record.side === 'buy' && !record.reason) {
+      void deps.telegramNotifier?.notifyXSniperOrderCard?.(record);
+    }
   };
 
   const computeWsConfirm = (tokenAddress: `0x${string}`, nowMs: number, strategy: any) =>

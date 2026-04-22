@@ -1197,7 +1197,7 @@ export default function App() {
       }
       let amountWei = bal > 0n ? (bal * BigInt(pct)) / 100n : 0n;
       const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
-      const isInnerFourMeme = !!tokenInfo?.launchpad && (platform.includes('fourmeme')) && tokenInfo.launchpad_status !== 1;
+      const isInnerFourMeme = !!tokenInfo?.launchpad && (platform.includes('four')) && tokenInfo.launchpad_status !== 1;
       if (!isTurbo && isInnerFourMeme && amountWei > 0n) {
         amountWei = (amountWei / 1000000000n) * 1000000000n;
       }

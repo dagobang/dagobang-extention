@@ -163,7 +163,7 @@ export class TokenService {
     const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
     const isInnerDisk = tokenInfo?.launchpad_status !== 1;
 
-    if (platform.includes('fourmeme') && isInnerDisk) {
+    if (platform.includes('four') && isInnerDisk) {
       try {
         const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
         const contractInfo = await TokenFourmemeService.getTokenInfo(chainId, tokenAddress);

@@ -1,7 +1,7 @@
 import { ChainId } from "./chains";
 
 export const SUPPORTED_LAUNCHPADS: Partial<Record<ChainId, string[]>> = ({
-    [ChainId.BNB]: ["fourmeme", "bn_fourmeme", "fourmeme_agent", "flap"],
+    [ChainId.BNB]: ["fourmeme", "bn_fourmeme", "fourmeme_agent", "four_xmode_agent", "flap"],
 });
 
 export function getSupportedLaunchpads(chainId: ChainId): readonly string[] {

@@ -8,6 +8,7 @@ const LAST_UPDATE_ID_KEY = 'dagobang_telegram_last_update_id_v1';
 export type ParsedTelegramCommand =
   | { type: 'start' }
   | { type: 'menu' }
+  | { type: 'settings' }
   | { type: 'status' }
   | { type: 'holdings' }
   | { type: 'wallets' }
@@ -30,6 +31,18 @@ export type ParsedTelegramCommand =
   | { type: 'actionWallets' }
   | { type: 'actionWhoami' }
   | { type: 'actionSwitchWallet'; target: string }
+  | { type: 'actionSettings' }
+  | { type: 'actionXSniperSettings' }
+  | { type: 'actionQuickTradeSettings' }
+  | { type: 'actionSetXSniperDryRun'; enabled: boolean }
+  | { type: 'actionSetXSniperAutoSell'; enabled: boolean }
+  | { type: 'actionSetXSniperBuyAmount'; amountBnb: string }
+  | { type: 'actionSetXSniperBuyCaCount'; count: number }
+  | { type: 'actionInputXSniperBuyAmount' }
+  | { type: 'actionInputXSniperBuyCaCount' }
+  | { type: 'actionInputQuickBuyPresets' }
+  | { type: 'actionInputQuickSellPresets' }
+  | { type: 'actionXSniperOrder'; orderId: string }
   | { type: 'unknown'; text: string };
 
 export function parseTelegramCommand(text: string): ParsedTelegramCommand {
@@ -42,6 +55,17 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
       return { type: 'actionOrdersPage', page: Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1 };
     }
     if (action === 'menu') return { type: 'actionMenu' };
+    if (action === 'settings') return { type: 'actionSettings' };
+    if (action === 'xset') return { type: 'actionXSniperSettings' };
+    if (action === 'qset') return { type: 'actionQuickTradeSettings' };
+    if (action === 'xsdry' && (arg1 === '0' || arg1 === '1')) return { type: 'actionSetXSniperDryRun', enabled: arg1 === '1' };
+    if (action === 'xsell' && (arg1 === '0' || arg1 === '1')) return { type: 'actionSetXSniperAutoSell', enabled: arg1 === '1' };
+    if (action === 'xsamt' && (arg1 || '').trim() && Number.isFinite(Number(arg1 || ''))) return { type: 'actionSetXSniperBuyAmount', amountBnb: (arg1 || '').trim() };
+    if (action === 'xsca' && Number.isFinite(Number(arg1 || ''))) return { type: 'actionSetXSniperBuyCaCount', count: Math.max(0, Math.floor(Number(arg1 || '0'))) };
+    if (action === 'xsamtin') return { type: 'actionInputXSniperBuyAmount' };
+    if (action === 'xscain') return { type: 'actionInputXSniperBuyCaCount' };
+    if (action === 'qbuyin') return { type: 'actionInputQuickBuyPresets' };
+    if (action === 'qsellin') return { type: 'actionInputQuickSellPresets' };
     if (action === 'status') return { type: 'actionStatus' };
     if (action === 'holdings') return { type: 'actionHoldings' };
     if (action === 'wallets') return { type: 'actionWallets' };
@@ -61,6 +85,9 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
     if (action === 'sell' && /^0x[a-fA-F0-9]{40}$/.test(arg1 || '') && Number.isFinite(Number(arg2 || ''))) {
       return { type: 'actionSell', tokenAddress: arg1 as `0x${string}`, sellPercent: Number(arg2) };
     }
+    if (action === 'xso' && (arg1 || '').trim()) {
+      return { type: 'actionXSniperOrder', orderId: (arg1 || '').trim() };
+    }
     return { type: 'unknown', text: raw };
   }
   const [cmdRaw, ...rest] = raw.split(/\s+/).filter(Boolean);
@@ -70,6 +97,7 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
   }
   if (cmd === '/start') return { type: 'start' };
   if (cmd === '/menu') return { type: 'menu' };
+  if (cmd === '/settings') return { type: 'settings' };
   if (cmd === '/status') return { type: 'status' };
   if (cmd === '/holdings') return { type: 'holdings' };
   if (cmd === '/wallets') return { type: 'wallets' };

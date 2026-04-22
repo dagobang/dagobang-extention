@@ -7,7 +7,9 @@ import { TokenService } from '@/services/token';
 import { cancelLimitOrder, listLimitOrders } from '@/services/limitOrders/store';
 import FourmemeAPI from '@/services/api/fourmeme';
 import type { TokenInfo } from '@/types/token';
+import type { XSniperBuyRecord } from '@/types/extention';
 import { ZERO_ADDRESS } from '@/services/trade/tradeTypes';
+import { loadXSniperHistory } from '@/services/xSniper/xSniperHistory';
 import { createTelegramPoller } from './poller';
 import { isTelegramConfigured, telegramSendMessageWithOptions, type TelegramApiConfig } from './api';
 import { formatCountShort } from '@/utils/format';
@@ -26,6 +28,7 @@ export function createTelegramController(deps: {
   fetchGmgnHoldings?: (chain: string, walletAddress: string) => Promise<any[]>;
   fetchGmgnHoldingDetail?: (chain: string, walletAddress: string, tokenAddress: string) => Promise<any | null>;
 }) {
+  const pendingInputByChat = new Map<string, 'buyAmountBnb' | 'buyNewCaCount' | 'quickBuyPresets' | 'quickSellPresets'>();
   const getTelegramConfigFromSettings = async (): Promise<TelegramApiConfig | null> => {
     const settings = await SettingsService.get();
     const tg = (settings as any).telegram;
@@ -62,6 +65,67 @@ export function createTelegramController(deps: {
   const formatPercent = (ratio: number | null | undefined) => {
     if (ratio == null || !Number.isFinite(ratio)) return '-';
     return `${ratio.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`;
+  };
+  const formatAge = (createdAtMs: number | undefined) => {
+    if (!Number.isFinite(createdAtMs) || Number(createdAtMs) <= 0) return '-';
+    const sec = Math.max(0, Math.floor((Date.now() - Number(createdAtMs)) / 1000));
+    if (sec < 60) return `${sec}s`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m`;
+    const hour = Math.floor(min / 60);
+    if (hour < 24) return `${hour}h`;
+    return `${Math.floor(hour / 24)}d`;
+  };
+  const formatPnlPct = (v: number | null | undefined) => {
+    if (v == null || !Number.isFinite(v)) return '-';
+    return `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+  };
+  const clampPercent = (value: unknown) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(100, n));
+  };
+  const computeWeightedPnlPct = (input: {
+    entryMcap: number | null;
+    latestMcap: number | null;
+    sellRecords: XSniperBuyRecord[];
+  }) => {
+    const entry = input.entryMcap;
+    if (entry == null || !Number.isFinite(entry) || entry <= 0) {
+      return { pnlPct: null as number | null, soldPct: 0, remainPct: 100 };
+    }
+    const sortedSells = input.sellRecords
+      .filter((x) => x && x.side === 'sell')
+      .slice()
+      .sort((a, b) => (Number(a.tsMs) || 0) - (Number(b.tsMs) || 0));
+    let soldPct = 0;
+    let pricedSoldPct = 0;
+    let weightedRoi = 0;
+    for (const s of sortedSells) {
+      const nextPct = clampPercent(s.sellPercent);
+      const effectivePct = Math.min(nextPct, Math.max(0, 100 - soldPct));
+      if (!(effectivePct > 0)) continue;
+      const sellMcap = typeof s.marketCapUsd === 'number' && Number.isFinite(s.marketCapUsd) ? s.marketCapUsd : input.latestMcap;
+      if (sellMcap != null && Number.isFinite(sellMcap) && sellMcap > 0) {
+        weightedRoi += (effectivePct / 100) * ((sellMcap / entry) - 1);
+        pricedSoldPct += effectivePct;
+      }
+      soldPct += effectivePct;
+    }
+    const remainPct = Math.max(0, 100 - soldPct);
+    if (remainPct > 0 && input.latestMcap != null && Number.isFinite(input.latestMcap) && input.latestMcap > 0) {
+      weightedRoi += (remainPct / 100) * ((input.latestMcap / entry) - 1);
+    }
+    if (pricedSoldPct < soldPct && (remainPct <= 0 || input.latestMcap == null || !Number.isFinite(input.latestMcap) || input.latestMcap <= 0)) {
+      return { pnlPct: null as number | null, soldPct, remainPct };
+    }
+    return { pnlPct: weightedRoi * 100, soldPct, remainPct };
+  };
+  const readEvalMcap = (r: XSniperBuyRecord) => {
+    const keys: Array<keyof XSniperBuyRecord> = ['eval3s', 'eval5s', 'eval8s', 'eval10s', 'eval15s', 'eval20s', 'eval25s', 'eval30s', 'eval60s'];
+    return keys
+      .map((k) => Number(((r as any)?.[k] as any)?.marketCapUsd))
+      .filter((n) => Number.isFinite(n) && n > 0) as number[];
   };
 
   const getLimitOrderDisplayMode = async (): Promise<'price' | 'marketCap'> => {
@@ -156,12 +220,100 @@ export function createTelegramController(deps: {
   const buildMainMenuKeyboard = () => [
     [{ text: '插件状态', callbackData: 'act:status' }, { text: '挂单列表', callbackData: 'act:orders' }],
     [{ text: '持仓列表', callbackData: 'act:holdings' }, { text: '钱包列表', callbackData: 'act:wallets' }],
-    [{ text: '当前钱包', callbackData: 'act:whoami' }],
+    [{ text: '⚙️ 设置', callbackData: 'act:settings' }, { text: '当前钱包', callbackData: 'act:whoami' }],
     [{ text: '使用说明', callbackData: 'act:menu' }],
   ];
+  const buildSettingsMenuKeyboard = () => [
+    [{ text: '🎯 推文狙击', callbackData: 'act:xset' }],
+    [{ text: '⚡ 快捷交易', callbackData: 'act:qset' }],
+    [{ text: '↩️ 返回菜单', callbackData: 'act:menu' }],
+  ];
+  const buildXSniperSettingsKeyboard = (input: { dryRun: boolean; autoSellEnabled: boolean; buyAmountBnb: string; buyNewCaCount: number }) => ([
+    [
+      { text: `${input.dryRun ? '✅' : '❌'} DryRun`, callbackData: `act:xsdry:${input.dryRun ? '0' : '1'}` },
+      { text: `${input.autoSellEnabled ? '✅' : '❌'} 自动卖出`, callbackData: `act:xsell:${input.autoSellEnabled ? '0' : '1'}` },
+    ],
+    [
+      { text: '⌨️ 输入买入金额', callbackData: 'act:xsamtin' },
+      { text: '⌨️ 输入CA数量', callbackData: 'act:xscain' },
+    ],
+    [{ text: '↩️ 设置菜单', callbackData: 'act:settings' }],
+  ]);
+  const buildQuickTradeSettingsKeyboard = () => ([
+    [
+      { text: '⌨️ 输入买入金额', callbackData: 'act:qbuyin' },
+      { text: '⌨️ 输入卖出金额', callbackData: 'act:qsellin' },
+    ],
+    [{ text: '↩️ 设置菜单', callbackData: 'act:settings' }],
+  ]);
+  const applyTwitterSnipePatch = (settings: any, patch: Record<string, any>) => {
+    const autoTrade = { ...(settings as any).autoTrade };
+    const twitterSnipe = { ...(autoTrade as any).twitterSnipe };
+    Object.assign(twitterSnipe, patch);
+    const presets = Array.isArray(twitterSnipe.presets) ? [...twitterSnipe.presets] : [];
+    const activePresetId = typeof twitterSnipe.activePresetId === 'string' ? twitterSnipe.activePresetId.trim() : '';
+    if (activePresetId) {
+      twitterSnipe.presets = presets.map((item: any) => {
+        if (!item || item.id !== activePresetId) return item;
+        return {
+          ...item,
+          strategy: {
+            ...(item.strategy ?? {}),
+            ...patch,
+          },
+        };
+      });
+    }
+    autoTrade.twitterSnipe = twitterSnipe;
+    return autoTrade;
+  };
+  const sendTelegramSettingsMenu = async () => {
+    await sendTelegramReply(
+      ['⚙️ 设置', '', '可配置项：', '1) 推文狙击'].join('\n'),
+      { inlineKeyboard: buildSettingsMenuKeyboard() }
+    );
+  };
+  const sendTelegramXSniperSettings = async () => {
+    const settings = await SettingsService.get();
+    const dryRun = (settings as any)?.autoTrade?.twitterSnipe?.dryRun === true;
+    const autoSellEnabled = (settings as any)?.autoTrade?.twitterSnipe?.autoSellEnabled === true;
+    const buyAmountRaw = String((settings as any)?.autoTrade?.twitterSnipe?.buyAmountBnb ?? '0.1').trim();
+    const buyAmountBnb = Number.isFinite(Number(buyAmountRaw)) && Number(buyAmountRaw) > 0 ? buyAmountRaw : '0.1';
+    const buyNewCaCount = Number((settings as any)?.autoTrade?.twitterSnipe?.buyNewCaCount ?? 1);
+    const buyCaCount = Number.isFinite(buyNewCaCount) ? Math.max(0, Math.floor(buyNewCaCount)) : 1;
+    await sendTelegramReply(
+      [
+        '🎯 推文狙击设置',
+        '',
+        `DryRun: ${dryRun ? '开启' : '关闭'}`,
+        `自动卖出: ${autoSellEnabled ? '开启' : '关闭'}`,
+        `策略买入金额(BNB): ${buyAmountBnb}`,
+        `买入CA数量: ${buyCaCount}`,
+      ].join('\n'),
+      { inlineKeyboard: buildXSniperSettingsKeyboard({ dryRun, autoSellEnabled, buyAmountBnb, buyNewCaCount: buyCaCount }) }
+    );
+  };
+  const sendTelegramQuickTradeSettings = async () => {
+    const settings = await SettingsService.get();
+    const chainId = settings.chainId;
+    const chain = (settings.chains as any)?.[chainId] ?? {};
+    const buyPresets = Array.isArray(chain.buyPresets) ? chain.buyPresets.map((x: any) => String(x).trim()).filter(Boolean).slice(0, 4) : ['0.1', '0.5', '1.0', '2.0'];
+    const sellPresets = Array.isArray(chain.sellPresets) ? chain.sellPresets.map((x: any) => String(x).trim()).filter(Boolean).slice(0, 4) : ['25', '50', '75', '100'];
+    await sendTelegramReply(
+      [
+        '⚡ 快捷交易设置',
+        '',
+        `买入金额(BNB): ${buyPresets.join(',')}`,
+        `卖出金额(%): ${sellPresets.join(',')}`,
+        '',
+        '输入规则: 4个数字，英文逗号分隔',
+      ].join('\n'),
+      { inlineKeyboard: buildQuickTradeSettingsKeyboard() }
+    );
+  };
   const sendTelegramMenu = async () => {
     await sendTelegramReply(
-      ['Dagobang Telegram 菜单', '', '1) 直接发送 tokenAddress 查看快照与持仓', '2) 使用按钮快速查看状态、持仓和挂单', '3) Token 快照里可一键买卖', '', '命令:', '/menu', '/status', '/holdings', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/token <tokenAddress>'].join('\n'),
+      ['Dagobang Telegram 菜单', '', '1) 直接发送 tokenAddress 查看快照与持仓', '2) 使用按钮快速查看状态、持仓和挂单', '3) Token 快照里可一键买卖', '', '命令:', '/menu', '/settings', '/status', '/holdings', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/token <tokenAddress>'].join('\n'),
       { inlineKeyboard: buildMainMenuKeyboard() }
     );
   };
@@ -245,6 +397,88 @@ export function createTelegramController(deps: {
       }
     }
     return { chainId, tokenAddress, symbol, name, priceUsd: normalizedPriceUsd, marketCapUsd, holderAddress, balanceWei, balanceAmount, balanceUsd };
+  };
+
+  const sendXSniperOrderCard = async (orderId: string) => {
+    const history = await loadXSniperHistory();
+    const record = history.find((r) => String(r?.id || '') === orderId) as XSniperBuyRecord | undefined;
+    if (!record) {
+      await sendTelegramReply('未找到该推文狙击订单记录（可能已过期）', {
+        inlineKeyboard: [[{ text: '↩️ 菜单', callbackData: 'act:menu' }]],
+      });
+      return;
+    }
+    const addrKey = String(record.tokenAddress || '').toLowerCase();
+    const groupKey = `${record.dryRun === true ? 'dry:' : ''}${record.chainId}:${addrKey}`;
+    const grouped = history
+      .filter((r) => {
+        if (!r || typeof r.chainId !== 'number') return false;
+        const key = `${r.dryRun === true ? 'dry:' : ''}${r.chainId}:${String(r.tokenAddress || '').toLowerCase()}`;
+        return key === groupKey;
+      })
+      .sort((a, b) => (Number(b.tsMs) || 0) - (Number(a.tsMs) || 0));
+    const parent =
+      grouped.find((x) => x && x.side !== 'sell' && x.reason !== 'ws_confirm_failed') ??
+      grouped[0] ??
+      record;
+    const sellRecords = grouped.filter((x) => x && x.side === 'sell');
+
+    const tokenAddress = String(parent.tokenAddress || '').trim() as `0x${string}`;
+    const snapshot = /^0x[a-fA-F0-9]{40}$/.test(tokenAddress)
+      ? await buildTelegramTokenSnapshot(tokenAddress).catch(() => null)
+      : null;
+    const entryMcap = typeof parent.marketCapUsd === 'number' && Number.isFinite(parent.marketCapUsd) ? parent.marketCapUsd : null;
+    const latestMcap = snapshot && typeof snapshot.marketCapUsd === 'number' && Number.isFinite(snapshot.marketCapUsd)
+      ? snapshot.marketCapUsd
+      : null;
+    const athCandidates: number[] = [];
+    if (latestMcap != null) athCandidates.push(latestMcap);
+    for (const r of grouped) {
+      if (typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) && r.marketCapUsd > 0) athCandidates.push(r.marketCapUsd);
+      if (typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) && r.athMarketCapUsd > 0) athCandidates.push(r.athMarketCapUsd);
+      athCandidates.push(...readEvalMcap(r));
+    }
+    const athMcap = athCandidates.length ? Math.max(...athCandidates) : null;
+    const weighted = computeWeightedPnlPct({ entryMcap, latestMcap, sellRecords });
+    const pnlPct = weighted.pnlPct;
+    const pnlAthPct =
+      entryMcap != null && athMcap != null && Number.isFinite(entryMcap) && entryMcap > 0
+        ? ((athMcap / entryMcap) - 1) * 100
+        : null;
+
+    const mode = parent.dryRun ? '🧪 DryRun' : '✅ 实盘';
+    const screen = String(parent.userScreen || '').trim();
+    const user = String(parent.userName || '').trim();
+    const account = screen ? `@${screen}` : (user || '-');
+    const symbol = String(parent.tokenSymbol || parent.tokenName || 'TOKEN').trim();
+    await sendTelegramReply(
+      [
+        `🎯 推文狙击订单 ${mode}`,
+        `订单: ${parent.id}`,
+        `代币: ${symbol}`,
+        `地址: ${shortAddress(parent.tokenAddress)}`,
+        `仓位: 已卖 ${weighted.soldPct.toFixed(1)}% | 剩余 ${weighted.remainPct.toFixed(1)}%`,
+        `PnL(MCap): ${formatPnlPct(pnlPct)} | ATH PnL: ${formatPnlPct(pnlAthPct)}`,
+        `市值: 入场 ${formatUsd(entryMcap)} | 当前 ${formatUsd(latestMcap)} | ATH ${formatUsd(athMcap)}`,
+        `买入: ${parent.buyAmountBnb != null ? `${parent.buyAmountBnb} BNB` : '-'} | 入场价: ${formatPrice(parent.entryPriceUsd)}`,
+        `持有人: ${Number.isFinite(parent.holders) ? Number(parent.holders) : '-'} | KOL: ${Number.isFinite(parent.kol) ? Number(parent.kol) : '-'} | Smart: ${Number.isFinite(parent.smartMoney) ? Number(parent.smartMoney) : '-'}`,
+        `Dev持仓: ${parent.devHoldPercent != null ? `${parent.devHoldPercent.toFixed(2)}%` : '-'} | Dev卖出: ${parent.devHasSold === true ? '是' : parent.devHasSold === false ? '否' : '-'}`,
+        `24h: Vol ${formatUsd(parent.vol24hUsd)} | NetBuy ${formatUsd(parent.netBuy24hUsd)} | Buy/Sell ${parent.buyTx24h ?? '-'} / ${parent.sellTx24h ?? '-'}`,
+        `代币Age: ${formatAge(parent.createdAtMs)}`,
+        `推文类型: ${parent.tweetType || '-'}`,
+        `推文账户: ${account}`,
+        `推文链接: ${parent.tweetUrl || '-'}`,
+        `Tx: ${parent.txHash || '-'}`,
+      ].join('\n'),
+      {
+        inlineKeyboard: [
+          [
+            { text: '🔄 刷新', callbackData: `act:xso:${parent.id}` },
+            { text: '🔍 查看代币', callbackData: `act:token:${parent.tokenAddress}` },
+          ],
+        ],
+      }
+    );
   };
 
   const runTelegramQuickBuy = async (tokenAddress: `0x${string}`, amountBnb: string) => {
@@ -475,7 +709,7 @@ export function createTelegramController(deps: {
       const n = Number((settings as any).telegram?.pollIntervalMs);
       return Number.isFinite(n) && n >= 1000 && n <= 10000 ? Math.floor(n) : 2000;
     },
-    onCommand: async ({ command, rawText, userId }) => {
+    onCommand: async ({ command, rawText, userId, chatId }) => {
       const settings = await SettingsService.get();
       if ((settings as any).telegram?.enabled !== true) return;
       const enforceUserId = (settings as any).telegram?.enforceUserId === true;
@@ -488,15 +722,127 @@ export function createTelegramController(deps: {
         const isBuyAction = command.type === 'buy' || command.type === 'actionBuy';
         const isSellAction = command.type === 'sell' || command.type === 'actionSell';
         const isMenuAction = command.type === 'menu' || command.type === 'start' || command.type === 'actionMenu';
+        const isSettingsAction = command.type === 'settings' || command.type === 'actionSettings';
+        const isXSniperSettingsAction = command.type === 'actionXSniperSettings';
+        const isQuickTradeSettingsAction = command.type === 'actionQuickTradeSettings';
+        const isSetXSniperDryRunAction = command.type === 'actionSetXSniperDryRun';
+        const isSetXSniperAutoSellAction = command.type === 'actionSetXSniperAutoSell';
+        const isSetXSniperBuyAmountAction = command.type === 'actionSetXSniperBuyAmount';
+        const isSetXSniperBuyCaCountAction = command.type === 'actionSetXSniperBuyCaCount';
+        const isInputXSniperBuyAmountAction = command.type === 'actionInputXSniperBuyAmount';
+        const isInputXSniperBuyCaCountAction = command.type === 'actionInputXSniperBuyCaCount';
+        const isInputQuickBuyPresetsAction = command.type === 'actionInputQuickBuyPresets';
+        const isInputQuickSellPresetsAction = command.type === 'actionInputQuickSellPresets';
         const isStatusAction = command.type === 'status' || command.type === 'actionStatus';
         const isHoldingsAction = command.type === 'holdings' || command.type === 'actionHoldings';
         const isWalletsAction = command.type === 'wallets' || command.type === 'actionWallets';
         const isWhoamiAction = command.type === 'whoami' || command.type === 'actionWhoami';
         const isSwitchWalletAction = command.type === 'switchWallet' || command.type === 'actionSwitchWallet';
+        const isXSniperOrderAction = command.type === 'actionXSniperOrder';
 
         if (isMenuAction) {
           await sendTelegramMenu();
           return;
+        }
+        if (isSettingsAction) {
+          await sendTelegramSettingsMenu();
+          return;
+        }
+        if (isXSniperSettingsAction) {
+          await sendTelegramXSniperSettings();
+          return;
+        }
+        if (isQuickTradeSettingsAction) {
+          await sendTelegramQuickTradeSettings();
+          return;
+        }
+        if (isInputXSniperBuyAmountAction) {
+          pendingInputByChat.set(chatId, 'buyAmountBnb');
+          await sendTelegramReply('请输入策略买入金额(BNB)，例如: 0.1');
+          return;
+        }
+        if (isInputXSniperBuyCaCountAction) {
+          pendingInputByChat.set(chatId, 'buyNewCaCount');
+          await sendTelegramReply('请输入买入CA数量（整数），例如: 3');
+          return;
+        }
+        if (isInputQuickBuyPresetsAction) {
+          pendingInputByChat.set(chatId, 'quickBuyPresets');
+          await sendTelegramReply('请输入买入金额，格式: 0.01,0.2,0.5,1.0');
+          return;
+        }
+        if (isInputQuickSellPresetsAction) {
+          pendingInputByChat.set(chatId, 'quickSellPresets');
+          await sendTelegramReply('请输入卖出金额(%)，格式: 10,25,50,100');
+          return;
+        }
+        if (isSetXSniperDryRunAction || isSetXSniperAutoSellAction || isSetXSniperBuyAmountAction || isSetXSniperBuyCaCountAction) {
+          const nextSettings = await SettingsService.get();
+          const patch: Record<string, any> = {};
+          if (isSetXSniperDryRunAction) patch.dryRun = command.enabled;
+          if (isSetXSniperAutoSellAction) patch.autoSellEnabled = command.enabled;
+          if (isSetXSniperBuyAmountAction) patch.buyAmountBnb = command.amountBnb;
+          if (isSetXSniperBuyCaCountAction) patch.buyNewCaCount = command.count;
+          const autoTrade = applyTwitterSnipePatch(nextSettings, patch);
+          await SettingsService.update({ autoTrade } as any);
+          pendingInputByChat.delete(chatId);
+          await sendTelegramXSniperSettings();
+          return;
+        }
+        if (command.type === 'unknown') {
+          const pending = pendingInputByChat.get(chatId);
+          if (pending === 'buyAmountBnb') {
+            const v = String(rawText || '').trim();
+            const n = Number(v);
+            if (!Number.isFinite(n) || n <= 0) {
+              await sendTelegramReply('输入无效，请输入大于0的数字（例如 0.1）');
+              return;
+            }
+            const nextSettings = await SettingsService.get();
+            const autoTrade = applyTwitterSnipePatch(nextSettings, { buyAmountBnb: v });
+            await SettingsService.update({ autoTrade } as any);
+            pendingInputByChat.delete(chatId);
+            await sendTelegramXSniperSettings();
+            return;
+          }
+          if (pending === 'buyNewCaCount') {
+            const n = Number(String(rawText || '').trim());
+            if (!Number.isFinite(n) || n < 0) {
+              await sendTelegramReply('输入无效，请输入整数（例如 3）');
+              return;
+            }
+            const count = Math.max(0, Math.floor(n));
+            const nextSettings = await SettingsService.get();
+            const autoTrade = applyTwitterSnipePatch(nextSettings, { buyNewCaCount: count });
+            await SettingsService.update({ autoTrade } as any);
+            pendingInputByChat.delete(chatId);
+            await sendTelegramXSniperSettings();
+            return;
+          }
+          if (pending === 'quickBuyPresets' || pending === 'quickSellPresets') {
+            const raw = String(rawText || '').trim();
+            const parts = raw.split(',').map((x) => x.trim()).filter(Boolean);
+            if (parts.length !== 4) {
+              await sendTelegramReply('输入无效：必须是4个数字，英文逗号分隔。');
+              return;
+            }
+            const allOk = parts.every((p) => Number.isFinite(Number(p)) && Number(p) > 0);
+            if (!allOk) {
+              await sendTelegramReply('输入无效：请确保4个值都为大于0的数字。');
+              return;
+            }
+            const settings = await SettingsService.get();
+            const chainId = settings.chainId;
+            const chains = { ...(settings as any).chains };
+            const chain = { ...(chains as any)[chainId] };
+            if (pending === 'quickBuyPresets') chain.buyPresets = parts;
+            if (pending === 'quickSellPresets') chain.sellPresets = parts;
+            (chains as any)[chainId] = chain;
+            await SettingsService.update({ chains } as any);
+            pendingInputByChat.delete(chatId);
+            await sendTelegramQuickTradeSettings();
+            return;
+          }
         }
         if (isStatusAction) {
           const status = await WalletService.getStatus();
@@ -547,6 +893,10 @@ export function createTelegramController(deps: {
           await WalletService.switchAccount(selectedAddress);
           await deps.broadcastStateChange();
           await sendTelegramReply(`已切换钱包: ${selectedAddress}`, { inlineKeyboard: buildMainMenuKeyboard() });
+          return;
+        }
+        if (isXSniperOrderAction) {
+          await sendXSniperOrderCard(command.orderId);
           return;
         }
         if (isOrdersAction) {
@@ -693,7 +1043,7 @@ export function createTelegramController(deps: {
         }
         if (isBuyAction) return void await runTelegramQuickBuy(command.tokenAddress, command.amountBnb);
         if (isSellAction) return void await runTelegramQuickSell(command.tokenAddress, command.sellPercent);
-        await sendTelegramReply(['未知命令: ' + rawText, '支持:', '/status', '/holdings', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/cancel <orderId>', '/buy <tokenAddress> <bnb>', '/sell <tokenAddress> <percent>', '/token <tokenAddress>', '/menu', '/start', '或直接发送 tokenAddress'].join('\n'), { inlineKeyboard: buildMainMenuKeyboard() });
+        await sendTelegramReply(['未知命令: ' + rawText, '支持:', '/settings', '/status', '/holdings', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/cancel <orderId>', '/buy <tokenAddress> <bnb>', '/sell <tokenAddress> <percent>', '/token <tokenAddress>', '/menu', '/start', '或直接发送 tokenAddress'].join('\n'), { inlineKeyboard: buildMainMenuKeyboard() });
       } catch (e: any) {
         await sendTelegramReply(`命令执行失败: ${String(e?.message || e || 'unknown_error')}`);
       }

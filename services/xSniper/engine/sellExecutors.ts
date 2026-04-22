@@ -18,7 +18,7 @@ const calcSellAmountWei = (input: {
   const platform = input.tokenInfo?.launchpad_platform?.toLowerCase() || '';
   const isInnerFourMeme =
     !!(input.tokenInfo as any)?.launchpad &&
-    platform.includes('fourmeme') &&
+    platform.includes('four') &&
     (input.tokenInfo as any).launchpad_status !== 1;
   if (!input.isTurbo && isInnerFourMeme && amountWei > 0n) {
     amountWei = (amountWei / 1000000000n) * 1000000000n;

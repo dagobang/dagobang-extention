@@ -247,7 +247,7 @@ export class TradeService {
     if (tokenInfo.launchpad) {
       // Assuming 'status' 1 means Trading (Outer), anything else (0/2?) is Inner/Launchpad
       // Or checking if platform is known launchpad
-      if (['fourmeme', 'bn_fourmeme', 'fourmeme_agent', 'flap'].includes(tokenInfo.launchpad_platform?.toLowerCase() || '')) {
+      if (['fourmeme', 'bn_fourmeme', 'fourmeme_agent', 'four_xmode_agent', 'flap'].includes(tokenInfo.launchpad_platform?.toLowerCase() || '')) {
         // If status is NOT 1 (assuming 1 is "Trading on DEX"), treat as Inner
         // This logic might need adjustment based on exact status codes
         return tokenInfo.launchpad_status !== 1;
@@ -260,7 +260,7 @@ export class TradeService {
     const platform = tokenInfo.launchpad_platform?.toLowerCase();
     const contracts = DeployAddress[chainId as ChainId] || {};
 
-    if (platform.includes('fourmeme')) {
+    if (platform.includes('four')) {
       return {
         buyType: SwapType.FOUR_MEME_BUY_AMAP,
         sellType: SwapType.FOUR_MEME_SELL,
@@ -374,7 +374,7 @@ export class TradeService {
       const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
       let dataForDesc: `0x${string}` = '0x';
 
-      if (platform.includes('fourmeme')) {
+      if (platform.includes('four')) {
         const to = account.address as Address;
         const fundsForEstimate = currentRouterToken === ZERO_ADDRESS ? amountIn : currentAmount;
         let minAmount = 0n;
@@ -659,7 +659,7 @@ export class TradeService {
     const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
     const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
     const isInner = this.isInnerDisk(tokenInfo);
-    const isInnerFourMeme = isInner && platform.includes('fourmeme');
+    const isInnerFourMeme = isInner && platform.includes('four');
 
     const spenders = getSellSpenders({
       chainId,
@@ -782,7 +782,7 @@ export class TradeService {
 
       const isInner = this.isInnerDisk(tokenInfo);
       const platformLower = tokenInfo.launchpad_platform?.toLowerCase() || '';
-      const isInnerFourMeme = isInner && platformLower.includes('fourmeme');
+      const isInnerFourMeme = isInner && platformLower.includes('four');
       const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
       const bridgeToken = getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
       const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;

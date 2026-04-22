@@ -104,6 +104,44 @@ export default defineBackground(() => {
     }
   };
 
+  const tokenBriefCache = new Map<string, { atMs: number; tokenName?: string; tokenSymbol?: string; marketCapUsd?: number | null }>();
+  const resolveTokenBrief = async (chainId: number | undefined, tokenAddress: string | undefined) => {
+    const addr = String(tokenAddress || '').trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) return { tokenName: undefined, tokenSymbol: undefined, marketCapUsd: null as number | null };
+    const key = `${chainId ?? 56}:${addr.toLowerCase()}`;
+    const now = Date.now();
+    const cached = tokenBriefCache.get(key);
+    if (cached && now - cached.atMs < 15_000) return cached;
+    const out: { atMs: number; tokenName?: string; tokenSymbol?: string; marketCapUsd?: number | null } = {
+      atMs: now,
+      tokenName: undefined,
+      tokenSymbol: undefined,
+      marketCapUsd: null,
+    };
+    try {
+      const chain = (chainId ?? 56) === 56 ? 'bsc' : String(chainId ?? 56);
+      const tokenInfo = await FourmemeAPI.getTokenInfo(chain, addr as `0x${string}`);
+      const mcapRaw = Number((tokenInfo as any)?.tokenPrice?.marketCap ?? 0);
+      out.marketCapUsd = Number.isFinite(mcapRaw) && mcapRaw > 0 ? mcapRaw : null;
+      const symbol = String((tokenInfo as any)?.symbol || '').trim();
+      const name = String((tokenInfo as any)?.name || '').trim();
+      out.tokenSymbol = symbol || undefined;
+      out.tokenName = name || undefined;
+    } catch {
+    }
+    if (!out.tokenSymbol || !out.tokenName) {
+      try {
+        const meta = await TokenService.getMeta(addr as `0x${string}`);
+        const symbol = String(meta?.symbol || '').trim();
+        out.tokenSymbol = out.tokenSymbol || symbol || undefined;
+        out.tokenName = out.tokenName || symbol || undefined;
+      } catch {
+      }
+    }
+    tokenBriefCache.set(key, out);
+    return out;
+  };
+
   const broadcastTradeSuccess = async (payload: any, tabId?: number | null) => {
     if (typeof tabId === 'number' && tabId > 0) {
       browser.tabs.sendMessage(tabId, payload).catch(() => { });
@@ -119,29 +157,18 @@ export default defineBackground(() => {
       broadcastToTabs(payload);
     }
     try {
-      if (payload?.type === 'bg:tradeSubmitted') {
-        await telegramNotifier.notifyTradeSubmitted({
-          source: payload?.source,
-          side: payload?.side,
-          tokenAddress: payload?.tokenAddress,
-          txHash: payload?.txHash,
-          submitElapsedMs: payload?.submitElapsedMs,
-        });
-      } else if (payload?.type === 'bg:tradeSuccess') {
+      if (payload?.type === 'bg:tradeSuccess' && payload?.source !== 'limitOrder') {
+        const brief = await resolveTokenBrief(payload?.chainId, payload?.tokenAddress);
         await telegramNotifier.notifyTradeSuccess({
           source: payload?.source,
           side: payload?.side,
           tokenAddress: payload?.tokenAddress,
+          tokenName: brief.tokenName,
+          tokenSymbol: brief.tokenSymbol,
+          marketCapUsd: brief.marketCapUsd,
           txHash: payload?.txHash,
           submitElapsedMs: payload?.submitElapsedMs,
           receiptElapsedMs: payload?.receiptElapsedMs,
-        });
-      } else if (payload?.type === 'bg:tradeRetrying') {
-        await telegramNotifier.notifyRetrying({
-          side: payload?.side,
-          tokenAddress: payload?.tokenAddress,
-          attempt: payload?.attempt,
-          reason: payload?.reason,
         });
       }
     } catch {
@@ -177,13 +204,6 @@ export default defineBackground(() => {
         txHash,
         submitElapsedMs,
       });
-      void telegramNotifier.notifyLimitOrderResult({
-        stage: 'submitted',
-        orderId: order.id,
-        side: order.side,
-        tokenAddress: order.tokenAddress,
-        txHash,
-      });
     },
     onOrderSubmitted: ({ order, txHash, submitElapsedMs, receiptElapsedMs, totalElapsedMs, broadcastVia, broadcastUrl, isBundle }) => {
       broadcastTradeSuccess({
@@ -201,22 +221,46 @@ export default defineBackground(() => {
         broadcastUrl,
         isBundle,
       });
-      void telegramNotifier.notifyLimitOrderResult({
-        stage: 'success',
-        orderId: order.id,
-        side: order.side,
-        tokenAddress: order.tokenAddress,
-        txHash,
-      });
+      void (async () => {
+        const brief = await resolveTokenBrief(order.chainId, order.tokenAddress);
+        await telegramNotifier.notifyLimitOrderResult({
+          stage: 'success',
+          orderId: order.id,
+          side: order.side,
+          tokenAddress: order.tokenAddress,
+          tokenName: brief.tokenName || order.tokenInfo?.name,
+          tokenSymbol: brief.tokenSymbol || order.tokenSymbol || order.tokenInfo?.symbol,
+          marketCapUsd: brief.marketCapUsd,
+          txHash,
+        });
+      })();
     },
   });
   limitOrderScanner = createLimitOrderScanner({
     executeLimitOrder: limitOrderExecutor.executeLimitOrder,
     onStateChanged: broadcastStateChange,
+    onOrderFailed: ({ order, error }) => {
+      void (async () => {
+        const brief = await resolveTokenBrief(order.chainId, order.tokenAddress);
+        await telegramNotifier.notifyLimitOrderResult({
+          stage: 'failed',
+          orderId: order.id,
+          side: order.side,
+          tokenAddress: order.tokenAddress,
+          tokenName: brief.tokenName || order.tokenInfo?.name,
+          tokenSymbol: brief.tokenSymbol || order.tokenSymbol || order.tokenInfo?.symbol,
+          marketCapUsd: brief.marketCapUsd,
+          error,
+        });
+      })();
+    },
   });
   limitOrderScanner.start();
 
-  const AutoTrade = createXSniperTrade({ onStateChanged: broadcastStateChange });
+  const AutoTrade = createXSniperTrade({
+    onStateChanged: broadcastStateChange,
+    telegramNotifier,
+  });
   const TokenSniperTrade = createTokenSniperTrade({ onStateChanged: broadcastStateChange });
   const buyInputByTxHash = new Map<`0x${string}`, { input: TxBuyInput; receiptRetried: boolean }>();
 

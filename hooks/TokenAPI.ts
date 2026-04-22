@@ -26,14 +26,14 @@ export class TokenAPI {
         if (api) {
             const tokenInfo = await api.getTokenInfo(chain, address);
             if (tokenInfo) {
-                if (tokenInfo.launchpad_platform.includes('fourmeme') && tokenInfo.quote_token != "BNB") {
+                if (tokenInfo.launchpad_platform.includes('four') && tokenInfo.quote_token != "BNB") {
                     const fourmemeTokenInfo = await this.getTokenInfoByFourmeme(platform, chain, address);
                     if (fourmemeTokenInfo) {
                         return fourmemeTokenInfo
                     }
                 }
                 if (MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
-                    tokenInfo.launchpad_platform.includes('fourmeme')) {
+                    tokenInfo.launchpad_platform.includes('four')) {
                     return tokenInfo;
                 }
                 return null;

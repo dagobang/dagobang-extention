@@ -21,6 +21,7 @@ const normalizeLimitScanIntervalMs = (value: any) => {
 export const createLimitOrderScanner = (deps: {
   executeLimitOrder: (order: LimitOrder, ctx?: { priceUsd?: number }) => Promise<`0x${string}`>;
   onStateChanged: () => void;
+  onOrderFailed?: (input: { order: LimitOrder; error: string }) => void;
 }) => {
   let limitScanIntervalMs = LIMIT_SCAN_INTERVAL_DEFAULT_MS;
   const limitScanPricesByTokenKey = new Map<string, { priceUsd: number; ts: number }>();
@@ -136,6 +137,7 @@ export const createLimitOrderScanner = (deps: {
           } catch (e: any) {
             const msg = typeof e?.message === 'string' ? e.message : String(e);
             await patchLimitOrder(o.id, { status: 'failed' as const, lastError: msg });
+            deps.onOrderFailed?.({ order: prepared, error: msg });
           }
         }
       }
