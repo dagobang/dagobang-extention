@@ -405,10 +405,13 @@ export function validateSettings(input: Settings): Settings | null {
       : !!(fallbackInput as any).wsConfirmEnabled,
     wsConfirmWindowMs: clampStringNumber((rawInput as any)?.wsConfirmWindowMs, (fallbackInput as any)?.wsConfirmWindowMs),
     wsConfirmMinMcapChangePct: clampStringNumber((rawInput as any)?.wsConfirmMinMcapChangePct, (fallbackInput as any)?.wsConfirmMinMcapChangePct),
+    wsConfirmMaxMcapChangePct: clampStringNumber((rawInput as any)?.wsConfirmMaxMcapChangePct, (fallbackInput as any)?.wsConfirmMaxMcapChangePct),
     wsConfirmMinHoldersDelta: clampStringNumber((rawInput as any)?.wsConfirmMinHoldersDelta, (fallbackInput as any)?.wsConfirmMinHoldersDelta),
     wsConfirmMinBuySellRatio: clampStringNumber((rawInput as any)?.wsConfirmMinBuySellRatio, (fallbackInput as any)?.wsConfirmMinBuySellRatio),
     wsConfirmMinNetBuy24hUsd: clampStringNumber((rawInput as any)?.wsConfirmMinNetBuy24hUsd, (fallbackInput as any)?.wsConfirmMinNetBuy24hUsd),
     wsConfirmMinVol24hUsd: clampStringNumber((rawInput as any)?.wsConfirmMinVol24hUsd, (fallbackInput as any)?.wsConfirmMinVol24hUsd),
+    wsConfirmMinVolMcapRatio: clampStringNumber((rawInput as any)?.wsConfirmMinVolMcapRatio, (fallbackInput as any)?.wsConfirmMinVolMcapRatio),
+    wsConfirmMinNetBuyMcapRatio: clampStringNumber((rawInput as any)?.wsConfirmMinNetBuyMcapRatio, (fallbackInput as any)?.wsConfirmMinNetBuyMcapRatio),
     wsConfirmMinSmartMoney: clampStringNumber((rawInput as any)?.wsConfirmMinSmartMoney, (fallbackInput as any)?.wsConfirmMinSmartMoney),
     rapidExitEnabled: typeof (rawInput as any)?.rapidExitEnabled === 'boolean'
       ? (rawInput as any).rapidExitEnabled

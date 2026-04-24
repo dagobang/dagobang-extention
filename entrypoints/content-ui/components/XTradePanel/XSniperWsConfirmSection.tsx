@@ -63,6 +63,16 @@ export function XSniperWsConfirmSection({
           />
         </label>
         <label className="block space-y-1">
+          <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.wsConfirmMaxMcapChangePct')}</div>
+          <input
+            type="number"
+            className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+            value={(twitterSnipe as any)?.wsConfirmMaxMcapChangePct ?? ''}
+            disabled={!canEdit}
+            onChange={(e) => updateTwitterSnipe({ wsConfirmMaxMcapChangePct: e.target.value } as any)}
+          />
+        </label>
+        <label className="block space-y-1">
           <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.wsConfirmMinHoldersDelta')}</div>
           <input
             type="number"
@@ -100,6 +110,28 @@ export function XSniperWsConfirmSection({
             value={(twitterSnipe as any)?.wsConfirmMinVol24hUsd ?? ''}
             disabled={!canEdit}
             onChange={(e) => updateTwitterSnipe({ wsConfirmMinVol24hUsd: e.target.value } as any)}
+          />
+        </label>
+        <label className="block space-y-1">
+          <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.wsConfirmMinVolMcapRatio')}</div>
+          <input
+            type="number"
+            step="0.01"
+            className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+            value={(twitterSnipe as any)?.wsConfirmMinVolMcapRatio ?? ''}
+            disabled={!canEdit}
+            onChange={(e) => updateTwitterSnipe({ wsConfirmMinVolMcapRatio: e.target.value } as any)}
+          />
+        </label>
+        <label className="block space-y-1">
+          <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.wsConfirmMinNetBuyMcapRatio')}</div>
+          <input
+            type="number"
+            step="0.01"
+            className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+            value={(twitterSnipe as any)?.wsConfirmMinNetBuyMcapRatio ?? ''}
+            disabled={!canEdit}
+            onChange={(e) => updateTwitterSnipe({ wsConfirmMinNetBuyMcapRatio: e.target.value } as any)}
           />
         </label>
         <label className="block space-y-1">

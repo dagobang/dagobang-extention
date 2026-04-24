@@ -9,6 +9,32 @@ import type { UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import type { DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
 
+const resolveEntryMcapAnchor = (input: {
+  postBuyMcapUsd?: number | null;
+  entryPriceUsd?: number | null;
+  referencePriceUsd?: number | null;
+  referenceMcapUsd?: number | null;
+  fallbackMcapUsd?: number | null;
+}) => {
+  const postBuyMcapUsd = sanitizeMarketCapUsd(input.postBuyMcapUsd);
+  if (postBuyMcapUsd != null) return postBuyMcapUsd;
+  const entryPriceUsd = Number(input.entryPriceUsd);
+  const referencePriceUsd = Number(input.referencePriceUsd);
+  const referenceMcapUsd = sanitizeMarketCapUsd(input.referenceMcapUsd);
+  if (
+    Number.isFinite(entryPriceUsd) && entryPriceUsd > 0
+    && Number.isFinite(referencePriceUsd) && referencePriceUsd > 0
+    && referenceMcapUsd != null
+  ) {
+    const impliedSupply = referenceMcapUsd / referencePriceUsd;
+    if (Number.isFinite(impliedSupply) && impliedSupply > 0) {
+      const estimatedMcap = sanitizeMarketCapUsd(entryPriceUsd * impliedSupply);
+      if (estimatedMcap != null) return estimatedMcap;
+    }
+  }
+  return sanitizeMarketCapUsd(input.fallbackMcapUsd);
+};
+
 const buildWsAutoSellPosition = (input: {
   cfg: any;
   chainId: number;
@@ -342,6 +368,14 @@ export const tryAutoBuyOnce = async (input: {
         dryRunMetrics.priceUsd ?? null,
         dryRunMetrics.marketCapUsd ?? null,
       );
+      const delayedTokenPriceUsd = Number(delayedTokenInfo?.tokenPrice?.price ?? 0);
+      const dryRunEntryMcapAnchor = resolveEntryMcapAnchor({
+        postBuyMcapUsd: delayedMcap,
+        entryPriceUsd,
+        referencePriceUsd: Number.isFinite(dryRunMetrics.priceUsd as any) ? Number(dryRunMetrics.priceUsd) : delayedTokenPriceUsd,
+        referenceMcapUsd: dryRunMetrics.marketCapUsd ?? null,
+        fallbackMcapUsd: dryRunMetrics.marketCapUsd ?? null,
+      });
       input.boughtOnceAtMs.set(key, Date.now());
       void input.persistBoughtOnce();
       input.onStateChanged();
@@ -361,7 +395,7 @@ export const tryAutoBuyOnce = async (input: {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         dryRun: true,
-        entryMcapUsd: dryRunMetrics.marketCapUsd ?? null,
+        entryMcapUsd: dryRunEntryMcapAnchor,
         buyAmountBnb: amountNumber,
         openedAtMs,
         tweetAtMs,
@@ -418,8 +452,8 @@ export const tryAutoBuyOnce = async (input: {
         txHash: undefined,
         entryPriceUsd: entryPriceUsd ?? undefined,
         dryRun: true,
-        marketCapUsd: dryRunMetrics.marketCapUsd,
-        athMarketCapUsd: dryRunMetrics.marketCapUsd,
+        marketCapUsd: dryRunEntryMcapAnchor ?? dryRunMetrics.marketCapUsd,
+        athMarketCapUsd: dryRunEntryMcapAnchor ?? dryRunMetrics.marketCapUsd,
         liquidityUsd: dryRunMetrics.liquidityUsd,
         holders: dryRunMetrics.holders,
         kol: dryRunMetrics.kol,
@@ -507,6 +541,19 @@ export const tryAutoBuyOnce = async (input: {
       refreshedMetrics.priceUsd ?? null,
       refreshedMetrics.marketCapUsd ?? null,
     );
+    const postBuyTokenInfo =
+      (await input.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ??
+      tokenInfoForTrade;
+    const postBuyRawMcap = Number(postBuyTokenInfo?.tokenPrice?.marketCap ?? 0);
+    const postBuyMcapUsd = sanitizeMarketCapUsd(postBuyRawMcap);
+    const postBuyPriceUsd = Number(postBuyTokenInfo?.tokenPrice?.price ?? 0);
+    const entryMcapAnchor = resolveEntryMcapAnchor({
+      postBuyMcapUsd,
+      entryPriceUsd,
+      referencePriceUsd: Number.isFinite(refreshedMetrics.priceUsd as any) ? Number(refreshedMetrics.priceUsd) : postBuyPriceUsd,
+      referenceMcapUsd: refreshedMetrics.marketCapUsd ?? null,
+      fallbackMcapUsd: refreshedMetrics.marketCapUsd ?? null,
+    });
     input.boughtOnceAtMs.set(key, Date.now());
     void input.persistBoughtOnce();
     input.onStateChanged();
@@ -526,7 +573,7 @@ export const tryAutoBuyOnce = async (input: {
       chainId: input.chainId,
       tokenAddress: input.tokenAddress,
       dryRun: false,
-      entryMcapUsd: refreshedMetrics.marketCapUsd ?? null,
+      entryMcapUsd: entryMcapAnchor,
       buyAmountBnb: amountNumber,
       openedAtMs,
       tweetAtMs,
@@ -554,8 +601,8 @@ export const tryAutoBuyOnce = async (input: {
       txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
       entryPriceUsd: effectiveEntryPriceUsd ?? undefined,
       dryRun: false,
-      marketCapUsd: refreshedMetrics.marketCapUsd,
-      athMarketCapUsd: refreshedMetrics.marketCapUsd,
+      marketCapUsd: entryMcapAnchor ?? refreshedMetrics.marketCapUsd,
+      athMarketCapUsd: entryMcapAnchor ?? refreshedMetrics.marketCapUsd,
       liquidityUsd: refreshedMetrics.liquidityUsd,
       holders: refreshedMetrics.holders,
       kol: refreshedMetrics.kol,

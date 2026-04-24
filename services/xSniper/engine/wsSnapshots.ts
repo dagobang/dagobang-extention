@@ -91,12 +91,26 @@ export const getWsWindowStats = (
     if (s <= 0) return b > 0 ? 999 : null;
     return b / s;
   })();
+  const volMcapRatio = (() => {
+    const vol = Number(cur.vol24hUsd);
+    const mcap = Number(cur.marketCapUsd);
+    if (!Number.isFinite(vol) || !Number.isFinite(mcap) || mcap <= 0) return null;
+    return vol / mcap;
+  })();
+  const netBuyMcapRatio = (() => {
+    const netBuy = Number(cur.netBuy24hUsd);
+    const mcap = Number(cur.marketCapUsd);
+    if (!Number.isFinite(netBuy) || !Number.isFinite(mcap) || mcap <= 0) return null;
+    return netBuy / mcap;
+  })();
   return {
     windowMs,
     hasCoverage,
     mcapChangePct,
     holdersDelta,
     buySellRatio,
+    volMcapRatio,
+    netBuyMcapRatio,
     vol24hUsd: typeof cur.vol24hUsd === 'number' && Number.isFinite(cur.vol24hUsd) ? cur.vol24hUsd : null,
     netBuy24hUsd: typeof cur.netBuy24hUsd === 'number' && Number.isFinite(cur.netBuy24hUsd) ? cur.netBuy24hUsd : null,
     smartMoney: typeof cur.smartMoney === 'number' && Number.isFinite(cur.smartMoney) ? cur.smartMoney : null,
@@ -139,10 +153,16 @@ export const computeWsConfirm = (
   const windowMs = Math.max(500, Math.min(60_000, parseNumber(strategy?.wsConfirmWindowMs) ?? 5000));
   const stats = getWsWindowStats(wsSnapshotsByAddr, tokenAddress, nowMs, windowMs);
   const minMcapChangePct = parseNumber(strategy?.wsConfirmMinMcapChangePct) ?? 0;
+  const maxMcapChangePctRaw = parseNumber(strategy?.wsConfirmMaxMcapChangePct);
+  const maxMcapChangePct = typeof maxMcapChangePctRaw === 'number' && Number.isFinite(maxMcapChangePctRaw)
+    ? maxMcapChangePctRaw
+    : null;
   const minHoldersDelta = parseNumber(strategy?.wsConfirmMinHoldersDelta) ?? 0;
   const minBuySellRatio = parseNumber(strategy?.wsConfirmMinBuySellRatio) ?? 0;
   const minNetBuy24hUsd = parseNumber(strategy?.wsConfirmMinNetBuy24hUsd) ?? 0;
   const minVol24hUsd = parseNumber(strategy?.wsConfirmMinVol24hUsd) ?? 0;
+  const minVolMcapRatio = parseNumber(strategy?.wsConfirmMinVolMcapRatio) ?? 0;
+  const minNetBuyMcapRatio = parseNumber(strategy?.wsConfirmMinNetBuyMcapRatio) ?? 0;
   const minSmartMoney = parseNumber(strategy?.wsConfirmMinSmartMoney) ?? 0;
 
   const requireNumberAtLeast = (v: number | null | undefined, min: number) => {
@@ -150,9 +170,24 @@ export const computeWsConfirm = (
     if (typeof v !== 'number' || !Number.isFinite(v)) return false;
     return v >= min;
   };
+  const requireNumberAtMost = (v: number | null | undefined, max: number | null) => {
+    if (!(typeof max === 'number' && Number.isFinite(max))) return true;
+    if (typeof v !== 'number' || !Number.isFinite(v)) return false;
+    return v <= max;
+  };
 
   if (!stats) {
-    const pass = !(minMcapChangePct > 0 || minHoldersDelta > 0 || minBuySellRatio > 0 || minNetBuy24hUsd > 0 || minVol24hUsd > 0 || minSmartMoney > 0);
+    const pass = !(
+      minMcapChangePct > 0 ||
+      typeof maxMcapChangePct === 'number' ||
+      minHoldersDelta > 0 ||
+      minBuySellRatio > 0 ||
+      minNetBuy24hUsd > 0 ||
+      minVol24hUsd > 0 ||
+      minVolMcapRatio > 0 ||
+      minNetBuyMcapRatio > 0 ||
+      minSmartMoney > 0
+    );
     return { pass, stats: null as any, windowMs };
   }
 
@@ -162,10 +197,13 @@ export const computeWsConfirm = (
 
   const pass =
     requireNumberAtLeast(stats.mcapChangePct, minMcapChangePct) &&
+    requireNumberAtMost(stats.mcapChangePct, maxMcapChangePct) &&
     requireNumberAtLeast(stats.holdersDelta, minHoldersDelta) &&
     requireNumberAtLeast(stats.buySellRatio, minBuySellRatio) &&
     requireNumberAtLeast(stats.netBuy24hUsd, minNetBuy24hUsd) &&
     requireNumberAtLeast(stats.vol24hUsd, minVol24hUsd) &&
+    requireNumberAtLeast(stats.volMcapRatio, minVolMcapRatio) &&
+    requireNumberAtLeast(stats.netBuyMcapRatio, minNetBuyMcapRatio) &&
     requireNumberAtLeast(stats.smartMoney, minSmartMoney);
 
   return { pass, stats, windowMs };
