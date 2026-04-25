@@ -59,6 +59,7 @@ export function XSniperRapidSection({
 
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {numInput('固定评估间隔(秒)', 'rapidEvalStepSec')}
+            {numInput('Watchdog间隔(秒)', 'rapidWatchdogSec')}
             {numInput('硬止损阈值(%)', 'rapidStopLossPct')}
             {numInput('首档止盈触发(%)', 'rapidTakeProfitTriggerPct')}
             {numInput('后续递增阈值(%)', 'rapidTakeProfitStepUpPct')}

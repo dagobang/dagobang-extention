@@ -7,6 +7,7 @@ export type RapidExitPosition = {
   dryRun: boolean;
   openedAtMs: number;
   entryMcapUsd: number;
+  impliedSupply?: number;
   peakMcapUsd: number;
   sizeBnb: number;
   tweetAtMs?: number;
@@ -77,6 +78,7 @@ export const registerRapidExitPosition = (input: {
   signalId?: string;
   signalEventId?: string;
   signalTweetId?: string;
+  entryPriceUsd?: number | null;
 }) => {
   const cfg = readRapidExitConfig(input.strategy);
   if (!cfg.enabled) return;
@@ -89,6 +91,13 @@ export const registerRapidExitPosition = (input: {
     dryRun: input.dryRun,
     openedAtMs: input.openedAtMs,
     entryMcapUsd: input.entryMcapUsd,
+    impliedSupply:
+      (() => {
+        const p = Number(input.entryPriceUsd);
+        if (!(Number.isFinite(p) && p > 0)) return undefined;
+        const supply = input.entryMcapUsd / p;
+        return Number.isFinite(supply) && supply > 0 ? supply : 1_000_000_000;
+      })(),
     peakMcapUsd: input.entryMcapUsd,
     sizeBnb,
     tweetAtMs: input.tweetAtMs,
@@ -127,6 +136,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       signalId?: string;
       signalEventId?: string;
       signalTweetId?: string;
+      triggerMarketCapUsd?: number;
     };
   }) => Promise<boolean>;
 }) => {
@@ -196,6 +206,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
             signalId: pos.signalId,
             signalEventId: pos.signalEventId,
             signalTweetId: pos.signalTweetId,
+            triggerMarketCapUsd: curMcap,
           },
         });
         if (!sold) return false;
@@ -203,15 +214,15 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
         return true;
       };
 
-      if (pnlPct <= cfg.stopLossPct) {
-        const sold = await sellPercentOfOriginal(remainingPercent, 'rapid_stop_loss');
+      const armed = pos.armed === true;
+      if (armed && pnlPct <= cfg.takeProfitFloorPct) {
+        const sold = await sellPercentOfOriginal(remainingPercent, 'rapid_trailing_stop');
         if (sold || !(pos.remainingPercent! > 0)) cleanup();
         continue;
       }
 
-      const armed = pos.armed === true;
-      if (armed && pnlPct <= cfg.takeProfitFloorPct) {
-        const sold = await sellPercentOfOriginal(remainingPercent, 'rapid_trailing_stop');
+      if (pnlPct <= cfg.stopLossPct) {
+        const sold = await sellPercentOfOriginal(remainingPercent, 'rapid_stop_loss');
         if (sold || !(pos.remainingPercent! > 0)) cleanup();
         continue;
       }

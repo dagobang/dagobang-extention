@@ -233,6 +233,7 @@ export const createSellExecutors = (deps: {
       signalId?: string;
       signalEventId?: string;
       signalTweetId?: string;
+      triggerMarketCapUsd?: number;
     };
   }) => {
     const percent = Math.max(0, Math.min(100, Number(input.percent)));
@@ -245,6 +246,9 @@ export const createSellExecutors = (deps: {
     try {
       const now = Date.now();
       const latestMarketCapUsd = deps.getLatestMarketCapUsd(input.tokenAddress);
+      const triggerMarketCapUsd = Number(input.meta.triggerMarketCapUsd);
+      const lockedTriggerMcapUsd =
+        Number.isFinite(triggerMarketCapUsd) && triggerMarketCapUsd > 0 ? triggerMarketCapUsd : null;
       const baseRecord: XSniperBuyRecord = {
         id: `${now}-${Math.random().toString(16).slice(2)}`,
         side: 'sell',
@@ -262,7 +266,12 @@ export const createSellExecutors = (deps: {
         signalId: input.meta.signalId,
         signalEventId: input.meta.signalEventId,
         signalTweetId: input.meta.signalTweetId,
-        marketCapUsd: latestMarketCapUsd != null && Number.isFinite(latestMarketCapUsd) && latestMarketCapUsd > 0 ? latestMarketCapUsd : undefined,
+        // Lock to evaluation-time mcap when provided so post-trade slippage can be diagnosed from history.
+        marketCapUsd:
+          lockedTriggerMcapUsd ??
+          (latestMarketCapUsd != null && Number.isFinite(latestMarketCapUsd) && latestMarketCapUsd > 0
+            ? latestMarketCapUsd
+            : undefined),
         reason: input.reason,
       };
 
@@ -275,7 +284,11 @@ export const createSellExecutors = (deps: {
           ...baseRecord,
           tsMs: now2,
           id: `${now2}-${Math.random().toString(16).slice(2)}`,
-          marketCapUsd: latestAfterDelay != null && Number.isFinite(latestAfterDelay) && latestAfterDelay > 0 ? latestAfterDelay : baseRecord.marketCapUsd,
+          marketCapUsd:
+            lockedTriggerMcapUsd ??
+            (latestAfterDelay != null && Number.isFinite(latestAfterDelay) && latestAfterDelay > 0
+              ? latestAfterDelay
+              : baseRecord.marketCapUsd),
         });
         return true;
       }

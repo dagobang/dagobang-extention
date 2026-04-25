@@ -417,6 +417,7 @@ export function validateSettings(input: Settings): Settings | null {
       ? (rawInput as any).rapidExitEnabled
       : !!(fallbackInput as any)?.rapidExitEnabled,
     rapidEvalStepSec: clampStringNumber((rawInput as any)?.rapidEvalStepSec, (fallbackInput as any)?.rapidEvalStepSec),
+    rapidWatchdogSec: clampStringNumber((rawInput as any)?.rapidWatchdogSec, (fallbackInput as any)?.rapidWatchdogSec),
     rapidStopLossPct: clampStringNumber((rawInput as any)?.rapidStopLossPct, (fallbackInput as any)?.rapidStopLossPct),
     rapidTakeProfitTriggerPct: clampStringNumber((rawInput as any)?.rapidTakeProfitTriggerPct, (fallbackInput as any)?.rapidTakeProfitTriggerPct),
     rapidTakeProfitStepUpPct: clampStringNumber((rawInput as any)?.rapidTakeProfitStepUpPct, (fallbackInput as any)?.rapidTakeProfitStepUpPct),

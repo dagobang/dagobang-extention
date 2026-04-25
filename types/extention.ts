@@ -99,6 +99,7 @@ export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
   wsConfirmMinSmartMoney?: string;
   rapidExitEnabled?: boolean;
   rapidEvalStepSec?: string;
+  rapidWatchdogSec?: string;
   rapidStopLossPct?: string;
   rapidTakeProfitTriggerPct?: string;
   rapidTakeProfitStepUpPct?: string;

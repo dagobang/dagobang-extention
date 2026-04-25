@@ -12,6 +12,7 @@ import { createSellExecutors } from '@/services/xSniper/engine/sellExecutors';
 import { tryAutoBuyOnce as tryAutoBuyOnceFromMod } from '@/services/xSniper/engine/buyExecutor';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import { maybeUpdateXSniperHistoryEvaluations } from '@/services/xSniper/xSniperHistory';
+import { TokenService } from '@/services/token';
 
 export const createXSniperTrade = (deps: {
   onStateChanged: () => void;
@@ -30,7 +31,10 @@ export const createXSniperTrade = (deps: {
   const wsSnapshotsByAddr = new Map<string, WsSnapshot[]>();
   const dryRunAutoSellByPosKey = new Map<string, DryRunAutoSellPos>();
   const rapidExitByPosKey = new Map<string, RapidExitPosition>();
+  const rapidWatchdogRpcAtMs = new Map<string, number>();
   let latestTwitterSnipeStrategy: any = null;
+  let rapidWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+  let rapidWatchdogIntervalMs = -1;
 
   const cleanupPosKey = (posKey: string) => {
     dryRunAutoSellByPosKey.delete(posKey);
@@ -84,6 +88,99 @@ export const createXSniperTrade = (deps: {
 
   const getWsDrawdownPctSince = (tokenAddress: `0x${string}`, sinceMs: number) =>
     getWsDrawdownPctSinceFromWs(wsSnapshotsByAddr, tokenAddress, sinceMs);
+
+  const readRapidWatchdogIntervalMs = (strategy: any) => {
+    const secRaw = parseNumber(strategy?.rapidWatchdogSec);
+    const sec = Number.isFinite(secRaw) ? Math.floor(Number(secRaw)) : 1;
+    const clampedSec = Math.max(0, Math.min(10, sec));
+    return clampedSec * 1000;
+  };
+
+  const runRapidWatchdogTick = async () => {
+    const strategy = latestTwitterSnipeStrategy;
+    if (!strategy || strategy.rapidExitEnabled === false) return;
+    if (!rapidExitByPosKey.size) return;
+    const nowMs = Date.now();
+    const staleMs = 3000;
+    const rpcCooldownMs = 3000;
+    const addrs = new Set<`0x${string}`>();
+    for (const pos of rapidExitByPosKey.values()) {
+      const addr = normalizeAddress(pos?.tokenAddress);
+      if (!addr) continue;
+      addrs.add(addr);
+    }
+    for (const tokenAddress of addrs) {
+      const latestList = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+      const latest = latestList.length ? latestList[latestList.length - 1] : null;
+      const wsAgeMs = latest ? nowMs - latest.atMs : Number.POSITIVE_INFINITY;
+      if (wsAgeMs > staleMs) {
+        const rpcKey = tokenAddress.toLowerCase();
+        const lastRpcAt = rapidWatchdogRpcAtMs.get(rpcKey) ?? 0;
+        if (nowMs - lastRpcAt >= rpcCooldownMs) {
+          rapidWatchdogRpcAtMs.set(rpcKey, nowMs);
+          try {
+            const anyPos = Array.from(rapidExitByPosKey.values()).find((p) => p.tokenAddress.toLowerCase() === rpcKey);
+            const chainId = anyPos?.chainId ?? 56;
+            const impliedSupply = Number(anyPos?.impliedSupply);
+            const priceUsd = await TokenService.getPriceUsdFromRpc({
+              chainId,
+              tokenAddress,
+              cacheTtlMs: 0,
+              allowTokenInfoPriceFallback: false,
+            });
+            const mcap = Number.isFinite(impliedSupply) && impliedSupply > 0 && Number.isFinite(priceUsd) && priceUsd > 0
+              ? priceUsd * impliedSupply
+              : NaN;
+            if (Number.isFinite(mcap) && mcap > 0) {
+              const merged: WsSnapshot = {
+                atMs: nowMs,
+                marketCapUsd: mcap,
+                holders: latest?.holders,
+                vol24hUsd: latest?.vol24hUsd,
+                netBuy24hUsd: latest?.netBuy24hUsd,
+                buyTx24h: latest?.buyTx24h,
+                sellTx24h: latest?.sellTx24h,
+                smartMoney: latest?.smartMoney,
+              };
+              const next = latestList.concat(merged).slice(-80);
+              wsSnapshotsByAddr.set(tokenAddress, next);
+            }
+          } catch {
+          }
+        }
+      }
+      void maybeEvaluateRapidExitAutoSellFromMod({
+        tokenAddress,
+        nowMs,
+        strategy,
+        wsSnapshotsByAddr,
+        rapidExitByPosKey,
+        cleanupPosKey,
+        tryRapidExitSellOnce,
+      });
+    }
+  };
+
+  const stopRapidWatchdog = () => {
+    if (rapidWatchdogTimer) clearInterval(rapidWatchdogTimer);
+    rapidWatchdogTimer = null;
+    rapidWatchdogIntervalMs = -1;
+  };
+
+  const ensureRapidWatchdog = (strategy: any) => {
+    const nextIntervalMs = readRapidWatchdogIntervalMs(strategy);
+    const enabled = strategy?.rapidExitEnabled !== false;
+    if (!enabled || nextIntervalMs <= 0) {
+      stopRapidWatchdog();
+      return;
+    }
+    if (rapidWatchdogTimer && rapidWatchdogIntervalMs === nextIntervalMs) return;
+    stopRapidWatchdog();
+    rapidWatchdogIntervalMs = nextIntervalMs;
+    rapidWatchdogTimer = setInterval(() => {
+      void runRapidWatchdogTick();
+    }, nextIntervalMs);
+  };
 
   async function onWsSnapshotUpdated(tokenAddress: `0x${string}`, nowMs: number) {
     const snapshots = wsSnapshotsByAddr.get(tokenAddress) ?? [];
@@ -279,6 +376,7 @@ export const createXSniperTrade = (deps: {
     signalId?: string;
     signalEventId?: string;
     signalTweetId?: string;
+    entryPriceUsd?: number | null;
   }) =>
     registerRapidExitPositionFromMod({
       rapidExitByPosKey,
@@ -295,6 +393,7 @@ export const createXSniperTrade = (deps: {
       if (!strategy) return;
       if (strategy.enabled === false) return;
       latestTwitterSnipeStrategy = strategy;
+      ensureRapidWatchdog(strategy);
 
       if (signal.tweetType === 'delete_post') {
         const pct = parseNumber(strategy.deleteTweetSellPercent) ?? 0;

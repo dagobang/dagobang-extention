@@ -170,6 +170,7 @@ export const tryAutoBuyOnce = async (input: {
     signalId?: string;
     signalEventId?: string;
     signalTweetId?: string;
+    entryPriceUsd?: number | null;
   }) => void;
   dryRunAutoSellByPosKey: Map<string, DryRunAutoSellPos>;
 }) => {
@@ -405,6 +406,7 @@ export const tryAutoBuyOnce = async (input: {
         signalId,
         signalEventId,
         signalTweetId,
+        entryPriceUsd,
       });
 
       if (input.strategy?.autoSellEnabled === true) {
@@ -583,6 +585,7 @@ export const tryAutoBuyOnce = async (input: {
       signalId,
       signalEventId,
       signalTweetId,
+      entryPriceUsd,
     });
     const effectiveEntryPriceUsd = entryPriceUsd;
 
