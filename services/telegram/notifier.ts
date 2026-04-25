@@ -63,6 +63,12 @@ export function createTelegramNotifier(deps: {
     if (v == null || !Number.isFinite(v)) return '-';
     return `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
   };
+  const toneIcon = (v: number | null | undefined) => {
+    if (v == null || !Number.isFinite(v)) return '⚪';
+    if (v > 0) return '🟢';
+    if (v < 0) return '🔴';
+    return '⚪';
+  };
 
   const sendText = async (
     text: string,
@@ -189,22 +195,28 @@ export function createTelegramNotifier(deps: {
     const account = screen ? `@${screen}` : (user || '-');
     const symbol = String(record.tokenSymbol || record.tokenName || 'TOKEN').trim();
     const title = `🎯 推文狙击订单 ${mode}`;
+    const athPnlIcon = toneIcon(pnlAthPct);
     const text = [
       title,
+      `🧾 基本信息`,
       `订单: ${record.id}`,
-      `代币: ${symbol}`,
-      `地址: ${shortAddr(record.tokenAddress) || '-'}`,
-      `PnL(MCap): - | ATH PnL: ${formatPnlPct(pnlAthPct)}`,
+      `代币: ${symbol} | ${shortAddr(record.tokenAddress) || '-'}`,
+      '',
+      `📈 价格与PnL`,
+      `⚪ PnL(MCap): - | ${athPnlIcon} ATH PnL: ${formatPnlPct(pnlAthPct)}`,
       `市值: 入场 ${formatUsd(entryMcap)} | ATH ${formatUsd(athMcap)}`,
       `买入: ${record.buyAmountBnb != null ? `${record.buyAmountBnb} BNB` : '-'} | 入场价: ${record.entryPriceUsd != null ? `$${record.entryPriceUsd}` : '-'}`,
+      '',
+      `📊 市场指标`,
       `持有人: ${Number.isFinite(record.holders) ? Number(record.holders) : '-'} | KOL: ${Number.isFinite(record.kol) ? Number(record.kol) : '-'} | Smart: ${Number.isFinite(record.smartMoney) ? Number(record.smartMoney) : '-'}`,
       `Dev持仓: ${record.devHoldPercent != null ? `${record.devHoldPercent.toFixed(2)}%` : '-'} | Dev卖出: ${record.devHasSold === true ? '是' : record.devHasSold === false ? '否' : '-'}`,
       `24h: Vol ${formatUsd(record.vol24hUsd)} | NetBuy ${formatUsd(record.netBuy24hUsd)} | Buy/Sell ${record.buyTx24h ?? '-'} / ${record.sellTx24h ?? '-'}`,
+      '',
+      `🐦 推文信息`,
       `代币Age: ${formatAge(record.createdAtMs)}`,
       `推文类型: ${record.tweetType || '-'}`,
       `推文账户: ${account}`,
       `推文链接: ${record.tweetUrl || '-'}`,
-      `Tx: ${record.txHash || '-'}`,
     ].join('\n');
     return await sendText(
       text,

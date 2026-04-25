@@ -80,6 +80,12 @@ export function createTelegramController(deps: {
     if (v == null || !Number.isFinite(v)) return '-';
     return `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
   };
+  const toneIcon = (v: number | null | undefined) => {
+    if (v == null || !Number.isFinite(v)) return '⚪';
+    if (v > 0) return '🟢';
+    if (v < 0) return '🔴';
+    return '⚪';
+  };
   const xSniperSellReasonLabel = (reason: unknown) => {
     const raw = String(reason || '').trim();
     if (raw === 'rapid_take_profit') return '里程碑止盈';
@@ -497,28 +503,42 @@ export function createTelegramController(deps: {
     const user = String(parent.userName || '').trim();
     const account = screen ? `@${screen}` : (user || '-');
     const symbol = String(parent.tokenSymbol || parent.tokenName || 'TOKEN').trim();
+    const priceDeltaPct =
+      entryMcap != null && latestMcap != null && Number.isFinite(entryMcap) && entryMcap > 0
+        ? ((latestMcap / entryMcap) - 1) * 100
+        : null;
+    const pnlIcon = toneIcon(pnlPct);
+    const athPnlIcon = toneIcon(pnlAthPct);
+    const priceIcon = toneIcon(priceDeltaPct);
     await sendTelegramReply(
       [
         `🎯 推文狙击订单 ${mode}`,
+        `🧾 基本信息`,
         `订单: ${parent.id}`,
-        `代币: ${symbol}`,
-        `地址: ${shortAddress(parent.tokenAddress)}`,
+        `代币: ${symbol} | ${shortAddress(parent.tokenAddress)}`,
+        '',
+        `📦 仓位与执行`,
         `仓位: 已卖 ${weighted.soldPct.toFixed(1)}% | 剩余 ${weighted.remainPct.toFixed(1)}%`,
-        `里程碑卖出: 止盈 ${reasonStats.tpCount}次/${reasonStats.tpPct.toFixed(1)}% | 止损 ${reasonStats.slCount}次/${reasonStats.slPct.toFixed(1)}% | 地板 ${reasonStats.floorCount}次/${reasonStats.floorPct.toFixed(1)}%`,
+        `里程碑: 止盈 ${reasonStats.tpCount}次/${reasonStats.tpPct.toFixed(1)}% | 止损 ${reasonStats.slCount}次/${reasonStats.slPct.toFixed(1)}% | 地板 ${reasonStats.floorCount}次/${reasonStats.floorPct.toFixed(1)}%`,
         latestSell
           ? `最近卖出: ${xSniperSellReasonLabel(latestSell.reason)} ${latestSell.sellPercent != null ? `${clampPercent(latestSell.sellPercent).toFixed(1)}%` : ''}`.trim()
           : '最近卖出: -',
-        `PnL(MCap): ${formatPnlPct(pnlPct)} | ATH PnL: ${formatPnlPct(pnlAthPct)}`,
-        `市值: 入场 ${formatUsd(entryMcap)} | 当前 ${formatUsd(latestMcap)} | ATH ${formatUsd(athMcap)}`,
+        '',
+        `📈 价格与PnL`,
+        `${pnlIcon} PnL(MCap): ${formatPnlPct(pnlPct)} | ${athPnlIcon} ATH PnL: ${formatPnlPct(pnlAthPct)}`,
+        `${priceIcon} 市值: 入场 ${formatUsd(entryMcap)} | 当前 ${formatUsd(latestMcap)} | ATH ${formatUsd(athMcap)}`,
         `买入: ${parent.buyAmountBnb != null ? `${parent.buyAmountBnb} BNB` : '-'} | 入场价: ${formatPrice(parent.entryPriceUsd)}`,
+        '',
+        `📊 市场指标`,
         `持有人: ${Number.isFinite(parent.holders) ? Number(parent.holders) : '-'} | KOL: ${Number.isFinite(parent.kol) ? Number(parent.kol) : '-'} | Smart: ${Number.isFinite(parent.smartMoney) ? Number(parent.smartMoney) : '-'}`,
         `Dev持仓: ${parent.devHoldPercent != null ? `${parent.devHoldPercent.toFixed(2)}%` : '-'} | Dev卖出: ${parent.devHasSold === true ? '是' : parent.devHasSold === false ? '否' : '-'}`,
         `24h: Vol ${formatUsd(parent.vol24hUsd)} | NetBuy ${formatUsd(parent.netBuy24hUsd)} | Buy/Sell ${parent.buyTx24h ?? '-'} / ${parent.sellTx24h ?? '-'}`,
+        '',
+        `🐦 推文信息`,
         `代币Age: ${formatAge(parent.createdAtMs)}`,
         `推文类型: ${parent.tweetType || '-'}`,
         `推文账户: ${account}`,
         `推文链接: ${parent.tweetUrl || '-'}`,
-        `Tx: ${parent.txHash || '-'}`,
       ].join('\n'),
       {
         inlineKeyboard: [
