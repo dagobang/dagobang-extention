@@ -613,7 +613,11 @@ export function createTelegramController(deps: {
         out.add(o.tokenAddress.toLowerCase());
       }
     }
-    const historyKeys = ['dagobang_xsniper_order_history_v1', 'dagobang_token_sniper_order_history_v1'];
+    const historyKeys = [
+      'dagobang_xsniper_order_history_v1',
+      'dagobang_token_sniper_order_history_v1',
+      'dagobang_new_coin_sniper_order_history_v1',
+    ];
     try {
       const res = await browser.storage.local.get(historyKeys as any);
       for (const key of historyKeys) {

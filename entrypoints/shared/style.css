@@ -34,3 +34,12 @@ body {
 .dagobang-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(161, 161, 170, 0.85);
 }
+
+.dagobang-scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.dagobang-scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

@@ -1,4 +1,4 @@
-import type { BgRequest, BgResponse, Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
+import type { BgRequest, BgResponse, Settings, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import {
   asAddress,
   extractFirstFromObject,
@@ -10,7 +10,6 @@ import {
   extractTokenAddress,
   extractTokenAddresses,
   extractTweetId,
-  extractUser,
   isObject,
   toArrayPayload,
 } from '@/utils/gmgnWs';
@@ -574,6 +573,33 @@ const summarizeTokensForLog = (signal: UnifiedTwitterSignal): string => {
 
 const shouldForwardTwitterSignal = (signal: UnifiedTwitterSignal): boolean => signal.tweetType !== 'delete_post';
 
+const snapshotToUnifiedToken = (snapshot: TokenSnapshot, now: number): UnifiedSignalToken => ({
+  tokenAddress: snapshot.tokenAddress,
+  chain: snapshot.chain,
+  tokenSymbol: snapshot.tokenSymbol,
+  tokenName: snapshot.tokenName,
+  tokenLogo: snapshot.tokenLogo,
+  marketCapUsd: snapshot.marketCapUsd,
+  priceUsd: snapshot.priceUsd,
+  liquidityUsd: snapshot.liquidityUsd,
+  holders: snapshot.holders,
+  kol: snapshot.kol,
+  vol24hUsd: snapshot.vol24hUsd,
+  netBuy24hUsd: snapshot.netBuy24hUsd,
+  buyTx24h: snapshot.buyTx24h,
+  sellTx24h: snapshot.sellTx24h,
+  smartMoney: snapshot.smartMoney,
+  devAddress: snapshot.devAddress,
+  devHoldPercent: snapshot.devHoldPercent,
+  devHasSold: snapshot.devHasSold,
+  devBuyRatio: snapshot.devBuyRatio,
+  top10HoldRatio: snapshot.top10HoldRatio,
+  devTokenStatus: snapshot.devTokenStatus,
+  createdAtMs: snapshot.createdAtMs,
+  firstSeenAtMs: typeof snapshot.createdAtMs === 'number' && snapshot.createdAtMs > 0 ? snapshot.createdAtMs : snapshot.receivedAtMs,
+  updatedAtMs: now,
+});
+
 const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number): UnifiedTwitterSignal | null => {
   if (!item || typeof item !== 'object') return null;
   const extractedAtMs = extractTimestampMs(item);
@@ -779,6 +805,7 @@ export function initGmgnWsMonitor(options: {
   call: <T extends BgRequest>(req: T) => Promise<BgResponse<T>>;
 }): WsSiteMonitor {
   const SIGNAL_FORWARD_WINDOW_MS = 80;
+  const MARKET_SIGNAL_FORWARD_WINDOW_MS = 80;
   const SIGNAL_FORWARD_FAST_WINDOW_MS = 0;
   const SIGNAL_FORWARD_PROBE_WINDOW_MS = 3000;
   type SignalForwardDedupeMode = 'strict' | 'balanced' | 'aggressive';
@@ -803,6 +830,9 @@ export function initGmgnWsMonitor(options: {
   const pendingForwardByChannel = new Map<string, Map<string, UnifiedTwitterSignal>>();
   const forwardTimerByChannel = new Map<string, number>();
   const forwardQueueByChannel = new Map<string, Promise<void>>();
+  const pendingMarketForwardByChannel = new Map<string, Map<string, UnifiedMarketSignal>>();
+  const marketForwardTimerByChannel = new Map<string, number>();
+  const marketForwardQueueByChannel = new Map<string, Promise<void>>();
   const createSignalForwardProbeWindow = (now: number): SignalForwardProbeWindow => ({
     windowStartAt: now,
     received: 0,
@@ -945,6 +975,72 @@ export function initGmgnWsMonitor(options: {
     forwardTimerByChannel.set(normalizedChannel, timer);
   };
 
+  const getMarketForwardKey = (signal: UnifiedMarketSignal): string => {
+    const firstAddr = Array.isArray(signal.tokens)
+      ? signal.tokens.map((t) => (typeof t?.tokenAddress === 'string' ? t.tokenAddress.trim().toLowerCase() : '')).find(Boolean) ?? ''
+      : '';
+    const tsBucket = typeof signal.ts === 'number' && Number.isFinite(signal.ts)
+      ? Math.floor(signal.ts / MARKET_SIGNAL_FORWARD_WINDOW_MS)
+      : 0;
+    return `${signal.source}:${firstAddr}:${tsBucket}`;
+  };
+
+  const flushMarketForwardChannel = (channel: string) => {
+    const map = pendingMarketForwardByChannel.get(channel);
+    if (!map || !map.size) return;
+    const batch = Array.from(map.values());
+    pendingMarketForwardByChannel.delete(channel);
+    const prevQueue = marketForwardQueueByChannel.get(channel) ?? Promise.resolve();
+    const nextQueue = prevQueue
+      .then(async () => {
+        for (const signal of batch) {
+          await options.call({ type: 'market:signal', payload: signal }).catch(() => { });
+        }
+      })
+      .catch(() => { });
+    marketForwardQueueByChannel.set(channel, nextQueue);
+  };
+
+  const enqueueMarketSignalForward = (channel: string, signal: UnifiedMarketSignal) => {
+    const normalizedChannel = channel || 'market_monitor';
+    let map = pendingMarketForwardByChannel.get(normalizedChannel);
+    if (!map) {
+      map = new Map<string, UnifiedMarketSignal>();
+      pendingMarketForwardByChannel.set(normalizedChannel, map);
+    }
+    map.set(getMarketForwardKey(signal), signal);
+    if (marketForwardTimerByChannel.has(normalizedChannel)) return;
+    const timer = window.setTimeout(() => {
+      marketForwardTimerByChannel.delete(normalizedChannel);
+      flushMarketForwardChannel(normalizedChannel);
+    }, MARKET_SIGNAL_FORWARD_WINDOW_MS);
+    marketForwardTimerByChannel.set(normalizedChannel, timer);
+  };
+
+  const emitMarketSignal = (input: {
+    source: UnifiedMarketSignal['source'];
+    channel: string;
+    tokenAddress: string;
+    chain?: string;
+    receivedAtMs: number;
+  }) => {
+    const addr = normalizeTokenKey(input.tokenAddress);
+    const snapshot = tokenByAddress.get(addr);
+    if (!snapshot) return;
+    const token = snapshotToUnifiedToken(snapshot, input.receivedAtMs);
+    const signal: UnifiedMarketSignal = {
+      id: `gmgn:${input.source}:${input.channel}:${addr}:${Math.floor(input.receivedAtMs / 1000)}`,
+      site: 'gmgn',
+      channel: input.channel,
+      source: input.source,
+      chain: input.chain ?? snapshot.chain,
+      tokens: [token],
+      receivedAtMs: input.receivedAtMs,
+      ts: Date.now(),
+    };
+    enqueueMarketSignalForward(input.channel, signal);
+  };
+
   let wsStatus: WsStatus = {
     connected: false,
     lastPacketAt: 0,
@@ -1031,20 +1127,6 @@ export function initGmgnWsMonitor(options: {
       (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = cache;
     }
     let cacheList = Array.isArray(cache?.list) ? (cache.list as UnifiedTwitterSignal[]).slice() : [];
-
-    const removeFromCache = (eventId?: string, tweetId?: string) => {
-      if (!eventId && !tweetId) return;
-      const next = cacheList.filter((s) => {
-        if (!s) return false;
-        if (eventId && s.site === 'gmgn' && s.eventId === eventId) return false;
-        if (tweetId && s.site === 'gmgn' && s.tweetId === tweetId) return false;
-        return true;
-      });
-      if (next.length !== cacheList.length) {
-        cacheList = next;
-        saveUnifiedTwitterCache(cacheList);
-      }
-    };
 
     for (const item of list) {
       if (channel === 'twitter_monitor_translation') {
@@ -1415,6 +1497,13 @@ export function initGmgnWsMonitor(options: {
           signalCount: wsStatus.signalCount + 1,
         };
         pushLog('signal', `new_pool > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${chain ? ` ${chain}` : ''}`);
+        emitMarketSignal({
+          source: 'new_pool',
+          channel,
+          tokenAddress: tokenData.tokenAddress,
+          chain: chain ? String(chain) : undefined,
+          receivedAtMs: now,
+        });
         emitStatus();
       }
     }
@@ -1426,7 +1515,6 @@ export function initGmgnWsMonitor(options: {
     updatePacketStatus(channel, now, latencyMs);
     const wrapper = isObject(payload) ? (payload as any) : null;
     const wrapperUpdateTypeRaw = wrapper && typeof wrapper._v_ch === 'string' ? wrapper._v_ch : '';
-    const wrapperUpdateType = typeof wrapperUpdateTypeRaw === 'string' ? String(wrapperUpdateTypeRaw).trim().toLowerCase() : '';
     const inner = wrapper && wrapper.data != null ? wrapper.data : payload;
     const items = toArrayPayload(inner);
     const list = items.length ? items : [inner];
@@ -1450,11 +1538,18 @@ export function initGmgnWsMonitor(options: {
         signalCount: wsStatus.signalCount + 1,
       };
       pushLog('signal', `trenches > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${tokenData.chain ? ` ${tokenData.chain}` : ''}`);
+      emitMarketSignal({
+        source: 'token_update',
+        channel,
+        tokenAddress: tokenData.tokenAddress,
+        chain: tokenData.chain ? String(tokenData.chain) : undefined,
+        receivedAtMs: now,
+      });
       emitStatus();
     }
   };
 
-  const handleOtherChannel = (data: any, channel: string, payload: any, now: number) => {
+  const handleOtherChannel = (_data: any, _channel: string, _payload: any, _now: number) => {
     // updatePacketStatus(channel, now, null);
   };
 
@@ -1510,8 +1605,15 @@ export function initGmgnWsMonitor(options: {
         window.clearTimeout(timer);
       }
       forwardTimerByChannel.clear();
+      for (const timer of marketForwardTimerByChannel.values()) {
+        window.clearTimeout(timer);
+      }
+      marketForwardTimerByChannel.clear();
       for (const channel of pendingForwardByChannel.keys()) {
         flushForwardChannel(channel);
+      }
+      for (const channel of pendingMarketForwardByChannel.keys()) {
+        flushMarketForwardChannel(channel);
       }
       flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
       window.removeEventListener('message', onMessage);

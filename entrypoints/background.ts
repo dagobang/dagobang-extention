@@ -13,13 +13,14 @@ import { debugLogTxError, extractRevertReasonFromError, serializeTxError, tryGet
 import { createLimitOrderScanner } from './background/limitOrderScanner';
 import { createXSniperTrade } from '@/services/xSniper/xSniperTrade';
 import { createTokenSniperTrade } from '@/services/tokenSniper/tokenSniperTrade';
+import { createNewCoinSniperTrade } from '@/services/newCoinSniper/newCoinSniperTrade';
 import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/limitOrders/executor';
 import type { BgRequest, LimitOrderScanStatus } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import FourmemeAPI from '@/services/api/fourmeme';
 import BloxRouterAPI from '@/services/api/bloxRouter';
-import { formatUnits, isAddress, parseEther } from 'viem';
+import { isAddress, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { getGasPriceWei, sendTransaction } from '@/services/trade/tradeTx';
 import { classifyBroadcastError, collectErrorText } from '@/utils/txErrorClassify';
@@ -262,6 +263,7 @@ export default defineBackground(() => {
     telegramNotifier,
   });
   const TokenSniperTrade = createTokenSniperTrade({ onStateChanged: broadcastStateChange });
+  const NewCoinSniperTrade = createNewCoinSniperTrade({ onStateChanged: broadcastStateChange });
   const buyInputByTxHash = new Map<`0x${string}`, { input: TxBuyInput; receiptRetried: boolean }>();
 
   browser.runtime.onInstalled.addListener(() => {
@@ -1061,6 +1063,12 @@ export default defineBackground(() => {
               (AutoTrade as any).handleTwitterSignal(signal),
               (TokenSniperTrade as any).handleTwitterSignal(signal),
             ]);
+            return { ok: true };
+          }
+
+          case 'market:signal': {
+            const signal = msg.payload as any;
+            await (NewCoinSniperTrade as any).handleMarketSignal(signal);
             return { ok: true };
           }
         }

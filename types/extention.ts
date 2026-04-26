@@ -120,6 +120,17 @@ export type AutoTradeTwitterSnipeStrategy = AutoTradeTwitterSnipeRuntimeStrategy
   activePresetId?: string;
 };
 
+export type AutoTradeNewCoinSnipeConfig = Omit<
+  AutoTradeTwitterSnipeRuntimeStrategy,
+  | 'targetUsers'
+  | 'interactionTypes'
+  | 'deleteTweetSellPercent'
+  | 'deleteTweetPlaySound'
+  | 'deleteTweetSoundPreset'
+> & {
+  signalSources?: Array<'new_pool' | 'token_update'>;
+};
+
 export type TokenSnipeTask = {
   id: string;
   chain: number;
@@ -155,6 +166,7 @@ export type AutoTradeConfig = {
   signalForwardWindowMs?: number;
   triggerSound: AutoTradeTriggerSound;
   twitterSnipe: AutoTradeTwitterSnipeStrategy;
+  newCoinSnipe: AutoTradeNewCoinSnipeConfig;
   tokenSnipe: AutoTradeTokenSnipeConfig;
 };
 
@@ -482,6 +494,17 @@ export type UnifiedTwitterSignal = {
   ts: number;
 };
 
+export type UnifiedMarketSignal = {
+  id: string;
+  site: 'gmgn' | 'axiom';
+  channel: string;
+  source: 'new_pool' | 'token_update';
+  chain?: string;
+  tokens: UnifiedSignalToken[];
+  receivedAtMs: number;
+  ts: number;
+};
+
 export type XSniperEvalPoint = {
   atMs: number;
   marketCapUsd?: number;
@@ -596,6 +619,7 @@ export type BgRequest =
   | { type: 'telegram:quickBuy'; tokenAddress: `0x${string}`; amountBnb: string }
   | { type: 'telegram:quickSell'; tokenAddress: `0x${string}`; sellPercent: number }
   | { type: 'twitter:signal'; payload: UnifiedTwitterSignal }
+  | { type: 'market:signal'; payload: UnifiedMarketSignal }
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
   | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
   | { type: 'limitOrder:cancel'; id: string }
@@ -713,6 +737,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
     | { ok: false; error?: TxWaitForReceiptError | { message: string } }
   )
   : T extends { type: 'twitter:signal' }
+  ? { ok: true }
+  : T extends { type: 'market:signal' }
   ? { ok: true }
   : T extends { type: 'limitOrder:list' }
   ? { ok: true; orders: LimitOrder[] }

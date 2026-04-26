@@ -571,6 +571,10 @@ export function validateSettings(input: Settings): Settings | null {
       preset: triggerSoundPreset,
     },
     twitterSnipe,
+    newCoinSnipe: {
+      ...((defaultAutoTrade as any).newCoinSnipe ?? {}),
+      ...((inputAutoTrade as any)?.newCoinSnipe ?? {}),
+    },
     tokenSnipe,
   };
 
