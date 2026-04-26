@@ -713,7 +713,20 @@
       "sell": "Sell",
       "addRule": "Add Rule",
       "trailingStop": "Trailing Stop (Remaining)",
+      "trailingStrategy": "Take-Profit Strategy (Remaining)",
+      "trailingMode": "Mode",
+      "trailingModeOption": {
+        "trailingStop": "Trailing Stop",
+        "rollingTakeProfit": "Rolling Take Profit"
+      },
+      "useMode": "Use This Mode",
+      "activeMode": "Active Mode",
       "trailingStopCallback": "Callback",
+      "rollingStepPercent": "Every Rise (vs Last TP)",
+      "rollingSellPercent": "Sell Each Trigger",
+      "rollingFloorPercent": "Floor Liquidation Gain (vs Entry)",
+      "modeHintTrailing": "Trailing Stop: after a new peak, sell when price pulls back by the callback percent.",
+      "modeHintRolling": "Rolling TP: sell partially at each rise step; after first rolling TP, full exit if price falls below floor gain.",
       "trailingStopActivationMode": "Activation",
       "trailingStopActivationModeOption": {
         "immediate": "Immediate",

@@ -11,7 +11,12 @@ import { call } from '@/utils/messaging';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import GmgnAPI from '@/hooks/GmgnAPI';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
-import { buildStrategySellOrderInputs, buildStrategyTrailingSellOrderInputs } from '@/services/limitOrders/advancedAutoSell';
+import {
+  buildStrategyRollingTakeProfitOrderInputs,
+  buildStrategySellOrderInputs,
+  buildStrategyTrailingSellOrderInputs,
+  getAdvancedAutoSellMode,
+} from '@/services/limitOrders/advancedAutoSell';
 
 import { CustomToaster } from './components/CustomToaster';
 import { LimitTradePanel } from './components/LimitTradePanel';
@@ -1130,17 +1135,30 @@ export default function App() {
             basePriceUsd,
           });
 
-          const mode = (config as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
+          const mode = (config as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
           if (mode === 'immediate' && (config as any)?.trailingStop?.enabled) {
-            const trailing = buildStrategyTrailingSellOrderInputs({
-              config,
-              chainId,
-              tokenAddress: tokenAddressNormalized,
-              tokenSymbol: tokenSymbol ?? null,
-              tokenInfo,
-              basePriceUsd,
-            });
-            if (trailing) inputs.push(trailing);
+            if (getAdvancedAutoSellMode(config) === 'rolling_take_profit') {
+              const rolling = buildStrategyRollingTakeProfitOrderInputs({
+                config,
+                chainId,
+                tokenAddress: tokenAddressNormalized,
+                tokenSymbol: tokenSymbol ?? null,
+                tokenInfo,
+                basePriceUsd,
+                entryPriceUsd: basePriceUsd,
+              });
+              if (rolling) inputs.push(rolling);
+            } else {
+              const trailing = buildStrategyTrailingSellOrderInputs({
+                config,
+                chainId,
+                tokenAddress: tokenAddressNormalized,
+                tokenSymbol: tokenSymbol ?? null,
+                tokenInfo,
+                basePriceUsd,
+              });
+              if (trailing) inputs.push(trailing);
+            }
           }
 
           if (!inputs.length) return;

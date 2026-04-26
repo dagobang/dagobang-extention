@@ -4,7 +4,13 @@ import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
 import { RpcService } from '@/services/rpc';
 import { getLimitOrders } from '@/services/storage';
-import { buildStrategySellOrderInputs, buildStrategyTrailingSellOrderInputs } from './advancedAutoSell';
+import {
+  buildStrategyRollingFloorOrderInputs,
+  buildStrategyRollingTakeProfitOrderInputs,
+  buildStrategySellOrderInputs,
+  buildStrategyTrailingSellOrderInputs,
+  getAdvancedAutoSellMode,
+} from './advancedAutoSell';
 import { applyTrailingStopUpdate, cancelAllSellLimitOrdersForToken, createLimitOrder, hitLimitOrder, normalizeLimitOrderType, patchLimitOrder } from './store';
 import { extractRevertReasonFromError, tryGetReceiptRevertReason } from '@/services/tx/errors';
 import type { LimitOrder } from '@/types/extention';
@@ -93,6 +99,15 @@ export const createLimitOrderExecutor = (deps: {
     }
   };
 
+  const deriveEntryPriceUsdFromTakeProfit = (order: LimitOrder) => {
+    const trigger = Number(order.triggerPriceUsd);
+    const change = Number(order.targetChangePercent);
+    if (!(Number.isFinite(trigger) && trigger > 0 && Number.isFinite(change) && change > -99.9)) return null;
+    const entry = trigger / (1 + change / 100);
+    if (!(Number.isFinite(entry) && entry > 0)) return null;
+    return entry;
+  };
+
   const executeLimitOrder = async (order: LimitOrder, ctx?: { priceUsd?: number }) => {
     if (!order.tokenInfo) throw new Error('Token info required');
     if (order.side === 'buy') {
@@ -138,19 +153,36 @@ export const createLimitOrderExecutor = (deps: {
           await createLimitOrder(o);
           created += 1;
         }
-        const mode = (config as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
+        const mode = (config as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
+        const autoSellMode = getAdvancedAutoSellMode(config);
         if (mode === 'immediate' && (config as any)?.trailingStop?.enabled) {
-          const trailing = buildStrategyTrailingSellOrderInputs({
-            config,
-            chainId: order.chainId,
-            tokenAddress: order.tokenAddress,
-            tokenSymbol: order.tokenSymbol ?? null,
-            tokenInfo: order.tokenInfo,
-            basePriceUsd,
-          });
-          if (trailing) {
-            await createLimitOrder(trailing);
-            created += 1;
+          if (autoSellMode === 'rolling_take_profit') {
+            const rolling = buildStrategyRollingTakeProfitOrderInputs({
+              config,
+              chainId: order.chainId,
+              tokenAddress: order.tokenAddress,
+              tokenSymbol: order.tokenSymbol ?? null,
+              tokenInfo: order.tokenInfo,
+              basePriceUsd,
+              entryPriceUsd: basePriceUsd,
+            });
+            if (rolling) {
+              await createLimitOrder(rolling);
+              created += 1;
+            }
+          } else {
+            const trailing = buildStrategyTrailingSellOrderInputs({
+              config,
+              chainId: order.chainId,
+              tokenAddress: order.tokenAddress,
+              tokenSymbol: order.tokenSymbol ?? null,
+              tokenInfo: order.tokenInfo,
+              basePriceUsd,
+            });
+            if (trailing) {
+              await createLimitOrder(trailing);
+              created += 1;
+            }
           }
         }
         if (created > 0) deps.onOrdersChanged();
@@ -220,33 +252,82 @@ export const createLimitOrderExecutor = (deps: {
 
     try {
       const type = normalizeLimitOrderType(order.orderType, order.side);
-      if (type === 'take_profit_sell' && percentBps > 0 && percentBps < 10000) {
+      const isRollingTakeProfit = type === 'take_profit_sell' && Number(order.rollingStepPercent) > 0;
+      if (isRollingTakeProfit && percentBps > 0 && percentBps < 10000) {
+        const settings = await SettingsService.get();
+        const config = (settings as any).advancedAutoSell;
+        const entryPriceUsd = Number(order.rollingEntryPriceUsd);
+        const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
+        const nextRolling = buildStrategyRollingTakeProfitOrderInputs({
+          config,
+          chainId: order.chainId,
+          tokenAddress: order.tokenAddress,
+          tokenSymbol: order.tokenSymbol ?? null,
+          tokenInfo: order.tokenInfo,
+          basePriceUsd,
+          entryPriceUsd: Number.isFinite(entryPriceUsd) && entryPriceUsd > 0 ? entryPriceUsd : basePriceUsd,
+        });
+        if (nextRolling) await createLimitOrder(nextRolling);
+
+        if (Number.isFinite(entryPriceUsd) && entryPriceUsd > 0) {
+          const floor = buildStrategyRollingFloorOrderInputs({
+            config,
+            chainId: order.chainId,
+            tokenAddress: order.tokenAddress,
+            tokenSymbol: order.tokenSymbol ?? null,
+            tokenInfo: order.tokenInfo,
+            entryPriceUsd,
+          });
+          if (floor) await createLimitOrder(floor);
+        }
+        deps.onOrdersChanged();
+      } else if (type === 'take_profit_sell' && percentBps > 0 && percentBps < 10000) {
         const all = await getLimitOrders();
         const keyAddr = order.tokenAddress.toLowerCase();
-        const hasTrailing = all.some((o) => {
+        const settings = await SettingsService.get();
+        const config = (settings as any).advancedAutoSell;
+        const mode = (config as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
+        const autoSellMode = getAdvancedAutoSellMode(config);
+        const hasSpecialOrder = all.some((o) => {
           if (o.chainId !== order.chainId) return false;
           if (o.status !== 'open') return false;
           if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
           const ot = normalizeLimitOrderType(o.orderType, o.side);
+          if (autoSellMode === 'rolling_take_profit') {
+            return ot === 'take_profit_sell' && Number(o.rollingStepPercent) > 0;
+          }
           return ot === 'trailing_stop_sell';
         });
-        if (!hasTrailing) {
-          const settings = await SettingsService.get();
-          const config = (settings as any).advancedAutoSell;
-          const mode = (config as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
-          if (mode === 'after_first_take_profit' || mode === 'after_last_take_profit') {
-            const shouldCreate = mode === 'after_first_take_profit'
-              ? true
-              : !all.some((o) => {
-                if (o.chainId !== order.chainId) return false;
-                if (o.status !== 'open') return false;
-                if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
-                const ot = normalizeLimitOrderType(o.orderType, o.side);
-                if (ot !== 'take_profit_sell') return false;
-                return o.triggerPriceUsd > order.triggerPriceUsd;
+        if (hasSpecialOrder) return txHash;
+        if (mode === 'after_first_take_profit' || mode === 'after_last_take_profit') {
+          const shouldCreate = mode === 'after_first_take_profit'
+            ? true
+            : !all.some((o) => {
+              if (o.chainId !== order.chainId) return false;
+              if (o.status !== 'open') return false;
+              if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+              const ot = normalizeLimitOrderType(o.orderType, o.side);
+              if (ot !== 'take_profit_sell' || Number(o.rollingStepPercent) > 0) return false;
+              return o.triggerPriceUsd > order.triggerPriceUsd;
+            });
+          if (shouldCreate) {
+            const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
+            if (autoSellMode === 'rolling_take_profit') {
+              const entryPriceUsd = deriveEntryPriceUsdFromTakeProfit(order) ?? basePriceUsd;
+              const nextRolling = buildStrategyRollingTakeProfitOrderInputs({
+                config,
+                chainId: order.chainId,
+                tokenAddress: order.tokenAddress,
+                tokenSymbol: order.tokenSymbol ?? null,
+                tokenInfo: order.tokenInfo,
+                basePriceUsd,
+                entryPriceUsd,
               });
-            if (shouldCreate) {
-              const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
+              if (nextRolling) {
+                await createLimitOrder(nextRolling);
+                deps.onOrdersChanged();
+              }
+            } else {
               const input = buildStrategyTrailingSellOrderInputs({
                 config,
                 chainId: order.chainId,

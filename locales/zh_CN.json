@@ -713,7 +713,20 @@
       "sell": "卖出",
       "addRule": "添加规则",
       "trailingStop": "移动止盈（剩仓）",
+      "trailingStrategy": "止盈策略（剩仓）",
+      "trailingMode": "模式",
+      "trailingModeOption": {
+        "trailingStop": "移动止盈",
+        "rollingTakeProfit": "滚动止盈"
+      },
+      "useMode": "使用此模式",
+      "activeMode": "当前模式",
       "trailingStopCallback": "回撤距离",
+      "rollingStepPercent": "每涨（相对上次止盈点）",
+      "rollingSellPercent": "每次卖出",
+      "rollingFloorPercent": "地板清仓涨幅（相对入场）",
+      "modeHintTrailing": "移动止盈：价格创新高后，回撤达到设定比例时触发卖出。",
+      "modeHintRolling": "滚动止盈：每涨到一档卖出一部分，触发过一次后若回撤到地板涨幅以下则清仓。",
       "trailingStopActivationMode": "启用时机",
       "trailingStopActivationModeOption": {
         "immediate": "立即启用",

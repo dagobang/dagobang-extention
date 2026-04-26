@@ -713,7 +713,20 @@
       "sell": "賣出",
       "addRule": "新增規則",
       "trailingStop": "移動止盈（剩倉）",
+      "trailingStrategy": "止盈策略（剩倉）",
+      "trailingMode": "模式",
+      "trailingModeOption": {
+        "trailingStop": "移動止盈",
+        "rollingTakeProfit": "滾動止盈"
+      },
+      "useMode": "使用此模式",
+      "activeMode": "當前模式",
       "trailingStopCallback": "回撤距離",
+      "rollingStepPercent": "每漲（相對上次止盈點）",
+      "rollingSellPercent": "每次賣出",
+      "rollingFloorPercent": "地板清倉漲幅（相對入場）",
+      "modeHintTrailing": "移動止盈：價格創新高後，回撤達到設定比例時觸發賣出。",
+      "modeHintRolling": "滾動止盈：每漲到一檔賣出一部分，成功觸發一次後若回撤到地板漲幅以下則清倉。",
       "trailingStopActivationMode": "啟用時機",
       "trailingStopActivationModeOption": {
         "immediate": "立即啟用",

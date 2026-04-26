@@ -199,8 +199,12 @@ export type AdvancedAutoSellRule = {
 
 export type AdvancedAutoSellTrailingStop = {
   enabled: boolean;
+  mode?: 'trailing_stop' | 'rolling_take_profit';
   callbackPercent: number;
   sellPercent?: number;
+  rollingSellPercent?: number;
+  rollingStepPercent?: number;
+  rollingFloorPercent?: number;
   activationMode?: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit';
 };
 
@@ -380,6 +384,10 @@ export type LimitOrder = {
   targetChangePercent?: number;
   trailingStopBps?: number;
   trailingPeakPriceUsd?: number;
+  rollingStepPercent?: number;
+  rollingFloorPercent?: number;
+  rollingEntryPriceUsd?: number;
+  rollingIsFloor?: boolean;
   buyBnbAmountWei?: string;
   sellPercentBps?: number;
   sellTokenAmountWei?: string;
@@ -400,6 +408,10 @@ export type LimitOrderCreateInput = {
   targetChangePercent?: number;
   trailingStopBps?: number;
   trailingPeakPriceUsd?: number;
+  rollingStepPercent?: number;
+  rollingFloorPercent?: number;
+  rollingEntryPriceUsd?: number;
+  rollingIsFloor?: boolean;
   buyBnbAmountWei?: string;
   sellPercentBps?: number;
   sellTokenAmountWei?: string;

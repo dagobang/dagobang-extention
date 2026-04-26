@@ -5,7 +5,12 @@ import { defaultSettings } from '@/utils/defaults';
 import { SettingsService } from '@/services/settings';
 import { WalletService } from '@/services/wallet';
 import { TradeService } from '@/services/trade';
-import { buildStrategySellOrderInputs, buildStrategyTrailingSellOrderInputs } from '@/services/limitOrders/advancedAutoSell';
+import {
+  buildStrategyRollingTakeProfitOrderInputs,
+  buildStrategySellOrderInputs,
+  buildStrategyTrailingSellOrderInputs,
+  getAdvancedAutoSellMode,
+} from '@/services/limitOrders/advancedAutoSell';
 import { cancelAllSellLimitOrdersForToken, createLimitOrder } from '@/services/limitOrders/store';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import { parseNumber } from '@/services/xSniper/engine/metrics';
@@ -735,18 +740,29 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                   tokenInfo,
                   basePriceUsd: entryPriceUsd,
                 });
-                const trailingMode = (cfg as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
-                const trailing = trailingMode === 'immediate'
-                  ? buildStrategyTrailingSellOrderInputs({
-                    config: cfg,
-                    chainId: task.chain,
-                    tokenAddress: task.tokenAddress,
-                    tokenSymbol: tokenInfo.symbol,
-                    tokenInfo,
-                    basePriceUsd: entryPriceUsd,
-                  })
+                const trailingMode = (cfg as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
+                const isRolling = getAdvancedAutoSellMode(cfg) === 'rolling_take_profit';
+                const special = trailingMode === 'immediate'
+                  ? (isRolling
+                    ? buildStrategyRollingTakeProfitOrderInputs({
+                      config: cfg,
+                      chainId: task.chain,
+                      tokenAddress: task.tokenAddress,
+                      tokenSymbol: tokenInfo.symbol,
+                      tokenInfo,
+                      basePriceUsd: entryPriceUsd,
+                      entryPriceUsd,
+                    })
+                    : buildStrategyTrailingSellOrderInputs({
+                      config: cfg,
+                      chainId: task.chain,
+                      tokenAddress: task.tokenAddress,
+                      tokenSymbol: tokenInfo.symbol,
+                      tokenInfo,
+                      basePriceUsd: entryPriceUsd,
+                    }))
                   : null;
-                const allOrders = trailing ? [...orders, trailing] : orders;
+                const allOrders = special ? [...orders, special] : orders;
                 const sellOrderIds = allOrders.length
                   ? await (async () => {
                     const ids: string[] = [];

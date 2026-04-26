@@ -292,9 +292,13 @@ const DEFAULT_ADVANCED_AUTO_SELL: AdvancedAutoSellConfig = {
   ],
   trailingStop: {
     enabled: false,
-    callbackPercent: 15,
-    sellPercent: 70,
-    activationMode: 'after_last_take_profit',
+    mode: 'trailing_stop',
+    callbackPercent: 20,
+    sellPercent: 80,
+    rollingSellPercent: 15,
+    rollingStepPercent: 25,
+    rollingFloorPercent: 15,
+    activationMode: 'after_first_take_profit',
   },
 };
 

@@ -2,7 +2,12 @@ import { parseEther } from 'viem';
 import { WalletService } from '@/services/wallet';
 import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
-import { buildStrategySellOrderInputs, buildStrategyTrailingSellOrderInputs } from '@/services/limitOrders/advancedAutoSell';
+import {
+  buildStrategyRollingTakeProfitOrderInputs,
+  buildStrategySellOrderInputs,
+  buildStrategyTrailingSellOrderInputs,
+  getAdvancedAutoSellMode,
+} from '@/services/limitOrders/advancedAutoSell';
 import { cancelAllSellLimitOrdersForToken, createLimitOrder } from '@/services/limitOrders/store';
 import { buildTweetUrl, getSignalTimeMs, isRepostOrQuoteSignal, parseNumber, sanitizeMarketCapUsd, shouldBuyByConfig, type TokenMetrics } from '@/services/xSniper/engine/metrics';
 import type { UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
@@ -645,18 +650,29 @@ export const tryAutoBuyOnce = async (input: {
             tokenInfo: tokenInfoForTrade,
             basePriceUsd: effectiveEntryPriceUsd,
           });
-          const trailingMode = (cfg as any)?.trailingStop?.activationMode ?? 'after_last_take_profit';
-          const trailing = trailingMode === 'immediate'
-            ? buildStrategyTrailingSellOrderInputs({
-              config: cfg,
-              chainId: input.chainId,
-              tokenAddress: input.tokenAddress,
-              tokenSymbol: tokenInfoForTrade.symbol,
-              tokenInfo: tokenInfoForTrade,
-              basePriceUsd: effectiveEntryPriceUsd,
-            })
+          const trailingMode = (cfg as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
+          const isRolling = getAdvancedAutoSellMode(cfg) === 'rolling_take_profit';
+          const special = trailingMode === 'immediate'
+            ? (isRolling
+              ? buildStrategyRollingTakeProfitOrderInputs({
+                config: cfg,
+                chainId: input.chainId,
+                tokenAddress: input.tokenAddress,
+                tokenSymbol: tokenInfoForTrade.symbol,
+                tokenInfo: tokenInfoForTrade,
+                basePriceUsd: effectiveEntryPriceUsd,
+                entryPriceUsd: effectiveEntryPriceUsd,
+              })
+              : buildStrategyTrailingSellOrderInputs({
+                config: cfg,
+                chainId: input.chainId,
+                tokenAddress: input.tokenAddress,
+                tokenSymbol: tokenInfoForTrade.symbol,
+                tokenInfo: tokenInfoForTrade,
+                basePriceUsd: effectiveEntryPriceUsd,
+              }))
             : null;
-          const all = trailing ? [...orders, trailing] : orders;
+          const all = special ? [...orders, special] : orders;
           if (all.length) await Promise.all(all.map((o) => createLimitOrder(o)));
         }
       } catch {

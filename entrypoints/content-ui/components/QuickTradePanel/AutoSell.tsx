@@ -19,7 +19,20 @@ type DraftRule = {
 
 export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
   const defaultConfig = useMemo<AdvancedAutoSellConfig>(() => {
-    return value ?? { enabled: false, rules: [], trailingStop: { enabled: false, callbackPercent: 15, sellPercent: 70, activationMode: 'after_last_take_profit' } };
+    return value ?? {
+      enabled: false,
+      rules: [],
+      trailingStop: {
+        enabled: false,
+        mode: 'trailing_stop',
+        callbackPercent: 20,
+        sellPercent: 80,
+        rollingSellPercent: 15,
+        rollingStepPercent: 25,
+        rollingFloorPercent: 15,
+        activationMode: 'after_first_take_profit',
+      },
+    };
   }, [value]);
 
   const [enabled, setEnabled] = useState<boolean>(defaultConfig.enabled);
@@ -32,12 +45,17 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
     }))
   );
   const [trailingEnabled, setTrailingEnabled] = useState<boolean>(defaultConfig.trailingStop?.enabled ?? false);
-  const [trailingCallbackPercent, setTrailingCallbackPercent] = useState<string>(String(defaultConfig.trailingStop?.callbackPercent ?? 15));
-  const [trailingSellPercent, setTrailingSellPercent] = useState<string>(String(defaultConfig.trailingStop?.sellPercent ?? 70));
+  const [trailingMode, setTrailingMode] = useState<'trailing_stop' | 'rolling_take_profit'>(defaultConfig.trailingStop?.mode === 'rolling_take_profit' ? 'rolling_take_profit' : 'trailing_stop');
+  const [trailingCallbackPercent, setTrailingCallbackPercent] = useState<string>(String(defaultConfig.trailingStop?.callbackPercent ?? 20));
+  const [trailingSellPercent, setTrailingSellPercent] = useState<string>(String(defaultConfig.trailingStop?.sellPercent ?? 80));
+  const [rollingSellPercent, setRollingSellPercent] = useState<string>(String(defaultConfig.trailingStop?.rollingSellPercent ?? 15));
+  const [rollingStepPercent, setRollingStepPercent] = useState<string>(String(defaultConfig.trailingStop?.rollingStepPercent ?? 25));
+  const [rollingFloorPercent, setRollingFloorPercent] = useState<string>(String(defaultConfig.trailingStop?.rollingFloorPercent ?? 15));
   const [trailingActivationMode, setTrailingActivationMode] = useState<'immediate' | 'after_first_take_profit' | 'after_last_take_profit'>(
-    defaultConfig.trailingStop?.activationMode ?? 'after_last_take_profit'
+    defaultConfig.trailingStop?.activationMode ?? 'after_first_take_profit'
   );
   const [open, setOpen] = useState(false);
+  const [expandedMode, setExpandedMode] = useState<'trailing_stop' | 'rolling_take_profit' | null>(null);
 
   useEffect(() => {
     if (open) return;
@@ -50,13 +68,29 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
         sellPercent: String(r.sellPercent),
       }))
     );
+    setTrailingMode(defaultConfig.trailingStop?.mode === 'rolling_take_profit' ? 'rolling_take_profit' : 'trailing_stop');
     setTrailingEnabled(defaultConfig.trailingStop?.enabled ?? false);
-    setTrailingCallbackPercent(String(defaultConfig.trailingStop?.callbackPercent ?? 15));
-    setTrailingSellPercent(String(defaultConfig.trailingStop?.sellPercent ?? 70));
-    setTrailingActivationMode(defaultConfig.trailingStop?.activationMode ?? 'after_last_take_profit');
+    setTrailingCallbackPercent(String(defaultConfig.trailingStop?.callbackPercent ?? 20));
+    setTrailingSellPercent(String(defaultConfig.trailingStop?.sellPercent ?? 80));
+    setRollingSellPercent(String(defaultConfig.trailingStop?.rollingSellPercent ?? 15));
+    setRollingStepPercent(String(defaultConfig.trailingStop?.rollingStepPercent ?? 25));
+    setRollingFloorPercent(String(defaultConfig.trailingStop?.rollingFloorPercent ?? 15));
+    setTrailingActivationMode(defaultConfig.trailingStop?.activationMode ?? 'after_first_take_profit');
+    setExpandedMode(null);
   }, [open, defaultConfig]);
 
-  const commit = (next?: { enabled?: boolean; rules?: DraftRule[]; trailingEnabled?: boolean; trailingCallbackPercent?: string; trailingSellPercent?: string; trailingActivationMode?: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit' }) => {
+  const commit = (next?: {
+    enabled?: boolean;
+    rules?: DraftRule[];
+    trailingEnabled?: boolean;
+    trailingMode?: 'trailing_stop' | 'rolling_take_profit';
+    trailingCallbackPercent?: string;
+    trailingSellPercent?: string;
+    rollingSellPercent?: string;
+    rollingStepPercent?: string;
+    rollingFloorPercent?: string;
+    trailingActivationMode?: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit';
+  }) => {
     const nextEnabled = next?.enabled ?? enabled;
     const rulesDraft = next?.rules ?? rules;
     const parsed = rulesDraft
@@ -73,22 +107,39 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
       })
       .filter(Boolean) as AdvancedAutoSellConfig['rules'];
     const nextTrailingEnabled = next?.trailingEnabled ?? trailingEnabled;
+    const nextTrailingMode = next?.trailingMode ?? trailingMode;
     const rawTrailingCallback = Number(next?.trailingCallbackPercent ?? trailingCallbackPercent);
     const safeTrailingCallback = Number.isFinite(rawTrailingCallback)
       ? Math.round(Math.max(0.1, Math.min(99.9, rawTrailingCallback)) * 100) / 100
-      : 15;
+      : 20;
     const rawTrailingSell = Number(next?.trailingSellPercent ?? trailingSellPercent);
     const safeTrailingSell = Number.isFinite(rawTrailingSell)
       ? Math.round(Math.max(1, Math.min(100, rawTrailingSell)) * 100) / 100
-      : 70;
+      : 80;
+    const rawRollingSell = Number(next?.rollingSellPercent ?? rollingSellPercent);
+    const safeRollingSell = Number.isFinite(rawRollingSell)
+      ? Math.round(Math.max(1, Math.min(100, rawRollingSell)) * 100) / 100
+      : 15;
+    const rawRollingStep = Number(next?.rollingStepPercent ?? rollingStepPercent);
+    const safeRollingStep = Number.isFinite(rawRollingStep)
+      ? Math.round(Math.max(0.1, Math.min(100000, rawRollingStep)) * 100) / 100
+      : 25;
+    const rawRollingFloor = Number(next?.rollingFloorPercent ?? rollingFloorPercent);
+    const safeRollingFloor = Number.isFinite(rawRollingFloor)
+      ? Math.round(Math.max(0, Math.min(100000, rawRollingFloor)) * 100) / 100
+      : 15;
     const nextTrailingActivationMode = next?.trailingActivationMode ?? trailingActivationMode;
     onChange({
       enabled: nextEnabled,
       rules: parsed,
       trailingStop: {
         enabled: nextTrailingEnabled,
+        mode: nextTrailingMode,
         callbackPercent: safeTrailingCallback,
         sellPercent: safeTrailingSell,
+        rollingSellPercent: safeRollingSell,
+        rollingStepPercent: safeRollingStep,
+        rollingFloorPercent: safeRollingFloor,
         activationMode: nextTrailingActivationMode,
       },
     });
@@ -267,7 +318,7 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
                 </span>
               </button>
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 flex items-center justify-between gap-3">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3 space-y-3">
                 <label
                   className={`flex items-center gap-2 select-none ${canEdit ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
                   onClick={(e) => e.stopPropagation()}
@@ -285,64 +336,192 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
                   />
                   <span className="inline-flex items-center gap-1 text-[13px] text-zinc-200">
                     <RefreshCw size={12} className="text-amber-400" />
-                    {t('contentUi.autoSell.trailingStop', locale)}
+                    {t('contentUi.autoSell.trailingStrategy', locale)}
                   </span>
                 </label>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.trailingStopCallback', locale)}</span>
-                  <div className="relative w-[92px]">
-                    <input
-                      type="number"
-                      className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
-                      value={trailingCallbackPercent}
+                <div className={`rounded-lg border p-3 ${trailingMode === 'trailing_stop' ? 'border-amber-500/40 bg-amber-500/5' : 'border-zinc-800 bg-zinc-950/40'}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[13px] text-zinc-200">{t('contentUi.autoSell.trailingModeOption.trailingStop', locale)}</div>
+                    <button
+                      type="button"
                       disabled={!canEdit || !trailingEnabled}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setTrailingCallbackPercent(v);
-                        commit({ trailingCallbackPercent: v });
+                      className={trailingMode === 'trailing_stop'
+                        ? 'px-2 py-1 rounded text-[12px] bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        : 'px-2 py-1 rounded text-[12px] text-zinc-300 border border-zinc-700 hover:border-zinc-500 disabled:opacity-60'}
+                      onClick={() => {
+                        if (trailingMode === 'trailing_stop') {
+                          setExpandedMode((prev) => (prev === 'trailing_stop' ? null : 'trailing_stop'));
+                          return;
+                        }
+                        setTrailingMode('trailing_stop');
+                        setExpandedMode('trailing_stop');
+                        commit({ trailingMode: 'trailing_stop' });
                       }}
-                    />
-                    <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
+                    >
+                      {trailingMode === 'trailing_stop' ? t('contentUi.autoSell.activeMode', locale) : t('contentUi.autoSell.useMode', locale)}
+                    </button>
                   </div>
+                  {trailingMode === 'trailing_stop' && expandedMode === 'trailing_stop' ? (
+                    <div className="mt-2 space-y-2">
+                      <div className="text-[11px] text-zinc-500">{t('contentUi.autoSell.modeHintTrailing', locale)}</div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.trailingStopCallback', locale)}</span>
+                        <div className="relative w-[110px]">
+                          <input
+                            type="number"
+                            className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
+                            value={trailingCallbackPercent}
+                            disabled={!canEdit || !trailingEnabled}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setTrailingCallbackPercent(v);
+                              commit({ trailingCallbackPercent: v });
+                            }}
+                          />
+                          <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.sell', locale)}</span>
+                        <div className="relative w-[110px]">
+                          <input
+                            type="number"
+                            className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
+                            value={rollingSellPercent}
+                            disabled={!canEdit || !trailingEnabled}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRollingSellPercent(v);
+                              commit({ rollingSellPercent: v });
+                            }}
+                          />
+                          <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.trailingStopActivationMode', locale)}</span>
+                        <select
+                          className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] text-zinc-200 outline-none disabled:opacity-60"
+                          value={trailingActivationMode}
+                          disabled={!canEdit || !trailingEnabled}
+                          onChange={(e) => {
+                            const v = e.target.value as any;
+                            if (v !== 'immediate' && v !== 'after_first_take_profit' && v !== 'after_last_take_profit') return;
+                            setTrailingActivationMode(v);
+                            commit({ trailingActivationMode: v });
+                          }}
+                        >
+                          <option value="immediate">{t('contentUi.autoSell.trailingStopActivationModeOption.immediate', locale)}</option>
+                          <option value="after_first_take_profit">{t('contentUi.autoSell.trailingStopActivationModeOption.afterFirstTakeProfit', locale)}</option>
+                          <option value="after_last_take_profit">{t('contentUi.autoSell.trailingStopActivationModeOption.afterLastTakeProfit', locale)}</option>
+                        </select>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-[11px] text-zinc-500 truncate">{t('contentUi.autoSell.modeHintTrailing', locale)}</div>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.sell', locale)}</span>
-                  <div className="relative w-[92px]">
-                    <input
-                      type="number"
-                      className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
-                      value={trailingSellPercent}
+                <div className={`rounded-lg border p-3 ${trailingMode === 'rolling_take_profit' ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-zinc-800 bg-zinc-950/40'}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[13px] text-zinc-200">{t('contentUi.autoSell.trailingModeOption.rollingTakeProfit', locale)}</div>
+                    <button
+                      type="button"
                       disabled={!canEdit || !trailingEnabled}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setTrailingSellPercent(v);
-                        commit({ trailingSellPercent: v });
+                      className={trailingMode === 'rolling_take_profit'
+                        ? 'px-2 py-1 rounded text-[12px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'px-2 py-1 rounded text-[12px] text-zinc-300 border border-zinc-700 hover:border-zinc-500 disabled:opacity-60'}
+                      onClick={() => {
+                        if (trailingMode === 'rolling_take_profit') {
+                          setExpandedMode((prev) => (prev === 'rolling_take_profit' ? null : 'rolling_take_profit'));
+                          return;
+                        }
+                        setTrailingMode('rolling_take_profit');
+                        setExpandedMode('rolling_take_profit');
+                        commit({ trailingMode: 'rolling_take_profit' });
                       }}
-                    />
-                    <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
+                    >
+                      {trailingMode === 'rolling_take_profit' ? t('contentUi.autoSell.activeMode', locale) : t('contentUi.autoSell.useMode', locale)}
+                    </button>
                   </div>
+                  {trailingMode === 'rolling_take_profit' && expandedMode === 'rolling_take_profit' ? (
+                    <div className="mt-2 space-y-2">
+                      <div className="text-[11px] text-zinc-500">{t('contentUi.autoSell.modeHintRolling', locale)}</div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.rollingStepPercent', locale)}</span>
+                        <div className="relative w-[110px]">
+                          <input
+                            type="number"
+                            className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
+                            value={rollingStepPercent}
+                            disabled={!canEdit || !trailingEnabled}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRollingStepPercent(v);
+                              commit({ rollingStepPercent: v });
+                            }}
+                          />
+                          <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.rollingSellPercent', locale)}</span>
+                        <div className="relative w-[110px]">
+                          <input
+                            type="number"
+                            className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
+                            value={trailingSellPercent}
+                            disabled={!canEdit || !trailingEnabled}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setTrailingSellPercent(v);
+                              commit({ trailingSellPercent: v });
+                            }}
+                          />
+                          <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.rollingFloorPercent', locale)}</span>
+                        <div className="relative w-[110px]">
+                          <input
+                            type="number"
+                            className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
+                            value={rollingFloorPercent}
+                            disabled={!canEdit || !trailingEnabled}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRollingFloorPercent(v);
+                              commit({ rollingFloorPercent: v });
+                            }}
+                          />
+                          <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.trailingStopActivationMode', locale)}</span>
+                        <select
+                          className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] text-zinc-200 outline-none disabled:opacity-60"
+                          value={trailingActivationMode}
+                          disabled={!canEdit || !trailingEnabled}
+                          onChange={(e) => {
+                            const v = e.target.value as any;
+                            if (v !== 'immediate' && v !== 'after_first_take_profit' && v !== 'after_last_take_profit') return;
+                            setTrailingActivationMode(v);
+                            commit({ trailingActivationMode: v });
+                          }}
+                        >
+                          <option value="immediate">{t('contentUi.autoSell.trailingStopActivationModeOption.immediate', locale)}</option>
+                          <option value="after_first_take_profit">{t('contentUi.autoSell.trailingStopActivationModeOption.afterFirstTakeProfit', locale)}</option>
+                          <option value="after_last_take_profit">{t('contentUi.autoSell.trailingStopActivationModeOption.afterLastTakeProfit', locale)}</option>
+                        </select>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-[11px] text-zinc-500 truncate">{t('contentUi.autoSell.modeHintRolling', locale)}</div>
+                  )}
                 </div>
-              </div>
-
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 flex items-center justify-between gap-3">
-                <span className="text-[12px] text-zinc-400">{t('contentUi.autoSell.trailingStopActivationMode', locale)}</span>
-                <select
-                  className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] text-zinc-200 outline-none disabled:opacity-60"
-                  value={trailingActivationMode}
-                  disabled={!canEdit || !trailingEnabled}
-                  onChange={(e) => {
-                    const v = e.target.value as any;
-                    if (v !== 'immediate' && v !== 'after_first_take_profit' && v !== 'after_last_take_profit') return;
-                    setTrailingActivationMode(v);
-                    commit({ trailingActivationMode: v });
-                  }}
-                >
-                  <option value="immediate">{t('contentUi.autoSell.trailingStopActivationModeOption.immediate', locale)}</option>
-                  <option value="after_first_take_profit">{t('contentUi.autoSell.trailingStopActivationModeOption.afterFirstTakeProfit', locale)}</option>
-                  <option value="after_last_take_profit">{t('contentUi.autoSell.trailingStopActivationModeOption.afterLastTakeProfit', locale)}</option>
-                </select>
               </div>
             </div>
           </div>

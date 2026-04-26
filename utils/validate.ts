@@ -605,28 +605,60 @@ export function validateSettings(input: Settings): Settings | null {
     inputTrailingStop?.callbackPercent,
     0.1,
     99.9,
-    typeof defaultTrailingStop?.callbackPercent === 'number' ? defaultTrailingStop.callbackPercent : 15
+    typeof defaultTrailingStop?.callbackPercent === 'number' ? defaultTrailingStop.callbackPercent : 20
   );
   const trailingStopSellPercent = clampFloat(
     inputTrailingStop?.sellPercent,
     1,
     100,
-    typeof defaultTrailingStop?.sellPercent === 'number' ? defaultTrailingStop.sellPercent : 100
+    typeof defaultTrailingStop?.sellPercent === 'number' ? defaultTrailingStop.sellPercent : 80
   );
-  const activationMode = ((): 'immediate' | 'after_first_take_profit' | 'after_last_take_profit' => {
+  const rollingSellPercent = clampFloat(
+    inputTrailingStop?.rollingSellPercent,
+    1,
+    100,
+    typeof defaultTrailingStop?.rollingSellPercent === 'number'
+      ? defaultTrailingStop.rollingSellPercent
+      : (typeof inputTrailingStop?.sellPercent === 'number'
+        ? inputTrailingStop.sellPercent
+        : (typeof defaultTrailingStop?.sellPercent === 'number' ? defaultTrailingStop.sellPercent : 15))
+  );
+  const trailingMode = inputTrailingStop?.mode === 'rolling_take_profit' || inputTrailingStop?.mode === 'trailing_stop'
+    ? inputTrailingStop.mode
+    : (defaultTrailingStop?.mode === 'rolling_take_profit' || defaultTrailingStop?.mode === 'trailing_stop'
+      ? defaultTrailingStop.mode
+      : 'trailing_stop');
+  const rollingStepPercent = clampFloat(
+    inputTrailingStop?.rollingStepPercent,
+    0.1,
+    100000,
+    typeof defaultTrailingStop?.rollingStepPercent === 'number' ? defaultTrailingStop.rollingStepPercent : 25
+  );
+  const rollingFloorPercent = clampFloat(
+    inputTrailingStop?.rollingFloorPercent,
+    0,
+    100000,
+    typeof defaultTrailingStop?.rollingFloorPercent === 'number' ? defaultTrailingStop.rollingFloorPercent : 15
+  );
+  const activationModeRaw = ((): 'immediate' | 'after_first_take_profit' | 'after_last_take_profit' => {
     const raw = inputTrailingStop?.activationMode;
     if (raw === 'immediate' || raw === 'after_first_take_profit' || raw === 'after_last_take_profit') return raw;
     const def = defaultTrailingStop?.activationMode;
     if (def === 'immediate' || def === 'after_first_take_profit' || def === 'after_last_take_profit') return def;
-    return 'after_last_take_profit';
+    return 'after_first_take_profit';
   })();
+  const activationMode: 'immediate' | 'after_first_take_profit' | 'after_last_take_profit' = activationModeRaw;
   const advancedAutoSell: AdvancedAutoSellConfig = {
     enabled: typeof inputAdvancedAutoSell?.enabled === 'boolean' ? inputAdvancedAutoSell.enabled : defaultAdvancedAutoSell.enabled,
     rules: rules as any,
     trailingStop: {
       enabled: trailingStopEnabled,
+      mode: trailingMode,
       callbackPercent: trailingStopCallbackPercent,
       sellPercent: trailingStopSellPercent,
+      rollingSellPercent,
+      rollingStepPercent,
+      rollingFloorPercent,
       activationMode,
     },
   };

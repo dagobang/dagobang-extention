@@ -93,6 +93,10 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
   const trailingStopBps = input.trailingStopBps != null ? Number(input.trailingStopBps) : null;
   const trailingPeakPriceUsd = input.trailingPeakPriceUsd != null ? normalizePriceUsd(Number(input.trailingPeakPriceUsd)) : null;
   const targetChangePercent = input.targetChangePercent != null ? normalizePercentValue(Number(input.targetChangePercent)) : null;
+  const rollingStepPercent = input.rollingStepPercent != null ? normalizePercentValue(Number(input.rollingStepPercent)) : null;
+  const rollingFloorPercent = input.rollingFloorPercent != null ? normalizePercentValue(Number(input.rollingFloorPercent)) : null;
+  const rollingEntryPriceUsd = input.rollingEntryPriceUsd != null ? normalizePriceUsd(Number(input.rollingEntryPriceUsd)) : null;
+  const rollingIsFloor = input.rollingIsFloor === true;
   if (orderType === 'trailing_stop_sell') {
     if (!(side === 'sell')) throw new Error('Trailing stop must be sell');
     if (trailingStopBps == null || !Number.isFinite(trailingStopBps) || !(trailingStopBps > 0 && trailingStopBps < 10000)) {
@@ -155,6 +159,21 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
     if (normalizeLimitOrderType(o.orderType, o.side) !== orderType) return false;
     if (!hasSameAmount(o)) return false;
     if (!hasSameTargetChange(o)) return false;
+    const existingRollingStepPercent =
+      typeof o.rollingStepPercent === 'number' && Number.isFinite(o.rollingStepPercent)
+        ? normalizePercentValue(o.rollingStepPercent)
+        : null;
+    if (existingRollingStepPercent !== rollingStepPercent) return false;
+    const existingRollingFloorPercent =
+      typeof o.rollingFloorPercent === 'number' && Number.isFinite(o.rollingFloorPercent)
+        ? normalizePercentValue(o.rollingFloorPercent)
+        : null;
+    if (existingRollingFloorPercent !== rollingFloorPercent) return false;
+    const existingRollingEntry = typeof o.rollingEntryPriceUsd === 'number' && Number.isFinite(o.rollingEntryPriceUsd)
+      ? normalizePriceUsd(o.rollingEntryPriceUsd)
+      : null;
+    if (existingRollingEntry !== rollingEntryPriceUsd) return false;
+    if ((o.rollingIsFloor === true) !== rollingIsFloor) return false;
     if (orderType === 'trailing_stop_sell') {
       if (o.trailingStopBps !== trailingStopBps) return false;
     }
@@ -180,6 +199,10 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
           ? trailingPeakPriceUsd
           : triggerPriceUsd
         : undefined,
+    rollingStepPercent: rollingStepPercent ?? undefined,
+    rollingFloorPercent: rollingFloorPercent ?? undefined,
+    rollingEntryPriceUsd: rollingEntryPriceUsd ?? undefined,
+    rollingIsFloor: rollingIsFloor || undefined,
     buyBnbAmountWei: input.buyBnbAmountWei,
     sellPercentBps: input.sellPercentBps,
     sellTokenAmountWei: input.sellTokenAmountWei,
