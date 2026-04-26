@@ -225,6 +225,7 @@ export const createSellExecutors = (deps: {
     percent: number;
     dryRun: boolean;
     reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
+    onReceiptFailed?: () => void | Promise<void>;
     meta: {
       tweetAtMs?: number;
       tweetUrl?: string;
@@ -234,6 +235,8 @@ export const createSellExecutors = (deps: {
       signalEventId?: string;
       signalTweetId?: string;
       triggerMarketCapUsd?: number;
+      sellPercentOfOriginal?: number;
+      sellPercentOfCurrent?: number;
     };
   }) => {
     const percent = Math.max(0, Math.min(100, Number(input.percent)));
@@ -257,7 +260,9 @@ export const createSellExecutors = (deps: {
         tweetUrl: input.meta.tweetUrl,
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
-        sellPercent: percent,
+        sellPercent: Number.isFinite(Number(input.meta.sellPercentOfCurrent)) ? Number(input.meta.sellPercentOfCurrent) : percent,
+        sellPercentOfOriginal: Number.isFinite(Number(input.meta.sellPercentOfOriginal)) ? Number(input.meta.sellPercentOfOriginal) : undefined,
+        sellPercentOfCurrent: Number.isFinite(Number(input.meta.sellPercentOfCurrent)) ? Number(input.meta.sellPercentOfCurrent) : percent,
         sellTokenAmountWei: undefined,
         txHash: undefined,
         dryRun: input.dryRun,
@@ -336,10 +341,17 @@ export const createSellExecutors = (deps: {
       try {
         await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
       } catch {}
-      let rsp: any;
       let tokenInfoForTrade = tokenInfo;
+      let submittedTxHash: `0x${string}` | null = null;
+      let submittedSettled = false;
+      let resolveSubmitted: (() => void) | null = null;
+      let rejectSubmitted: ((e: unknown) => void) | null = null;
+      const submittedGate = new Promise<void>((resolve, reject) => {
+        resolveSubmitted = resolve;
+        rejectSubmitted = reject;
+      });
       try {
-        rsp = await TradeService.sellWithReceiptAndAutoRecovery({
+        const settlePromise = TradeService.sellWithReceiptAndAutoRecovery({
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
           tokenAmountWei: amountWei.toString(),
@@ -349,6 +361,7 @@ export const createSellExecutors = (deps: {
           maxRetry: 1,
           timeoutMs: 20_000,
           onSubmitted: async (ctx) => {
+            submittedTxHash = ctx.txHash;
             await deps.broadcastToActiveTabs({
               type: 'bg:tradeSubmitted',
               source: 'xsniper',
@@ -358,11 +371,53 @@ export const createSellExecutors = (deps: {
               txHash: ctx.txHash,
               submitElapsedMs: ctx.submitElapsedMs,
             });
+            if (!submittedSettled) {
+              submittedSettled = true;
+              resolveSubmitted?.();
+            }
           },
         });
+        void settlePromise
+          .then(async (doneRsp) => {
+            const finalTxHash = (doneRsp as any)?.txHash as `0x${string}`;
+            await deps.broadcastToActiveTabs({
+              type: 'bg:tradeSuccess',
+              source: 'xsniper',
+              side: 'sell',
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              txHash: finalTxHash,
+              submitElapsedMs: (doneRsp as any)?.submitElapsedMs,
+              receiptElapsedMs: (doneRsp as any)?.receiptElapsedMs,
+              totalElapsedMs: (doneRsp as any)?.totalElapsedMs,
+              broadcastVia: (doneRsp as any)?.broadcastVia,
+              broadcastUrl: (doneRsp as any)?.broadcastUrl,
+              isBundle: (doneRsp as any)?.isBundle,
+            });
+          })
+          .catch(async () => {
+            if (!submittedSettled) {
+              submittedSettled = true;
+              rejectSubmitted?.(new Error('sell_submit_failed'));
+              return;
+            }
+            const txHash = submittedTxHash as any;
+            deps.emitRecord({
+              ...baseRecord,
+              dryRun: false,
+              sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
+              txHash,
+              reason: 'sell_receipt_failed',
+            } as any);
+            try {
+              await input.onReceiptFailed?.();
+            } catch {
+            }
+          });
+        await submittedGate;
       } catch {
       }
-      if (!rsp) {
+      if (!submittedTxHash) {
         deps.emitRecord({
           ...baseRecord,
           dryRun: false,
@@ -371,29 +426,13 @@ export const createSellExecutors = (deps: {
         });
         return false;
       }
-      const finalTxHash = (rsp as any)?.txHash as `0x${string}`;
-      void deps.broadcastToActiveTabs({
-        type: 'bg:tradeSuccess',
-        source: 'xsniper',
-        side: 'sell',
-        chainId: input.chainId,
-        tokenAddress: input.tokenAddress,
-        txHash: finalTxHash,
-        submitElapsedMs: (rsp as any)?.submitElapsedMs,
-        receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
-        totalElapsedMs: (rsp as any)?.totalElapsedMs,
-        broadcastVia: (rsp as any)?.broadcastVia,
-        broadcastUrl: (rsp as any)?.broadcastUrl,
-        isBundle: (rsp as any)?.isBundle,
-      });
-
       deps.emitRecord({
         ...baseRecord,
         dryRun: false,
         tokenSymbol: tokenInfoForTrade.symbol ? String(tokenInfoForTrade.symbol) : baseRecord.tokenSymbol,
         tokenName: tokenInfoForTrade.name ? String(tokenInfoForTrade.name) : baseRecord.tokenName,
         sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
-        txHash: finalTxHash as any,
+        txHash: submittedTxHash as any,
       });
       return true;
     } catch {

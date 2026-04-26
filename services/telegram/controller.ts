@@ -98,6 +98,20 @@ export function createTelegramController(deps: {
     if (!Number.isFinite(n)) return 0;
     return Math.max(0, Math.min(100, n));
   };
+  const getSellPercentOfOriginal = (record: XSniperBuyRecord) => {
+    const fromOriginal = Number((record as any).sellPercentOfOriginal);
+    if (Number.isFinite(fromOriginal)) return clampPercent(fromOriginal);
+    return clampPercent(record.sellPercent);
+  };
+  const formatSellPercentSummary = (record: XSniperBuyRecord) => {
+    const original = Number((record as any).sellPercentOfOriginal);
+    const current = Number((record as any).sellPercentOfCurrent);
+    if (Number.isFinite(original) && Number.isFinite(current)) {
+      return `${clampPercent(original).toFixed(1)}%(orig) / ${clampPercent(current).toFixed(1)}%(curr)`;
+    }
+    const fallback = Number(record.sellPercent);
+    return Number.isFinite(fallback) ? `${clampPercent(fallback).toFixed(1)}%` : '';
+  };
   const computeWeightedPnlPct = (input: {
     entryMcap: number | null;
     latestMcap: number | null;
@@ -115,7 +129,7 @@ export function createTelegramController(deps: {
     let pricedSoldPct = 0;
     let weightedRoi = 0;
     for (const s of sortedSells) {
-      const nextPct = clampPercent(s.sellPercent);
+      const nextPct = getSellPercentOfOriginal(s);
       const effectivePct = Math.min(nextPct, Math.max(0, 100 - soldPct));
       if (!(effectivePct > 0)) continue;
       const sellMcap = typeof s.marketCapUsd === 'number' && Number.isFinite(s.marketCapUsd) ? s.marketCapUsd : input.latestMcap;
@@ -470,7 +484,7 @@ export function createTelegramController(deps: {
         otherPct: 0,
       };
       for (const s of sellRecords) {
-        const pct = clampPercent(s.sellPercent);
+        const pct = getSellPercentOfOriginal(s);
         const reason = String(s.reason || '').trim();
         if (reason === 'rapid_take_profit') {
           acc.tpCount += 1;
@@ -521,7 +535,7 @@ export function createTelegramController(deps: {
         `仓位: 已卖 ${weighted.soldPct.toFixed(1)}% | 剩余 ${weighted.remainPct.toFixed(1)}%`,
         `里程碑: 止盈 ${reasonStats.tpCount}次/${reasonStats.tpPct.toFixed(1)}% | 止损 ${reasonStats.slCount}次/${reasonStats.slPct.toFixed(1)}% | 地板 ${reasonStats.floorCount}次/${reasonStats.floorPct.toFixed(1)}%`,
         latestSell
-          ? `最近卖出: ${xSniperSellReasonLabel(latestSell.reason)} ${latestSell.sellPercent != null ? `${clampPercent(latestSell.sellPercent).toFixed(1)}%` : ''}`.trim()
+          ? `最近卖出: ${xSniperSellReasonLabel(latestSell.reason)} ${formatSellPercentSummary(latestSell)}`.trim()
           : '最近卖出: -',
         '',
         `📈 价格与PnL`,

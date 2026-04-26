@@ -22,6 +22,8 @@ export type RapidExitPosition = {
   lastTakeProfitPnlPct?: number;
   lastEvalSlot?: number;
   evalInProgress?: boolean;
+  nextRetryAtMs?: number;
+  failCount?: number;
 };
 
 type RapidExitConfig = {
@@ -112,6 +114,8 @@ export const registerRapidExitPosition = (input: {
     lastTakeProfitPnlPct: undefined,
     lastEvalSlot: -1,
     evalInProgress: false,
+    nextRetryAtMs: 0,
+    failCount: 0,
   });
 };
 
@@ -128,6 +132,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
     percent: number;
     dryRun: boolean;
     reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
+    onReceiptFailed?: () => void | Promise<void>;
     meta: {
       tweetAtMs?: number;
       tweetUrl?: string;
@@ -137,6 +142,8 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       signalEventId?: string;
       signalTweetId?: string;
       triggerMarketCapUsd?: number;
+      sellPercentOfOriginal?: number;
+      sellPercentOfCurrent?: number;
     };
   }) => Promise<boolean>;
 }) => {
@@ -176,8 +183,17 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
         cleanup();
         continue;
       }
+      const nextRetryAtMs = Number(pos.nextRetryAtMs ?? 0);
+      if (Number.isFinite(nextRetryAtMs) && nextRetryAtMs > input.nowMs) {
+        input.rapidExitByPosKey.set(posKey, pos);
+        continue;
+      }
 
       const ageMs = input.nowMs - pos.openedAtMs;
+      if (ageMs < cfg.evalStepSec * 1000) {
+        input.rapidExitByPosKey.set(posKey, pos);
+        continue;
+      }
       const pnlPct = ((curMcap - entryMcap) / entryMcap) * 100;
       const evalSlot = Math.floor(ageMs / (cfg.evalStepSec * 1000));
       if (pos.lastEvalSlot === evalSlot) {
@@ -198,6 +214,16 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
           percent: percentOfCurrent,
           dryRun: pos.dryRun,
           reason,
+          onReceiptFailed: () => {
+            const cur = input.rapidExitByPosKey.get(posKey) ?? pos;
+            const nowRemaining2 = Number.isFinite(cur.remainingPercent) ? Math.max(0, Math.min(100, Number(cur.remainingPercent))) : 100;
+            cur.remainingPercent = Math.max(0, Math.min(100, nowRemaining2 + targetPortion));
+            const failCount = Math.max(0, Math.floor(Number(cur.failCount) || 0)) + 1;
+            cur.failCount = failCount;
+            const backoffMs = Math.min(120_000, 30_000 * (2 ** Math.min(2, failCount - 1)));
+            cur.nextRetryAtMs = Date.now() + backoffMs;
+            input.rapidExitByPosKey.set(posKey, cur);
+          },
           meta: {
             tweetAtMs: pos.tweetAtMs,
             tweetUrl: pos.tweetUrl,
@@ -207,9 +233,19 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
             signalEventId: pos.signalEventId,
             signalTweetId: pos.signalTweetId,
             triggerMarketCapUsd: curMcap,
+            sellPercentOfOriginal: targetPortion,
+            sellPercentOfCurrent: percentOfCurrent,
           },
         });
-        if (!sold) return false;
+        if (!sold) {
+          const failCount = Math.max(0, Math.floor(Number(pos.failCount) || 0)) + 1;
+          pos.failCount = failCount;
+          const backoffMs = Math.min(120_000, 30_000 * (2 ** Math.min(2, failCount - 1)));
+          pos.nextRetryAtMs = input.nowMs + backoffMs;
+          return false;
+        }
+        pos.failCount = 0;
+        pos.nextRetryAtMs = 0;
         pos.remainingPercent = Math.max(0, nowRemaining - targetPortion);
         return true;
       };

@@ -65,6 +65,23 @@ const clampPercent = (value: unknown) => {
   return Math.max(0, Math.min(100, n));
 };
 
+const getSellPercentOfOriginal = (record: XSniperBuyRecord) => {
+  const fromOriginal = Number((record as any).sellPercentOfOriginal);
+  if (Number.isFinite(fromOriginal)) return clampPercent(fromOriginal);
+  return clampPercent(record.sellPercent);
+};
+
+const formatSellPercentText = (record: XSniperBuyRecord) => {
+  const original = Number((record as any).sellPercentOfOriginal);
+  const current = Number((record as any).sellPercentOfCurrent);
+  if (Number.isFinite(original) && Number.isFinite(current)) {
+    return `${clampPercent(original).toFixed(2)}% (orig) / ${clampPercent(current).toFixed(2)}% (curr)`;
+  }
+  const fallback = Number(record.sellPercent);
+  if (Number.isFinite(fallback)) return `${clampPercent(fallback).toFixed(2)}%`;
+  return '-';
+};
+
 const resolveReasonLabel = (tt: (key: string, subs?: Array<string | number>) => string, reason: unknown) => {
   if (reason == null) return '-';
   const raw = String(reason).trim();
@@ -111,7 +128,7 @@ const computeWeightedPnlPct = (input: {
   let pricedSoldPct = 0;
   let weightedRoi = 0;
   for (const s of sortedSells) {
-    const nextPct = clampPercent(s.sellPercent);
+    const nextPct = getSellPercentOfOriginal(s);
     const effectivePct = Math.min(nextPct, Math.max(0, 100 - soldPct));
     if (!(effectivePct > 0)) continue;
     const sellMcap = typeof s.marketCapUsd === 'number' && Number.isFinite(s.marketCapUsd) ? s.marketCapUsd : input.latestMcap;
@@ -562,7 +579,7 @@ export function XSniperHistoryView({
                             <span className="text-emerald-300/80">{isSell ? tt('contentUi.autoTradeStrategy.snipeHistorySellPercent') : tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}:</span>{' '}
                             <span className="text-zinc-200">
                               {isSell
-                                ? r.sellPercent == null ? '-' : `${r.sellPercent.toFixed(2)}%`
+                                ? formatSellPercentText(r)
                                 : formatBnbAmount(r.buyAmountBnb)}
                             </span>
                           </div>
@@ -718,7 +735,7 @@ export function XSniperHistoryView({
                       })();
                       const isSell = c.side === 'sell';
                       const primary = isSell
-                        ? `${tt('contentUi.autoTradeStrategy.snipeHistorySellPercent')}: ${c.sellPercent == null ? '-' : `${c.sellPercent.toFixed(2)}%`}`
+                        ? `${tt('contentUi.autoTradeStrategy.snipeHistorySellPercent')}: ${formatSellPercentText(c)}`
                         : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnbAmount(c.buyAmountBnb)}`;
                       const showTriggerMcap =
                         isSell

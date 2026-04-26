@@ -536,6 +536,8 @@ export type XSniperBuyRecord = {
   tokenName?: string;
   buyAmountBnb?: number;
   sellPercent?: number;
+  sellPercentOfOriginal?: number;
+  sellPercentOfCurrent?: number;
   sellTokenAmountWei?: string;
   txHash?: string;
   entryPriceUsd?: number;
