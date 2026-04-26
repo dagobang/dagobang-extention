@@ -10,6 +10,28 @@ import type { LimitOrder, LimitOrderScanStatus } from '@/types/extention';
 const LIMIT_SCAN_ALARM = 'limitOrder:scan';
 const LIMIT_SCAN_INTERVAL_DEFAULT_MS = 3000;
 const LIMIT_SCAN_INTERVAL_OPTIONS_MS = [1000, 3000, 5000, 10000, 30000, 60000, 120000] as const;
+const ORDER_EXECUTE_MAX_RETRY = 2;
+
+const isRetryableOrderError = (rawMessage: string) => {
+  const msg = rawMessage.toLowerCase();
+  return (
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('network') ||
+    msg.includes('nonce') ||
+    msg.includes('underpriced') ||
+    msg.includes('already known') ||
+    msg.includes('temporarily unavailable') ||
+    msg.includes('429') ||
+    msg.includes('503')
+  );
+};
+
+const getRetryDelayMs = (retryCount: number) => {
+  if (retryCount <= 0) return 1500;
+  if (retryCount === 1) return 3000;
+  return 5000;
+};
 
 const normalizeLimitScanIntervalMs = (value: any) => {
   const v = Math.floor(Number(value));
@@ -114,6 +136,10 @@ export const createLimitOrderScanner = (deps: {
         limitScanPricesByTokenKey.set(priceKey, { priceUsd: scanPriceUsd, ts: Date.now() });
 
         for (const o of orders) {
+          const nowMs = Date.now();
+          if (Number.isFinite(o.retryAtMs) && (o.retryAtMs as number) > nowMs) {
+            continue;
+          }
           const prepared = await applyTrailingStopUpdate(o, priceUsd);
           if (
             prepared.orderType === 'trailing_stop_sell' &&
@@ -128,7 +154,7 @@ export const createLimitOrderScanner = (deps: {
           const hit = hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
           if (!hit) continue;
 
-          await patchLimitOrder(o.id, { status: 'triggered' as const });
+          await patchLimitOrder(o.id, { status: 'triggered' as const, retryAtMs: undefined });
           changed = true;
 
           try {
@@ -136,8 +162,25 @@ export const createLimitOrderScanner = (deps: {
             await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
           } catch (e: any) {
             const msg = typeof e?.message === 'string' ? e.message : String(e);
-            await patchLimitOrder(o.id, { status: 'failed' as const, lastError: msg });
-            deps.onOrderFailed?.({ order: prepared, error: msg });
+            const retryCount = Number.isFinite(prepared.retryCount) ? Math.max(0, Math.floor(prepared.retryCount as number)) : 0;
+            const nextRetryCount = retryCount + 1;
+            const canRetry = nextRetryCount <= ORDER_EXECUTE_MAX_RETRY && isRetryableOrderError(msg);
+            if (canRetry) {
+              await patchLimitOrder(o.id, {
+                status: 'open' as const,
+                lastError: msg,
+                retryCount: nextRetryCount,
+                retryAtMs: Date.now() + getRetryDelayMs(retryCount),
+              });
+            } else {
+              await patchLimitOrder(o.id, {
+                status: 'failed' as const,
+                lastError: msg,
+                retryCount: nextRetryCount,
+                retryAtMs: undefined,
+              });
+              deps.onOrderFailed?.({ order: prepared, error: msg });
+            }
           }
         }
       }

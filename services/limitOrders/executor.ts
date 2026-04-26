@@ -157,6 +157,7 @@ export const createLimitOrderExecutor = (deps: {
         const autoSellMode = getAdvancedAutoSellMode(config);
         if (mode === 'immediate' && (config as any)?.trailingStop?.enabled) {
           if (autoSellMode === 'rolling_take_profit') {
+            const entryPriceUsd = basePriceUsd;
             const rolling = buildStrategyRollingTakeProfitOrderInputs({
               config,
               chainId: order.chainId,
@@ -164,10 +165,22 @@ export const createLimitOrderExecutor = (deps: {
               tokenSymbol: order.tokenSymbol ?? null,
               tokenInfo: order.tokenInfo,
               basePriceUsd,
-              entryPriceUsd: basePriceUsd,
+              entryPriceUsd,
             });
             if (rolling) {
               await createLimitOrder(rolling);
+              created += 1;
+            }
+            const floor = buildStrategyRollingFloorOrderInputs({
+              config,
+              chainId: order.chainId,
+              tokenAddress: order.tokenAddress,
+              tokenSymbol: order.tokenSymbol ?? null,
+              tokenInfo: order.tokenInfo,
+              entryPriceUsd,
+            });
+            if (floor) {
+              await createLimitOrder(floor);
               created += 1;
             }
           } else {
@@ -325,8 +338,17 @@ export const createLimitOrderExecutor = (deps: {
               });
               if (nextRolling) {
                 await createLimitOrder(nextRolling);
-                deps.onOrdersChanged();
               }
+              const floor = buildStrategyRollingFloorOrderInputs({
+                config,
+                chainId: order.chainId,
+                tokenAddress: order.tokenAddress,
+                tokenSymbol: order.tokenSymbol ?? null,
+                tokenInfo: order.tokenInfo,
+                entryPriceUsd,
+              });
+              if (floor) await createLimitOrder(floor);
+              deps.onOrdersChanged();
             } else {
               const input = buildStrategyTrailingSellOrderInputs({
                 config,

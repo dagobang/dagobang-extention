@@ -395,6 +395,8 @@ export type LimitOrder = {
   status: LimitOrderStatus;
   txHash?: `0x${string}`;
   lastError?: string;
+  retryCount?: number;
+  retryAtMs?: number;
   tokenInfo?: TokenInfo;
 };
 
