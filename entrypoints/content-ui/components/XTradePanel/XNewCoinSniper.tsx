@@ -11,6 +11,7 @@ import { XSniperHistoryView } from './XSniperHistoryView';
 import { XSniperFilterSection } from './XSniperFilterSection';
 import { XSniperRapidSection } from './XSniperRapidSection';
 import { XSniperWsConfirmSection } from './XSniperWsConfirmSection';
+import { PLATFORM_OPTIONS } from '@/constants/launchpad';
 
 type XNewCoinSniperContentProps = {
   siteInfo: SiteInfo | null;
@@ -27,6 +28,14 @@ type NewCoinHistoryGroup = {
   children: NewCoinSniperOrderRecord[];
 };
 
+const normalizePlatforms = (input: unknown): string[] => {
+  const raw = Array.isArray(input) ? input : [];
+  const list = raw
+    .map((x) => String(x).trim().toLowerCase())
+    .filter((x) => PLATFORM_OPTIONS.some((p) => p.value === x));
+  return list.length ? Array.from(new Set(list)) : PLATFORM_OPTIONS.map((x) => x.value);
+};
+
 const normalizeNewCoinStrategy = (input: unknown): AutoTradeNewCoinSnipeConfig => {
   const base = defaultSettings().autoTrade.newCoinSnipe as AutoTradeNewCoinSnipeConfig;
   const merged = {
@@ -36,6 +45,7 @@ const normalizeNewCoinStrategy = (input: unknown): AutoTradeNewCoinSnipeConfig =
   return {
     ...merged,
     signalSources: normalizeSources((merged as any).signalSources),
+    platforms: normalizePlatforms((merged as any).platforms),
   };
 };
 
@@ -232,6 +242,7 @@ export function XNewCoinSniperContent({
       const nextNewCoin = {
         ...nextDraft,
         signalSources: normalizeSources((nextDraft as any).signalSources),
+        platforms: normalizePlatforms((nextDraft as any).platforms),
       };
       const nextSettings: Settings = {
         ...resolvedSettings,
@@ -392,6 +403,8 @@ export function XNewCoinSniperContent({
             tt={tt}
             onToggle={() => toggleConfigSection('filter')}
             updateTwitterSnipe={updateDraft}
+            showTweetAge={false}
+            platformOptions={[...PLATFORM_OPTIONS]}
           />
           <XSniperWsConfirmSection
             open={configSectionOpen.wsConfirm}

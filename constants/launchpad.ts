@@ -1,8 +1,18 @@
 import { ChainId } from "./chains";
 
 export const SUPPORTED_LAUNCHPADS: Partial<Record<ChainId, string[]>> = ({
-    [ChainId.BNB]: ["fourmeme", "bn_fourmeme", "fourmeme_agent", "four_xmode_agent", "flap"],
+    [ChainId.BNB]: ["fourmeme", "fourmeme_agent", "bn_fourmeme", "four_xmode_agent", "flap"],
 });
+
+
+export const PLATFORM_OPTIONS = [
+    { value: 'fourmeme', label: 'Fourmeme' },
+    { value: 'fourmeme_agent', label: 'Fourmeme Agent' },
+    { value: 'bn_fourmeme', label: 'X Mode' },
+    { value: 'four_xmode_agent', label: 'X Mode Agent' },
+    { value: 'flap', label: 'Flap' },
+] as const;
+
 
 export function getSupportedLaunchpads(chainId: ChainId): readonly string[] {
     return SUPPORTED_LAUNCHPADS[chainId] ?? []

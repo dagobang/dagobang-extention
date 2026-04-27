@@ -364,6 +364,7 @@ const upsertUnifiedSignal = (signal: UnifiedTwitterSignal, cacheList?: UnifiedTw
 type TokenSnapshot = {
   tokenAddress: string;
   chain?: string;
+  launchpadPlatform?: string;
   tokenSymbol?: string;
   tokenName?: string;
   tokenLogo?: string;
@@ -402,6 +403,17 @@ const normalizePercentValue = (v: number | null | undefined): number | undefined
   return v;
 };
 
+const normalizeLaunchpadPlatform = (value: unknown): string | undefined => {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!raw) return undefined;
+  if (raw === 'fourmeme' || raw === 'fourmeme v2') return 'fourmeme';
+  if (raw === 'fourmeme_agent' || raw === 'fourmeme agent') return 'fourmeme_agent';
+  if (raw === 'bn_fourmeme' || raw === 'binance' || raw === 'bn fourmeme') return 'bn_fourmeme';
+  if (raw === 'four_xmode_agent' || raw === 'four xmode agent' || raw === 'xmode' || raw === 'x mode') return 'four_xmode_agent';
+  if (raw === 'flap' || raw === 'flap ai') return 'flap';
+  return raw;
+};
+
 const normalizeTokenKey = (addr: string) => addr.trim().toLowerCase();
 
 const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken[] => {
@@ -412,6 +424,7 @@ const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken
     return fromList.map((t) => ({
       tokenAddress: String(t.tokenAddress),
       chain: t.chain,
+      launchpadPlatform: normalizeLaunchpadPlatform((t as any).launchpadPlatform ?? (t as any).launchpad_platform ?? (t as any).platform),
       tokenSymbol: t.tokenSymbol,
       tokenName: t.tokenName,
       tokenLogo: t.tokenLogo,
@@ -443,6 +456,10 @@ const mergeTokenFields = (prev: UnifiedSignalToken, next: Partial<UnifiedSignalT
   return {
     ...prev,
     chain: pickNonEmptyString(next.chain, prev.chain),
+    launchpadPlatform: pickNonEmptyString(
+      normalizeLaunchpadPlatform((next as any).launchpadPlatform ?? (next as any).launchpad_platform ?? (next as any).platform),
+      normalizeLaunchpadPlatform((prev as any).launchpadPlatform ?? (prev as any).launchpad_platform ?? (prev as any).platform),
+    ),
     tokenSymbol: pickNonEmptyString(next.tokenSymbol, prev.tokenSymbol),
     tokenName: pickNonEmptyString(next.tokenName, prev.tokenName),
     tokenLogo: pickNonEmptyString(next.tokenLogo, prev.tokenLogo),
@@ -492,6 +509,7 @@ const upsertSignalToken = (
 
   const same =
     mergedWithTimes.chain === prev.chain &&
+    (mergedWithTimes as any).launchpadPlatform === (prev as any).launchpadPlatform &&
     mergedWithTimes.tokenSymbol === prev.tokenSymbol &&
     mergedWithTimes.tokenName === prev.tokenName &&
     mergedWithTimes.tokenLogo === prev.tokenLogo &&
@@ -525,6 +543,7 @@ const applySnapshotToSignal = (signal: UnifiedTwitterSignal, snapshot: TokenSnap
   const baseToken: UnifiedSignalToken = {
     tokenAddress: snapshot.tokenAddress,
     chain: snapshot.chain,
+    launchpadPlatform: snapshot.launchpadPlatform,
     tokenSymbol: snapshot.tokenSymbol,
     tokenName: snapshot.tokenName,
     tokenLogo: snapshot.tokenLogo,
@@ -576,6 +595,7 @@ const shouldForwardTwitterSignal = (signal: UnifiedTwitterSignal): boolean => si
 const snapshotToUnifiedToken = (snapshot: TokenSnapshot, now: number): UnifiedSignalToken => ({
   tokenAddress: snapshot.tokenAddress,
   chain: snapshot.chain,
+  launchpadPlatform: snapshot.launchpadPlatform,
   tokenSymbol: snapshot.tokenSymbol,
   tokenName: snapshot.tokenName,
   tokenLogo: snapshot.tokenLogo,
@@ -1311,6 +1331,16 @@ export function initGmgnWsMonitor(options: {
     const next: TokenSnapshot = {
       tokenAddress: addr,
       chain: pickNonEmptyString(tokenData?.chain, prev?.chain),
+      launchpadPlatform: pickNonEmptyString(
+        normalizeLaunchpadPlatform(
+          tokenData?.launchpadPlatform ??
+          tokenData?.launchpad_platform ??
+          tokenData?.platform ??
+          tokenData?.lp ??
+          tokenData?.protocol,
+        ),
+        prev?.launchpadPlatform,
+      ),
       tokenSymbol,
       tokenName,
       tokenLogo,

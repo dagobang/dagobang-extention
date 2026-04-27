@@ -105,7 +105,7 @@ export const shouldBuyByConfig = (
   config: any,
   signalAtMs?: number | null,
   orderAtMs?: number | null,
-  options?: { skipTokenCreatedAtWindowCheck?: boolean },
+  options?: { skipTokenCreatedAtWindowCheck?: boolean; skipTweetAgeWindowCheck?: boolean },
 ) => {
   if (!metrics || !config) return false;
   const marketCapUsd = sanitizeMarketCapUsd(metrics.marketCapUsd);
@@ -158,17 +158,20 @@ export const shouldBuyByConfig = (
     if (maxAgeSec != null && tokenDelayFromSignalMs > maxAgeSec * 1000) return false;
   }
 
-  const minTweetAgeSecRaw = parseNumber((config as any).minTweetAgeSeconds);
-  const maxTweetAgeSec = parseNumber((config as any).maxTweetAgeSeconds);
-  const minTweetAgeSec = minTweetAgeSecRaw ?? (maxTweetAgeSec != null ? 0 : null);
-  if (minTweetAgeSec != null || maxTweetAgeSec != null) {
-    const ref = normalizeEpochMs(signalAtMs);
-    const now = normalizeEpochMs(orderAtMs) ?? Date.now();
-    if (ref == null) return false;
-    const tweetAgeMs = now - ref;
-    if (tweetAgeMs < 0) return false;
-    if (minTweetAgeSec != null && tweetAgeMs < minTweetAgeSec * 1000) return false;
-    if (maxTweetAgeSec != null && tweetAgeMs > maxTweetAgeSec * 1000) return false;
+  const shouldCheckTweetAgeWindow = options?.skipTweetAgeWindowCheck !== true;
+  if (shouldCheckTweetAgeWindow) {
+    const minTweetAgeSecRaw = parseNumber((config as any).minTweetAgeSeconds);
+    const maxTweetAgeSec = parseNumber((config as any).maxTweetAgeSeconds);
+    const minTweetAgeSec = minTweetAgeSecRaw ?? (maxTweetAgeSec != null ? 0 : null);
+    if (minTweetAgeSec != null || maxTweetAgeSec != null) {
+      const ref = normalizeEpochMs(signalAtMs);
+      const now = normalizeEpochMs(orderAtMs) ?? Date.now();
+      if (ref == null) return false;
+      const tweetAgeMs = now - ref;
+      if (tweetAgeMs < 0) return false;
+      if (minTweetAgeSec != null && tweetAgeMs < minTweetAgeSec * 1000) return false;
+      if (maxTweetAgeSec != null && tweetAgeMs > maxTweetAgeSec * 1000) return false;
+    }
   }
 
   const minDevPct = parseNumber(config.minDevHoldPercent);

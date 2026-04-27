@@ -129,6 +129,7 @@ export type AutoTradeNewCoinSnipeConfig = Omit<
   | 'deleteTweetSoundPreset'
 > & {
   signalSources?: Array<'new_pool' | 'token_update'>;
+  platforms?: string[];
 };
 
 export type TokenSnipeTask = {
@@ -456,6 +457,7 @@ export type TxTimingMetrics = {
 export type UnifiedSignalToken = {
   tokenAddress: string;
   chain?: string;
+  launchpadPlatform?: string;
   tokenSymbol?: string;
   tokenName?: string;
   tokenLogo?: string;

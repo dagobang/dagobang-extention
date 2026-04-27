@@ -15,6 +15,7 @@ import { maybeUpdateNewCoinSniperHistoryEvaluations, pushNewCoinSniperHistory } 
 export const createNewCoinSniperTrade = (deps: {
   onStateChanged: () => void;
 }) => {
+  const DEFAULT_PLATFORM_FILTERS = ['fourmeme', 'fourmeme_agent', 'bn_fourmeme', 'four_xmode_agent'] as const;
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
   const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_new_coin_sniper_bought_once_v1';
 
@@ -251,9 +252,36 @@ export const createNewCoinSniperTrade = (deps: {
       ? (signal.tokens as UnifiedSignalToken[]).filter((t) => t && typeof t.tokenAddress === 'string' && t.tokenAddress.trim())
       : [];
 
+  const normalizePlatformFilters = (input: unknown): string[] => {
+    const raw = Array.isArray(input) ? input : [];
+    const list = raw
+      .map((x) => String(x).trim().toLowerCase())
+      .filter(Boolean);
+    return list.length ? Array.from(new Set(list)) : [...DEFAULT_PLATFORM_FILTERS];
+  };
+
+  const extractTokenPlatform = (token: UnifiedSignalToken): string => {
+    const raw = String(
+      (token as any).launchpadPlatform ??
+      (token as any).launchpad_platform ??
+      (token as any).platform ??
+      '',
+    )
+      .trim()
+      .toLowerCase();
+    if (!raw) return '';
+    if (raw === 'fourmeme v2') return 'fourmeme';
+    if (raw === 'fourmeme agent') return 'fourmeme_agent';
+    if (raw === 'bn fourmeme' || raw === 'binance') return 'bn_fourmeme';
+    if (raw === 'four xmode agent' || raw === 'xmode' || raw === 'x mode') return 'four_xmode_agent';
+    if (raw === 'flap ai') return 'flap';
+    return raw;
+  };
+
   const pickCandidates = (signal: UnifiedMarketSignal, strategy: any) => {
     const now = Date.now();
     const signalAtMs = typeof signal.ts === 'number' ? signal.ts : now;
+    const allowedPlatforms = normalizePlatformFilters(strategy?.platforms);
     const tokens = normalizeSignalTokens(signal);
     const unique: UnifiedSignalToken[] = [];
     const seen = new Set<string>();
@@ -268,11 +296,13 @@ export const createNewCoinSniperTrade = (deps: {
       .map((t) => {
         const m = metricsFromUnifiedToken(t);
         if (m?.tokenAddress) pushWsSnapshot(m.tokenAddress, m);
-        return { m };
+        return { t, m };
       })
       .filter((x) => {
         if (!x.m?.tokenAddress) return false;
-        if (!shouldBuyByConfig(x.m, strategy, signalAtMs, now)) return false;
+        const tokenPlatform = extractTokenPlatform(x.t);
+        if (!tokenPlatform || !allowedPlatforms.includes(tokenPlatform)) return false;
+        if (!shouldBuyByConfig(x.m, strategy, signalAtMs, now, { skipTweetAgeWindowCheck: true })) return false;
         const confirm = computeWsConfirm(x.m.tokenAddress, now, strategy);
         return confirm.pass;
       });

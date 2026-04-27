@@ -273,6 +273,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
     rapidTakeProfitBatchPct: '15',
     rapidTakeProfitFloorPct: '5',
     signalSources: ['new_pool', 'token_update'],
+    platforms: ['fourmeme', 'fourmeme_agent', 'bn_fourmeme', 'four_xmode_agent'],
   },
   tokenSnipe: {
     enabled: true,
