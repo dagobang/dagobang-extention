@@ -116,6 +116,7 @@ export const createLimitOrderExecutor = (deps: {
         chainId: order.chainId,
         tokenAddress: order.tokenAddress,
         bnbAmountWei: order.buyBnbAmountWei,
+        fromAddress: order.fromAddress,
         tokenInfo: order.tokenInfo,
       }, {
         maxRetry: 1,
@@ -150,7 +151,7 @@ export const createLimitOrderExecutor = (deps: {
           basePriceUsd,
         });
         for (const o of orders) {
-          await createLimitOrder(o);
+          await createLimitOrder({ ...o, fromAddress: order.fromAddress });
           created += 1;
         }
         const mode = (config as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
@@ -168,7 +169,7 @@ export const createLimitOrderExecutor = (deps: {
               entryPriceUsd,
             });
             if (rolling) {
-              await createLimitOrder(rolling);
+              await createLimitOrder({ ...rolling, fromAddress: order.fromAddress });
               created += 1;
             }
             const floor = buildStrategyRollingFloorOrderInputs({
@@ -180,7 +181,7 @@ export const createLimitOrderExecutor = (deps: {
               entryPriceUsd,
             });
             if (floor) {
-              await createLimitOrder(floor);
+              await createLimitOrder({ ...floor, fromAddress: order.fromAddress });
               created += 1;
             }
           } else {
@@ -193,7 +194,7 @@ export const createLimitOrderExecutor = (deps: {
               basePriceUsd,
             });
             if (trailing) {
-              await createLimitOrder(trailing);
+              await createLimitOrder({ ...trailing, fromAddress: order.fromAddress });
               created += 1;
             }
           }
@@ -205,7 +206,7 @@ export const createLimitOrderExecutor = (deps: {
       return txHash;
     }
 
-    const account = await WalletService.getSigner();
+    const account = await WalletService.getSigner(order.fromAddress);
     const client = await RpcService.getClient();
     const balance = await client.readContract({
       address: order.tokenAddress,
@@ -239,6 +240,7 @@ export const createLimitOrderExecutor = (deps: {
       chainId: order.chainId,
       tokenAddress: order.tokenAddress,
       tokenAmountWei: amountIn.toString(),
+      fromAddress: order.fromAddress,
       tokenInfo: order.tokenInfo,
       sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
     } as const;
@@ -280,7 +282,7 @@ export const createLimitOrderExecutor = (deps: {
           basePriceUsd,
           entryPriceUsd: Number.isFinite(entryPriceUsd) && entryPriceUsd > 0 ? entryPriceUsd : basePriceUsd,
         });
-        if (nextRolling) await createLimitOrder(nextRolling);
+        if (nextRolling) await createLimitOrder({ ...nextRolling, fromAddress: order.fromAddress });
 
         if (Number.isFinite(entryPriceUsd) && entryPriceUsd > 0) {
           const floor = buildStrategyRollingFloorOrderInputs({
@@ -291,7 +293,7 @@ export const createLimitOrderExecutor = (deps: {
             tokenInfo: order.tokenInfo,
             entryPriceUsd,
           });
-          if (floor) await createLimitOrder(floor);
+          if (floor) await createLimitOrder({ ...floor, fromAddress: order.fromAddress });
         }
         deps.onOrdersChanged();
       } else if (type === 'take_profit_sell' && percentBps > 0 && percentBps < 10000) {
@@ -305,6 +307,7 @@ export const createLimitOrderExecutor = (deps: {
           if (o.chainId !== order.chainId) return false;
           if (o.status !== 'open') return false;
           if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+          if ((o.fromAddress?.toLowerCase() ?? null) !== (order.fromAddress?.toLowerCase() ?? null)) return false;
           const ot = normalizeLimitOrderType(o.orderType, o.side);
           if (autoSellMode === 'rolling_take_profit') {
             return ot === 'take_profit_sell' && Number(o.rollingStepPercent) > 0;
@@ -319,6 +322,7 @@ export const createLimitOrderExecutor = (deps: {
               if (o.chainId !== order.chainId) return false;
               if (o.status !== 'open') return false;
               if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+              if ((o.fromAddress?.toLowerCase() ?? null) !== (order.fromAddress?.toLowerCase() ?? null)) return false;
               const ot = normalizeLimitOrderType(o.orderType, o.side);
               if (ot !== 'take_profit_sell' || Number(o.rollingStepPercent) > 0) return false;
               return o.triggerPriceUsd > order.triggerPriceUsd;
@@ -337,7 +341,7 @@ export const createLimitOrderExecutor = (deps: {
                 entryPriceUsd,
               });
               if (nextRolling) {
-                await createLimitOrder(nextRolling);
+                await createLimitOrder({ ...nextRolling, fromAddress: order.fromAddress });
               }
               const floor = buildStrategyRollingFloorOrderInputs({
                 config,
@@ -347,7 +351,7 @@ export const createLimitOrderExecutor = (deps: {
                 tokenInfo: order.tokenInfo,
                 entryPriceUsd,
               });
-              if (floor) await createLimitOrder(floor);
+              if (floor) await createLimitOrder({ ...floor, fromAddress: order.fromAddress });
               deps.onOrdersChanged();
             } else {
               const input = buildStrategyTrailingSellOrderInputs({
@@ -359,7 +363,7 @@ export const createLimitOrderExecutor = (deps: {
                 basePriceUsd,
               });
               if (input) {
-                await createLimitOrder(input);
+                await createLimitOrder({ ...input, fromAddress: order.fromAddress });
                 deps.onOrdersChanged();
               }
             }
@@ -371,7 +375,7 @@ export const createLimitOrderExecutor = (deps: {
 
     if (percentBps === 10000) {
       setTimeout(() => {
-        void cancelAllSellLimitOrdersForToken(order.chainId, order.tokenAddress);
+        void cancelAllSellLimitOrdersForToken(order.chainId, order.tokenAddress, order.fromAddress);
         deps.onOrdersChanged();
       }, 2000);
     }

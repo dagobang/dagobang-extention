@@ -276,6 +276,7 @@ export type Settings = {
   chains: Record<number, ChainSettings>;
   autoLockSeconds: number;
   lastSelectedAddress?: `0x${string}`;
+  selectedTradeWallets?: `0x${string}`[];
   locale: 'zh_CN' | 'zh_TW' | 'en';
   accountAliases?: Record<string, string>;
   toastPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
@@ -344,6 +345,7 @@ export type TxBuyInput = {
   chainId: number;
   tokenAddress: `0x${string}`;
   bnbAmountWei: string;
+  fromAddress?: `0x${string}`;
   poolFee?: number;
   slippageBps?: number;
   gasPreset?: GasPreset;
@@ -357,6 +359,7 @@ export type TxSellInput = {
   chainId: number;
   tokenAddress: `0x${string}`;
   tokenAmountWei: string;
+  fromAddress?: `0x${string}`;
   sellPercentBps?: number;
   expectedTokenInWei?: string;
   poolFee?: number;
@@ -377,6 +380,7 @@ export type LimitOrder = {
   id: string;
   chainId: number;
   tokenAddress: `0x${string}`;
+  fromAddress?: `0x${string}`;
   tokenSymbol?: string | null;
   side: LimitOrderSide;
   orderType?: LimitOrderType;
@@ -403,6 +407,7 @@ export type LimitOrder = {
 export type LimitOrderCreateInput = {
   chainId: number;
   tokenAddress: `0x${string}`;
+  fromAddress?: `0x${string}`;
   tokenSymbol?: string | null;
   side: LimitOrderSide;
   orderType?: LimitOrderType;
@@ -612,12 +617,12 @@ export type BgRequest =
   | { type: 'ai:generateLogo'; prompt: string; size?: string; apiKey: string }
   | { type: 'rpc:prewarm'; input?: { urls?: string[]; force?: boolean; timeoutMs?: number } }
   | { type: 'trade:prewarmTurbo'; input: { chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo } }
-  | { type: 'trade:refreshNonce'; input: { chainId: number } }
+  | { type: 'trade:refreshNonce'; input: { chainId: number; fromAddress?: `0x${string}` } }
   | { type: 'tx:buy'; input: TxBuyInput }
   | { type: 'tx:buyWithReceiptAuto'; input: TxBuyInput }
   | { type: 'tx:sell'; input: TxSellInput }
   | { type: 'tx:sellWithReceiptAuto'; input: TxSellInput }
-  | { type: 'tx:approve'; chainId: number; tokenAddress: `0x${string}`; spender: `0x${string}`; amountWei: string }
+  | { type: 'tx:approve'; chainId: number; tokenAddress: `0x${string}`; spender: `0x${string}`; amountWei: string; fromAddress?: `0x${string}` }
   | {
     type: 'tx:transferNative';
     fromAddress: `0x${string}`;
@@ -627,8 +632,8 @@ export type BgRequest =
     password: string;
   }
   | { type: 'tx:waitForReceipt'; hash: `0x${string}`; chainId: number }
-  | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
-  | { type: 'tx:checkSellAllowanceInsufficient'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo }
+  | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo; fromAddress?: `0x${string}` }
+  | { type: 'tx:checkSellAllowanceInsufficient'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo; fromAddress?: `0x${string}` }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
   | { type: 'telegram:test' }
   | { type: 'telegram:getStatus' }

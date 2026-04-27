@@ -692,7 +692,10 @@ export default defineBackground(() => {
               });
               if (isNonceLikeError(e)) {
                 try {
-                  const refreshedNonce = await TradeService.refreshNonce({ chainId: msg.input.chainId });
+                  const refreshedNonce = await TradeService.refreshNonce({
+                    chainId: msg.input.chainId,
+                    fromAddress: msg.input.fromAddress,
+                  });
                   console.info('[nonce.repair][buy.submit.retry]', {
                     chainId: msg.input.chainId,
                     token: msg.input.tokenAddress,
@@ -823,7 +826,10 @@ export default defineBackground(() => {
               });
               if (isNonceLikeError(e)) {
                 try {
-                  const refreshedNonce = await TradeService.refreshNonce({ chainId: msg.input.chainId });
+                  const refreshedNonce = await TradeService.refreshNonce({
+                    chainId: msg.input.chainId,
+                    fromAddress: msg.input.fromAddress,
+                  });
                   console.info('[nonce.repair][sell.submit.retry]', {
                     chainId: msg.input.chainId,
                     token: msg.input.tokenAddress,
@@ -946,19 +952,23 @@ export default defineBackground(() => {
           }
 
           case 'tx:approve': {
-            const txHash = await TradeService.approve(msg.chainId, msg.tokenAddress, msg.spender, msg.amountWei);
+            const txHash = await TradeService.approve(msg.chainId, msg.tokenAddress, msg.spender, msg.amountWei, msg.fromAddress);
             broadcastStateChange();
             return { ok: true, txHash };
           }
 
           case 'tx:approveMaxForSellIfNeeded': {
-            const txHash = await TradeService.approveMaxForSellIfNeeded(msg.chainId, msg.tokenAddress, msg.tokenInfo);
+            const txHash = await TradeService.approveMaxForSellIfNeeded(msg.chainId, msg.tokenAddress, msg.tokenInfo, {
+              fromAddress: msg.fromAddress,
+            });
             broadcastStateChange();
             return txHash ? { ok: true, txHash } : { ok: true };
           }
 
           case 'tx:checkSellAllowanceInsufficient': {
-            const check = await TradeService.checkSellAllowanceInsufficient(msg.chainId, msg.tokenAddress, msg.tokenInfo);
+            const check = await TradeService.checkSellAllowanceInsufficient(msg.chainId, msg.tokenAddress, msg.tokenInfo, {
+              fromAddress: msg.fromAddress,
+            });
             return { ok: true, insufficient: check.insufficient, checked: check.checked };
           }
 
@@ -1012,7 +1022,10 @@ export default defineBackground(() => {
                 if (tracked && !tracked.receiptRetried && isNonceLike) {
                   tracked.receiptRetried = true;
                   buyInputByTxHash.set(msg.hash, tracked);
-                  const refreshedNonce = await TradeService.refreshNonce({ chainId: tracked.input.chainId });
+                  const refreshedNonce = await TradeService.refreshNonce({
+                    chainId: tracked.input.chainId,
+                    fromAddress: tracked.input.fromAddress,
+                  });
                   console.info('[nonce.repair][buy.receipt.retry]', {
                     chainId: tracked.input.chainId,
                     oldTxHash: msg.hash,

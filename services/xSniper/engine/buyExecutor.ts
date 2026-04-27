@@ -317,6 +317,10 @@ export const tryAutoBuyOnce = async (input: {
       emitBuyFailure('wallet_locked', { buyAmountBnb: amountNumber, confirm });
       return false;
     }
+    const tradeFromAddress =
+      !dryRun && status.address
+        ? (String(status.address) as `0x${string}`)
+        : undefined;
 
     let settings: any = null;
     try {
@@ -496,6 +500,7 @@ export const tryAutoBuyOnce = async (input: {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         bnbAmountWei: amountWei.toString(),
+        fromAddress: tradeFromAddress,
         tokenInfo: tokenInfoForTrade,
       } as any, {
         maxRetry: 1,
@@ -638,8 +643,10 @@ export const tryAutoBuyOnce = async (input: {
 
     if (input.strategy?.autoSellEnabled && effectiveEntryPriceUsd != null && effectiveEntryPriceUsd > 0) {
       try {
-        await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfoForTrade);
-        await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
+        await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfoForTrade, {
+          fromAddress: tradeFromAddress,
+        });
+        await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress, tradeFromAddress);
         const cfg = (settings as any).advancedAutoSell;
         if (cfg?.enabled) {
           const orders = buildStrategySellOrderInputs({
@@ -673,7 +680,9 @@ export const tryAutoBuyOnce = async (input: {
               }))
             : null;
           const all = special ? [...orders, special] : orders;
-          if (all.length) await Promise.all(all.map((o) => createLimitOrder(o)));
+          if (all.length) {
+            await Promise.all(all.map((o) => createLimitOrder({ ...o, fromAddress: tradeFromAddress })));
+          }
         }
       } catch {
       }

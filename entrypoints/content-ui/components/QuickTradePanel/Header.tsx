@@ -1,7 +1,6 @@
 import {
   Pencil,
   X,
-  GripHorizontal,
   Check,
   LineChart,
   SatelliteDish,
@@ -13,6 +12,7 @@ import {
 import type { PointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
 import type { SiteInfo } from '@/utils/sites';
+import { WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
 
 type HeaderProps = {
   siteInfo: SiteInfo;
@@ -32,6 +32,11 @@ type HeaderProps = {
   reviewActive: boolean;
   keyboardShortcutsEnabled: boolean;
   onToggleKeyboardShortcuts: () => void;
+  walletSelectorVisible: boolean;
+  walletSelectorOpen: boolean;
+  walletSelectedCount: number;
+  walletTotalCount: number;
+  onToggleWalletSelector: () => void;
 };
 
 export function Header({
@@ -52,6 +57,11 @@ export function Header({
   reviewActive,
   keyboardShortcutsEnabled,
   onToggleKeyboardShortcuts,
+  walletSelectorVisible,
+  walletSelectorOpen,
+  walletSelectedCount,
+  walletTotalCount,
+  onToggleWalletSelector,
 }: HeaderProps) {
   return (
     <div
@@ -201,6 +211,14 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-2">
+        {walletSelectorVisible && (
+          <WalletSelectorTrigger
+            walletSelectorOpen={walletSelectorOpen}
+            walletSelectedCount={walletSelectedCount}
+            walletTotalCount={walletTotalCount}
+            onToggleWalletSelector={onToggleWalletSelector}
+          />
+        )}
         <X
           size={16}
           className="text-zinc-400 hover:text-red-400 cursor-pointer"

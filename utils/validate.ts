@@ -82,6 +82,10 @@ export function validateSettings(input: Settings): Settings | null {
   const defaults = defaultSettings();
   const chainId = 56;
   const autoLockSeconds = clampNumber(input.autoLockSeconds, 30, 3600, defaults.autoLockSeconds);
+  const selectedTradeWallets = Array.isArray((input as any).selectedTradeWallets)
+    ? ((input as any).selectedTradeWallets as unknown[])
+      .filter((v): v is `0x${string}` => typeof v === 'string' && /^0x[a-fA-F0-9]{40}$/.test(v))
+    : ((defaults as any).selectedTradeWallets ?? []);
   const limitOrderScanIntervalOptionsMs = [1000, 3000, 5000, 10000, 30000, 60000, 120000] as const;
   const inputLimitOrderScanIntervalMs = Number((input as any).limitOrderScanIntervalMs);
   const limitOrderScanIntervalMs = Number.isFinite(inputLimitOrderScanIntervalMs) && limitOrderScanIntervalOptionsMs.includes(Math.floor(inputLimitOrderScanIntervalMs) as any)
@@ -668,6 +672,7 @@ export function validateSettings(input: Settings): Settings | null {
     chains,
     autoLockSeconds,
     lastSelectedAddress: input.lastSelectedAddress,
+    selectedTradeWallets,
     locale,
     accountAliases,
     toastPosition,

@@ -606,6 +606,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                 chainId: task.chain,
                 tokenAddress: task.tokenAddress,
                 bnbAmountWei: amountWei,
+                fromAddress: pluginWalletAddress ? (pluginWalletAddress as `0x${string}`) : undefined,
                 gasPriceGwei: typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() : undefined,
                 priorityFeeBnb: typeof task.buyBribeBnb === 'string' ? String(task.buyBribeBnb).trim() : undefined,
                 tokenInfo: tokenInfo as any,
@@ -730,8 +731,9 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                 null,
               );
               if (cfg?.enabled && entryPriceUsd != null && entryPriceUsd > 0) {
-                await TradeService.approveMaxForSellIfNeeded(task.chain, task.tokenAddress, tokenInfo);
-                await cancelAllSellLimitOrdersForToken(task.chain, task.tokenAddress);
+                const fromAddress = pluginWalletAddress ? (pluginWalletAddress as `0x${string}`) : undefined;
+                await TradeService.approveMaxForSellIfNeeded(task.chain, task.tokenAddress, tokenInfo, { fromAddress });
+                await cancelAllSellLimitOrdersForToken(task.chain, task.tokenAddress, fromAddress);
                 const orders = buildStrategySellOrderInputs({
                   config: cfg,
                   chainId: task.chain,
@@ -767,7 +769,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                   ? await (async () => {
                     const ids: string[] = [];
                     for (const item of allOrders) {
-                      const createdOrder = await createLimitOrder(item);
+                      const createdOrder = await createLimitOrder({ ...item, fromAddress });
                       const id = (createdOrder as any)?.id;
                       if (id) ids.push(String(id));
                     }

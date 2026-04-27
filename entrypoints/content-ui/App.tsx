@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { SatelliteDish } from 'lucide-react';
 import { parseEther, zeroAddress } from 'viem';
-import type { BgGetStateResponse, Settings, TradeSuccessSoundPreset } from '@/types/extention';
+import type { Account, BgGetStateResponse, Settings, TradeSuccessSoundPreset } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatBroadcastProvider } from '@/utils/format';
@@ -36,6 +36,34 @@ const DEFAULT_PRIORITY_FEE_PRESET_VALUES = {
   fast: '0.0001',
 } as const;
 
+function normalizeAddr(addr: string): `0x${string}` | null {
+  const trimmed = typeof addr === 'string' ? addr.trim() : '';
+  if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return null;
+  return trimmed as `0x${string}`;
+}
+
+function resolveSelectedTradeWallets(
+  wallet: BgGetStateResponse['wallet'] | null | undefined,
+  settings: Settings | null | undefined
+): `0x${string}`[] {
+  if (!wallet?.isUnlocked) return [];
+  const allAccounts = Array.isArray(wallet.accounts) ? wallet.accounts : [];
+  const byLower = new Map<string, `0x${string}`>();
+  for (const acc of allAccounts) {
+    const normalized = normalizeAddr(String(acc.address || ''));
+    if (!normalized) continue;
+    byLower.set(normalized.toLowerCase(), normalized);
+  }
+  const selectedRaw = Array.isArray(settings?.selectedTradeWallets) ? settings!.selectedTradeWallets : [];
+  const picked = selectedRaw
+    .map((x) => byLower.get(String(x).toLowerCase()))
+    .filter(Boolean) as `0x${string}`[];
+  const deduped = Array.from(new Set(picked.map((x) => x.toLowerCase()))).map((x) => byLower.get(x)!).filter(Boolean);
+  if (deduped.length > 0) return deduped;
+  const fallback = normalizeAddr(String(wallet.address || ''));
+  return fallback ? [fallback] : [];
+}
+
 export default function App() {
   const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(() => parseCurrentUrl(window.location.href));
   const [busy, setBusy] = useState(false);
@@ -47,6 +75,8 @@ export default function App() {
   const [tokenSymbol, setTokenSymbol] = useState<string | null>(null);
   const [tokenBalanceWei, setTokenBalanceWei] = useState<string>('0');
   const [nativeBalanceWei, setNativeBalanceWei] = useState<string>('0');
+  const [walletNativeBalancesWei, setWalletNativeBalancesWei] = useState<Record<string, string>>({});
+  const [walletTokenBalancesWei, setWalletTokenBalancesWei] = useState<Record<string, string>>({});
   const [txHash, setTxHash] = useState<string | null>(null);
   const [pendingBuyTokenMinOutWei, setPendingBuyTokenMinOutWei] = useState<string | null>(null);
   const [minimized, setMinimized] = useState(false);
@@ -94,6 +124,11 @@ export default function App() {
   const isUnlocked = !!state?.wallet.isUnlocked;
   const settings: Settings | null = state?.settings ?? null;
   const address = state?.wallet.address ?? null;
+  const walletAccounts = (state?.wallet.accounts ?? []) as Account[];
+  const selectedTradeWallets = useMemo(
+    () => resolveSelectedTradeWallets(state?.wallet, settings),
+    [state?.wallet, settings]
+  );
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
   const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
@@ -576,11 +611,26 @@ export default function App() {
     const res = await call({ type: 'bg:getState' });
     setState(res);
     setError(null);
-    if (res.wallet.isUnlocked && res.wallet.address) {
-      const tokenBalanceWei = await TokenAPI.getBalance(siteInfo.platform, siteInfo.chain, res.wallet.address, zeroAddress, { cacheTtlMs: 2000 });
-      setNativeBalanceWei(tokenBalanceWei ?? '0');
+    if (res.wallet.isUnlocked) {
+      const allWallets = ((res.wallet.accounts ?? []) as Account[])
+        .map((acc) => normalizeAddr(String(acc.address || '')))
+        .filter(Boolean) as `0x${string}`[];
+      const allBalances = await Promise.all(
+        allWallets.map((addr) => TokenAPI.getBalance(siteInfo.platform, siteInfo.chain, addr, zeroAddress, { cacheTtlMs: 2000 }))
+      );
+      const byWallet: Record<string, string> = {};
+      allWallets.forEach((addr, i) => {
+        byWallet[addr.toLowerCase()] = typeof allBalances[i] === 'string' ? (allBalances[i] as string) : '0';
+      });
+      setWalletNativeBalancesWei(byWallet);
+
+      const selectedWallets = resolveSelectedTradeWallets(res.wallet, res.settings);
+      const total = selectedWallets.reduce((sum, addr) => sum + BigInt(byWallet[addr.toLowerCase()] || '0'), 0n);
+      setNativeBalanceWei(total.toString());
     } else {
       setNativeBalanceWei('0');
+      setWalletNativeBalancesWei({});
+      setWalletTokenBalancesWei({});
     }
   }
 
@@ -593,6 +643,7 @@ export default function App() {
       setTokenSymbol(null);
       setTokenDecimals(null);
       setTokenBalanceWei('0');
+      setWalletTokenBalancesWei({});
       setTokenStat(null);
       setTokenPriceUsd(null);
       setMarketCapDisplay(null);
@@ -624,14 +675,29 @@ export default function App() {
         }
       }
 
-      if (isUnlocked && address) {
-        const holding = await TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, address, tokenAddressNormalized, {
-          cacheTtlMs: tokenBalanceRefreshThrottleMs,
-        });
+      const allWalletsForToken = ((state?.wallet.accounts ?? []) as Account[])
+        .map((acc) => normalizeAddr(String(acc.address || '')))
+        .filter(Boolean) as `0x${string}`[];
+      if (isUnlocked && allWalletsForToken.length > 0) {
+        const holdings = await Promise.all(
+          allWalletsForToken.map((walletAddr) =>
+            TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, walletAddr, tokenAddressNormalized, {
+              cacheTtlMs: tokenBalanceRefreshThrottleMs,
+            })
+          )
+        );
         if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
-        setTokenBalanceWei(holding ?? '0');
+        const byWallet: Record<string, string> = {};
+        allWalletsForToken.forEach((addr, i) => {
+          byWallet[addr.toLowerCase()] = holdings[i] ?? '0';
+        });
+        setWalletTokenBalancesWei(byWallet);
+        const walletsForToken = resolveSelectedTradeWallets(state?.wallet, settings);
+        const total = walletsForToken.reduce((sum, addr) => sum + BigInt(byWallet[addr.toLowerCase()] || '0'), 0n);
+        setTokenBalanceWei(total.toString());
       } else {
         setTokenBalanceWei('0');
+        setWalletTokenBalancesWei({});
       }
 
       await refreshTokenPrice(force, meta ?? null);
@@ -640,6 +706,7 @@ export default function App() {
       setTokenSymbol(null);
       setTokenDecimals(null);
       setTokenBalanceWei('0');
+      setWalletTokenBalancesWei({});
       setTokenStat(null);
       setTokenPriceUsd(null);
       setMarketCapDisplay(null);
@@ -1067,9 +1134,12 @@ export default function App() {
     withBusy(async () => {
       if (!settings) throw new Error('Settings not ready');
       if (!tokenAddressNormalized) throw new Error('Invalid token');
+      const wallets = selectedTradeWallets;
+      if (wallets.length <= 0) throw new Error('No wallet selected');
       const amountIn = parseEther(amountStr);
       if (!amountIn) throw new Error('Invalid amount');
-      if (BigInt(nativeBalanceWei || '0') < amountIn) throw new Error('Insufficient balance');
+      const required = amountIn * BigInt(wallets.length);
+      if (BigInt(nativeBalanceWei || '0') < required) throw new Error('Insufficient balance');
       ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
       const flowToastId = getTradeToastId('buy', tokenAddressNormalized);
@@ -1077,37 +1147,58 @@ export default function App() {
       let buyLoadingClosed = false;
 
       const mainTrade = (async () => {
-        const buyInput = {
-          chainId: settings.chainId,
-          tokenAddress: tokenAddressNormalized,
-          bnbAmountWei: amountIn.toString(),
-          priorityFeeBnb: resolvePriorityFee('buy'),
-          tokenInfo: tokenInfo ?? undefined,
-        } as const;
-        const res = await call({
-          type: 'tx:buyWithReceiptAuto',
-          input: buyInput,
-        } as const);
-        if (!res.ok) {
-          const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
-          throw new Error(detail || 'Transaction failed');
+        const results = await Promise.allSettled(
+          wallets.map(async (walletAddress) => {
+            const buyInput = {
+              chainId: settings.chainId,
+              tokenAddress: tokenAddressNormalized,
+              bnbAmountWei: amountIn.toString(),
+              fromAddress: walletAddress,
+              priorityFeeBnb: resolvePriorityFee('buy'),
+              tokenInfo: tokenInfo ?? undefined,
+            } as const;
+            const res = await call({
+              type: 'tx:buyWithReceiptAuto',
+              input: buyInput,
+            } as const);
+            if (!res.ok) {
+              const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
+              throw new Error(detail || 'Transaction failed');
+            }
+            return { walletAddress, res };
+          })
+        );
+        const successes = results
+          .filter((item): item is PromiseFulfilledResult<{ walletAddress: `0x${string}`; res: any }> => item.status === 'fulfilled')
+          .map((item) => item.value);
+        const failures = results
+          .filter((item): item is PromiseRejectedResult => item.status === 'rejected')
+          .map((item) => String(item.reason?.message || item.reason || 'Transaction failed'));
+        if (successes.length <= 0) {
+          throw new Error(failures[0] || 'Transaction failed');
         }
-        const tokenMinOutWei = res.tokenMinOutWei ?? null;
-
-        setTxHash(res.txHash);
+        const first = successes[0].res;
+        const tokenMinOutWei = first.tokenMinOutWei ?? null;
+        setTxHash(first.txHash);
         setPendingBuyTokenMinOutWei(tokenMinOutWei);
-        const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl, res.isBundle);
-        const timing = formatTradeTiming(res);
-        toast.success(renderTradeSuccessToast({ side: 'buy', symbol: sym, provider, timing, stage: 'confirmed' }), { id: flowToastId, icon: '✅' });
+        toast.success(`买入成功 ${successes.length}/${wallets.length} 个钱包`, { id: flowToastId, icon: '✅' });
+        if (failures.length > 0) {
+          toast.error(`买入失败 ${failures.length} 个钱包`, { icon: '⚠️' });
+        }
         buyLoadingClosed = true;
 
         if (tokenInfo) {
-          void call({
-            type: 'tx:approveMaxForSellIfNeeded',
-            chainId: settings.chainId,
-            tokenAddress: tokenAddressNormalized,
-            tokenInfo: tokenInfo,
-          } as const).catch(() => { });
+          void Promise.allSettled(
+            successes.map(({ walletAddress }) =>
+              call({
+                type: 'tx:approveMaxForSellIfNeeded',
+                chainId: settings.chainId,
+                tokenAddress: tokenAddressNormalized,
+                tokenInfo: tokenInfo,
+                fromAddress: walletAddress,
+              } as const)
+            )
+          ).catch(() => { });
         }
 
         await Promise.all([refreshToken(true), refreshAll()]);
@@ -1162,13 +1253,18 @@ export default function App() {
           }
 
           if (!inputs.length) return;
-          for (const input of inputs) {
-            await call({
-              type: 'limitOrder:create',
-              input,
-            } as const);
+          for (const { walletAddress } of successes) {
+            for (const input of inputs) {
+              await call({
+                type: 'limitOrder:create',
+                input: {
+                  ...input,
+                  fromAddress: walletAddress,
+                },
+              } as const);
+            }
           }
-          toast.success(`已创建自动卖出挂单 ${inputs.length} 个`, { icon: '✅' });
+          toast.success(`已创建自动卖出挂单 ${inputs.length * successes.length} 个`, { icon: '✅' });
         } catch (e) {
           console.error('auto sell xsniper create orders failed', e);
         }
@@ -1205,21 +1301,14 @@ export default function App() {
     withBusy(async () => {
       if (!settings) throw new Error('Settings not ready');
       if (!tokenAddressNormalized) throw new Error('Invalid token');
+      const wallets = selectedTradeWallets;
+      if (wallets.length <= 0) throw new Error('No wallet selected');
 
       if (!tokenDecimals) return;
       const chainId = settings.chainId;
       const isTurbo = settings.chains[chainId]?.executionMode === 'turbo';
-      const bal = BigInt(tokenBalanceWei || '0');
-      if (!isTurbo) {
-        if (bal <= 0n) throw new Error('No balance');
-      }
-      let amountWei = bal > 0n ? (bal * BigInt(pct)) / 100n : 0n;
       const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
       const isInnerFourMeme = !!tokenInfo?.launchpad && (platform.includes('four')) && tokenInfo.launchpad_status !== 1;
-      if (!isTurbo && isInnerFourMeme && amountWei > 0n) {
-        amountWei = (amountWei / 1000000000n) * 1000000000n;
-      }
-      if (!isTurbo && amountWei <= 0n) throw new Error('Invalid amount');
 
       ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
@@ -1237,42 +1326,71 @@ export default function App() {
         ts: sellReqStartedAt,
       });
       const mainTrade = (async () => {
-        const sellInput = {
-          chainId,
-          tokenAddress: tokenAddressNormalized,
-          tokenAmountWei: isTurbo ? '0' : amountWei.toString(),
-          sellPercentBps: isTurbo ? percentBps : undefined,
-          expectedTokenInWei: isTurbo ? (pendingBuyTokenMinOutWei ?? undefined) : undefined,
-          priorityFeeBnb: resolvePriorityFee('sell'),
-          tokenInfo: tokenInfo ?? undefined
-        } as const;
-        const res = await call({
-          type: 'tx:sellWithReceiptAuto',
-          input: sellInput,
-        } as const);
+        const results = await Promise.allSettled(
+          wallets.map(async (walletAddress) => {
+            let tokenAmountWei = '0';
+            if (!isTurbo) {
+              const holding = await TokenAPI.getTokenHolding(siteInfo?.platform || 'gmgn', siteInfo?.chain || String(chainId), walletAddress, tokenAddressNormalized, {
+                cacheTtlMs: 0,
+              });
+              const bal = BigInt(holding || '0');
+              if (bal <= 0n) throw new Error('No balance');
+              let amountWei = (bal * BigInt(pct)) / 100n;
+              if (isInnerFourMeme && amountWei > 0n) amountWei = (amountWei / 1000000000n) * 1000000000n;
+              if (amountWei <= 0n) throw new Error('Invalid amount');
+              tokenAmountWei = amountWei.toString();
+            }
+            const sellInput = {
+              chainId,
+              tokenAddress: tokenAddressNormalized,
+              tokenAmountWei: isTurbo ? '0' : tokenAmountWei,
+              sellPercentBps: isTurbo ? percentBps : undefined,
+              expectedTokenInWei: isTurbo ? (pendingBuyTokenMinOutWei ?? undefined) : undefined,
+              fromAddress: walletAddress,
+              priorityFeeBnb: resolvePriorityFee('sell'),
+              tokenInfo: tokenInfo ?? undefined
+            } as const;
+            const res = await call({
+              type: 'tx:sellWithReceiptAuto',
+              input: sellInput,
+            } as const);
+            if (!res.ok) {
+              const detail = res.revertReason || res.error?.shortMessage || res.error?.message || 'Transaction failed';
+              throw new Error(detail);
+            }
+            return { walletAddress, res };
+          })
+        );
+        const successes = results
+          .filter((item): item is PromiseFulfilledResult<{ walletAddress: `0x${string}`; res: any }> => item.status === 'fulfilled')
+          .map((item) => item.value);
+        const failures = results
+          .filter((item): item is PromiseRejectedResult => item.status === 'rejected')
+          .map((item) => String(item.reason?.message || item.reason || 'Transaction failed'));
         console.log('[ui.sell.auto][request.response]', {
           chainId,
           token: tokenAddressNormalized,
-          ok: !!res?.ok,
+          ok: successes.length > 0,
+          successCount: successes.length,
+          totalWallets: wallets.length,
           elapsedMs: Date.now() - sellReqStartedAt,
           ts: Date.now(),
         });
-        if (!res.ok) {
-          const detail = res.revertReason || res.error?.shortMessage || res.error?.message || 'Transaction failed';
-          throw new Error(detail);
+        if (successes.length <= 0) {
+          throw new Error(failures[0] || 'Transaction failed');
         }
-
-        setTxHash(res.txHash);
-        const provider = formatBroadcastProvider(res.broadcastVia, res.broadcastUrl, res.isBundle);
-        const timing = formatTradeTiming(res);
-        toast.success(renderTradeSuccessToast({ side: 'sell', symbol: sym, provider, timing, stage: 'confirmed' }), { id: flowToastId, icon: '✅' });
+        setTxHash(successes[0].res.txHash);
+        toast.success(`卖出成功 ${successes.length}/${wallets.length} 个钱包`, { id: flowToastId, icon: '✅' });
+        if (failures.length > 0) {
+          toast.error(`卖出失败 ${failures.length} 个钱包`, { icon: '⚠️' });
+        }
         sellLoadingClosed = true;
         await Promise.all([refreshToken(true), refreshAll()]);
         startFastPolling();
         setPendingBuyTokenMinOutWei(null);
 
         // Cancel limit order if exists
-        if (percentBps === 10000) {
+        if (percentBps === 10000 && successes.length > 0) {
           await call({ type: 'limitOrder:cancelAll', chainId, tokenAddress: tokenAddressNormalized } as const);
         }
       })().catch((e: any) => {
@@ -1288,13 +1406,14 @@ export default function App() {
       });
 
       let gmgnTrade: Promise<unknown> | null = null;
-      if (gmgnSellEnabled && siteInfo?.platform === 'gmgn' && amountWei > 0n) {
+      const gmgnAmountWei = ((BigInt(tokenBalanceWei || '0') * BigInt(pct)) / 100n).toString();
+      if (gmgnSellEnabled && siteInfo?.platform === 'gmgn' && BigInt(gmgnAmountWei) > 0n) {
         gmgnTrade = (async () => {
           try {
             await new Promise((resolve) => setTimeout(resolve, 200));
             await GmgnAPI.sellToken({
               tokenAddress: tokenAddressNormalized,
-              amount: amountWei.toString(),
+              amount: gmgnAmountWei,
             });
           } catch (e) {
             console.error('GMGN sell failed', e);
@@ -1323,16 +1442,27 @@ export default function App() {
       if (!settings) throw new Error('Settings not ready');
       if (!tokenAddressNormalized) throw new Error('Invalid token');
       if (!tokenInfo) throw new Error('Token info required');
-      const res = await call({
-        type: 'tx:approveMaxForSellIfNeeded',
-        chainId: settings.chainId,
-        tokenAddress: tokenAddressNormalized,
-        tokenInfo,
-      } as const);
-      if (res.txHash) {
-        setTxHash(res.txHash);
+      const wallets = selectedTradeWallets;
+      if (wallets.length <= 0) throw new Error('No wallet selected');
+      const results = await Promise.allSettled(
+        wallets.map((walletAddress) =>
+          call({
+            type: 'tx:approveMaxForSellIfNeeded',
+            chainId: settings.chainId,
+            tokenAddress: tokenAddressNormalized,
+            tokenInfo,
+            fromAddress: walletAddress,
+          } as const)
+        )
+      );
+      const successes = results
+        .filter((item): item is PromiseFulfilledResult<any> => item.status === 'fulfilled')
+        .map((item) => item.value)
+        .filter((res) => !!res?.txHash);
+      if (successes[0]?.txHash) {
+        setTxHash(successes[0].txHash);
       }
-      toast.success(t('contentUi.toast.approveSubmitted', locale, [tokenSymbol ?? '']), { icon: '✅' });
+      toast.success(`授权已提交 ${successes.length}/${wallets.length} 个钱包`, { icon: '✅' });
 
       // Trigger immediate refresh and start fast polling
       await Promise.all([refreshToken(true), refreshAll()]);
@@ -1523,6 +1653,36 @@ export default function App() {
     void call({ type: 'settings:set', settings: { ...settings, advancedAutoSell: next } } as const).then(() => refreshAll());
   };
 
+  const handleToggleTradeWallet = (walletAddress: `0x${string}`) => {
+    if (!settings || !state?.wallet) return;
+    const allAccounts = (state.wallet.accounts ?? []) as Account[];
+    const lowerToCanonical = new Map<string, `0x${string}`>();
+    for (const acc of allAccounts) {
+      const normalized = normalizeAddr(String(acc.address || ''));
+      if (!normalized) continue;
+      lowerToCanonical.set(normalized.toLowerCase(), normalized);
+    }
+    const targetLower = walletAddress.toLowerCase();
+    if (!lowerToCanonical.has(targetLower)) return;
+    const current = new Set(selectedTradeWallets.map((x) => x.toLowerCase()));
+    if (current.has(targetLower)) current.delete(targetLower);
+    else current.add(targetLower);
+    if (current.size === 0) {
+      const fallback = normalizeAddr(String(state.wallet.address || ''));
+      if (fallback) current.add(fallback.toLowerCase());
+    }
+    const nextSelected = Array.from(current)
+      .map((x) => lowerToCanonical.get(x))
+      .filter(Boolean) as `0x${string}`[];
+    void call({
+      type: 'settings:set',
+      settings: {
+        ...settings,
+        selectedTradeWallets: nextSelected,
+      },
+    } as const).then(() => refreshAll());
+  };
+
   const handleUnlock = () => {
     call({ type: 'bg:openPopup' });
   };
@@ -1622,6 +1782,13 @@ export default function App() {
               reviewActive={showReviewPanel}
               keyboardShortcutsEnabled={keyboardShortcutsEnabled}
               onToggleKeyboardShortcuts={handleToggleKeyboardShortcuts}
+              walletAccounts={walletAccounts}
+              activeWalletAddress={address as `0x${string}` | null}
+              selectedTradeWallets={selectedTradeWallets}
+              onToggleTradeWallet={handleToggleTradeWallet}
+              walletNativeBalancesWei={walletNativeBalancesWei}
+              walletTokenBalancesWei={walletTokenBalancesWei}
+              tokenDecimals={tokenDecimals}
               formattedNativeBalance={formattedNativeBalance}
               busy={busy}
               isUnlocked={isUnlocked}
@@ -1662,6 +1829,13 @@ export default function App() {
             settings={settings}
             isUnlocked={isUnlocked}
             address={address}
+            walletAccounts={walletAccounts}
+            activeWalletAddress={address as `0x${string}` | null}
+            selectedTradeWallets={selectedTradeWallets}
+            onToggleTradeWallet={handleToggleTradeWallet}
+            walletNativeBalancesWei={walletNativeBalancesWei}
+            walletTokenBalancesWei={walletTokenBalancesWei}
+            tokenDecimals={tokenDecimals}
             formattedNativeBalance={formattedNativeBalance}
             formattedTokenBalance={formattedTokenBalance}
             tokenSymbol={tokenSymbol}

@@ -1,7 +1,8 @@
 import { browser } from 'wxt/browser';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { parseEther, formatEther, formatUnits } from 'viem';
-import type { Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
+import { Wallet } from 'lucide-react';
+import type { Account, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
@@ -9,7 +10,14 @@ import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
 import { formatPriceValue, parseNumberLoose, formatTime } from '@/utils/format';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
-import { navigateToUrl, parsePlatformTokenLink } from '@/utils/sites';
+import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
+import { WalletSelectorDropdown, WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
+
+const normalizeWalletAddr = (addr?: string | null): `0x${string}` | null => {
+  const raw = typeof addr === 'string' ? addr.trim() : '';
+  if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) return null;
+  return raw as `0x${string}`;
+};
 
 type LimitTradePanelProps = {
   siteInfo: SiteInfo;
@@ -18,6 +26,13 @@ type LimitTradePanelProps = {
   settings: Settings | null;
   isUnlocked: boolean;
   address: string | null;
+  walletAccounts: Account[];
+  activeWalletAddress: `0x${string}` | null;
+  selectedTradeWallets: `0x${string}`[];
+  onToggleTradeWallet: (address: `0x${string}`) => void;
+  walletNativeBalancesWei: Record<string, string>;
+  walletTokenBalancesWei: Record<string, string>;
+  tokenDecimals: number | null;
   tokenPrice?: number | null;
   formattedNativeBalance: string;
   formattedTokenBalance: string;
@@ -33,6 +48,13 @@ export function LimitTradePanel({
   settings,
   isUnlocked,
   address,
+  walletAccounts,
+  activeWalletAddress,
+  selectedTradeWallets,
+  onToggleTradeWallet,
+  walletNativeBalancesWei,
+  walletTokenBalancesWei,
+  tokenDecimals,
   tokenPrice,
   formattedNativeBalance,
   formattedTokenBalance,
@@ -63,6 +85,7 @@ export function LimitTradePanel({
   });
   const posRef = useRef(pos);
   const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
+  const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
 
   useEffect(() => {
     posRef.current = pos;
@@ -169,6 +192,19 @@ export function LimitTradePanel({
   })();
 
   const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : tt('contentUi.autotrade.walletNotConnected');
+  const walletSelectorVisible = isUnlocked && walletAccounts.length > 0;
+  const selectedWalletCount = selectedTradeWallets.length;
+  const getWalletName = (addr?: string | null) => {
+    const normalized = normalizeWalletAddr(addr);
+    if (!normalized) return 'Wallet';
+    const hit = walletAccounts.find((acc) => acc.address.toLowerCase() === normalized.toLowerCase());
+    return hit?.name || 'Wallet';
+  };
+  const getWalletDisplayName = (addr?: string | null) => {
+    const normalized = normalizeWalletAddr(addr);
+    if (!normalized) return tt('contentUi.autotrade.walletNotConnected');
+    return `${getWalletName(normalized)} ${normalized.slice(0, 6)}...${normalized.slice(-4)}`;
+  };
 
   const formatPrice4 = (value: number, emptyOnInvalid = false) => {
     const s = formatPriceValue(value, 4, 4);
@@ -664,9 +700,9 @@ export function LimitTradePanel({
 
   const buyTrigger = parsePositiveNumber(buyPrice);
   const sellTrigger = parsePositiveNumber(sellPrice);
-  const buyCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || !buyAmount || buyTrigger == null;
+  const buyCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || !buyAmount || buyTrigger == null || selectedWalletCount <= 0;
   const sellBps = toPercentBps(sellPercent);
-  const sellCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || sellBps == null || sellTrigger == null;
+  const sellCreateDisabled = !settings || !isUnlocked || !tokenAddress || !tokenInfo || sellBps == null || sellTrigger == null || selectedWalletCount <= 0;
   const isCompactLayout = panelLayout === 'compact';
   const togglePriceDisplayMode = () => {
     setPriceDisplayMode((v) => (v === 'price' ? 'marketCap' : 'price'));
@@ -692,6 +728,7 @@ export function LimitTradePanel({
               const input: LimitOrderCreateInput = {
                 chainId: o.chainId,
                 tokenAddress: o.tokenAddress,
+                fromAddress: o.fromAddress,
                 tokenSymbol: o.tokenSymbol ?? null,
                 side: o.side,
                 orderType: normalizeOrderType(o),
@@ -737,7 +774,7 @@ export function LimitTradePanel({
       className="fixed z-[2147483647]"
       style={{ left: pos.x, top: pos.y }}
     >
-      <div className="max-w-[92vw] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/40 text-[12px]" style={{ width: panelWidth }}>
+      <div className="relative max-w-[92vw] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/40 text-[12px]" style={{ width: panelWidth }}>
         <div
           className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 cursor-grab"
           onPointerDown={(e) => {
@@ -754,6 +791,14 @@ export function LimitTradePanel({
             <div className="text-[10px] text-zinc-500">{statusText} · {shortAddress}</div>
           </div>
           <div className="flex items-center gap-2">
+            {walletSelectorVisible ? (
+              <WalletSelectorTrigger
+                walletSelectorOpen={walletSelectorOpen}
+                walletSelectedCount={selectedWalletCount}
+                walletTotalCount={walletAccounts.length}
+                onToggleWalletSelector={() => setWalletSelectorOpen((v) => !v)}
+              />
+            ) : null}
             <div className="inline-flex rounded border border-zinc-700 overflow-hidden text-[11px]">
               <button
                 type="button"
@@ -885,20 +930,24 @@ export function LimitTradePanel({
                     ensureTradeSuccessAudioReady();
                     const trigger = parsePositiveNumber(buyPrice);
                     if (trigger == null) return;
+                    if (selectedTradeWallets.length <= 0) return;
                     const amountWei = parseEther(buyAmount).toString();
-                    await call({
-                      type: 'limitOrder:create',
-                      input: {
-                        chainId,
-                        tokenAddress,
-                        tokenSymbol,
-                        side: 'buy',
-                        orderType: buyOrderType,
-                        triggerPriceUsd: trigger,
-                        buyBnbAmountWei: amountWei,
-                        tokenInfo,
-                      },
-                    });
+                    for (const walletAddress of selectedTradeWallets) {
+                      await call({
+                        type: 'limitOrder:create',
+                        input: {
+                          chainId,
+                          tokenAddress,
+                          tokenSymbol,
+                          side: 'buy',
+                          orderType: buyOrderType,
+                          triggerPriceUsd: trigger,
+                          buyBnbAmountWei: amountWei,
+                          tokenInfo,
+                          fromAddress: walletAddress,
+                        },
+                      });
+                    }
                     setBuyAmount('');
                     await refreshOrders();
                   }}
@@ -992,19 +1041,23 @@ export function LimitTradePanel({
                       const trigger = parsePositiveNumber(sellPrice);
                       const bps = toPercentBps(sellPercent);
                       if (trigger == null || bps == null) return;
-                      await call({
-                        type: 'limitOrder:create',
-                        input: {
-                          chainId,
-                          tokenAddress,
-                          tokenSymbol,
-                          side: 'sell',
-                          orderType: sellOrderType,
-                          triggerPriceUsd: trigger,
-                          sellPercentBps: bps,
-                          tokenInfo,
-                        },
-                      });
+                      if (selectedTradeWallets.length <= 0) return;
+                      for (const walletAddress of selectedTradeWallets) {
+                        await call({
+                          type: 'limitOrder:create',
+                          input: {
+                            chainId,
+                            tokenAddress,
+                            tokenSymbol,
+                            side: 'sell',
+                            orderType: sellOrderType,
+                            triggerPriceUsd: trigger,
+                            sellPercentBps: bps,
+                            tokenInfo,
+                            fromAddress: walletAddress,
+                          },
+                        });
+                      }
                       setSellPercent('');
                       await refreshOrders();
                     }}
@@ -1206,7 +1259,7 @@ export function LimitTradePanel({
                         ].join(' ')}
                       >
                         <div className="flex items-center justify-between gap-2 min-w-0">
-                          <div className="min-w-0 flex items-center gap-1">
+                          <div className="min-w-0">
                             <button
                               type="button"
                               className="font-semibold truncate hover:underline text-zinc-100"
@@ -1215,11 +1268,19 @@ export function LimitTradePanel({
                             >
                               {o.tokenSymbol || tt('contentUi.common.token')}
                             </button>
-                            <span className="text-[10px] text-zinc-500 truncate">
-                              {o.tokenAddress.slice(0, 6)}...{o.tokenAddress.slice(-4)}
-                            </span>
                           </div>
                           {renderOrderActions(o, true)}
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-zinc-500 min-w-0 flex-wrap">
+                          <span className="truncate">{o.tokenAddress.slice(0, 6)}...{o.tokenAddress.slice(-4)}</span>
+                          {o.fromAddress ? (
+                            <span className="inline-flex items-center gap-1 rounded border border-zinc-700/80 bg-zinc-900/70 px-1 py-0.5 text-[9px] text-zinc-300 max-w-full">
+                              <Wallet size={9} className="shrink-0 text-zinc-400" />
+                              <span className="truncate" title={getWalletDisplayName(o.fromAddress)}>
+                                {getWalletName(o.fromAddress)} · {o.fromAddress.slice(0, 6)}...{o.fromAddress.slice(-4)}
+                              </span>
+                            </span>
+                          ) : null}
                         </div>
                         <div className="flex items-start justify-between gap-2 min-w-0">
                           <div className="min-w-0 leading-tight">
@@ -1292,7 +1353,7 @@ export function LimitTradePanel({
                 </>
               ) : (
                 <>
-                  <div className="grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
+                  <div className="grid grid-cols-[minmax(0,2.8fr)_minmax(0,1.5fr)_minmax(0,1.3fr)_minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_minmax(0,0.6fr)] gap-2 text-zinc-400 border-b border-zinc-800 py-1 sticky top-0 bg-[#0F0F11]">
                     <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.token')}</div>
                     <div className="font-medium truncate">{tt('contentUi.limitTradePanel.table.type')}</div>
                     <button
@@ -1316,7 +1377,7 @@ export function LimitTradePanel({
                       <div
                         key={o.id}
                         className={[
-                          'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.5fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.55fr)] gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
+                          'grid grid-cols-[minmax(0,2.8fr)_minmax(0,1.5fr)_minmax(0,1.3fr)_minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_minmax(0,0.6fr)] gap-2 items-center border-b border-zinc-900 last:border-b-0 py-1',
                           o.status === 'executed' ? 'bg-emerald-500/5' : '',
                           o.status === 'failed' ? 'bg-rose-500/5' : '',
                         ].join(' ')}
@@ -1331,9 +1392,17 @@ export function LimitTradePanel({
                             >
                               {o.tokenSymbol || tt('contentUi.common.token')}
                             </button>
-                            <span className="text-[10px] text-zinc-500 truncate">
-                              {o.tokenAddress.slice(0, 6)}...{o.tokenAddress.slice(-4)}
-                            </span>
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-1 text-[10px] text-zinc-500 min-w-0">
+                            <span className="truncate">{o.tokenAddress.slice(0, 6)}...{o.tokenAddress.slice(-4)}</span>
+                            {o.fromAddress ? (
+                              <span className="inline-flex max-w-full items-center gap-1 rounded border border-zinc-700/80 bg-zinc-900/70 px-1 py-0.5 text-[10px] text-zinc-300">
+                                <Wallet size={10} className="shrink-0 text-zinc-400" />
+                                <span className="truncate" title={getWalletDisplayName(o.fromAddress)}>
+                                  {getWalletName(o.fromAddress)} · {o.fromAddress.slice(0, 6)}...{o.fromAddress.slice(-4)}
+                                </span>
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                         <div className="min-w-0">
@@ -1417,6 +1486,20 @@ export function LimitTradePanel({
             </div>
           </div>
         </div>
+        {walletSelectorVisible && (
+          <WalletSelectorDropdown
+            open={walletSelectorOpen}
+            selectedTradeWallets={selectedTradeWallets}
+            walletAccounts={walletAccounts}
+            activeWalletAddress={activeWalletAddress}
+            onToggleTradeWallet={onToggleTradeWallet}
+            walletNativeBalancesWei={walletNativeBalancesWei}
+            walletTokenBalancesWei={walletTokenBalancesWei}
+            tokenDecimals={tokenDecimals}
+            className="absolute right-3 top-11 z-30 w-[340px] rounded-lg border border-zinc-700 bg-[#141416] p-2 shadow-xl"
+            onRequestClose={() => setWalletSelectorOpen(false)}
+          />
+        )}
       </div>
     </div>
   );

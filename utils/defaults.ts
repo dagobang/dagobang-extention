@@ -309,6 +309,7 @@ export function defaultSettings(): Settings {
       56: BSC_MAINNET,
     },
     autoLockSeconds: 30 * 60, // 30 minutes
+    selectedTradeWallets: [],
     locale: 'zh_CN',
     accountAliases: {},
     toastPosition: 'top-center',

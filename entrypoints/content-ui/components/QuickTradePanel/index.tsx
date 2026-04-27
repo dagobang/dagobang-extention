@@ -1,5 +1,5 @@
-import type { PointerEvent as ReactPointerEvent } from 'react';
-import type { Settings } from '@/types/extention';
+import { useState, type PointerEvent as ReactPointerEvent } from 'react';
+import type { Account, Settings } from '@/types/extention';
 import type { SiteInfo } from '@/utils/sites';
 import type { Locale } from '@/utils/i18n';
 import { Header } from './Header';
@@ -7,6 +7,7 @@ import { BuySection } from './BuySection';
 import { SellSection } from './SellSection';
 import { Overlays } from './Overlays';
 import { Logo } from '@/components/Logo';
+import { WalletSelectorDropdown } from '@/entrypoints/content-ui/components/WalletSelector';
 
 type QuickTradePanelProps = {
   minimized: boolean;
@@ -59,6 +60,13 @@ type QuickTradePanelProps = {
   onApprove: () => void;
   siteInfo: SiteInfo;
   onUnlock: () => void;
+  walletAccounts: Account[];
+  activeWalletAddress: `0x${string}` | null;
+  selectedTradeWallets: `0x${string}`[];
+  onToggleTradeWallet: (address: `0x${string}`) => void;
+  walletNativeBalancesWei: Record<string, string>;
+  walletTokenBalancesWei: Record<string, string>;
+  tokenDecimals: number | null;
 };
 
 export function QuickTradePanel({
@@ -112,7 +120,18 @@ export function QuickTradePanel({
   onApprove,
   siteInfo,
   onUnlock,
+  walletAccounts,
+  activeWalletAddress,
+  selectedTradeWallets,
+  onToggleTradeWallet,
+  walletNativeBalancesWei,
+  walletTokenBalancesWei,
+  tokenDecimals,
 }: QuickTradePanelProps) {
+  const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
+
+  const walletSelectorVisible = isUnlocked && walletAccounts.length > 0;
+
   if (minimized) {
     return (
       <div
@@ -149,9 +168,27 @@ export function QuickTradePanel({
         reviewActive={reviewActive}
         keyboardShortcutsEnabled={keyboardShortcutsEnabled}
         onToggleKeyboardShortcuts={onToggleKeyboardShortcuts}
+        walletSelectorVisible={walletSelectorVisible}
+        walletSelectorOpen={walletSelectorOpen}
+        walletSelectedCount={selectedTradeWallets.length}
+        walletTotalCount={walletAccounts.length}
+        onToggleWalletSelector={() => setWalletSelectorOpen((v) => !v)}
       />
       {!siteInfo.showBar && (
         <div className="relative flex flex-col">
+          {walletSelectorVisible && (
+            <WalletSelectorDropdown
+              open={walletSelectorOpen}
+              selectedTradeWallets={selectedTradeWallets}
+              walletAccounts={walletAccounts}
+              activeWalletAddress={activeWalletAddress}
+              onToggleTradeWallet={onToggleTradeWallet}
+              walletNativeBalancesWei={walletNativeBalancesWei}
+              walletTokenBalancesWei={walletTokenBalancesWei}
+              tokenDecimals={tokenDecimals}
+              onRequestClose={() => setWalletSelectorOpen(false)}
+            />
+          )}
           <BuySection
             formattedNativeBalance={formattedNativeBalance}
             busy={busy}

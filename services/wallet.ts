@@ -339,11 +339,12 @@ export class WalletService {
     return payload.mnemonic;
   }
   
-  static async getSigner() {
+  static async getSigner(address?: `0x${string}`) {
     const unlocked = await getUnlockedState();
     if (!unlocked) throw new Error('Wallet locked');
-    
-    const acc = unlocked.accounts.find(a => a.address === unlocked.selectedAddress);
+
+    const target = (address ?? unlocked.selectedAddress).toLowerCase();
+    const acc = unlocked.accounts.find(a => a.address.toLowerCase() === target);
     if (!acc) throw new Error('Active account not found');
     
     return privateKeyToAccount(acc.privateKey);

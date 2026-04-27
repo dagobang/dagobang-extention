@@ -127,6 +127,7 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
 
   const all = await getLimitOrders();
   const keyAddr = input.tokenAddress.toLowerCase();
+  const inputFromLower = input.fromAddress?.toLowerCase() ?? null;
   const normalizedTrigger = triggerPriceUsd;
   const normalizedTrailingPeak =
     orderType === 'trailing_stop_sell'
@@ -155,6 +156,8 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
   const existing = all.find((o) => {
     if (o.chainId !== input.chainId) return false;
     if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+    const orderFromLower = o.fromAddress?.toLowerCase() ?? null;
+    if (orderFromLower !== inputFromLower) return false;
     if (o.status !== 'open') return false;
     if (normalizeLimitOrderType(o.orderType, o.side) !== orderType) return false;
     if (!hasSameAmount(o)) return false;
@@ -187,6 +190,7 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
     id: makeLimitOrderId(),
     chainId: input.chainId,
     tokenAddress: input.tokenAddress,
+    fromAddress: input.fromAddress,
     tokenSymbol: input.tokenSymbol ?? null,
     side,
     orderType,
@@ -234,13 +238,19 @@ export const cancelAllLimitOrders = async (chainId: number, tokenAddress?: `0x${
   return next;
 };
 
-export const cancelAllSellLimitOrdersForToken = async (chainId: number, tokenAddress: `0x${string}` | null | undefined) => {
+export const cancelAllSellLimitOrdersForToken = async (
+  chainId: number,
+  tokenAddress: `0x${string}` | null | undefined,
+  fromAddress?: `0x${string}`
+) => {
   if (!tokenAddress) return getLimitOrders();
   const keyAddr = tokenAddress.toLowerCase();
+  const fromLower = fromAddress?.toLowerCase() ?? null;
   const all = await getLimitOrders();
   const next = all.filter((o) => {
     if (o.chainId !== chainId) return true;
     if (o.tokenAddress.toLowerCase() !== keyAddr) return true;
+    if (fromLower && (o.fromAddress?.toLowerCase() ?? null) !== fromLower) return true;
     if (o.side !== 'sell') return true;
     if (o.status === 'executed') return true;
     return false;

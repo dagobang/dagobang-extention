@@ -50,7 +50,7 @@ export class TradeService {
     const inFlight = this.approveInFlightByKey.get(key);
     if (inFlight) return await inFlight;
 
-    const task = (async () => await this.approve(input.chainId, input.tokenAddress, input.spender, input.maxUint256.toString()))();
+    const task = (async () => await this.approve(input.chainId, input.tokenAddress, input.spender, input.maxUint256.toString(), input.owner))();
     this.approveInFlightByKey.set(key, task);
     try {
       return await task;
@@ -71,7 +71,7 @@ export class TradeService {
     return await quoteBestExactInDex(chainId, tokenIn, tokenOut, amountIn, opts);
   }
 
-  static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo }) {
+  static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo; fromAddress?: `0x${string}` }) {
     const settings = await SettingsService.get();
     const chainSettings = settings.chains[input.chainId];
     const executionMode = chainSettings?.executionMode ?? 'default';
@@ -80,7 +80,7 @@ export class TradeService {
     if (!tokenInfo) return;
 
     const client = await RpcService.getClient();
-    const account = await WalletService.getSigner();
+    const account = await WalletService.getSigner(input.fromAddress);
     await prewarmNonce(client, input.chainId, account.address);
 
     const token = input.tokenAddress;
@@ -141,9 +141,9 @@ export class TradeService {
     await Promise.allSettled(warmTasks);
   }
 
-  static async refreshNonce(input: { chainId: number }): Promise<number> {
+  static async refreshNonce(input: { chainId: number; fromAddress?: `0x${string}` }): Promise<number> {
     const client = await RpcService.getClient();
-    const account = await WalletService.getSigner();
+    const account = await WalletService.getSigner(input.fromAddress);
     const nextNonce = await prewarmNonce(client, input.chainId, account.address, { force: true });
     console.info('[nonce.refresh]', {
       chainId: input.chainId,
@@ -189,10 +189,15 @@ export class TradeService {
     tokenAddress: string;
     tokenInfo: TokenInfo;
     timeoutMs?: number;
+    fromAddress?: `0x${string}`;
   }): Promise<boolean> {
-    const allowanceCheck = await this.checkSellAllowanceInsufficient(input.chainId, input.tokenAddress, input.tokenInfo);
+    const allowanceCheck = await this.checkSellAllowanceInsufficient(input.chainId, input.tokenAddress, input.tokenInfo, {
+      fromAddress: input.fromAddress,
+    });
     if (!allowanceCheck.insufficient) return false;
-    const approveTx = await this.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, input.tokenInfo);
+    const approveTx = await this.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, input.tokenInfo, {
+      fromAddress: input.fromAddress,
+    });
     if (approveTx) {
       await this.waitApproveFastForRetry(input.chainId, approveTx);
     }
@@ -285,7 +290,7 @@ export class TradeService {
     if (!input.tokenInfo) throw new Error('Token info required');
     const tokenInfo = input.tokenInfo;
 
-    const account = await WalletService.getSigner();
+    const account = await WalletService.getSigner(input.fromAddress);
     const client = await RpcService.getClient();
 
     const amountIn = BigInt(input.bnbAmountWei);
@@ -525,7 +530,7 @@ export class TradeService {
         lastErr = e;
         if (attempt >= maxRetry || !this.isNonceLikeError(e)) break;
         await opts?.onRetry?.({ side: 'buy', attempt: attempt + 1, reason: 'nonce' });
-        await this.refreshNonce({ chainId: input.chainId });
+        await this.refreshNonce({ chainId: input.chainId, fromAddress: input.fromAddress });
       }
     }
     throw lastErr;
@@ -621,6 +626,7 @@ export class TradeService {
             tokenAddress: input.tokenAddress,
             tokenInfo: input.tokenInfo,
             timeoutMs,
+            fromAddress: input.fromAddress,
           });
         } catch (repairErr: any) {
           lastErr = repairErr;
@@ -633,7 +639,7 @@ export class TradeService {
         }
         if (!nonceLike && !allowanceRepaired && !this.isAllowanceLikeError(e)) break;
         console.log('[trade.sell.auto][nonce.refresh]', { flowId, attempt: attemptNo, allowanceRepaired, nonceLike });
-        await this.refreshNonce({ chainId: input.chainId });
+        await this.refreshNonce({ chainId: input.chainId, fromAddress: input.fromAddress });
       }
     }
     console.warn('[trade.sell.auto][final.failed]', {
@@ -648,12 +654,12 @@ export class TradeService {
     chainId: number,
     tokenAddress: string,
     tokenInfo: TokenInfo,
-    opts?: { extraSpenders?: string[] }
+    opts?: { extraSpenders?: string[]; fromAddress?: `0x${string}` }
   ) {
     const routerAddress = DeployAddress[chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
 
-    const account = await WalletService.getSigner();
+    const account = await WalletService.getSigner(opts?.fromAddress);
     const client = await RpcService.getClient();
 
     const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
@@ -705,11 +711,11 @@ export class TradeService {
     chainId: number,
     tokenAddress: string,
     tokenInfo: TokenInfo,
-    opts?: { extraSpenders?: string[] }
+    opts?: { extraSpenders?: string[]; fromAddress?: `0x${string}` }
   ): Promise<SellAllowanceCheckResult> {
     const routerAddress = DeployAddress[chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
-    const account = await WalletService.getSigner();
+    const account = await WalletService.getSigner(opts?.fromAddress);
     const client = await RpcService.getClient();
     const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
     return await hasInsufficientSellAllowance({
@@ -738,7 +744,8 @@ export class TradeService {
       attempt?: number;
     }
   ) {
-    const sellLockKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+    const sellFrom = String(input.fromAddress || 'default').toLowerCase();
+    const sellLockKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${sellFrom}`;
     if (this.sellInFlightByToken.has(sellLockKey)) {
       throw new Error('SELL_IN_FLIGHT');
     }
@@ -750,7 +757,7 @@ export class TradeService {
       if (!input.tokenInfo) throw new Error('Token info required');
       const tokenInfo = input.tokenInfo;
 
-      const account = await WalletService.getSigner();
+      const account = await WalletService.getSigner(input.fromAddress);
       const client = await RpcService.getClient();
 
       let amountIn = BigInt(input.tokenAmountWei);
@@ -1104,9 +1111,15 @@ export class TradeService {
     }
   }
 
-  static async approve(chainId: number, tokenAddress: string, spender: string, amountWei: string) {
+  static async approve(
+    chainId: number,
+    tokenAddress: string,
+    spender: string,
+    amountWei: string,
+    fromAddress?: `0x${string}`
+  ) {
     const settings = await SettingsService.get();
-    const account = await WalletService.getSigner();
+    const account = await WalletService.getSigner(fromAddress);
     const client = await RpcService.getClient();
     const chainSettings = settings.chains[chainId];
     const approveGasGwei = typeof chainSettings.approveGasGwei === 'string' ? chainSettings.approveGasGwei.trim() : '';
