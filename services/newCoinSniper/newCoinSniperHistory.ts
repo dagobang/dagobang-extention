@@ -6,12 +6,16 @@ export type NewCoinSniperOrderRecord = {
   tsMs: number;
   side?: 'buy' | 'sell';
   reason?: string;
+  tweetAtMs?: number;
+  tweetUrl?: string;
   chainId: number;
   tokenAddress: string;
   tokenSymbol?: string;
   tokenName?: string;
   buyAmountBnb?: number;
   sellPercent?: number;
+  sellPercentOfOriginal?: number;
+  sellPercentOfCurrent?: number;
   sellTokenAmountWei?: string;
   txHash?: string;
   entryPriceUsd?: number;
@@ -43,9 +47,15 @@ export type NewCoinSniperOrderRecord = {
   eval30s?: XSniperEvalPoint;
   eval60s?: XSniperEvalPoint;
   dryRun?: boolean;
+  userScreen?: string;
+  userName?: string;
+  tweetType?: string;
   source?: 'new_pool' | 'token_update';
   signalId?: string;
+  signalEventId?: string;
+  signalTweetId?: string;
   channel?: string;
+  launchpadPlatform?: string;
 };
 
 const NEW_COIN_SNIPER_EVAL_WINDOWS = [

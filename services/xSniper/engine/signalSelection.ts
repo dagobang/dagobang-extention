@@ -1,5 +1,17 @@
 import type { UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { getSignalTimeMs, isRepostOrQuoteSignal, normalizeAddress, normalizeEpochMs, parseNumber, sanitizeMarketCapUsd, shouldBuyByConfig, type TokenMetrics } from '@/services/xSniper/engine/metrics';
+import { extractLaunchpadPlatform } from '@/constants/launchpad';
+
+const normalizePlatformFilters = (input: unknown): string[] => {
+  const raw = Array.isArray(input) ? input : [];
+  return raw
+    .map((x) => String(x).trim().toLowerCase())
+    .filter(Boolean);
+};
+
+const extractTokenPlatform = (token: UnifiedSignalToken): string => {
+  return extractLaunchpadPlatform(token as any) ?? '';
+};
 
 export const matchesTwitterFilters = (signal: UnifiedTwitterSignal, strategy: any) => {
   const type = (() => {
@@ -42,6 +54,7 @@ export const metricsFromUnifiedToken = (t: UnifiedSignalToken): TokenMetrics | n
   return {
     tokenAddress,
     tokenSymbol: typeof (t as any).tokenSymbol === 'string' ? String((t as any).tokenSymbol) : undefined,
+    launchpadPlatform: extractTokenPlatform(t) || undefined,
     marketCapUsd: sanitizeMarketCapUsd((t as any).marketCapUsd) ?? undefined,
     liquidityUsd: typeof (t as any).liquidityUsd === 'number' ? (t as any).liquidityUsd : undefined,
     holders: typeof (t as any).holders === 'number' ? (t as any).holders : undefined,
@@ -75,6 +88,7 @@ export const pickTokensToBuyFromSignal = (input: {
   const signalAtMs = getSignalTimeMs(signal) ?? now;
   const skipTokenCreatedAtWindowCheck = isRepostOrQuoteSignal(signal);
   const perTweetMax = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
+  const allowedPlatforms = normalizePlatformFilters(strategy?.platforms);
   if (perTweetMax <= 0) return [];
   const scanLimit = Math.min(500, tokens.length);
   const unique: UnifiedSignalToken[] = [];
@@ -99,6 +113,10 @@ export const pickTokensToBuyFromSignal = (input: {
     })
     .filter((x) => {
       if (!x.m?.tokenAddress) return false;
+      if (allowedPlatforms.length > 0) {
+        const tokenPlatform = extractTokenPlatform(x.t);
+        if (!tokenPlatform || !allowedPlatforms.includes(tokenPlatform)) return false;
+      }
       if (!shouldBuyByConfig(x.m, strategy, signalAtMs, now, { skipTokenCreatedAtWindowCheck })) return false;
       const confirm = input.computeWsConfirm(x.m.tokenAddress, now, strategy);
       return confirm.pass;

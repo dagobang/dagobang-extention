@@ -130,6 +130,7 @@ export const tryAutoBuyOnce = async (input: {
   strategy: any;
   signal?: UnifiedTwitterSignal;
   amountBnbOverride?: number;
+  tokenAgeMode?: 'signal_delta' | 'now_age';
   onStateChanged: () => void;
   loadBoughtOnceIfNeeded: () => Promise<void>;
   persistBoughtOnce: () => Promise<void>;
@@ -188,7 +189,22 @@ export const tryAutoBuyOnce = async (input: {
     tokenInfo?: TokenInfo | null;
     confirm?: { windowMs?: number; stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number } };
   }) => {
-    if (dryRun) return;
+    if (dryRun) {
+      const m = extras?.metrics ?? input.metrics;
+      console.log('XSniperTrade dry-run buy skipped', {
+        reason,
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        launchpadPlatform: m.launchpadPlatform,
+        signalId: input.signal?.id ? String(input.signal.id) : undefined,
+        signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+        signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+        buyAmountBnb: extras?.buyAmountBnb,
+        confirmWindowMs: extras?.confirm?.windowMs,
+        confirmStats: extras?.confirm?.stats,
+      });
+      return;
+    }
     if (input.shouldEmitBuyFailureRecord && !input.shouldEmitBuyFailureRecord({
       reason,
       chainId: input.chainId,
@@ -210,6 +226,7 @@ export const tryAutoBuyOnce = async (input: {
       tokenAddress: input.tokenAddress,
       tokenSymbol: extras?.tokenInfo?.symbol ? String(extras.tokenInfo.symbol) : (m.tokenSymbol ? String(m.tokenSymbol) : undefined),
       tokenName: extras?.tokenInfo?.name ? String(extras.tokenInfo.name) : undefined,
+      launchpadPlatform: m.launchpadPlatform,
       buyAmountBnb: extras?.buyAmountBnb,
       dryRun: false,
       reason,
@@ -275,6 +292,7 @@ export const tryAutoBuyOnce = async (input: {
             chainId: input.chainId,
             tokenAddress: input.tokenAddress,
             tokenSymbol: input.metrics.tokenSymbol,
+            launchpadPlatform: input.metrics.launchpadPlatform,
             buyAmountBnb: amountNumber,
             dryRun: true,
             reason: 'ws_confirm_failed',
@@ -347,7 +365,10 @@ export const tryAutoBuyOnce = async (input: {
     };
     const signalAtMs = getSignalTimeMs(input.signal);
     const skipTokenCreatedAtWindowCheck = isRepostOrQuoteSignal(input.signal);
-    if (!shouldBuyByConfig(refreshedMetrics, input.strategy, signalAtMs, Date.now(), { skipTokenCreatedAtWindowCheck })) {
+    if (!shouldBuyByConfig(refreshedMetrics, input.strategy, signalAtMs, Date.now(), {
+      skipTokenCreatedAtWindowCheck,
+      tokenAgeMode: input.tokenAgeMode,
+    })) {
       emitBuyFailure('buy_filter_mismatch_after_refresh', {
         buyAmountBnb: amountNumber,
         metrics: refreshedMetrics,
@@ -459,6 +480,7 @@ export const tryAutoBuyOnce = async (input: {
         tokenAddress: input.tokenAddress,
         tokenSymbol: delayedTokenInfo.symbol ? String(delayedTokenInfo.symbol) : undefined,
         tokenName: delayedTokenInfo.name ? String(delayedTokenInfo.name) : undefined,
+        launchpadPlatform: dryRunMetrics.launchpadPlatform,
         buyAmountBnb: amountNumber,
         txHash: undefined,
         entryPriceUsd: entryPriceUsd ?? undefined,
@@ -610,6 +632,7 @@ export const tryAutoBuyOnce = async (input: {
       tokenAddress: input.tokenAddress,
       tokenSymbol: tokenInfoForTrade.symbol ? String(tokenInfoForTrade.symbol) : undefined,
       tokenName: tokenInfoForTrade.name ? String(tokenInfoForTrade.name) : undefined,
+      launchpadPlatform: refreshedMetrics.launchpadPlatform,
       buyAmountBnb: amountNumber,
       txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
       entryPriceUsd: effectiveEntryPriceUsd ?? undefined,

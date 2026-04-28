@@ -7,6 +7,7 @@ import { call } from '@/utils/messaging';
 import { browser } from 'wxt/browser';
 import { SiteInfo } from '@/utils/sites';
 import { clearXSniperHistory, XSNIPER_HISTORY_STORAGE_KEY } from '@/services/xSniper/xSniperHistory';
+import { PLATFORM_OPTIONS } from '@/constants/launchpad';
 import { XSniperHistoryView } from './XSniperHistoryView';
 import { XSniperBasicSection } from './XSniperBasicSection';
 import { XSniperFilterSection } from './XSniperFilterSection';
@@ -677,6 +678,7 @@ export function XSniperContent({
               tt={tt}
               onToggle={() => toggleConfigSection('filter')}
               updateTwitterSnipe={updateTwitterSnipe}
+              platformOptions={[...PLATFORM_OPTIONS]}
             />
             <XSniperWsConfirmSection
               open={configSectionOpen.wsConfirm}

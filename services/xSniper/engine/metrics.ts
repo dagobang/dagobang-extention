@@ -3,6 +3,7 @@ import type { UnifiedTwitterSignal } from '@/types/extention';
 export type TokenMetrics = {
   tokenAddress?: `0x${string}`;
   tokenSymbol?: string;
+  launchpadPlatform?: string;
   marketCapUsd?: number;
   liquidityUsd?: number;
   holders?: number;
@@ -105,7 +106,11 @@ export const shouldBuyByConfig = (
   config: any,
   signalAtMs?: number | null,
   orderAtMs?: number | null,
-  options?: { skipTokenCreatedAtWindowCheck?: boolean; skipTweetAgeWindowCheck?: boolean },
+  options?: {
+    skipTokenCreatedAtWindowCheck?: boolean;
+    skipTweetAgeWindowCheck?: boolean;
+    tokenAgeMode?: 'signal_delta' | 'now_age';
+  },
 ) => {
   if (!metrics || !config) return false;
   const marketCapUsd = sanitizeMarketCapUsd(metrics.marketCapUsd);
@@ -151,11 +156,20 @@ export const shouldBuyByConfig = (
   const shouldCheckTokenCreatedAtWindow = options?.skipTokenCreatedAtWindowCheck !== true;
   if (shouldCheckTokenCreatedAtWindow && (minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
   if (shouldCheckTokenCreatedAtWindow && tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
-    const ref = normalizeEpochMs(signalAtMs);
-    if (ref == null) return false;
-    const tokenDelayFromSignalMs = tokenAtMs - ref;
-    if (minAgeSec != null && tokenDelayFromSignalMs < minAgeSec * 1000) return false;
-    if (maxAgeSec != null && tokenDelayFromSignalMs > maxAgeSec * 1000) return false;
+    const tokenAgeMode = options?.tokenAgeMode ?? 'signal_delta';
+    if (tokenAgeMode === 'now_age') {
+      const now = normalizeEpochMs(orderAtMs) ?? Date.now();
+      const tokenAgeMs = now - tokenAtMs;
+      if (tokenAgeMs < 0) return false;
+      if (minAgeSec != null && tokenAgeMs < minAgeSec * 1000) return false;
+      if (maxAgeSec != null && tokenAgeMs > maxAgeSec * 1000) return false;
+    } else {
+      const ref = normalizeEpochMs(signalAtMs);
+      if (ref == null) return false;
+      const tokenDelayFromSignalMs = tokenAtMs - ref;
+      if (minAgeSec != null && tokenDelayFromSignalMs < minAgeSec * 1000) return false;
+      if (maxAgeSec != null && tokenDelayFromSignalMs > maxAgeSec * 1000) return false;
+    }
   }
 
   const shouldCheckTweetAgeWindow = options?.skipTweetAgeWindowCheck !== true;

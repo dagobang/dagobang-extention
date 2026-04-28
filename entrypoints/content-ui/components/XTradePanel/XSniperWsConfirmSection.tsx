@@ -34,7 +34,7 @@ export function XSniperWsConfirmSection({
           <input
             type="checkbox"
             className="h-3.5 w-3.5 accent-emerald-500"
-            checked={twitterSnipe?.wsConfirmEnabled !== false}
+            checked={twitterSnipe?.wsConfirmEnabled === true}
             disabled={!canEdit}
             onChange={(e) => updateTwitterSnipe({ wsConfirmEnabled: e.target.checked } as any)}
           />

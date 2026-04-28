@@ -148,7 +148,7 @@ export const computeWsConfirm = (
   nowMs: number,
   strategy: any
 ) => {
-  const enabled = strategy?.wsConfirmEnabled !== false;
+  const enabled = strategy?.wsConfirmEnabled === true;
   if (!enabled) return { pass: true, stats: null as any, windowMs: 0 };
   const windowMs = Math.max(500, Math.min(60_000, parseNumber(strategy?.wsConfirmWindowMs) ?? 5000));
   const stats = getWsWindowStats(wsSnapshotsByAddr, tokenAddress, nowMs, windowMs);

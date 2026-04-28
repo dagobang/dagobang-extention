@@ -1,21 +1,23 @@
 import { browser } from 'wxt/browser';
 import { SettingsService } from '@/services/settings';
 import { defaultSettings } from '@/utils/defaults';
-import type { UnifiedMarketSignal, UnifiedSignalToken } from '@/types/extention';
+import type { UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import { maybeEvaluateDryRunAutoSell as maybeEvaluateDryRunAutoSellFromMod, type DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
 import { maybeEvaluateRapidExitAutoSell as maybeEvaluateRapidExitAutoSellFromMod, registerRapidExitPosition as registerRapidExitPositionFromMod, type RapidExitPosition } from '@/services/xSniper/engine/rapidExitAutoSell';
 import { createSellExecutors } from '@/services/xSniper/engine/sellExecutors';
-import { type TokenMetrics, parseNumber, shouldBuyByConfig } from '@/services/xSniper/engine/metrics';
+import { type TokenMetrics, normalizeAddress, parseNumber, shouldBuyByConfig } from '@/services/xSniper/engine/metrics';
+import { extractLaunchpadPlatform } from '@/constants/launchpad';
 import { computeWsConfirm as computeWsConfirmFromWs, pushWsSnapshot as pushWsSnapshotFromWs, shouldLogWsConfirmFail as shouldLogWsConfirmFailFromWs, type WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
 import { metricsFromUnifiedToken } from '@/services/xSniper/engine/signalSelection';
 import { tryAutoBuyOnce as tryAutoBuyOnceFromMod } from '@/services/xSniper/engine/buyExecutor';
 import { maybeUpdateNewCoinSniperHistoryEvaluations, pushNewCoinSniperHistory } from '@/services/newCoinSniper/newCoinSniperHistory';
+import { TokenService } from '@/services/token';
 
 export const createNewCoinSniperTrade = (deps: {
   onStateChanged: () => void;
 }) => {
-  const DEFAULT_PLATFORM_FILTERS = ['fourmeme', 'fourmeme_agent', 'bn_fourmeme', 'four_xmode_agent'] as const;
+  const DEFAULT_PLATFORM_FILTERS = ['fourmeme', 'fourmeme_agent', 'xmode', 'xmode_agent'] as const;
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
   const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_new_coin_sniper_bought_once_v1';
 
@@ -27,8 +29,11 @@ export const createNewCoinSniperTrade = (deps: {
   const wsSnapshotsByAddr = new Map<string, WsSnapshot[]>();
   const dryRunAutoSellByPosKey = new Map<string, DryRunAutoSellPos>();
   const rapidExitByPosKey = new Map<string, RapidExitPosition>();
+  const rapidWatchdogRpcAtMs = new Map<string, number>();
   let currentSignalContext: UnifiedMarketSignal | null = null;
   let latestNewCoinSnipeStrategy: any = null;
+  let rapidWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+  let rapidWatchdogIntervalMs = -1;
 
   const cleanupPosKey = (posKey: string) => {
     dryRunAutoSellByPosKey.delete(posKey);
@@ -40,6 +45,99 @@ export const createNewCoinSniperTrade = (deps: {
   const shouldLogWsConfirmFail = (key: string, nowMs: number) => shouldLogWsConfirmFailFromWs(wsConfirmFailDedupe, key, nowMs);
   const computeWsConfirm = (tokenAddress: `0x${string}`, nowMs: number, strategy: any) =>
     computeWsConfirmFromWs(wsSnapshotsByAddr, tokenAddress, nowMs, strategy);
+
+  const readRapidWatchdogIntervalMs = (strategy: any) => {
+    const secRaw = parseNumber(strategy?.rapidWatchdogSec);
+    const sec = Number.isFinite(secRaw) ? Math.floor(Number(secRaw)) : 1;
+    const clampedSec = Math.max(0, Math.min(10, sec));
+    return clampedSec * 1000;
+  };
+
+  const runRapidWatchdogTick = async () => {
+    const strategy = latestNewCoinSnipeStrategy;
+    if (!strategy || strategy.rapidExitEnabled === false) return;
+    if (!rapidExitByPosKey.size) return;
+    const nowMs = Date.now();
+    const staleMs = 3000;
+    const rpcCooldownMs = 3000;
+    const addrs = new Set<`0x${string}`>();
+    for (const pos of rapidExitByPosKey.values()) {
+      const addr = normalizeAddress(pos?.tokenAddress);
+      if (!addr) continue;
+      addrs.add(addr);
+    }
+    for (const tokenAddress of addrs) {
+      const latestList = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+      const latest = latestList.length ? latestList[latestList.length - 1] : null;
+      const wsAgeMs = latest ? nowMs - latest.atMs : Number.POSITIVE_INFINITY;
+      if (wsAgeMs > staleMs) {
+        const rpcKey = tokenAddress.toLowerCase();
+        const lastRpcAt = rapidWatchdogRpcAtMs.get(rpcKey) ?? 0;
+        if (nowMs - lastRpcAt >= rpcCooldownMs) {
+          rapidWatchdogRpcAtMs.set(rpcKey, nowMs);
+          try {
+            const anyPos = Array.from(rapidExitByPosKey.values()).find((p) => p.tokenAddress.toLowerCase() === rpcKey);
+            const chainId = anyPos?.chainId ?? 56;
+            const impliedSupply = Number(anyPos?.impliedSupply);
+            const priceUsd = await TokenService.getPriceUsdFromRpc({
+              chainId,
+              tokenAddress,
+              cacheTtlMs: 0,
+              allowTokenInfoPriceFallback: false,
+            });
+            const mcap = Number.isFinite(impliedSupply) && impliedSupply > 0 && Number.isFinite(priceUsd) && priceUsd > 0
+              ? priceUsd * impliedSupply
+              : NaN;
+            if (Number.isFinite(mcap) && mcap > 0) {
+              const merged: WsSnapshot = {
+                atMs: nowMs,
+                marketCapUsd: mcap,
+                holders: latest?.holders,
+                vol24hUsd: latest?.vol24hUsd,
+                netBuy24hUsd: latest?.netBuy24hUsd,
+                buyTx24h: latest?.buyTx24h,
+                sellTx24h: latest?.sellTx24h,
+                smartMoney: latest?.smartMoney,
+              };
+              const next = latestList.concat(merged).slice(-80);
+              wsSnapshotsByAddr.set(tokenAddress, next);
+            }
+          } catch {
+          }
+        }
+      }
+      void maybeEvaluateRapidExitAutoSellFromMod({
+        tokenAddress,
+        nowMs,
+        strategy,
+        wsSnapshotsByAddr,
+        rapidExitByPosKey,
+        cleanupPosKey,
+        tryRapidExitSellOnce,
+      });
+    }
+  };
+
+  const stopRapidWatchdog = () => {
+    if (rapidWatchdogTimer) clearInterval(rapidWatchdogTimer);
+    rapidWatchdogTimer = null;
+    rapidWatchdogIntervalMs = -1;
+  };
+
+  const ensureRapidWatchdog = (strategy: any) => {
+    const nextIntervalMs = readRapidWatchdogIntervalMs(strategy);
+    const enabled = strategy?.rapidExitEnabled !== false;
+    if (!enabled || nextIntervalMs <= 0) {
+      stopRapidWatchdog();
+      return;
+    }
+    if (rapidWatchdogTimer && rapidWatchdogIntervalMs === nextIntervalMs) return;
+    stopRapidWatchdog();
+    rapidWatchdogIntervalMs = nextIntervalMs;
+    rapidWatchdogTimer = setInterval(() => {
+      void runRapidWatchdogTick();
+    }, nextIntervalMs);
+  };
 
   const pushWsSnapshot = (tokenAddress: `0x${string}`, metrics: TokenMetrics) => {
     pushWsSnapshotFromWs({
@@ -188,19 +286,45 @@ export const createNewCoinSniperTrade = (deps: {
     return true;
   };
 
+  const buildPseudoSignalFromMarketSignal = (signal: UnifiedMarketSignal): UnifiedTwitterSignal => ({
+    id: signal.id,
+    site: signal.site,
+    channel: signal.channel,
+    tweetType: 'tweet',
+    userScreen: signal.source,
+    userName: signal.source,
+    tokens: signal.tokens,
+    receivedAtMs: signal.receivedAtMs,
+    ts: signal.ts,
+  });
+
   const emitRecord = (record: any) => {
     const signal = currentSignalContext;
+    const signalSourceTag = signal?.source ? String(signal.source) : undefined;
+    const resolvedLaunchpadPlatform = (() => {
+      const fromRecord = extractLaunchpadPlatform(record as any);
+      if (fromRecord) return fromRecord;
+      const addr = String(record?.tokenAddress || '').trim().toLowerCase();
+      if (!addr) return undefined;
+      const tokens = Array.isArray(signal?.tokens) ? (signal?.tokens as UnifiedSignalToken[]) : [];
+      const matched = tokens.find((x) => String((x as any)?.tokenAddress || '').trim().toLowerCase() === addr);
+      return extractLaunchpadPlatform(matched as any);
+    })();
     void pushNewCoinSniperHistory({
       id: record.id,
       tsMs: record.tsMs,
       side: record.side,
       reason: record.reason,
+      tweetAtMs: record.tweetAtMs,
+      tweetUrl: record.tweetUrl,
       chainId: record.chainId,
       tokenAddress: record.tokenAddress,
       tokenSymbol: record.tokenSymbol,
       tokenName: record.tokenName,
       buyAmountBnb: record.buyAmountBnb,
       sellPercent: record.sellPercent,
+      sellPercentOfOriginal: record.sellPercentOfOriginal,
+      sellPercentOfCurrent: record.sellPercentOfCurrent,
       sellTokenAmountWei: record.sellTokenAmountWei,
       txHash: record.txHash,
       entryPriceUsd: record.entryPriceUsd,
@@ -232,17 +356,28 @@ export const createNewCoinSniperTrade = (deps: {
       eval30s: record.eval30s,
       eval60s: record.eval60s,
       dryRun: record.dryRun,
+      userScreen: record.userScreen ?? signalSourceTag,
+      userName: record.userName ?? signalSourceTag,
+      tweetType: record.tweetType,
       source: signal?.source,
-      signalId: signal?.id,
-      channel: signal?.channel,
+      signalId: record.signalId ?? signal?.id,
+      signalEventId: record.signalEventId,
+      signalTweetId: record.signalTweetId,
+      channel: record.channel ?? signal?.channel,
+      ...(resolvedLaunchpadPlatform ? { launchpadPlatform: resolvedLaunchpadPlatform } : {}),
     });
     void broadcastToTabs({
       type: 'bg:newCoinSniper:order',
       record: {
         ...record,
+        userScreen: record.userScreen ?? signalSourceTag,
+        userName: record.userName ?? signalSourceTag,
         source: signal?.source,
-        signalId: signal?.id,
-        channel: signal?.channel,
+        signalId: record.signalId ?? signal?.id,
+        signalEventId: record.signalEventId,
+        signalTweetId: record.signalTweetId,
+        channel: record.channel ?? signal?.channel,
+        ...(resolvedLaunchpadPlatform ? { launchpadPlatform: resolvedLaunchpadPlatform } : {}),
       },
     });
   };
@@ -261,21 +396,7 @@ export const createNewCoinSniperTrade = (deps: {
   };
 
   const extractTokenPlatform = (token: UnifiedSignalToken): string => {
-    const raw = String(
-      (token as any).launchpadPlatform ??
-      (token as any).launchpad_platform ??
-      (token as any).platform ??
-      '',
-    )
-      .trim()
-      .toLowerCase();
-    if (!raw) return '';
-    if (raw === 'fourmeme v2') return 'fourmeme';
-    if (raw === 'fourmeme agent') return 'fourmeme_agent';
-    if (raw === 'bn fourmeme' || raw === 'binance') return 'bn_fourmeme';
-    if (raw === 'four xmode agent' || raw === 'xmode' || raw === 'x mode') return 'four_xmode_agent';
-    if (raw === 'flap ai') return 'flap';
-    return raw;
+    return extractLaunchpadPlatform(token as any) ?? '';
   };
 
   const pickCandidates = (signal: UnifiedMarketSignal, strategy: any) => {
@@ -299,12 +420,60 @@ export const createNewCoinSniperTrade = (deps: {
         return { t, m };
       })
       .filter((x) => {
-        if (!x.m?.tokenAddress) return false;
+        const metrics = x.m;
+        const tokenAddress = x.m?.tokenAddress;
         const tokenPlatform = extractTokenPlatform(x.t);
-        if (!tokenPlatform || !allowedPlatforms.includes(tokenPlatform)) return false;
-        if (!shouldBuyByConfig(x.m, strategy, signalAtMs, now, { skipTweetAgeWindowCheck: true })) return false;
-        const confirm = computeWsConfirm(x.m.tokenAddress, now, strategy);
-        return confirm.pass;
+        if (!tokenAddress) {
+          console.log('NewCoinSniper prefilter_skip_invalid_token', {
+            tokenAddress: (x.t as any)?.tokenAddress,
+            tokenPlatform,
+          });
+          return false;
+        }
+        if (!tokenPlatform || !allowedPlatforms.includes(tokenPlatform)) {
+          console.log('NewCoinSniper prefilter_skip_platform', {
+            tokenAddress,
+            tokenPlatform,
+            allowedPlatforms,
+          });
+          return false;
+        }
+        if (!metrics) return false;
+        const configPass = shouldBuyByConfig(metrics, strategy, signalAtMs, now, {
+          skipTweetAgeWindowCheck: true,
+          tokenAgeMode: 'now_age',
+        });
+        if (!configPass) {
+          console.log('NewCoinSniper prefilter_skip_config', {
+            tokenAddress,
+            tokenPlatform,
+            signalAtMs,
+            now,
+            marketCapUsd: metrics.marketCapUsd,
+            holders: metrics.holders,
+            kol: metrics.kol,
+            createdAtMs: metrics.createdAtMs,
+            firstSeenAtMs: metrics.firstSeenAtMs,
+            devHoldPercent: metrics.devHoldPercent,
+            devHasSold: metrics.devHasSold,
+          });
+          return false;
+        }
+        const confirm = computeWsConfirm(tokenAddress, now, strategy);
+        if (!confirm.pass) {
+          console.log('NewCoinSniper prefilter_skip_ws_confirm', {
+            tokenAddress,
+            tokenPlatform,
+            confirmWindowMs: confirm.windowMs,
+            confirmStats: confirm.stats ?? null,
+          });
+          return false;
+        }
+        console.log('NewCoinSniper prefilter_pass', {
+          tokenAddress,
+          tokenPlatform,
+        });
+        return true;
       });
     candidates.sort((a, b) => {
       const ma = typeof a.m?.marketCapUsd === 'number' ? a.m.marketCapUsd : 0;
@@ -328,9 +497,11 @@ export const createNewCoinSniperTrade = (deps: {
     tokenAddress: `0x${string}`;
     metrics: TokenMetrics;
     strategy: any;
+    signal?: UnifiedTwitterSignal;
   }) =>
     tryAutoBuyOnceFromMod({
       ...input,
+      tokenAgeMode: 'now_age',
       onStateChanged: deps.onStateChanged,
       loadBoughtOnceIfNeeded,
       persistBoughtOnce,
@@ -395,6 +566,7 @@ export const createNewCoinSniperTrade = (deps: {
       const strategy = (config as any).newCoinSnipe;
       if (!strategy || strategy.enabled === false) return;
       latestNewCoinSnipeStrategy = strategy;
+      ensureRapidWatchdog(strategy);
       if (!isSourceEnabled(signal, strategy)) return;
 
       const perSignalMax = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
@@ -405,6 +577,7 @@ export const createNewCoinSniperTrade = (deps: {
       const dryRun = strategy?.dryRun === true;
       for (const { m } of picked) {
         if (!m?.tokenAddress) continue;
+        const pseudoSignal = buildPseudoSignalFromMarketSignal(signal);
         currentSignalContext = signal;
         let bought = false;
         try {
@@ -413,6 +586,7 @@ export const createNewCoinSniperTrade = (deps: {
             tokenAddress: m.tokenAddress,
             metrics: m,
             strategy,
+            signal: pseudoSignal,
           });
         } catch {
         } finally {

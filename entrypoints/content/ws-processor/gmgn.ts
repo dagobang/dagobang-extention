@@ -1,4 +1,5 @@
 import type { BgRequest, BgResponse, Settings, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
+import { normalizeLaunchpadPlatform } from '@/constants/launchpad';
 import {
   asAddress,
   extractFirstFromObject,
@@ -401,17 +402,6 @@ const normalizePercentValue = (v: number | null | undefined): number | undefined
   if (typeof v !== 'number' || !Number.isFinite(v)) return undefined;
   if (v >= 0 && v <= 1) return v * 100;
   return v;
-};
-
-const normalizeLaunchpadPlatform = (value: unknown): string | undefined => {
-  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  if (!raw) return undefined;
-  if (raw === 'fourmeme' || raw === 'fourmeme v2') return 'fourmeme';
-  if (raw === 'fourmeme_agent' || raw === 'fourmeme agent') return 'fourmeme_agent';
-  if (raw === 'bn_fourmeme' || raw === 'binance' || raw === 'bn fourmeme') return 'bn_fourmeme';
-  if (raw === 'four_xmode_agent' || raw === 'four xmode agent' || raw === 'xmode' || raw === 'x mode') return 'four_xmode_agent';
-  if (raw === 'flap' || raw === 'flap ai') return 'flap';
-  return raw;
 };
 
 const normalizeTokenKey = (addr: string) => addr.trim().toLowerCase();
@@ -1058,6 +1048,7 @@ export function initGmgnWsMonitor(options: {
       receivedAtMs: input.receivedAtMs,
       ts: Date.now(),
     };
+    console.log('emitMarketSignal>>', token.tokenName, token.launchpadPlatform, token.tokenAddress);
     enqueueMarketSignalForward(input.channel, signal);
   };
 
@@ -1336,8 +1327,8 @@ export function initGmgnWsMonitor(options: {
           tokenData?.launchpadPlatform ??
           tokenData?.launchpad_platform ??
           tokenData?.platform ??
-          tokenData?.lp ??
-          tokenData?.protocol,
+          tokenData?.lpp ??
+          tokenData?.pts,
         ),
         prev?.launchpadPlatform,
       ),

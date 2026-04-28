@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Settings, XSniperBuyRecord, XSniperEvalPoint } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { chainNames } from '@/constants/chains/chainName';
+import { extractLaunchpadPlatform } from '@/constants/launchpad';
 import { call } from '@/utils/messaging';
 import { navigateToUrl, type SiteInfo, parsePlatformTokenLink } from '@/utils/sites';
 import { formatBnbAmount, formatCompactNumber, formatShortAddress } from '@/utils/format';
 import { XSniperWsStatusSection } from './XSniperWsStatusSection';
+import { LaunchpadPlatformBadge } from './LaunchpadPlatformBadge';
 
 type HistoryGroup = { key: string; parent: XSniperBuyRecord; children: XSniperBuyRecord[] };
 
@@ -465,6 +467,7 @@ export function XSniperHistoryView({
                   const weightedPnl = computeWeightedPnlPct({ entryMcap: orderMcap, latestMcap, sellRecords });
                   const recordAthMcap = typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) ? r.athMarketCapUsd : null;
                   const athMcap = recordAthMcap ?? (athMcapByAddr[String(r.tokenAddress).toLowerCase()] ?? null);
+                  const launchpadPlatform = extractLaunchpadPlatform(r as any) ?? extractLaunchpadPlatform(latest as any);
                   const pnlPct = weightedPnl.pnlPct;
                   const pnlText = pnlPct == null || !Number.isFinite(pnlPct) ? '-' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
                   const pnlClass =
@@ -595,6 +598,10 @@ export function XSniperHistoryView({
                           <div>
                             <span className="text-zinc-500">{tt('contentUi.autoTradeStrategy.snipeHistoryUser')}:</span>{' '}
                             <span className="text-zinc-300">{r.userScreen ? String(r.userScreen) : '-'}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-zinc-500">Launchpad:</span>{' '}
+                            <LaunchpadPlatformBadge platform={launchpadPlatform} />
                           </div>
                           <div>
                             <span className="text-violet-300/80">{tt('contentUi.autoTradeStrategy.snipeHistorySmartMoney')}:</span>{' '}

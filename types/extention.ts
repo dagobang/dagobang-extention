@@ -80,6 +80,7 @@ export type AutoTradeStrategyBase = {
 };
 
 export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
+  platforms?: string[];
   dryRun?: boolean;
   dryRunBuyDelayMs?: string;
   dryRunSellDelayMs?: string;
@@ -585,6 +586,7 @@ export type XSniperBuyRecord = {
   signalId?: string;
   signalEventId?: string;
   signalTweetId?: string;
+  launchpadPlatform?: string;
   reason?: string;
 };
 

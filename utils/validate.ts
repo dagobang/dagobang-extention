@@ -38,6 +38,13 @@ function parseListInput(value: any, fallback: string[]) {
   return fallback;
 }
 
+function normalizePlatformsInput(value: any, fallback: string[] = []): string[] {
+  const list = parseListInput(value, fallback)
+    .map((x) => String(x).trim().toLowerCase())
+    .filter(Boolean);
+  return list.filter((x, idx) => list.indexOf(x) === idx);
+}
+
 function parseCommaOrLineListInput(value: any, fallback: string[]) {
   if (Array.isArray(value)) {
     return value.map((x) => String(x).trim()).filter(Boolean);
@@ -435,6 +442,7 @@ export function validateSettings(input: Settings): Settings | null {
       ? (rawInput as any).deleteTweetSoundPreset
       : (((fallbackInput as any)?.deleteTweetSoundPreset ?? 'Handgun') as any),
     targetUsers: parseListInput(rawInput?.targetUsers, fallbackInput.targetUsers),
+    platforms: normalizePlatformsInput(rawInput?.platforms, fallbackInput?.platforms ?? []),
     interactionTypes: normalizeInteractionTypes(rawInput?.interactionTypes, fallbackInput.interactionTypes),
   });
   const twitterSnipeBase = normalizeTwitterSnipeCore(inputTwitterSnipe, defaultTwitterSnipe);

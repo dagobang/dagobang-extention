@@ -11,7 +11,7 @@ import { XSniperHistoryView } from './XSniperHistoryView';
 import { XSniperFilterSection } from './XSniperFilterSection';
 import { XSniperRapidSection } from './XSniperRapidSection';
 import { XSniperWsConfirmSection } from './XSniperWsConfirmSection';
-import { PLATFORM_OPTIONS } from '@/constants/launchpad';
+import { PLATFORM_OPTIONS, extractLaunchpadPlatform } from '@/constants/launchpad';
 
 type XNewCoinSniperContentProps = {
   siteInfo: SiteInfo | null;
@@ -169,9 +169,19 @@ export function XNewCoinSniperContent({
     };
   }, []);
 
+  const normalizedHistory = useMemo(
+    () =>
+      history.map((record) => {
+        const launchpadPlatform = extractLaunchpadPlatform(record as any);
+        return launchpadPlatform
+          ? ({ ...record, launchpadPlatform } as NewCoinSniperOrderRecord)
+          : record;
+      }),
+    [history],
+  );
   const historyGroups = useMemo<NewCoinHistoryGroup[]>(() => {
-    if (!history.length) return [];
-    const sortedAsc = history
+    if (!normalizedHistory.length) return [];
+    const sortedAsc = normalizedHistory
       .slice()
       .sort((a, b) => {
         const ta = Number(a.tsMs) || 0;
@@ -206,12 +216,12 @@ export function XNewCoinSniperContent({
       g.children.sort((a, b) => (Number(a.tsMs) || 0) - (Number(b.tsMs) || 0));
     }
     return merged;
-  }, [history]);
+  }, [normalizedHistory]);
   const canEdit = !!resolvedSettings && isUnlocked;
   const { latestTokenByAddr, athMcapByAddr } = useMemo(() => {
     const latest: Record<string, any> = {};
     const ath: Record<string, number> = {};
-    const sorted = history.slice().sort((a, b) => (Number(b.tsMs) || 0) - (Number(a.tsMs) || 0));
+    const sorted = normalizedHistory.slice().sort((a, b) => (Number(b.tsMs) || 0) - (Number(a.tsMs) || 0));
     for (const r of sorted) {
       const addr = String(r.tokenAddress || '').toLowerCase();
       if (!addr) continue;
@@ -220,7 +230,8 @@ export function XNewCoinSniperContent({
         const curAth = ath[addr];
         ath[addr] = typeof curAth === 'number' && Number.isFinite(curAth) ? Math.max(curAth, mcap) : mcap;
       }
-      if (!latest[addr]) {
+      const prev = latest[addr];
+      if (!prev) {
         latest[addr] = {
           updatedAtMs: r.tsMs,
           marketCapUsd: r.marketCapUsd,
@@ -228,11 +239,40 @@ export function XNewCoinSniperContent({
           devHoldPercent: r.devHoldPercent,
           devHasSold: r.devHasSold,
           kol: r.kol,
+          launchpadPlatform: (r as any).launchpadPlatform,
         };
+        continue;
       }
+      latest[addr] = {
+        updatedAtMs: Math.max(Number(prev.updatedAtMs) || 0, Number(r.tsMs) || 0),
+        marketCapUsd:
+          typeof prev.marketCapUsd === 'number' && Number.isFinite(prev.marketCapUsd)
+            ? prev.marketCapUsd
+            : r.marketCapUsd,
+        holders:
+          typeof prev.holders === 'number' && Number.isFinite(prev.holders)
+            ? prev.holders
+            : r.holders,
+        devHoldPercent:
+          typeof prev.devHoldPercent === 'number' && Number.isFinite(prev.devHoldPercent)
+            ? prev.devHoldPercent
+            : r.devHoldPercent,
+        devHasSold:
+          typeof prev.devHasSold === 'boolean'
+            ? prev.devHasSold
+            : r.devHasSold,
+        kol:
+          typeof prev.kol === 'number' && Number.isFinite(prev.kol)
+            ? prev.kol
+            : r.kol,
+        launchpadPlatform:
+          typeof prev.launchpadPlatform === 'string' && prev.launchpadPlatform.trim()
+            ? prev.launchpadPlatform
+            : (r as any).launchpadPlatform,
+      };
     }
     return { latestTokenByAddr: latest, athMcapByAddr: ath };
-  }, [history]);
+  }, [normalizedHistory]);
 
   const persistDraft = async (nextDraft: AutoTradeNewCoinSnipeConfig) => {
     if (!resolvedSettings || !isUnlocked) return;
@@ -431,7 +471,7 @@ export function XNewCoinSniperContent({
           isUnlocked={isUnlocked}
           canEdit={canEdit}
           tt={tt}
-          buyHistory={history as unknown as XSniperBuyRecord[]}
+          buyHistory={normalizedHistory as unknown as XSniperBuyRecord[]}
           historyGroups={historyGroups as unknown as Array<{ key: string; parent: XSniperBuyRecord; children: XSniperBuyRecord[] }>}
           latestTokenByAddr={latestTokenByAddr}
           athMcapByAddr={athMcapByAddr}

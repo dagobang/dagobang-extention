@@ -13,6 +13,7 @@ import { tryAutoBuyOnce as tryAutoBuyOnceFromMod } from '@/services/xSniper/engi
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import { maybeUpdateXSniperHistoryEvaluations } from '@/services/xSniper/xSniperHistory';
 import { TokenService } from '@/services/token';
+import { extractLaunchpadPlatform } from '@/constants/launchpad';
 
 export const createXSniperTrade = (deps: {
   onStateChanged: () => void;
@@ -32,6 +33,7 @@ export const createXSniperTrade = (deps: {
   const dryRunAutoSellByPosKey = new Map<string, DryRunAutoSellPos>();
   const rapidExitByPosKey = new Map<string, RapidExitPosition>();
   const rapidWatchdogRpcAtMs = new Map<string, number>();
+  let currentSignalContext: UnifiedTwitterSignal | null = null;
   let latestTwitterSnipeStrategy: any = null;
   let rapidWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   let rapidWatchdogIntervalMs = -1;
@@ -76,10 +78,23 @@ export const createXSniperTrade = (deps: {
   };
 
   const emitRecord = (record: XSniperBuyRecord) => {
-    void pushXSniperHistory(record);
-    void broadcastToTabs({ type: 'bg:xsniper:buy', record });
-    if (record.side === 'buy' && !record.reason) {
-      void deps.telegramNotifier?.notifyXSniperOrderCard?.(record);
+    const resolvedLaunchpadPlatform = (() => {
+      const fromRecord = extractLaunchpadPlatform(record as any);
+      if (fromRecord) return fromRecord;
+      const signal = currentSignalContext;
+      const addr = String(record?.tokenAddress || '').trim().toLowerCase();
+      if (!signal || !addr) return undefined;
+      const tokens = Array.isArray(signal.tokens) ? signal.tokens : [];
+      const matched = tokens.find((x: any) => String(x?.tokenAddress || '').trim().toLowerCase() === addr);
+      return extractLaunchpadPlatform(matched as any);
+    })();
+    const nextRecord: XSniperBuyRecord = resolvedLaunchpadPlatform
+      ? { ...record, launchpadPlatform: resolvedLaunchpadPlatform }
+      : record;
+    void pushXSniperHistory(nextRecord);
+    void broadcastToTabs({ type: 'bg:xsniper:buy', record: nextRecord });
+    if (nextRecord.side === 'buy' && !nextRecord.reason) {
+      void deps.telegramNotifier?.notifyXSniperOrderCard?.(nextRecord);
     }
   };
 
@@ -475,6 +490,7 @@ export const createXSniperTrade = (deps: {
         if (!m?.tokenAddress) continue;
         let bought = false;
         try {
+          currentSignalContext = signal;
           bought = await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
         } catch (e) {
           console.error('XSniperTrade buy attempt failed', {
@@ -483,6 +499,8 @@ export const createXSniperTrade = (deps: {
             tweetId: signal.tweetId,
           }, e);
           continue;
+        } finally {
+          currentSignalContext = null;
         }
         if (!dryRun && bought) {
           boughtCount += 1;
