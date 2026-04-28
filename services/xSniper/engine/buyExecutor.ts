@@ -191,6 +191,7 @@ export const tryAutoBuyOnce = async (input: {
     tokenInfo?: TokenInfo | null;
     confirm?: { windowMs?: number; stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number } };
   }) => {
+    if (reason === 'buy_skipped_recently_bought' || reason === 'buy_skipped_in_flight') return;
     if (dryRun) {
       const m = extras?.metrics ?? input.metrics;
       console.log('XSniperTrade dry-run buy skipped', {
@@ -518,6 +519,7 @@ export const tryAutoBuyOnce = async (input: {
 
     const amountWei = parseEther(String(amountNumber));
     let rsp: any;
+    let buySubmittedAtMs: number | undefined;
     let tokenInfoForTrade = tokenInfo;
     try {
       rsp = await TradeService.buyWithReceiptAndNonceRecovery({
@@ -531,6 +533,7 @@ export const tryAutoBuyOnce = async (input: {
       } as any, {
         maxRetry: 1,
         onSubmitted: async (ctx) => {
+          buySubmittedAtMs = Date.now();
           await input.broadcastToActiveTabs({
             type: 'bg:tradeSubmitted',
             source: 'xsniper',
@@ -630,6 +633,7 @@ export const tryAutoBuyOnce = async (input: {
       id: `${now}-${Math.random().toString(16).slice(2)}`,
       side: 'buy',
       tsMs: now,
+      buySubmittedAtMs,
       tweetAtMs,
       tweetUrl,
       chainId: input.chainId,

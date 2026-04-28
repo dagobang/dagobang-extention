@@ -556,6 +556,7 @@ export type XSniperBuyRecord = {
   id: string;
   side?: 'buy' | 'sell';
   tsMs: number;
+  buySubmittedAtMs?: number;
   tweetAtMs?: number;
   tweetUrl?: string;
   chainId: number;

@@ -56,6 +56,13 @@ export function XSniperRapidSection({
               <span>Milestone Runner 里程碑分批止盈</span>
             </label>
           </div>
+          <div className="rounded-md border border-cyan-800/40 bg-cyan-950/30 px-2.5 py-2 text-[11px] leading-5 text-cyan-100/90">
+            <div className="font-medium text-cyan-100">使用说明</div>
+            <div>1. 固定评估间隔到点后，按当前市值相对买入市值的涨跌幅判断是否卖出。</div>
+            <div>2. 先触发硬止损：跌到“硬止损阈值”以下时，直接卖出剩余全部仓位。</div>
+            <div>3. 达到“首档止盈触发”后，每次再上涨“后续递增阈值”，按“每档卖出占比”继续分批卖。</div>
+            <div>4. 一旦进入止盈阶段，若回撤到“绝对涨幅清仓地板”以下，会触发地板清仓（卖出剩余仓位）。</div>
+          </div>
 
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {numInput('固定评估间隔(秒)', 'rapidEvalStepSec')}

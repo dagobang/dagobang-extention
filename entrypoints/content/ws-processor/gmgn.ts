@@ -814,10 +814,10 @@ const emitTrenchesTokenEvent = (tokenData: any, receivedAtMs: number) => {
 export function initGmgnWsMonitor(options: {
   call: <T extends BgRequest>(req: T) => Promise<BgResponse<T>>;
 }): WsSiteMonitor {
-  const SIGNAL_FORWARD_WINDOW_MS = 80;
-  const MARKET_SIGNAL_FORWARD_WINDOW_MS = 80;
+  const SIGNAL_FORWARD_WINDOW_MS = 20;
+  const MARKET_SIGNAL_FORWARD_WINDOW_MS = 20;
   const SIGNAL_FORWARD_FAST_WINDOW_MS = 0;
-  const SIGNAL_FORWARD_PROBE_WINDOW_MS = 3000;
+  const SIGNAL_FORWARD_PROBE_WINDOW_MS = 200;
   type SignalForwardDedupeMode = 'strict' | 'balanced' | 'aggressive';
   type SignalForwardProbeWindow = {
     windowStartAt: number;

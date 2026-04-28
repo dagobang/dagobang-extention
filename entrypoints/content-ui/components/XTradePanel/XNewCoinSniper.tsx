@@ -137,6 +137,7 @@ export function XNewCoinSniperContent({
   const [expandedTaskById, setExpandedTaskById] = useState<Record<string, boolean>>({});
   const [taskModalMode, setTaskModalMode] = useState<'create' | 'edit' | null>(null);
   const [taskEditor, setTaskEditor] = useState<NewCoinXmodeSnipeTask | null>(null);
+  const [taskModalError, setTaskModalError] = useState('');
   const [editingTaskId, setEditingTaskId] = useState<string>('');
   const [history, setHistory] = useState<NewCoinSniperOrderRecord[]>([]);
   const [wsStatus, setWsStatus] = useState(() => {
@@ -325,8 +326,8 @@ export function XNewCoinSniperContent({
     return { latestTokenByAddr: latest, athMcapByAddr: ath };
   }, [normalizedHistory]);
 
-  const persistDraft = async (nextDraft: AutoTradeNewCoinSnipeConfig) => {
-    if (!resolvedSettings || !isUnlocked) return;
+  const persistDraft = async (nextDraft: AutoTradeNewCoinSnipeConfig): Promise<boolean> => {
+    if (!resolvedSettings || !isUnlocked) return false;
     setSaving(true);
     setError('');
     try {
@@ -346,20 +347,22 @@ export function XNewCoinSniperContent({
       await call({ type: 'settings:set', settings: nextSettings } as const);
       setDraft(normalizeNewCoinStrategy(nextNewCoin));
       setIsDirty(false);
+      return true;
     } catch (e: any) {
       setError(String(e?.message || '保存失败'));
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
-  const persistQuickPatch = async (patch: Partial<AutoTradeNewCoinSnipeConfig>) => {
+  const persistQuickPatch = async (patch: Partial<AutoTradeNewCoinSnipeConfig>): Promise<boolean> => {
     const nextDraft = normalizeNewCoinStrategy({
       ...draft,
       ...patch,
     });
     setDraft(nextDraft);
-    await persistDraft(nextDraft);
+    return await persistDraft(nextDraft);
   };
 
   const updateDraft = (patch: Partial<AutoTradeNewCoinSnipeConfig>) => {
@@ -431,12 +434,14 @@ export function XNewCoinSniperContent({
 
   const openCreateTaskModal = async () => {
     const newTask = await buildNewTask();
+    setTaskModalError('');
     setEditingTaskId('');
     setTaskEditor(newTask);
     setTaskModalMode('create');
   };
 
   const openEditTaskModal = (task: NewCoinXmodeSnipeTask) => {
+    setTaskModalError('');
     setEditingTaskId(task.id);
     setTaskEditor({
       ...task,
@@ -446,25 +451,45 @@ export function XNewCoinSniperContent({
   };
 
   const closeTaskModal = () => {
+    setTaskModalError('');
     setTaskModalMode(null);
     setTaskEditor(null);
     setEditingTaskId('');
   };
 
-  const saveTaskModal = () => {
+  const saveTaskModal = async () => {
     if (!taskEditor) return;
-    const normalized = normalizeXmodeTasks([taskEditor])[0];
-    if (!normalized) return;
-    const current = normalizeXmodeTasks(draft.xmodeTasks);
-    if (taskModalMode === 'create') {
-      const next = current.concat(normalized);
-      updateDraft({ xmodeTasks: next });
-      setSelectedTaskId(normalized.id);
-    } else if (taskModalMode === 'edit' && editingTaskId) {
-      const next = current.map((item) => (item.id === editingTaskId ? { ...normalized, id: editingTaskId } : item));
-      updateDraft({ xmodeTasks: next });
-      setSelectedTaskId(editingTaskId);
+    const keywordCount = Array.isArray(taskEditor.keywords) ? taskEditor.keywords.filter(Boolean).length : 0;
+    if (keywordCount <= 0) {
+      setTaskModalError('任务关键词不能为空');
+      return;
     }
+    const buyAmount = Number(taskEditor.buyAmountBnb);
+    if (!Number.isFinite(buyAmount) || buyAmount <= 0) {
+      setTaskModalError('买入 BNB 不能为空，且必须大于 0');
+      return;
+    }
+    const normalized = normalizeXmodeTasks([taskEditor])[0];
+    if (!normalized) {
+      setTaskModalError('任务数据无效，请检查后重试');
+      return;
+    }
+    const current = normalizeXmodeTasks(draft.xmodeTasks);
+    let nextTasks = current;
+    let nextSelectedTaskId = selectedTaskId;
+    if (taskModalMode === 'create') {
+      nextTasks = current.concat(normalized);
+      nextSelectedTaskId = normalized.id;
+    } else if (taskModalMode === 'edit' && editingTaskId) {
+      nextTasks = current.map((item) => (item.id === editingTaskId ? { ...normalized, id: editingTaskId } : item));
+      nextSelectedTaskId = editingTaskId;
+    }
+    const ok = await persistQuickPatch({ xmodeTasks: nextTasks });
+    if (!ok) {
+      setTaskModalError('保存失败，请重试');
+      return;
+    }
+    setSelectedTaskId(nextSelectedTaskId);
     closeTaskModal();
   };
 
@@ -755,6 +780,7 @@ export function XNewCoinSniperContent({
           athMcapByAddr={athMcapByAddr}
           wsStatus={wsStatus}
           wsMonitorEnabled={wsMonitorEnabled}
+          showTweetTime={false}
           twitterSnipeEnabled={draft.enabled === true}
           taskModeEnabled={draft.taskModeEnabled !== false}
           twitterSnipeDryRun={draft.dryRun !== false}
@@ -903,6 +929,7 @@ export function XNewCoinSniperContent({
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-zinc-800/60 px-4 py-3">
+              {taskModalError ? <div className="mr-auto text-[12px] text-rose-300">{taskModalError}</div> : null}
               <button
                 type="button"
                 className="rounded-md border border-zinc-700 px-3 py-1 text-xs text-zinc-300 hover:border-zinc-500"
@@ -914,7 +941,9 @@ export function XNewCoinSniperContent({
                 type="button"
                 className="rounded-md bg-emerald-500/20 px-3 py-1 text-xs text-emerald-200 hover:bg-emerald-500/30 disabled:opacity-50"
                 disabled={!canEdit || saving}
-                onClick={saveTaskModal}
+                onClick={() => {
+                  void saveTaskModal();
+                }}
               >
                 保存任务
               </button>

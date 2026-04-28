@@ -23,6 +23,7 @@ type XSniperHistoryViewProps = {
   athMcapByAddr: Record<string, number>;
   wsStatus: any;
   wsMonitorEnabled: boolean;
+  showTweetTime?: boolean;
   twitterSnipeEnabled: boolean;
   taskModeEnabled?: boolean;
   twitterSnipeDryRun: boolean;
@@ -168,6 +169,7 @@ export function XSniperHistoryView({
   athMcapByAddr,
   wsStatus,
   wsMonitorEnabled,
+  showTweetTime = true,
   twitterSnipeEnabled,
   taskModeEnabled = true,
   twitterSnipeDryRun,
@@ -575,6 +577,13 @@ export function XSniperHistoryView({
                   const sellingForRecord = sellingKey != null && sellingKey.startsWith(`${r.id}:`);
                   const tweetAtMs = typeof r.tweetAtMs === 'number' && Number.isFinite(r.tweetAtMs) ? r.tweetAtMs : null;
                   const tweetUrl = typeof r.tweetUrl === 'string' && r.tweetUrl.trim() ? r.tweetUrl.trim() : buildTweetUrlFallback(r);
+                  const buySubmittedAtMs =
+                    r.side === 'buy'
+                    && typeof (r as any).buySubmittedAtMs === 'number'
+                    && Number.isFinite((r as any).buySubmittedAtMs)
+                    && Number((r as any).buySubmittedAtMs) > 0
+                      ? Number((r as any).buySubmittedAtMs)
+                      : null;
 
                   return (
                     <div>
@@ -608,8 +617,8 @@ export function XSniperHistoryView({
                           <span className="text-zinc-500">{formatShortAddress(r.tokenAddress)}</span>
                         </div>
                         <div className="text-right text-[11px] text-zinc-500">
-                          <div>{formatTs(r.tsMs)}</div>
-                          {tweetAtMs != null ? (
+                          <div>{r.side === 'buy' ? `提交: ${formatTs(buySubmittedAtMs ?? r.tsMs)}` : formatTs(r.tsMs)}</div>
+                          {showTweetTime && tweetAtMs != null ? (
                             <div>
                               {tt('contentUi.autoTradeStrategy.snipeHistoryTweet')}: {' '}
                               {tweetUrl ? (

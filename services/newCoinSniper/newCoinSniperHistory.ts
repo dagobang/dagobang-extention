@@ -4,6 +4,7 @@ import type { XSniperEvalPoint } from '@/types/extention';
 export type NewCoinSniperOrderRecord = {
   id: string;
   tsMs: number;
+  buySubmittedAtMs?: number;
   side?: 'buy' | 'sell';
   reason?: string;
   tweetAtMs?: number;

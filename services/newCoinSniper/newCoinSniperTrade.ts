@@ -345,6 +345,7 @@ export const createNewCoinSniperTrade = (deps: {
     void pushNewCoinSniperHistory({
       id: record.id,
       tsMs: record.tsMs,
+      buySubmittedAtMs: record.buySubmittedAtMs,
       side: record.side,
       reason: record.reason,
       tweetAtMs: record.tweetAtMs,
