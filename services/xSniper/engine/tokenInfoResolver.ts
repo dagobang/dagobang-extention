@@ -1,6 +1,5 @@
 import { chainNames } from '@/constants/chains/chainName';
 import { FourmemeAPI } from '@/services/api/fourmeme';
-import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenService } from '@/services/token';
 import type { TokenInfo } from '@/types/token';
@@ -85,11 +84,11 @@ export const createTokenInfoResolvers = () => {
     try {
       const info = await FourmemeAPI.getTokenInfo(chain, typedAddress);
       if (!info) return { tokenInfo: null, failureReason: 'fourmeme_empty' };
-      try {
-        const onchain = await TokenFourmemeService.getTokenInfo(chainId, typedAddress);
-        if (onchain?.quote) info.quote_token_address = String(onchain.quote);
-        if (onchain?.aiCreator !== undefined) (info as any).aiCreator = onchain.aiCreator;
-      } catch {}
+      // try {
+      //   const onchain = await TokenFourmemeService.getTokenInfo(chainId, typedAddress);
+      //   if (onchain?.quote) info.quote_token_address = String(onchain.quote);
+      //   if (onchain?.aiCreator !== undefined) (info as any).aiCreator = onchain.aiCreator;
+      // } catch {}
       return { tokenInfo: info };
     } catch (error) {
       return { tokenInfo: null, failureReason: isRateLimitError(error) ? 'fourmeme_rate_limited' : 'fourmeme_error' };

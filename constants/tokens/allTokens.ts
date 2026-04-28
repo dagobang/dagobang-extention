@@ -28,6 +28,10 @@ export function getQuoteTokenSymbol(chainId: ChainId, address: string): string {
     return token ? allTokens[chainId]?.[token]?.symbol ?? 'UNKNOWN' : 'UNKNOWN';
 }
 
+export function getQuoteTokenAddress(chainId: ChainId, symbol: string): string {
+    return allTokens[chainId]?.[symbol.toLocaleLowerCase()]?.address ?? ''
+}
+
 export function getBridgeTokenDexPreference(chainId: ChainId, address: string): 'v2' | 'v3' | null {
     if (chainId !== ChainId.BNB) return null;
     const addr = address.toLowerCase();
