@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import { SettingsService } from '@/services/settings';
 import { defaultSettings } from '@/utils/defaults';
-import type { UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
+import type { NewCoinXmodeSnipeTask, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import { maybeEvaluateDryRunAutoSell as maybeEvaluateDryRunAutoSellFromMod, type DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
 import { maybeEvaluateRapidExitAutoSell as maybeEvaluateRapidExitAutoSellFromMod, registerRapidExitPosition as registerRapidExitPositionFromMod, type RapidExitPosition } from '@/services/xSniper/engine/rapidExitAutoSell';
@@ -30,7 +30,10 @@ export const createNewCoinSniperTrade = (deps: {
   const dryRunAutoSellByPosKey = new Map<string, DryRunAutoSellPos>();
   const rapidExitByPosKey = new Map<string, RapidExitPosition>();
   const rapidWatchdogRpcAtMs = new Map<string, number>();
+  const latestModeMetaByToken = new Map<string, { strategyMode: 'auto_filter' | 'xmode_task'; taskId?: string; taskName?: string; matchKeywords?: string[]; matchText?: string }>();
   let currentSignalContext: UnifiedMarketSignal | null = null;
+  let currentStrategyMode: 'auto_filter' | 'xmode_task' = 'auto_filter';
+  let currentTaskContext: { taskId?: string; taskName?: string; matchKeywords?: string[]; matchText?: string } | null = null;
   let latestNewCoinSnipeStrategy: any = null;
   let rapidWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   let rapidWatchdogIntervalMs = -1;
@@ -274,7 +277,10 @@ export const createNewCoinSniperTrade = (deps: {
   }) => {
     const now = Date.now();
     const signalStableId = currentSignalContext?.id || 'no-signal';
-    const key = `${input.reason}:${input.chainId}:${input.tokenAddress.toLowerCase()}:${signalStableId}`;
+    const modeTag = currentStrategyMode === 'xmode_task'
+      ? `xmode_task:${currentTaskContext?.taskId || 'no-task'}`
+      : 'auto_filter';
+    const key = `${input.reason}:${input.chainId}:${input.tokenAddress.toLowerCase()}:${signalStableId}:${modeTag}`;
     const ttlMs =
       input.reason === 'buy_skipped_recently_bought' || input.reason === 'buy_skipped_in_flight'
         ? 60_000
@@ -301,6 +307,32 @@ export const createNewCoinSniperTrade = (deps: {
   const emitRecord = (record: any) => {
     const signal = currentSignalContext;
     const signalSourceTag = signal?.source ? String(signal.source) : undefined;
+    const tokenAddrLower = String(record?.tokenAddress || '').trim().toLowerCase();
+    const fallbackModeMeta = (() => {
+      if (currentStrategyMode === 'xmode_task') {
+        return {
+          strategyMode: 'xmode_task' as const,
+          taskId: currentTaskContext?.taskId,
+          taskName: currentTaskContext?.taskName,
+          matchKeywords: currentTaskContext?.matchKeywords,
+          matchText: currentTaskContext?.matchText,
+        };
+      }
+      if (record?.side === 'sell' && tokenAddrLower) {
+        return latestModeMetaByToken.get(tokenAddrLower) ?? { strategyMode: 'auto_filter' as const };
+      }
+      return { strategyMode: 'auto_filter' as const };
+    })();
+    const resolvedModeMeta = {
+      strategyMode: (record?.strategyMode === 'xmode_task' ? 'xmode_task' : record?.strategyMode === 'auto_filter' ? 'auto_filter' : fallbackModeMeta.strategyMode),
+      taskId: record?.taskId ?? fallbackModeMeta.taskId,
+      taskName: record?.taskName ?? fallbackModeMeta.taskName,
+      matchKeywords: Array.isArray(record?.matchKeywords) ? record.matchKeywords : fallbackModeMeta.matchKeywords,
+      matchText: record?.matchText ?? fallbackModeMeta.matchText,
+    };
+    if (tokenAddrLower && resolvedModeMeta.strategyMode) {
+      latestModeMetaByToken.set(tokenAddrLower, resolvedModeMeta);
+    }
     const resolvedLaunchpadPlatform = (() => {
       const fromRecord = extractLaunchpadPlatform(record as any);
       if (fromRecord) return fromRecord;
@@ -364,6 +396,12 @@ export const createNewCoinSniperTrade = (deps: {
       signalEventId: record.signalEventId,
       signalTweetId: record.signalTweetId,
       channel: record.channel ?? signal?.channel,
+      strategyMode: resolvedModeMeta.strategyMode,
+      taskId: resolvedModeMeta.taskId,
+      taskName: resolvedModeMeta.taskName,
+      matchKeywords: resolvedModeMeta.matchKeywords,
+      matchText: resolvedModeMeta.matchText,
+      triggerSource: signal?.source,
       ...(resolvedLaunchpadPlatform ? { launchpadPlatform: resolvedLaunchpadPlatform } : {}),
     });
     void broadcastToTabs({
@@ -377,6 +415,12 @@ export const createNewCoinSniperTrade = (deps: {
         signalEventId: record.signalEventId,
         signalTweetId: record.signalTweetId,
         channel: record.channel ?? signal?.channel,
+        strategyMode: resolvedModeMeta.strategyMode,
+        taskId: resolvedModeMeta.taskId,
+        taskName: resolvedModeMeta.taskName,
+        matchKeywords: resolvedModeMeta.matchKeywords,
+        matchText: resolvedModeMeta.matchText,
+        triggerSource: signal?.source,
         ...(resolvedLaunchpadPlatform ? { launchpadPlatform: resolvedLaunchpadPlatform } : {}),
       },
     });
@@ -393,6 +437,64 @@ export const createNewCoinSniperTrade = (deps: {
       .map((x) => String(x).trim().toLowerCase())
       .filter(Boolean);
     return list.length ? Array.from(new Set(list)) : [...DEFAULT_PLATFORM_FILTERS];
+  };
+
+  const normalizeKeywords = (input: unknown): string[] => {
+    if (!Array.isArray(input)) return [];
+    return Array.from(
+      new Set(
+        input
+          .map((x) => String(x ?? '').trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    );
+  };
+
+  const normalizeXmodeTasks = (input: unknown): NewCoinXmodeSnipeTask[] => {
+    const raw = Array.isArray(input) ? input : [];
+    const tasks: NewCoinXmodeSnipeTask[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const id = String((item as any).id || '').trim();
+      const keywords = normalizeKeywords((item as any).keywords);
+      if (!id || !keywords.length) continue;
+      tasks.push({
+        id,
+        enabled: (item as any).enabled !== false,
+        taskName: String((item as any).taskName || '').trim() || undefined,
+        keywords,
+        matchMode: (item as any).matchMode === 'all' ? 'all' : 'any',
+        maxTokenAgeSeconds: typeof (item as any).maxTokenAgeSeconds === 'string' ? String((item as any).maxTokenAgeSeconds).trim() : '600',
+        buyAmountBnb: typeof (item as any).buyAmountBnb === 'string' ? String((item as any).buyAmountBnb).trim() : '',
+        buyGasGwei: typeof (item as any).buyGasGwei === 'string' ? String((item as any).buyGasGwei).trim() : '',
+        buyBribeBnb: typeof (item as any).buyBribeBnb === 'string' ? String((item as any).buyBribeBnb).trim() : '',
+        autoSellEnabled: (item as any).autoSellEnabled !== false,
+        createdAt: Number((item as any).createdAt) > 0 ? Number((item as any).createdAt) : Date.now(),
+      });
+    }
+    return tasks;
+  };
+
+  const buildTokenMatchText = (token: UnifiedSignalToken) => {
+    const parts = [
+      String(token.tokenSymbol || '').trim().toLowerCase(),
+      String(token.tokenName || '').trim().toLowerCase(),
+    ].filter(Boolean);
+    return parts.join(' ');
+  };
+
+  const parseMaxTokenAgeSec = (task: NewCoinXmodeSnipeTask) => {
+    const n = parseNumber(task.maxTokenAgeSeconds);
+    const sec = Number.isFinite(n) ? Math.floor(Number(n)) : 600;
+    return Math.max(1, Math.min(3600, sec));
+  };
+
+  const matchTaskKeywords = (task: NewCoinXmodeSnipeTask, matchText: string) => {
+    const keywords = normalizeKeywords(task.keywords);
+    if (!keywords.length) return { pass: false, matched: [] as string[] };
+    const matched = keywords.filter((kw) => matchText.includes(kw));
+    const pass = task.matchMode === 'all' ? matched.length === keywords.length : matched.length > 0;
+    return { pass, matched };
   };
 
   const extractTokenPlatform = (token: UnifiedSignalToken): string => {
@@ -446,10 +548,115 @@ export const createNewCoinSniperTrade = (deps: {
     return candidates;
   };
 
+  const pickTaskCandidates = (signal: UnifiedMarketSignal, strategy: any, task: NewCoinXmodeSnipeTask) => {
+    const now = Date.now();
+    const signalAtMs = typeof signal.ts === 'number' ? signal.ts : now;
+    const allowedPlatforms = normalizePlatformFilters(strategy?.platforms);
+    const maxAgeSec = parseMaxTokenAgeSec(task);
+    const strategyForTask = {
+      ...strategy,
+      maxTokenAgeSeconds: String(maxAgeSec),
+      minTokenAgeSeconds: '0',
+    };
+    const tokens = normalizeSignalTokens(signal);
+    const unique: UnifiedSignalToken[] = [];
+    const seen = new Set<string>();
+    for (const t of tokens) {
+      const addr = String(t.tokenAddress || '').trim().toLowerCase();
+      if (!addr || seen.has(addr)) continue;
+      seen.add(addr);
+      unique.push(t);
+      if (unique.length >= 500) break;
+    }
+    const candidates = unique
+      .map((t) => {
+        const m = metricsFromUnifiedToken(t);
+        if (m?.tokenAddress) pushWsSnapshot(m.tokenAddress, m);
+        return { t, m };
+      })
+      .filter((x) => {
+        const tokenAddress = x.m?.tokenAddress;
+        if (!tokenAddress || !x.m) return false;
+        const tokenPlatform = extractTokenPlatform(x.t);
+        if (!tokenPlatform || !allowedPlatforms.includes(tokenPlatform)) return false;
+        const matchText = buildTokenMatchText(x.t);
+        const match = matchTaskKeywords(task, matchText);
+        if (!match.pass) return false;
+        const configPass = shouldBuyByConfig(x.m, strategyForTask, signalAtMs, now, {
+          skipTweetAgeWindowCheck: true,
+          tokenAgeMode: 'now_age',
+        });
+        if (!configPass) return false;
+        const confirm = computeWsConfirm(tokenAddress, now, strategyForTask);
+        if (!confirm.pass) return false;
+        return true;
+      });
+    candidates.sort((a, b) => {
+      const ta = typeof a.m?.firstSeenAtMs === 'number' ? a.m.firstSeenAtMs : 0;
+      const tb = typeof b.m?.firstSeenAtMs === 'number' ? b.m.firstSeenAtMs : 0;
+      return ta - tb;
+    });
+    return candidates;
+  };
+
   const isSourceEnabled = (signal: UnifiedMarketSignal, strategy: any) => {
     const list = Array.isArray(strategy?.signalSources) ? strategy.signalSources.map((x: any) => String(x).trim()) : [];
     if (!list.length) return true;
     return list.includes(signal.source);
+  };
+
+  const executeXmodeTaskBuys = async (input: {
+    signal: UnifiedMarketSignal;
+    strategy: any;
+    chainId: number;
+  }) => {
+    const tasks = normalizeXmodeTasks(input.strategy?.xmodeTasks).filter((x) => x.enabled !== false);
+    if (!tasks.length) return;
+    const pseudoSignal = buildPseudoSignalFromMarketSignal(input.signal);
+    const dryRun = input.strategy?.dryRun === true;
+    for (const task of tasks) {
+      const candidates = pickTaskCandidates(input.signal, input.strategy, task);
+      if (!candidates.length) continue;
+      for (const { t, m } of candidates) {
+        if (!m?.tokenAddress) continue;
+        const tokenAddress = m.tokenAddress;
+        const matchText = buildTokenMatchText(t);
+        const match = matchTaskKeywords(task, matchText);
+        if (!match.pass) continue;
+        currentSignalContext = input.signal;
+        currentStrategyMode = 'xmode_task';
+        currentTaskContext = {
+          taskId: task.id,
+          taskName: task.taskName,
+          matchKeywords: match.matched,
+          matchText,
+        };
+        let bought = false;
+        try {
+          const amountOverride = parseNumber(task.buyAmountBnb);
+          const gasPriceGweiOverride = String(task.buyGasGwei ?? '').trim() || undefined;
+          const priorityFeeBnbOverride = String(task.buyBribeBnb ?? '').trim() || undefined;
+          bought = await tryAutoBuyOnce({
+            chainId: input.chainId,
+            tokenAddress,
+            metrics: m,
+            strategy: task.autoSellEnabled === false ? { ...input.strategy, autoSellEnabled: false } : input.strategy,
+            signal: pseudoSignal,
+            amountBnbOverride: typeof amountOverride === 'number' && Number.isFinite(amountOverride) && amountOverride > 0
+              ? amountOverride
+              : undefined,
+            gasPriceGweiOverride,
+            priorityFeeBnbOverride,
+          });
+        } catch {
+        } finally {
+          currentSignalContext = null;
+          currentTaskContext = null;
+          currentStrategyMode = 'auto_filter';
+        }
+        if (bought && !dryRun) break;
+      }
+    }
   };
 
   const tryAutoBuyOnce = async (input: {
@@ -458,6 +665,9 @@ export const createNewCoinSniperTrade = (deps: {
     metrics: TokenMetrics;
     strategy: any;
     signal?: UnifiedTwitterSignal;
+    amountBnbOverride?: number;
+    gasPriceGweiOverride?: string;
+    priorityFeeBnbOverride?: string;
   }) =>
     tryAutoBuyOnceFromMod({
       ...input,
@@ -524,10 +734,23 @@ export const createNewCoinSniperTrade = (deps: {
       if (!config) return;
       if (config.wsMonitorEnabled === false) return;
       const strategy = (config as any).newCoinSnipe;
-      if (!strategy || strategy.enabled === false) return;
+      if (!strategy) return;
       latestNewCoinSnipeStrategy = strategy;
       ensureRapidWatchdog(strategy);
       if (!isSourceEnabled(signal, strategy)) return;
+      const autoModeEnabled = strategy.enabled === true;
+      const taskModeEnabled = strategy.taskModeEnabled !== false;
+      const effectiveTaskModeEnabled = taskModeEnabled;
+      const effectiveAutoModeEnabled = autoModeEnabled && !taskModeEnabled;
+      if (!effectiveAutoModeEnabled && !effectiveTaskModeEnabled) return;
+      if (effectiveTaskModeEnabled) {
+        await executeXmodeTaskBuys({
+          signal,
+          strategy,
+          chainId: settings.chainId,
+        });
+      }
+      if (!effectiveAutoModeEnabled) return;
 
       const perSignalMax = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
       if (perSignalMax <= 0) return;
@@ -539,18 +762,26 @@ export const createNewCoinSniperTrade = (deps: {
         if (!m?.tokenAddress) continue;
         const pseudoSignal = buildPseudoSignalFromMarketSignal(signal);
         currentSignalContext = signal;
+        currentStrategyMode = 'auto_filter';
+        currentTaskContext = null;
         let bought = false;
         try {
+          const gasPriceGweiOverride = String(strategy?.buyGasGwei ?? '').trim() || undefined;
+          const priorityFeeBnbOverride = String(strategy?.buyBribeBnb ?? '').trim() || undefined;
           bought = await tryAutoBuyOnce({
             chainId: settings.chainId,
             tokenAddress: m.tokenAddress,
             metrics: m,
             strategy,
             signal: pseudoSignal,
+            gasPriceGweiOverride,
+            priorityFeeBnbOverride,
           });
         } catch {
         } finally {
           currentSignalContext = null;
+          currentTaskContext = null;
+          currentStrategyMode = 'auto_filter';
         }
         if (!dryRun && bought) {
           boughtCount += 1;

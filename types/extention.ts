@@ -131,6 +131,24 @@ export type AutoTradeNewCoinSnipeConfig = Omit<
 > & {
   signalSources?: Array<'new_pool' | 'token_update'>;
   platforms?: string[];
+  taskModeEnabled?: boolean;
+  buyGasGwei?: string;
+  buyBribeBnb?: string;
+  xmodeTasks?: NewCoinXmodeSnipeTask[];
+};
+
+export type NewCoinXmodeSnipeTask = {
+  id: string;
+  enabled?: boolean;
+  taskName?: string;
+  keywords: string[];
+  matchMode?: 'any' | 'all';
+  maxTokenAgeSeconds?: string;
+  buyAmountBnb?: string;
+  buyGasGwei?: string;
+  buyBribeBnb?: string;
+  autoSellEnabled?: boolean;
+  createdAt: number;
 };
 
 export type TokenSnipeTask = {
@@ -587,6 +605,12 @@ export type XSniperBuyRecord = {
   signalEventId?: string;
   signalTweetId?: string;
   launchpadPlatform?: string;
+  strategyMode?: 'auto_filter' | 'xmode_task';
+  taskId?: string;
+  taskName?: string;
+  matchKeywords?: string[];
+  matchText?: string;
+  triggerSource?: 'new_pool' | 'token_update';
   reason?: string;
 };
 

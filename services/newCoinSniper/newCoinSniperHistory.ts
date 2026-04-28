@@ -56,6 +56,12 @@ export type NewCoinSniperOrderRecord = {
   signalTweetId?: string;
   channel?: string;
   launchpadPlatform?: string;
+  strategyMode?: 'auto_filter' | 'xmode_task';
+  taskId?: string;
+  taskName?: string;
+  matchKeywords?: string[];
+  matchText?: string;
+  triggerSource?: 'new_pool' | 'token_update';
 };
 
 const NEW_COIN_SNIPER_EVAL_WINDOWS = [

@@ -50,7 +50,7 @@ export function XTradePanel({
 }: XTradePanelProps) {
   const [activeTab, setActiveTab] = useState<XTradeMainTab>(() => normalizeMainTab(activeTabProp));
   const [showSniperConfigModal, setShowSniperConfigModal] = useState(false);
-  const [showNewCoinConfigModal, setShowNewCoinConfigModal] = useState(false);
+  const [newCoinModalMode, setNewCoinModalMode] = useState<'config' | 'task' | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth || 0);
   const panelWidth = resolvePanelWidth(activeTab, viewportWidth || 0);
   const [pos, setPos] = useState(() => {
@@ -74,7 +74,7 @@ export function XTradePanel({
   useEffect(() => {
     if (visible) return;
     setShowSniperConfigModal(false);
-    setShowNewCoinConfigModal(false);
+    setNewCoinModalMode(null);
   }, [visible]);
 
   useEffect(() => {
@@ -222,7 +222,8 @@ export function XTradePanel({
         siteInfo={siteInfo}
         active={activeTab === 'xnewcoinsniper'}
         view="history"
-        onOpenConfig={() => setShowNewCoinConfigModal(true)}
+        onOpenConfig={() => setNewCoinModalMode('config')}
+        onOpenTaskManager={() => setNewCoinModalMode('task')}
         settings={settings}
         isUnlocked={isUnlocked}
       />
@@ -249,23 +250,26 @@ export function XTradePanel({
           </div>
         </div>
       ) : null}
-      {showNewCoinConfigModal ? (
+      {newCoinModalMode ? (
         <div className="fixed inset-0 z-[2147483648] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-[560px] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/30">
             <div className="flex items-center justify-between border-b border-zinc-800/60 px-4 py-3">
-              <div className="text-[13px] font-semibold text-emerald-300">新币狙击设置</div>
+              <div className="text-[13px] font-semibold text-emerald-300">
+                {newCoinModalMode === 'task' ? '任务管理' : '新币狙击设置'}
+              </div>
               <button
                 type="button"
                 className="text-zinc-400 hover:text-zinc-200"
-                onClick={() => setShowNewCoinConfigModal(false)}
+                onClick={() => setNewCoinModalMode(null)}
               >
                 <X size={16} />
               </button>
             </div>
             <XNewCoinSniperContent
               siteInfo={siteInfo}
-              active={showNewCoinConfigModal}
+              active={Boolean(newCoinModalMode)}
               view="config"
+              configMode={newCoinModalMode === 'task' ? 'task' : 'full'}
               settings={settings}
               isUnlocked={isUnlocked}
             />

@@ -130,6 +130,8 @@ export const tryAutoBuyOnce = async (input: {
   strategy: any;
   signal?: UnifiedTwitterSignal;
   amountBnbOverride?: number;
+  gasPriceGweiOverride?: string;
+  priorityFeeBnbOverride?: string;
   tokenAgeMode?: 'signal_delta' | 'now_age';
   onStateChanged: () => void;
   loadBoughtOnceIfNeeded: () => Promise<void>;
@@ -524,6 +526,8 @@ export const tryAutoBuyOnce = async (input: {
         bnbAmountWei: amountWei.toString(),
         fromAddress: tradeFromAddress,
         tokenInfo: tokenInfoForTrade,
+        gasPriceGwei: input.gasPriceGweiOverride,
+        priorityFeeBnb: input.priorityFeeBnbOverride,
       } as any, {
         maxRetry: 1,
         onSubmitted: async (ctx) => {

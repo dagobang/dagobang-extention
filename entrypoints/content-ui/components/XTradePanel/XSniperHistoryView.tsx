@@ -24,10 +24,14 @@ type XSniperHistoryViewProps = {
   wsStatus: any;
   wsMonitorEnabled: boolean;
   twitterSnipeEnabled: boolean;
+  taskModeEnabled?: boolean;
   twitterSnipeDryRun: boolean;
   onTwitterSnipeEnabledChange: (next: boolean) => void;
+  onTaskModeEnabledChange?: (next: boolean) => void;
   onTwitterSnipeDryRunChange: (next: boolean) => void;
   onOpenConfig?: () => void;
+  onOpenTaskManager?: () => void;
+  onOpenCreateTask?: () => void;
   onClearHistory: () => void;
 };
 
@@ -165,10 +169,14 @@ export function XSniperHistoryView({
   wsStatus,
   wsMonitorEnabled,
   twitterSnipeEnabled,
+  taskModeEnabled = true,
   twitterSnipeDryRun,
   onTwitterSnipeEnabledChange,
+  onTaskModeEnabledChange,
   onTwitterSnipeDryRunChange,
   onOpenConfig,
+  onOpenTaskManager,
+  onOpenCreateTask,
   onClearHistory,
 }: XSniperHistoryViewProps) {
   const [keyword, setKeyword] = useState('');
@@ -177,20 +185,23 @@ export function XSniperHistoryView({
   const [wsExpanded, setWsExpanded] = useState(false);
   const [showWsLogs, setShowWsLogs] = useState(false);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const [strategyModeFilter, setStrategyModeFilter] = useState<'all' | 'auto_filter' | 'xmode_task'>('all');
   const normalizedKeyword = keyword.trim().toLowerCase();
 
   const filteredGroups = useMemo(() => {
-    if (!normalizedKeyword) return historyGroups;
     return historyGroups.filter((g) => {
+      const mode = g.parent.strategyMode === 'xmode_task' ? 'xmode_task' : 'auto_filter';
+      if (strategyModeFilter !== 'all' && mode !== strategyModeFilter) return false;
+      if (!normalizedKeyword) return true;
       const symbol = String(g.parent.tokenSymbol ?? '').toLowerCase();
       const addr = String(g.parent.tokenAddress ?? '').toLowerCase();
       return symbol.includes(normalizedKeyword) || addr.includes(normalizedKeyword);
     });
-  }, [historyGroups, normalizedKeyword]);
+  }, [historyGroups, normalizedKeyword, strategyModeFilter]);
 
   useEffect(() => {
     setVisibleCount(20);
-  }, [normalizedKeyword, historyGroups.length]);
+  }, [normalizedKeyword, strategyModeFilter, historyGroups.length]);
 
   const visibleGroups = useMemo(() => filteredGroups.slice(0, visibleCount), [filteredGroups, visibleCount]);
   const canLoadMore = visibleCount < filteredGroups.length;
@@ -295,33 +306,48 @@ export function XSniperHistoryView({
   return (
     <div className="dagobang-scrollbar space-y-2">
       <div className="rounded-md border border-zinc-800 bg-zinc-900/30 p-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-zinc-300">
-          <label
-            className="flex items-center gap-1.5"
-            title={wsMonitorEnabled ? tt('contentUi.autoTradeStrategy.twitterSnipeEnabledDesc') : tt('contentUi.xMonitor.wsMonitorDisabledSniperTip')}
-          >
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 accent-emerald-500"
-              checked={twitterSnipeEnabled}
-              disabled={!canEdit || !wsMonitorEnabled}
-              onChange={(e) => onTwitterSnipeEnabledChange(e.target.checked)}
-            />
-            <span className={!canEdit || !wsMonitorEnabled ? 'text-zinc-500' : ''}>{tt('contentUi.autoTradeStrategy.twitterSnipeEnabledShort')}</span>
-          </label>
-          <label className="flex items-center gap-1.5" title={tt('contentUi.autoTradeStrategy.twitterSnipeDryRun')}>
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 accent-amber-500"
-              checked={twitterSnipeDryRun}
-              disabled={!canEdit}
-              onChange={(e) => onTwitterSnipeDryRunChange(e.target.checked)}
-            />
-            <span>{tt('contentUi.autoTradeStrategy.twitterSnipeDryRunShort')}</span>
-          </label>
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2 text-[12px] text-zinc-300">
+            <label
+              className="flex items-center gap-1.5 rounded-md border border-zinc-800/80 bg-zinc-900/60 px-2 py-1"
+              title={wsMonitorEnabled ? tt('contentUi.autoTradeStrategy.twitterSnipeEnabledDesc') : tt('contentUi.xMonitor.wsMonitorDisabledSniperTip')}
+            >
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-emerald-500"
+                checked={twitterSnipeEnabled}
+                disabled={!canEdit || !wsMonitorEnabled}
+                onChange={(e) => onTwitterSnipeEnabledChange(e.target.checked)}
+              />
+              <span className={!canEdit || !wsMonitorEnabled ? 'text-zinc-500' : ''}>{tt('contentUi.autoTradeStrategy.twitterSnipeEnabledShort')}</span>
+            </label>
+            <label
+              className="flex items-center gap-1.5 rounded-md border border-zinc-800/80 bg-zinc-900/60 px-2 py-1"
+              title={tt('contentUi.autoTradeStrategy.twitterSnipeDryRun')}
+            >
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-amber-500"
+                checked={twitterSnipeDryRun}
+                disabled={!canEdit}
+                onChange={(e) => onTwitterSnipeDryRunChange(e.target.checked)}
+              />
+              <span>{tt('contentUi.autoTradeStrategy.twitterSnipeDryRunShort')}</span>
+            </label>
+            {onTaskModeEnabledChange ? (
+              <label className="flex items-center gap-1.5 rounded-md border border-zinc-800/80 bg-zinc-900/60 px-2 py-1" title="任务狙击开关">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 accent-sky-500"
+                  checked={taskModeEnabled}
+                  disabled={!canEdit}
+                  onChange={(e) => onTaskModeEnabledChange(e.target.checked)}
+                />
+                <span>任务狙击启用</span>
+              </label>
+            ) : null}
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] text-zinc-300 hover:bg-zinc-800"
@@ -358,6 +384,34 @@ export function XSniperHistoryView({
                 {tt('contentUi.autoTradeStrategy.snipeSettings')}
               </button>
             ) : null}
+            {onOpenTaskManager ? (
+              <button
+                type="button"
+                className="rounded-md border border-sky-500/50 bg-sky-500/15 px-2 py-1 text-[12px] text-sky-200 hover:bg-sky-500/25 disabled:opacity-50"
+                disabled={!canEdit}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onOpenTaskManager();
+                }}
+              >
+                任务管理
+              </button>
+            ) : null}
+            {onOpenCreateTask ? (
+              <button
+                type="button"
+                className="rounded-md border border-emerald-400/70 bg-emerald-500/25 px-2.5 py-1 text-[12px] font-semibold text-emerald-100 shadow-[0_0_0_1px_rgba(16,185,129,0.25)] hover:bg-emerald-500/35 disabled:opacity-50"
+                disabled={!canEdit}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onOpenCreateTask();
+                }}
+              >
+                + 添加任务
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -390,6 +444,15 @@ export function XSniperHistoryView({
             {tt('contentUi.autoTradeStrategy.snipeHistorySearchClear')}
           </button>
         ) : null}
+        <select
+          value={strategyModeFilter}
+          onChange={(e) => setStrategyModeFilter((e.target.value as 'all' | 'auto_filter' | 'xmode_task') || 'all')}
+          className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
+        >
+          <option value="all">全部模式</option>
+          <option value="auto_filter">自动狙击</option>
+          <option value="xmode_task">任务模式</option>
+        </select>
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -522,6 +585,14 @@ export function XSniperHistoryView({
                               {tt('contentUi.autoTradeStrategy.snipeHistoryDry')}
                             </span>
                           ) : null}
+                          <span
+                            className={`mr-2 rounded px-1.5 py-0.5 text-[10px] ${r.strategyMode === 'xmode_task'
+                              ? 'bg-sky-500/20 text-sky-200'
+                              : 'bg-zinc-700/40 text-zinc-300'
+                              }`}
+                          >
+                            {r.strategyMode === 'xmode_task' ? '任务模式' : '自动模式'}
+                          </span>
                           <a
                             href={tokenLink || '#'}
                             className="hover:underline"
@@ -674,6 +745,12 @@ export function XSniperHistoryView({
                           {r.reason ? (
                             <div className="col-span-3 text-[11px] text-amber-200/90">
                               {tt('contentUi.autoTradeStrategy.snipeHistoryReason')}: {resolveReasonLabel(tt, r.reason)}
+                            </div>
+                          ) : null}
+                          {r.strategyMode === 'xmode_task' ? (
+                            <div className="col-span-3 text-[11px] text-sky-200/90">
+                              任务: {r.taskName || r.taskId || '-'}
+                              {Array.isArray(r.matchKeywords) && r.matchKeywords.length ? ` | 关键词: ${r.matchKeywords.join(', ')}` : ''}
                             </div>
                           ) : null}
                         </div>

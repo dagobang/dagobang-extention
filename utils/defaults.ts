@@ -226,11 +226,14 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
   },
   newCoinSnipe: {
     enabled: false,
+    taskModeEnabled: true,
     dryRun: true,
     dryRunBuyDelayMs: '1000',
     dryRunSellDelayMs: '2000',
     autoSellEnabled: true,
     buyAmountBnb: '0.006',
+    buyGasGwei: '',
+    buyBribeBnb: '',
     buyNewCaCount: '1',
     buyOgCount: '0',
     minMarketCapUsd: '',
@@ -269,6 +272,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
     rapidTakeProfitFloorPct: '5',
     signalSources: ['new_pool', 'token_update'],
     platforms: ['fourmeme', 'fourmeme_agent', 'xmode', 'xmode_agent'],
+    xmodeTasks: [],
   },
   tokenSnipe: {
     enabled: true,

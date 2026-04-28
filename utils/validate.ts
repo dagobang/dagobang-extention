@@ -30,7 +30,7 @@ function parseListInput(value: any, fallback: string[]) {
   }
   if (typeof value === 'string') {
     return value
-      .split(/[\n,]/)
+      .split(/[\n,，]/)
       .flatMap((x) => x.split(/\s+/))
       .map((x) => x.trim())
       .filter(Boolean);
