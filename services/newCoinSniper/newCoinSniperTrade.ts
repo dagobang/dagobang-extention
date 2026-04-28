@@ -423,56 +423,16 @@ export const createNewCoinSniperTrade = (deps: {
         const metrics = x.m;
         const tokenAddress = x.m?.tokenAddress;
         const tokenPlatform = extractTokenPlatform(x.t);
-        if (!tokenAddress) {
-          console.log('NewCoinSniper prefilter_skip_invalid_token', {
-            tokenAddress: (x.t as any)?.tokenAddress,
-            tokenPlatform,
-          });
-          return false;
-        }
-        if (!tokenPlatform || !allowedPlatforms.includes(tokenPlatform)) {
-          console.log('NewCoinSniper prefilter_skip_platform', {
-            tokenAddress,
-            tokenPlatform,
-            allowedPlatforms,
-          });
-          return false;
-        }
+        if (!tokenAddress) return false;
+        if (!tokenPlatform || !allowedPlatforms.includes(tokenPlatform)) return false;
         if (!metrics) return false;
         const configPass = shouldBuyByConfig(metrics, strategy, signalAtMs, now, {
           skipTweetAgeWindowCheck: true,
           tokenAgeMode: 'now_age',
         });
-        if (!configPass) {
-          console.log('NewCoinSniper prefilter_skip_config', {
-            tokenAddress,
-            tokenPlatform,
-            signalAtMs,
-            now,
-            marketCapUsd: metrics.marketCapUsd,
-            holders: metrics.holders,
-            kol: metrics.kol,
-            createdAtMs: metrics.createdAtMs,
-            firstSeenAtMs: metrics.firstSeenAtMs,
-            devHoldPercent: metrics.devHoldPercent,
-            devHasSold: metrics.devHasSold,
-          });
-          return false;
-        }
+        if (!configPass) return false;
         const confirm = computeWsConfirm(tokenAddress, now, strategy);
-        if (!confirm.pass) {
-          console.log('NewCoinSniper prefilter_skip_ws_confirm', {
-            tokenAddress,
-            tokenPlatform,
-            confirmWindowMs: confirm.windowMs,
-            confirmStats: confirm.stats ?? null,
-          });
-          return false;
-        }
-        console.log('NewCoinSniper prefilter_pass', {
-          tokenAddress,
-          tokenPlatform,
-        });
+        if (!confirm.pass) return false;
         return true;
       });
     candidates.sort((a, b) => {
