@@ -475,12 +475,6 @@ export const createNewCoinSniperTrade = (deps: {
     return Math.max(min, Math.min(max, n));
   };
 
-  const parsePositiveFloat = (input: unknown, fallback: number, min: number, max: number) => {
-    const raw = parseNumber(typeof input === 'string' || typeof input === 'number' ? String(input) : '');
-    const n = Number.isFinite(raw) ? Number(raw) : fallback;
-    return Math.max(min, Math.min(max, n));
-  };
-
   const parseRangeBound = (input: unknown): number | null => {
     const raw = parseNumber(typeof input === 'string' || typeof input === 'number' ? String(input) : '');
     return Number.isFinite(raw) ? Number(raw) : null;
@@ -544,7 +538,10 @@ export const createNewCoinSniperTrade = (deps: {
     if (!taskModeEnabled || !autoTaskEnabled) return { strategy: input.strategy, updated: false, addedCount: 0 };
     const allowedPlatforms = normalizeAutoTaskPlatforms(input.strategy?.autoTaskPlatforms);
     if (!allowedPlatforms.length) return { strategy: input.strategy, updated: false, addedCount: 0 };
-    const athThresholdUsd = parsePositiveFloat(input.strategy?.autoTaskAthMcapUsd, 10_000, 100, 50_000_000);
+    const athThresholdRaw = parseRangeBound(input.strategy?.autoTaskAthMcapUsd);
+    const athThresholdUsd = athThresholdRaw == null
+      ? null
+      : Math.max(100, Math.min(50_000_000, athThresholdRaw));
     const maxPerSignal = parsePositiveInt(input.strategy?.autoTaskMaxPerSignal, 5, 1, 50);
     const tasks = normalizeXmodeTasks(input.strategy?.xmodeTasks);
     const defaultTaskBuyAmountBnb = readDefaultTaskBuyAmountBnb(input.strategy);
@@ -561,7 +558,7 @@ export const createNewCoinSniperTrade = (deps: {
       if (!platform || !allowedPlatforms.includes(platform)) continue;
       if (!passAutoTaskRangeFilters(metrics, input.strategy, now)) continue;
       const athMcapUsd = getWsAthMarketCapUsd(metrics.tokenAddress);
-      if (!Number.isFinite(athMcapUsd) || athMcapUsd < athThresholdUsd) continue;
+      if (athThresholdUsd != null && (!Number.isFinite(athMcapUsd) || athMcapUsd < athThresholdUsd)) continue;
       const symbol = String(token.tokenSymbol || '').trim();
       const name = String(token.tokenName || '').trim();
       const keywords = normalizeKeywords([name, symbol]);
