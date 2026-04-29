@@ -201,7 +201,7 @@ export function Header({
           ) : (
             <Pencil
               size={14}
-              className="cursor-pointer hover:text-zinc-200 ml-2"
+              className="cursor-pointer hover:text-zinc-200 ml-1"
               onClick={(e) => {
                 e.stopPropagation();
                 onEditToggle();

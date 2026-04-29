@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { browser } from 'wxt/browser';
 import type { AutoTradeNewCoinSnipeConfig, NewCoinXmodeSnipeTask, Settings, XSniperBuyRecord } from '@/types/extention';
 import { call } from '@/utils/messaging';
+import { normalizeAddress } from '@/services/xSniper/engine/metrics';
 import { NEW_COIN_SNIPER_HISTORY_STORAGE_KEY, type NewCoinSniperOrderRecord } from '@/services/newCoinSniper/newCoinSniperHistory';
 import { type SiteInfo } from '@/utils/sites';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
@@ -11,6 +12,9 @@ import { XSniperHistoryView } from './XSniperHistoryView';
 import { XSniperFilterSection } from './XSniperFilterSection';
 import { XSniperRapidSection } from './XSniperRapidSection';
 import { XSniperWsConfirmSection } from './XSniperWsConfirmSection';
+import { XNewCoinSniperTasksSection } from './XNewCoinSniperTasksSection';
+import { XNewCoinSniperTaskModal } from './XNewCoinSniperTaskModal';
+import { XSniperAutoTaskSection } from './XSniperAutoTaskSection';
 import { PLATFORM_OPTIONS, extractLaunchpadPlatform } from '@/constants/launchpad';
 
 type XNewCoinSniperContentProps = {
@@ -38,6 +42,17 @@ const normalizePlatforms = (input: unknown): string[] => {
   return list.length ? Array.from(new Set(list)) : PLATFORM_OPTIONS.map((x) => x.value);
 };
 
+const AUTO_TASK_FALLBACK_PLATFORMS = ['fourmeme', 'fourmeme_agent'];
+
+const normalizeAutoTaskPlatforms = (input: unknown): string[] => {
+  const allowed = new Set(AUTO_TASK_FALLBACK_PLATFORMS);
+  const raw = Array.isArray(input) ? input : [];
+  const list = raw
+    .map((x) => String(x).trim().toLowerCase())
+    .filter((x) => allowed.has(x));
+  return list.length ? Array.from(new Set(list)) : [...AUTO_TASK_FALLBACK_PLATFORMS];
+};
+
 const normalizeTaskKeywords = (input: unknown): string[] => {
   if (!Array.isArray(input)) return [];
   return Array.from(new Set(input.map((x) => String(x ?? '').trim().toLowerCase()).filter(Boolean)));
@@ -54,6 +69,7 @@ const normalizeXmodeTasks = (input: unknown): NewCoinXmodeSnipeTask[] => {
       id,
       enabled: (item as any).enabled !== false,
       taskName: String((item as any).taskName || '').trim(),
+      tokenAddress: normalizeAddress((item as any).tokenAddress) ?? undefined,
       keywords: normalizeTaskKeywords((item as any).keywords),
       matchMode: (item as any).matchMode === 'all' ? 'all' : 'any',
       maxTokenAgeSeconds: String((item as any).maxTokenAgeSeconds ?? '600'),
@@ -77,6 +93,7 @@ const normalizeNewCoinStrategy = (input: unknown): AutoTradeNewCoinSnipeConfig =
     ...merged,
     signalSources: normalizeSources((merged as any).signalSources),
     platforms: normalizePlatforms((merged as any).platforms),
+    autoTaskPlatforms: normalizeAutoTaskPlatforms((merged as any).autoTaskPlatforms),
     xmodeTasks: normalizeXmodeTasks((merged as any).xmodeTasks),
   };
 };
@@ -126,6 +143,7 @@ export function XNewCoinSniperContent({
   const [configSectionOpen, setConfigSectionOpen] = useState<Record<string, boolean>>({
     basic: true,
     tasks: true,
+    autoTask: true,
     filter: false,
     wsConfirm: false,
     rapid: true,
@@ -162,7 +180,7 @@ export function XNewCoinSniperContent({
     if (view !== 'config') return;
     if (configMode === 'task') {
       setTaskManagerOnly(true);
-      setConfigSectionOpen((prev) => ({ ...prev, basic: false, tasks: true, filter: false, wsConfirm: false, rapid: false }));
+      setConfigSectionOpen((prev) => ({ ...prev, basic: false, tasks: true, autoTask: false, filter: false, wsConfirm: false, rapid: false }));
       return;
     }
     setTaskManagerOnly(false);
@@ -335,6 +353,7 @@ export function XNewCoinSniperContent({
         ...nextDraft,
         signalSources: normalizeSources((nextDraft as any).signalSources),
         platforms: normalizePlatforms((nextDraft as any).platforms),
+        autoTaskPlatforms: normalizeAutoTaskPlatforms((nextDraft as any).autoTaskPlatforms),
       };
       const nextSettings: Settings = {
         ...resolvedSettings,
@@ -385,6 +404,7 @@ export function XNewCoinSniperContent({
       ...prev,
       basic: false,
       tasks: true,
+      autoTask: false,
       filter: false,
       wsConfirm: false,
       rapid: false,
@@ -395,12 +415,16 @@ export function XNewCoinSniperContent({
   const buildNewTask = async () => {
     const now = Date.now();
     let presetKeywords: string[] = [];
-    const currentTokenAddress = String(siteInfo?.tokenAddress || '').trim().toLowerCase();
-    if (currentTokenAddress.startsWith('0x')) {
+    let presetTokenName = '';
+    const currentTokenAddress = normalizeAddress(String(siteInfo?.tokenAddress || '').trim());
+    if (currentTokenAddress) {
       try {
         const metaRes = await call({ type: 'token:getMeta', tokenAddress: currentTokenAddress as `0x${string}` } as const);
         const symbol = String((metaRes as any)?.symbol || '').trim();
+        const name = String((metaRes as any)?.name || '').trim();
+        if (name) presetTokenName = name;
         if (symbol) presetKeywords.push(symbol);
+        if (name) presetKeywords.push(name);
       } catch {
       }
       try {
@@ -411,19 +435,28 @@ export function XNewCoinSniperContent({
           address: currentTokenAddress as `0x${string}`,
         } as const);
         const name = String((tokenInfoRes as any)?.tokenInfo?.name || '').trim();
+        if (name) presetTokenName = name;
         if (name) presetKeywords.push(name);
       } catch {
       }
     }
     presetKeywords = Array.from(new Set(presetKeywords.map((x) => x.toLowerCase()).filter(Boolean)));
+    const defaultBuyAmount = (() => {
+      const raw = String(draft?.buyAmountBnb ?? '').trim();
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) return raw;
+      const fallback = String(defaultSettings().autoTrade.newCoinSnipe.buyAmountBnb ?? '').trim();
+      return fallback || '0.006';
+    })();
     const newTask: NewCoinXmodeSnipeTask = {
       id: `task_${now}_${Math.floor(Math.random() * 1000)}`,
       enabled: true,
-      taskName: '',
+      taskName: presetTokenName,
+      tokenAddress: currentTokenAddress ?? undefined,
       keywords: presetKeywords,
       matchMode: 'any',
       maxTokenAgeSeconds: '600',
-      buyAmountBnb: '',
+      buyAmountBnb: defaultBuyAmount,
       buyGasGwei: '',
       buyBribeBnb: '',
       autoSellEnabled: true,
@@ -501,6 +534,16 @@ export function XNewCoinSniperContent({
     }
   };
 
+  const clearAllTasks = () => {
+    const current = normalizeXmodeTasks(draft.xmodeTasks);
+    if (!current.length) return;
+    const confirmed = window.confirm(`确认删除全部 ${current.length} 个任务？`);
+    if (!confirmed) return;
+    updateDraft({ xmodeTasks: [] });
+    setSelectedTaskId('');
+    setExpandedTaskById({});
+  };
+
   const clearHistory = async () => {
     try {
       await browser.storage.local.set({ [NEW_COIN_SNIPER_HISTORY_STORAGE_KEY]: [] } as any);
@@ -534,7 +577,6 @@ export function XNewCoinSniperContent({
     }
     return { text: '待命', className: 'bg-zinc-800 text-zinc-400' };
   };
-  const selectedTask = taskList.find((x) => x.id === selectedTaskId) ?? taskList[0] ?? null;
   const updateTaskEditor = (patch: Partial<NewCoinXmodeSnipeTask>) => {
     setTaskEditor((prev) => (prev ? { ...prev, ...patch } : prev));
   };
@@ -568,7 +610,7 @@ export function XNewCoinSniperContent({
                 className="rounded border border-sky-700 px-2 py-0.5 text-[11px] text-sky-200 hover:border-sky-500"
                 onClick={() => {
                   setTaskManagerOnly(false);
-                  setConfigSectionOpen((prev) => ({ ...prev, basic: true, tasks: true }));
+                  setConfigSectionOpen((prev) => ({ ...prev, basic: true, tasks: true, autoTask: true }));
                 }}
               >
                 进入完整设置
@@ -639,106 +681,39 @@ export function XNewCoinSniperContent({
             ) : null}
           </div>
           ) : null}
-          <div className="space-y-2 pb-3 border-b border-zinc-800/60">
-            <button
-              type="button"
-              className="flex w-full items-center justify-between rounded-md border border-zinc-800/70 bg-zinc-900/30 px-2 py-1.5 text-left text-[12px] text-zinc-300"
-              onClick={() => toggleConfigSection('tasks')}
-            >
-              <span>xmode 联动任务</span>
-              {configSectionOpen.tasks ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-            {configSectionOpen.tasks ? (
-              <div className="space-y-2 rounded-md border border-zinc-800/70 bg-zinc-900/30 p-2">
-                <div className="flex items-center justify-between text-[11px] text-zinc-400">
-                  <span>任务模式仅新增关键词过滤，平台与全局过滤条件共用</span>
-                  <button
-                    type="button"
-                    className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-200 hover:border-zinc-500"
-                    disabled={!canEdit || saving}
-                    onClick={() => {
-                      void openCreateTaskModal();
-                    }}
-                  >
-                    新增任务
-                  </button>
-                </div>
-                {taskList.length ? (
-                  <div className="space-y-1">
-                    {taskList.map((task, idx) => {
-                      const name = String(task.taskName || '').trim() || `任务 ${idx + 1}`;
-                      const kwText = (task.keywords || []).join(', ');
-                      const enabled = task.enabled !== false;
-                      const expanded = expandedTaskById[task.id] === true;
-                      const runtimeBadge = getTaskRuntimeBadge(task);
-                      return (
-                        <div
-                          key={task.id}
-                          className={`w-full rounded border px-2 py-1.5 text-left text-[12px] ${
-                            selectedTask?.id === task.id
-                              ? 'border-sky-600 bg-sky-950/30 text-sky-200'
-                              : 'border-zinc-800 bg-zinc-950/40 text-zinc-300 hover:border-zinc-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="min-w-0 flex flex-1 items-center gap-1.5">
-                              <button
-                                type="button"
-                                className="text-zinc-400 hover:text-zinc-200"
-                                onClick={() => setExpandedTaskById((prev) => ({ ...prev, [task.id]: !prev[task.id] }))}
-                              >
-                                {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                              </button>
-                              <button
-                                type="button"
-                                className="truncate text-left hover:underline"
-                                onClick={() => setSelectedTaskId(task.id)}
-                              >
-                                {name}
-                              </button>
-                            </div>
-                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-800 text-zinc-500'}`}>
-                              {enabled ? '启用' : '停用'}
-                            </span>
-                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${runtimeBadge.className}`}>{runtimeBadge.text}</span>
-                            <button
-                              type="button"
-                              className="shrink-0 text-[11px] text-zinc-300 hover:text-zinc-100"
-                              disabled={!canEdit || saving}
-                              onClick={() => {
-                                setSelectedTaskId(task.id);
-                                openEditTaskModal(task);
-                              }}
-                            >
-                              编辑
-                            </button>
-                            <button
-                              type="button"
-                              className="shrink-0 text-[11px] text-rose-300 hover:text-rose-200 disabled:opacity-50"
-                              disabled={!canEdit || saving}
-                              onClick={() => removeTask(task.id)}
-                            >
-                              删除
-                            </button>
-                          </div>
-                          <div className="mt-0.5 truncate text-[11px] text-zinc-500">
-                            关键词 {task.keywords.length} 个 · 买入 {task.buyAmountBnb || '-'} BNB
-                          </div>
-                          {expanded ? (
-                            <div className="mt-1.5 space-y-1 border-t border-zinc-800/60 pt-1.5 text-[11px] text-zinc-400">
-                              <div className="truncate">关键词：{kwText || '无'}</div>
-                              <div>匹配：{task.matchMode === 'all' ? '全部命中' : '任意命中'} · 最大币龄：{task.maxTokenAgeSeconds || '600'} 秒</div>
-                              <div>Gas：{task.buyGasGwei || '-'} Gwei · 贿赂费：{task.buyBribeBnb || '-'} BNB</div>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : <div className="text-[11px] text-zinc-500">暂无任务，点击“新增任务”创建。</div>}
-              </div>
-            ) : null}
-          </div>
+          <XNewCoinSniperTasksSection
+            open={configSectionOpen.tasks}
+            canEdit={canEdit}
+            saving={saving}
+            taskList={taskList}
+            expandedTaskById={expandedTaskById}
+            selectedTaskId={selectedTaskId}
+            onToggle={() => toggleConfigSection('tasks')}
+            onCreateTask={() => {
+              void openCreateTaskModal();
+            }}
+            onToggleTaskExpanded={(taskId) => {
+              setExpandedTaskById((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
+            }}
+            onSelectTask={setSelectedTaskId}
+            onEditTask={(task) => {
+              setSelectedTaskId(task.id);
+              openEditTaskModal(task);
+            }}
+            onRemoveTask={removeTask}
+            onClearAllTasks={clearAllTasks}
+            siteInfo={siteInfo}
+            getTaskRuntimeBadge={getTaskRuntimeBadge}
+          />
+          {!taskManagerOnly ? <XSniperAutoTaskSection
+            open={configSectionOpen.autoTask}
+            canEdit={canEdit && !saving}
+            saving={saving}
+            twitterSnipe={draft}
+            onToggle={() => toggleConfigSection('autoTask')}
+            updateTwitterSnipe={updateDraft}
+            platformOptions={PLATFORM_OPTIONS.filter((x) => x.value === 'fourmeme' || x.value === 'fourmeme_agent')}
+          /> : null}
           {!taskManagerOnly ? <XSniperFilterSection
             open={configSectionOpen.filter}
             canEdit={canEdit && !saving}
@@ -808,148 +783,18 @@ export function XNewCoinSniperContent({
       )}
       </div>
       {taskModalMode && taskEditor ? (
-        <div className="fixed inset-0 z-[2147483648] flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-[560px] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/20">
-            <div className="flex items-center justify-between border-b border-zinc-800/60 px-4 py-3">
-              <div className="text-[13px] font-semibold text-emerald-300">
-                {taskModalMode === 'create' ? '新增任务' : '编辑任务'}
-              </div>
-              <button
-                type="button"
-                className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500"
-                onClick={closeTaskModal}
-              >
-                关闭
-              </button>
-            </div>
-            <div className="max-h-[70vh] space-y-2 overflow-y-auto p-4">
-              <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-                  <input
-                    type="checkbox"
-                    className="h-3.5 w-3.5 accent-emerald-500"
-                    checked={taskEditor.enabled !== false}
-                    disabled={!canEdit || saving}
-                    onChange={(e) => updateTaskEditor({ enabled: e.target.checked })}
-                  />
-                  <span>启用任务</span>
-                </label>
-                <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-                  <input
-                    type="checkbox"
-                    className="h-3.5 w-3.5 accent-amber-500"
-                    checked={taskEditor.autoSellEnabled !== false}
-                    disabled={!canEdit || saving}
-                    onChange={(e) => updateTaskEditor({ autoSellEnabled: e.target.checked })}
-                  />
-                  <span>启用自动卖出</span>
-                </label>
-              </div>
-              <input
-                type="text"
-                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                placeholder="任务名称（可选）"
-                value={taskEditor.taskName ?? ''}
-                disabled={!canEdit || saving}
-                onChange={(e) => updateTaskEditor({ taskName: e.target.value })}
-              />
-              <label className="block space-y-1">
-                <div className="text-[11px] text-zinc-400">任务关键词(逗号分隔)</div>
-                <input
-                  type="text"
-                  className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                  placeholder="关键词，逗号分隔"
-                  value={taskEditor.keywords.join(', ')}
-                  disabled={!canEdit || saving}
-                  onChange={(e) =>
-                    updateTaskEditor({
-                      keywords: Array.from(new Set(e.target.value.split(/[,，]/).map((x) => x.trim().toLowerCase()).filter(Boolean))),
-                    })
-                  }
-                />
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="block space-y-1">
-                  <div className="text-[11px] text-zinc-400">匹配模式</div>
-                  <select
-                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                    value={taskEditor.matchMode === 'all' ? 'all' : 'any'}
-                    disabled={!canEdit || saving}
-                    onChange={(e) => updateTaskEditor({ matchMode: e.target.value === 'all' ? 'all' : 'any' })}
-                  >
-                    <option value="any">任意关键词命中</option>
-                    <option value="all">全部关键词命中</option>
-                  </select>
-                </label>
-                <label className="block space-y-1">
-                  <div className="text-[11px] text-zinc-400">最大币龄(秒)</div>
-                  <input
-                    type="number"
-                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                    value={taskEditor.maxTokenAgeSeconds ?? '600'}
-                    disabled={!canEdit || saving}
-                    onChange={(e) => updateTaskEditor({ maxTokenAgeSeconds: e.target.value })}
-                  />
-                </label>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="block space-y-1">
-                  <div className="text-[11px] text-zinc-400">买入 BNB</div>
-                  <input
-                    type="number"
-                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                    value={taskEditor.buyAmountBnb ?? ''}
-                    disabled={!canEdit || saving}
-                    onChange={(e) => updateTaskEditor({ buyAmountBnb: e.target.value })}
-                  />
-                </label>
-                <div />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="block space-y-1">
-                  <div className="text-[11px] text-zinc-400">任务 Gas(Gwei)</div>
-                  <input
-                    type="number"
-                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                    value={taskEditor.buyGasGwei ?? ''}
-                    disabled={!canEdit || saving}
-                    onChange={(e) => updateTaskEditor({ buyGasGwei: e.target.value })}
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <div className="text-[11px] text-zinc-400">任务 贿赂费(BNB)</div>
-                  <input
-                    type="number"
-                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                    value={taskEditor.buyBribeBnb ?? ''}
-                    disabled={!canEdit || saving}
-                    onChange={(e) => updateTaskEditor({ buyBribeBnb: e.target.value })}
-                  />
-                </label>
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t border-zinc-800/60 px-4 py-3">
-              {taskModalError ? <div className="mr-auto text-[12px] text-rose-300">{taskModalError}</div> : null}
-              <button
-                type="button"
-                className="rounded-md border border-zinc-700 px-3 py-1 text-xs text-zinc-300 hover:border-zinc-500"
-                onClick={closeTaskModal}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="rounded-md bg-emerald-500/20 px-3 py-1 text-xs text-emerald-200 hover:bg-emerald-500/30 disabled:opacity-50"
-                disabled={!canEdit || saving}
-                onClick={() => {
-                  void saveTaskModal();
-                }}
-              >
-                保存任务
-              </button>
-            </div>
-          </div>
-        </div>
+        <XNewCoinSniperTaskModal
+          mode={taskModalMode}
+          taskEditor={taskEditor}
+          canEdit={canEdit}
+          saving={saving}
+          error={taskModalError}
+          onClose={closeTaskModal}
+          onTaskEditorChange={updateTaskEditor}
+          onSave={() => {
+            void saveTaskModal();
+          }}
+        />
       ) : null}
       {view === 'config' ? (
         <div className="flex items-center justify-end px-4 py-3 border-t border-zinc-800/60">

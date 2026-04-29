@@ -132,6 +132,18 @@ export type AutoTradeNewCoinSnipeConfig = Omit<
   signalSources?: Array<'new_pool' | 'token_update'>;
   platforms?: string[];
   taskModeEnabled?: boolean;
+  autoTaskFromWsEnabled?: boolean;
+  autoTaskAthMcapUsd?: string;
+  autoTaskPlatforms?: string[];
+  autoTaskMaxPerSignal?: string;
+  autoTaskMinMarketCapUsd?: string;
+  autoTaskMaxMarketCapUsd?: string;
+  autoTaskMinTokenAgeSeconds?: string;
+  autoTaskMaxTokenAgeSeconds?: string;
+  autoTaskMinHolders?: string;
+  autoTaskMaxHolders?: string;
+  autoTaskMinKol?: string;
+  autoTaskMaxKol?: string;
   buyGasGwei?: string;
   buyBribeBnb?: string;
   xmodeTasks?: NewCoinXmodeSnipeTask[];
@@ -141,6 +153,7 @@ export type NewCoinXmodeSnipeTask = {
   id: string;
   enabled?: boolean;
   taskName?: string;
+  tokenAddress?: `0x${string}`;
   keywords: string[];
   matchMode?: 'any' | 'all';
   maxTokenAgeSeconds?: string;

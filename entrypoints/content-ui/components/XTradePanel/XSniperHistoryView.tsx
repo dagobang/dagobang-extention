@@ -189,6 +189,13 @@ export function XSniperHistoryView({
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [strategyModeFilter, setStrategyModeFilter] = useState<'all' | 'auto_filter' | 'xmode_task'>('all');
   const normalizedKeyword = keyword.trim().toLowerCase();
+  const taskSummaryText = useMemo(() => {
+    const rawTasks = (settings as any)?.autoTrade?.newCoinSnipe?.xmodeTasks;
+    const tasks = Array.isArray(rawTasks) ? rawTasks : [];
+    const total = tasks.filter((x) => x && typeof x === 'object').length;
+    const running = tasks.filter((x) => x && typeof x === 'object' && (x as any).enabled !== false).length;
+    return `${running}/${total}`;
+  }, [settings]);
 
   const filteredGroups = useMemo(() => {
     return historyGroups.filter((g) => {
@@ -397,7 +404,7 @@ export function XSniperHistoryView({
                   onOpenTaskManager();
                 }}
               >
-                任务管理
+                任务管理({taskSummaryText})
               </button>
             ) : null}
             {onOpenCreateTask ? (

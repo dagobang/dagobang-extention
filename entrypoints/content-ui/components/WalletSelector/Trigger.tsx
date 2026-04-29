@@ -21,8 +21,8 @@ export function WalletSelectorTrigger({
       type="button"
       className={
         walletSelectorOpen
-          ? 'inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-1 text-emerald-300'
-          : 'inline-flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:border-emerald-400'
+          ? 'inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-1 py-0.5 text-emerald-300'
+          : 'inline-flex items-center gap-1 rounded-md border border-zinc-700 px-1 py-0.5 text-zinc-200 hover:border-emerald-400'
       }
       onPointerDown={(e: ReactPointerEvent<HTMLButtonElement>) => {
         e.stopPropagation();

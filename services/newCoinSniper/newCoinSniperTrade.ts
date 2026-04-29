@@ -451,6 +451,170 @@ export const createNewCoinSniperTrade = (deps: {
     );
   };
 
+  const normalizeAutoTaskPlatforms = (input: unknown): string[] => {
+    const raw = Array.isArray(input) ? input : [];
+    const list = raw
+      .map((x) => String(x ?? '').trim().toLowerCase())
+      .filter(Boolean);
+    return list.length ? Array.from(new Set(list)) : ['fourmeme', 'fourmeme_agent'];
+  };
+
+  const readDefaultTaskBuyAmountBnb = (strategy: any): string => {
+    const raw = String(strategy?.buyAmountBnb ?? '').trim();
+    const n = parseNumber(raw);
+    if (typeof n === 'number' && Number.isFinite(n) && n > 0) return raw;
+    const fallback = String((defaultSettings().autoTrade as any)?.newCoinSnipe?.buyAmountBnb ?? '').trim();
+    const f = parseNumber(fallback);
+    if (typeof f === 'number' && Number.isFinite(f) && f > 0) return fallback;
+    return '0.006';
+  };
+
+  const parsePositiveInt = (input: unknown, fallback: number, min: number, max: number) => {
+    const raw = parseNumber(typeof input === 'string' || typeof input === 'number' ? String(input) : '');
+    const n = Number.isFinite(raw) ? Math.floor(Number(raw)) : fallback;
+    return Math.max(min, Math.min(max, n));
+  };
+
+  const parsePositiveFloat = (input: unknown, fallback: number, min: number, max: number) => {
+    const raw = parseNumber(typeof input === 'string' || typeof input === 'number' ? String(input) : '');
+    const n = Number.isFinite(raw) ? Number(raw) : fallback;
+    return Math.max(min, Math.min(max, n));
+  };
+
+  const parseRangeBound = (input: unknown): number | null => {
+    const raw = parseNumber(typeof input === 'string' || typeof input === 'number' ? String(input) : '');
+    return Number.isFinite(raw) ? Number(raw) : null;
+  };
+
+  const inRange = (value: number | null, minRaw: unknown, maxRaw: unknown) => {
+    const min = parseRangeBound(minRaw);
+    const max = parseRangeBound(maxRaw);
+    if (min == null && max == null) return true;
+    if (value == null || !Number.isFinite(value)) return false;
+    if (min != null && value < min) return false;
+    if (max != null && value > max) return false;
+    return true;
+  };
+
+  const passAutoTaskRangeFilters = (metrics: TokenMetrics, strategy: any, nowMs: number) => {
+    const marketCapUsd =
+      typeof metrics.marketCapUsd === 'number' && Number.isFinite(metrics.marketCapUsd) ? metrics.marketCapUsd : null;
+    if (!inRange(marketCapUsd, strategy?.autoTaskMinMarketCapUsd, strategy?.autoTaskMaxMarketCapUsd)) return false;
+    const holders = typeof metrics.holders === 'number' && Number.isFinite(metrics.holders) ? metrics.holders : null;
+    if (!inRange(holders, strategy?.autoTaskMinHolders, strategy?.autoTaskMaxHolders)) return false;
+    const kol = typeof metrics.kol === 'number' && Number.isFinite(metrics.kol) ? metrics.kol : null;
+    if (!inRange(kol, strategy?.autoTaskMinKol, strategy?.autoTaskMaxKol)) return false;
+    const tokenAtMs = (() => {
+      const firstSeen = typeof metrics.firstSeenAtMs === 'number' ? metrics.firstSeenAtMs : null;
+      const createdAt = typeof metrics.createdAtMs === 'number' ? metrics.createdAtMs : null;
+      if (firstSeen != null && firstSeen > 0) return firstSeen;
+      if (createdAt != null && createdAt > 0) return createdAt;
+      return null;
+    })();
+    const tokenAgeSec =
+      tokenAtMs != null && nowMs >= tokenAtMs ? Math.floor((nowMs - tokenAtMs) / 1000) : null;
+    if (!inRange(tokenAgeSec, strategy?.autoTaskMinTokenAgeSeconds, strategy?.autoTaskMaxTokenAgeSeconds)) return false;
+    return true;
+  };
+
+  const getWsAthMarketCapUsd = (tokenAddress: `0x${string}`): number => {
+    const snapshots = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+    let ath = 0;
+    for (const snap of snapshots) {
+      const mcap = Number(snap?.marketCapUsd);
+      if (!Number.isFinite(mcap) || mcap <= 0) continue;
+      if (mcap > ath) ath = mcap;
+    }
+    return ath;
+  };
+
+  const buildTaskKeywordKey = (keywords: string[]) => normalizeKeywords(keywords).slice().sort().join('|');
+
+  const ensureAutoTasksFromSignal = async (input: {
+    settings: any;
+    strategy: any;
+    signal: UnifiedMarketSignal;
+  }): Promise<{
+    strategy: any;
+    updated: boolean;
+    addedCount: number;
+  }> => {
+    const taskModeEnabled = input.strategy?.taskModeEnabled === true;
+    const autoTaskEnabled = input.strategy?.autoTaskFromWsEnabled === true;
+    if (!taskModeEnabled || !autoTaskEnabled) return { strategy: input.strategy, updated: false, addedCount: 0 };
+    const allowedPlatforms = normalizeAutoTaskPlatforms(input.strategy?.autoTaskPlatforms);
+    if (!allowedPlatforms.length) return { strategy: input.strategy, updated: false, addedCount: 0 };
+    const athThresholdUsd = parsePositiveFloat(input.strategy?.autoTaskAthMcapUsd, 10_000, 100, 50_000_000);
+    const maxPerSignal = parsePositiveInt(input.strategy?.autoTaskMaxPerSignal, 5, 1, 50);
+    const tasks = normalizeXmodeTasks(input.strategy?.xmodeTasks);
+    const defaultTaskBuyAmountBnb = readDefaultTaskBuyAmountBnb(input.strategy);
+    const existingKeywordKeySet = new Set(tasks.map((t) => buildTaskKeywordKey(t.keywords)));
+    const tokens = normalizeSignalTokens(input.signal);
+    const additions: NewCoinXmodeSnipeTask[] = [];
+    const now = Date.now();
+    for (const token of tokens) {
+      if (additions.length >= maxPerSignal) break;
+      const metrics = metricsFromUnifiedToken(token);
+      if (!metrics?.tokenAddress) continue;
+      pushWsSnapshot(metrics.tokenAddress, metrics);
+      const platform = extractTokenPlatform(token);
+      if (!platform || !allowedPlatforms.includes(platform)) continue;
+      if (!passAutoTaskRangeFilters(metrics, input.strategy, now)) continue;
+      const athMcapUsd = getWsAthMarketCapUsd(metrics.tokenAddress);
+      if (!Number.isFinite(athMcapUsd) || athMcapUsd < athThresholdUsd) continue;
+      const symbol = String(token.tokenSymbol || '').trim();
+      const name = String(token.tokenName || '').trim();
+      const keywords = normalizeKeywords([name, symbol]);
+      if (!keywords.length) continue;
+      const keywordKey = buildTaskKeywordKey(keywords);
+      if (!keywordKey || existingKeywordKeySet.has(keywordKey)) continue;
+      existingKeywordKeySet.add(keywordKey);
+      additions.push({
+        id: `auto_ws_${now}_${additions.length}_${Math.floor(Math.random() * 1000)}`,
+        enabled: true,
+        taskName: name || symbol || `AUTO ${metrics.tokenAddress.slice(0, 8)}`,
+        tokenAddress: metrics.tokenAddress,
+        keywords,
+        matchMode: 'any',
+        maxTokenAgeSeconds: String(parsePositiveInt(input.strategy?.maxTokenAgeSeconds, 600, 1, 3600)),
+        buyAmountBnb: defaultTaskBuyAmountBnb,
+        buyGasGwei: '',
+        buyBribeBnb: '',
+        autoSellEnabled: input.strategy?.autoSellEnabled !== false,
+        createdAt: now,
+      });
+    }
+    if (!additions.length) return { strategy: input.strategy, updated: false, addedCount: 0 };
+    try {
+      const latestSettings = await SettingsService.get();
+      const latestConfig = normalizeAutoTrade((latestSettings as any).autoTrade);
+      const latestStrategy = (latestConfig as any)?.newCoinSnipe ?? input.strategy;
+      const latestTasks = normalizeXmodeTasks(latestStrategy?.xmodeTasks);
+      const latestKeywordKeys = new Set(latestTasks.map((t) => buildTaskKeywordKey(t.keywords)));
+      const mergedAdditions = additions.filter((t) => {
+        const key = buildTaskKeywordKey(t.keywords);
+        if (!key || latestKeywordKeys.has(key)) return false;
+        latestKeywordKeys.add(key);
+        return true;
+      });
+      if (!mergedAdditions.length) return { strategy: latestStrategy, updated: false, addedCount: 0 };
+      const nextTasks = latestTasks.concat(mergedAdditions);
+      const nextStrategy = {
+        ...latestStrategy,
+        xmodeTasks: nextTasks,
+      };
+      const nextAutoTrade = {
+        ...latestSettings.autoTrade,
+        newCoinSnipe: nextStrategy,
+      };
+      await SettingsService.update({ autoTrade: nextAutoTrade } as any);
+      return { strategy: nextStrategy, updated: true, addedCount: mergedAdditions.length };
+    } catch (e) {
+      console.error('auto task persist failed', e);
+      return { strategy: input.strategy, updated: false, addedCount: 0 };
+    }
+  };
+
   const normalizeXmodeTasks = (input: unknown): NewCoinXmodeSnipeTask[] => {
     const raw = Array.isArray(input) ? input : [];
     const tasks: NewCoinXmodeSnipeTask[] = [];
@@ -463,6 +627,7 @@ export const createNewCoinSniperTrade = (deps: {
         id,
         enabled: (item as any).enabled !== false,
         taskName: String((item as any).taskName || '').trim() || undefined,
+        tokenAddress: normalizeAddress((item as any).tokenAddress) ?? undefined,
         keywords,
         matchMode: (item as any).matchMode === 'all' ? 'all' : 'any',
         maxTokenAgeSeconds: typeof (item as any).maxTokenAgeSeconds === 'string' ? String((item as any).maxTokenAgeSeconds).trim() : '600',
@@ -734,8 +899,16 @@ export const createNewCoinSniperTrade = (deps: {
       const config = normalizeAutoTrade((settings as any).autoTrade);
       if (!config) return;
       if (config.wsMonitorEnabled === false) return;
-      const strategy = (config as any).newCoinSnipe;
+      let strategy = (config as any).newCoinSnipe;
       if (!strategy) return;
+      const autoTaskRes = await ensureAutoTasksFromSignal({
+        settings,
+        strategy,
+        signal,
+      });
+      if (autoTaskRes.updated) {
+        strategy = autoTaskRes.strategy;
+      }
       latestNewCoinSnipeStrategy = strategy;
       ensureRapidWatchdog(strategy);
       if (!isSourceEnabled(signal, strategy)) return;
