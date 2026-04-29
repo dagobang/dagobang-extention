@@ -6,7 +6,6 @@ type XSniperSoundSectionProps = {
   twitterSnipe: any;
   tt: (key: string, subs?: Array<string | number>) => string;
   onToggle: () => void;
-  onAutoSellEnabledChange: (checked: boolean) => void;
   onDeleteTweetSellPercentChange: (value: string) => void;
 };
 
@@ -16,7 +15,6 @@ export function XSniperSoundSection({
   twitterSnipe,
   tt,
   onToggle,
-  onAutoSellEnabledChange,
   onDeleteTweetSellPercentChange,
 }: XSniperSoundSectionProps) {
   return (
@@ -31,16 +29,6 @@ export function XSniperSoundSection({
       </button>
       {open ? (
         <>
-        <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-          <input
-            type="checkbox"
-            className="h-3 w-3 accent-emerald-500"
-            checked={!!twitterSnipe?.autoSellEnabled}
-            disabled={!canEdit}
-            onChange={(e) => onAutoSellEnabledChange(e.target.checked)}
-          />
-          {tt('contentUi.autoTradeStrategy.strategyAutoSell')}
-        </label>
         <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800/60 pt-2">
           <div className="text-zinc-400">{tt('contentUi.autoTradeStrategy.deleteTweetSellPercent')}</div>
           <div className="relative w-[100px]">

@@ -703,7 +703,6 @@ export function XSniperContent({
               twitterSnipe={twitterSnipe}
               tt={tt}
               onToggle={() => toggleConfigSection('sell')}
-              onAutoSellEnabledChange={(checked) => updateTwitterSnipe({ autoSellEnabled: checked })}
               onDeleteTweetSellPercentChange={(value) => updateTwitterSnipe({ deleteTweetSellPercent: value })}
             />
           </>

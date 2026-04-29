@@ -1,14 +1,6 @@
 import { parseEther } from 'viem';
 import { WalletService } from '@/services/wallet';
-import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
-import {
-  buildStrategyRollingTakeProfitOrderInputs,
-  buildStrategySellOrderInputs,
-  buildStrategyTrailingSellOrderInputs,
-  getAdvancedAutoSellMode,
-} from '@/services/limitOrders/advancedAutoSell';
-import { cancelAllSellLimitOrdersForToken, createLimitOrder } from '@/services/limitOrders/store';
 import { buildTweetUrl, getSignalTimeMs, isRepostOrQuoteSignal, parseNumber, sanitizeMarketCapUsd, shouldBuyByConfig, type TokenMetrics } from '@/services/xSniper/engine/metrics';
 import type { UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
@@ -38,89 +30,6 @@ const resolveEntryMcapAnchor = (input: {
     }
   }
   return sanitizeMarketCapUsd(input.fallbackMcapUsd);
-};
-
-const buildWsAutoSellPosition = (input: {
-  cfg: any;
-  chainId: number;
-  tokenAddress: `0x${string}`;
-  openedAtMs: number;
-  entryMcapUsd: number;
-  sellLatencyMs?: number;
-  tweetAtMs?: number;
-  tweetUrl?: string;
-  tweetType?: string;
-  channel?: string;
-  signalId?: string;
-  signalEventId?: string;
-  signalTweetId?: string;
-}): DryRunAutoSellPos | null => {
-  const entryMcapUsd = Number(input.entryMcapUsd);
-  if (!Number.isFinite(entryMcapUsd) || entryMcapUsd <= 0) return null;
-  const cfg = input.cfg as any;
-  const rules = Array.isArray(cfg?.rules) ? (cfg.rules as any[]) : [];
-  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-  const takeProfits: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }> = [];
-  const stopLosses: Array<{ id: string; triggerMcapUsd: number; sellPercentBps: number; triggerPercent: number }> = [];
-  for (const r of rules) {
-    const id = typeof r?.id === 'string' && r.id.trim() ? String(r.id).trim() : '';
-    if (!id) continue;
-    const rawTrigger = Number(r?.triggerPercent);
-    const rawSell = Number(r?.sellPercent);
-    if (!Number.isFinite(rawTrigger) || !Number.isFinite(rawSell)) continue;
-    const baseTrigger = clamp(rawTrigger, -99.9, 100000);
-    const triggerPercent = r?.type === 'stop_loss' ? -Math.abs(baseTrigger) : Math.abs(baseTrigger);
-    const sellPercent = clamp(rawSell, 0, 100);
-    const sellPercentBps = Math.round(sellPercent * 100);
-    if (!(sellPercentBps > 0 && sellPercentBps <= 10000)) continue;
-    const triggerMcapUsd = entryMcapUsd * (1 + triggerPercent / 100);
-    if (!Number.isFinite(triggerMcapUsd) || triggerMcapUsd <= 0) continue;
-    if (r?.type === 'stop_loss') stopLosses.push({ id, triggerMcapUsd, sellPercentBps, triggerPercent });
-    else takeProfits.push({ id, triggerMcapUsd, sellPercentBps, triggerPercent });
-  }
-  const trailingRaw = cfg?.trailingStop as any;
-  const trailingSellPercent = Number.isFinite(Number(trailingRaw?.sellPercent))
-    ? clamp(Number(trailingRaw?.sellPercent), 1, 100)
-    : 100;
-  const trailing =
-    trailingRaw?.enabled === true
-      ? {
-          enabled: true,
-          callbackPercent: Number.isFinite(Number(trailingRaw?.callbackPercent))
-            ? clamp(Number(trailingRaw?.callbackPercent), 0.1, 99.9)
-            : 15,
-          sellPercentBps: Math.round(trailingSellPercent * 100),
-          activationMode:
-            trailingRaw?.activationMode === 'after_first_take_profit' || trailingRaw?.activationMode === 'after_last_take_profit'
-              ? trailingRaw.activationMode
-              : 'immediate',
-          active: false,
-          peakMcapUsd: entryMcapUsd,
-        }
-      : null;
-  const hasRules = takeProfits.length > 0 || stopLosses.length > 0 || !!trailing;
-  if (!hasRules) return null;
-  return {
-    chainId: input.chainId,
-    tokenAddress: input.tokenAddress,
-    openedAtMs: input.openedAtMs,
-    entryMcapUsd,
-    remainingBps: 10000,
-    sellLatencyMs: Number.isFinite(input.sellLatencyMs as any) ? Math.max(0, Math.floor(input.sellLatencyMs as number)) : 2000,
-    takeProfits,
-    stopLosses,
-    trailing,
-    takeProfitTotal: takeProfits.length,
-    takeProfitExecuted: 0,
-    executedIds: new Set<string>(),
-    tweetAtMs: input.tweetAtMs,
-    tweetUrl: input.tweetUrl,
-    tweetType: input.tweetType,
-    channel: input.channel,
-    signalId: input.signalId,
-    signalEventId: input.signalEventId,
-    signalTweetId: input.signalTweetId,
-  };
 };
 
 export const tryAutoBuyOnce = async (input: {
@@ -343,12 +252,6 @@ export const tryAutoBuyOnce = async (input: {
         ? (String(status.address) as `0x${string}`)
         : undefined;
 
-    let settings: any = null;
-    try {
-      settings = await SettingsService.get();
-    } catch {
-      settings = null;
-    }
     const tokenInfo =
       (await input.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ??
       (await input.buildGenericTokenInfo(input.chainId, input.tokenAddress));
@@ -383,7 +286,6 @@ export const tryAutoBuyOnce = async (input: {
 
     if (dryRun) {
       const dryRunBuyDelayMs = Math.max(0, Math.min(10_000, Math.floor(parseNumber(input.strategy?.dryRunBuyDelayMs) ?? 1000)));
-      const dryRunSellDelayMs = Math.max(0, Math.min(10_000, Math.floor(parseNumber(input.strategy?.dryRunSellDelayMs) ?? 2000)));
       if (dryRunBuyDelayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, dryRunBuyDelayMs));
       }
@@ -441,36 +343,6 @@ export const tryAutoBuyOnce = async (input: {
         signalTweetId,
         entryPriceUsd,
       });
-
-      if (input.strategy?.autoSellEnabled === true) {
-        try {
-          const settings = await SettingsService.get();
-          const cfg = (settings as any).advancedAutoSell as any;
-          if (cfg?.enabled) {
-            const rawEntryMcap = dryRunMetrics.marketCapUsd;
-            const entryMcapUsd = typeof rawEntryMcap === 'number' && Number.isFinite(rawEntryMcap) && rawEntryMcap > 0 ? rawEntryMcap : null;
-            if (entryMcapUsd != null && entryMcapUsd > 0) {
-              const wsPlan = buildWsAutoSellPosition({
-                cfg,
-                chainId: input.chainId,
-                tokenAddress: input.tokenAddress,
-                openedAtMs,
-                entryMcapUsd,
-                sellLatencyMs: dryRunSellDelayMs,
-                tweetAtMs,
-                tweetUrl,
-                tweetType,
-                channel,
-                signalId,
-                signalEventId,
-                signalTweetId,
-              });
-              if (wsPlan) input.dryRunAutoSellByPosKey.set(posKey, wsPlan);
-            }
-          }
-        } catch {
-        }
-      }
 
       const now = Date.now();
       input.emitRecord({
@@ -671,53 +543,6 @@ export const tryAutoBuyOnce = async (input: {
       signalEventId,
       signalTweetId,
     });
-
-    if (input.strategy?.autoSellEnabled && effectiveEntryPriceUsd != null && effectiveEntryPriceUsd > 0) {
-      try {
-        await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfoForTrade, {
-          fromAddress: tradeFromAddress,
-        });
-        await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress, tradeFromAddress);
-        const cfg = (settings as any).advancedAutoSell;
-        if (cfg?.enabled) {
-          const orders = buildStrategySellOrderInputs({
-            config: cfg,
-            chainId: input.chainId,
-            tokenAddress: input.tokenAddress,
-            tokenSymbol: tokenInfoForTrade.symbol,
-            tokenInfo: tokenInfoForTrade,
-            basePriceUsd: effectiveEntryPriceUsd,
-          });
-          const trailingMode = (cfg as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
-          const isRolling = getAdvancedAutoSellMode(cfg) === 'rolling_take_profit';
-          const special = trailingMode === 'immediate'
-            ? (isRolling
-              ? buildStrategyRollingTakeProfitOrderInputs({
-                config: cfg,
-                chainId: input.chainId,
-                tokenAddress: input.tokenAddress,
-                tokenSymbol: tokenInfoForTrade.symbol,
-                tokenInfo: tokenInfoForTrade,
-                basePriceUsd: effectiveEntryPriceUsd,
-                entryPriceUsd: effectiveEntryPriceUsd,
-              })
-              : buildStrategyTrailingSellOrderInputs({
-                config: cfg,
-                chainId: input.chainId,
-                tokenAddress: input.tokenAddress,
-                tokenSymbol: tokenInfoForTrade.symbol,
-                tokenInfo: tokenInfoForTrade,
-                basePriceUsd: effectiveEntryPriceUsd,
-              }))
-            : null;
-          const all = special ? [...orders, special] : orders;
-          if (all.length) {
-            await Promise.all(all.map((o) => createLimitOrder({ ...o, fromAddress: tradeFromAddress })));
-          }
-        }
-      } catch {
-      }
-    }
 
     console.log('XSniperTrade buy tx', (rsp as any)?.txHash ?? '');
     return true;
