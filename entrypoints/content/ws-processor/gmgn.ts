@@ -135,26 +135,44 @@ const normalizeNewPoolTokenData = (pool: any, chain?: string) => {
   };
 };
 
+const resolveTrenchesStageByFid = (fid: unknown): 'new_created' | 'near_complete' | 'complete' | 'unknown' => {
+  const text = typeof fid === 'string' ? fid.trim().toLowerCase() : '';
+  if (!text) return 'unknown';
+  if (text.startsWith('bsc_nc_')) return 'new_created';
+  if (text.startsWith('bsc_ncp_')) return 'near_complete';
+  if (text.startsWith('bsc_cp_')) return 'complete';
+  return 'unknown';
+};
+
 const normalizeTrenchesTokenData = (item: any) => {
+  const base = isObject(item) ? item : {};
+  const delta = isObject((base as any).f) ? (base as any).f : {};
+  const merged = {
+    ...(isObject(delta) ? delta : {}),
+    ...(isObject(base) ? base : {}),
+    a: asAddress((base as any)?.a) ?? asAddress((delta as any)?.a) ?? (base as any)?.a ?? (delta as any)?.a,
+    c: (base as any)?.c ?? (delta as any)?.c,
+    n: (base as any)?.n ?? (delta as any)?.n ?? (base as any)?.c ?? (delta as any)?.c,
+  };
   const address =
-    asAddress(item?.a) ??
-    extractTokenAddress(item);
-  const createdAtSec = typeof item?.ct === 'number' ? item.ct : null;
+    asAddress((merged as any)?.a) ??
+    extractTokenAddress(merged);
+  const createdAtSec = typeof (merged as any)?.ct === 'number' ? (merged as any).ct : null;
   const createdAtMs = createdAtSec ? createdAtSec * 1000 : null;
-  const marketCapUsd = extractNumber(item, ['mc']);
-  const liquidityUsd = extractNumber(item, ['lq', 'lqdt']);
-  const holders = extractNumber(item, ['hd']);
-  const kol = extractNumber(item, ['kol']);
-  const vol24hUsd = extractNumber(item, ['v24h']);
-  const netBuy24hUsd = extractNumber(item, ['nba_24h']);
-  const buyTx24h = extractNumber(item, ['b24h']);
-  const sellTx24h = extractNumber(item, ['s24h']);
-  const smartMoney = extractNumber(item, ['smt']);
-  const priceUsd = extractNumber(item, ['p']);
-  const devHoldRatio = extractNumber(item, ['d_br']);
-  const top10HoldRatio = extractNumber(item, ['t10']);
-  const devTokenStatus = typeof item?.d_ts === 'string' ? item.d_ts.trim() : undefined;
-  const tokenLogo = typeof item?.l === 'string' && item.l.trim() ? item.l.trim() : undefined;
+  const marketCapUsd = extractNumber(merged, ['mc']);
+  const liquidityUsd = extractNumber(merged, ['lq', 'lqdt']);
+  const holders = extractNumber(merged, ['hd']);
+  const kol = extractNumber(merged, ['kol']);
+  const vol24hUsd = extractNumber(merged, ['v24h']);
+  const netBuy24hUsd = extractNumber(merged, ['nba_24h']);
+  const buyTx24h = extractNumber(merged, ['b24h']);
+  const sellTx24h = extractNumber(merged, ['s24h']);
+  const smartMoney = extractNumber(merged, ['smt']);
+  const priceUsd = extractNumber(merged, ['p']);
+  const devHoldRatio = extractNumber(merged, ['d_br']);
+  const top10HoldRatio = extractNumber(merged, ['t10']);
+  const devTokenStatus = typeof (merged as any)?.d_ts === 'string' ? (merged as any).d_ts.trim() : undefined;
+  const tokenLogo = typeof (merged as any)?.l === 'string' && (merged as any).l.trim() ? (merged as any).l.trim() : undefined;
   return {
     tokenAddress: address ?? undefined,
     marketCapUsd: marketCapUsd ?? undefined,
@@ -168,17 +186,18 @@ const normalizeTrenchesTokenData = (item: any) => {
     smartMoney: smartMoney ?? undefined,
     priceUsd: priceUsd ?? undefined,
     createdAtMs: createdAtMs ?? undefined,
-    devAddress: asAddress(item?.d_ct) ?? undefined,
+    devAddress: asAddress((merged as any)?.d_ct) ?? undefined,
     devHoldPercent: normalizePercentValue(devHoldRatio ?? null),
-    devHasSold: typeof item?.d_ts === 'string' ? item.d_ts.toLowerCase().includes('sell') : undefined,
+    devHasSold: typeof (merged as any)?.d_ts === 'string' ? (merged as any).d_ts.toLowerCase().includes('sell') : undefined,
     devBuyRatio: devHoldRatio ?? undefined,
     top10HoldRatio: top10HoldRatio ?? undefined,
     devTokenStatus,
     tokenLogo,
-    chain: item?.n ?? item?.chain ?? undefined,
-    symbol: item?.s ?? undefined,
-    name: item?.nm ?? undefined,
-    ...(isObject(item) ? item : {}),
+    chain: (merged as any)?.n ?? (merged as any)?.chain ?? undefined,
+    symbol: (merged as any)?.s ?? undefined,
+    name: (merged as any)?.nm ?? undefined,
+    ...(isObject(merged) ? merged : {}),
+    ...(isObject(base) ? base : {}),
   };
 };
 
@@ -1535,18 +1554,51 @@ export function initGmgnWsMonitor(options: {
     const latencyMs = computeLatencyMs(payload, packetTs, now);
     updatePacketStatus(channel, now, latencyMs);
     const wrapper = isObject(payload) ? (payload as any) : null;
-    const wrapperUpdateTypeRaw = wrapper && typeof wrapper._v_ch === 'string' ? wrapper._v_ch : '';
-    const inner = wrapper && wrapper.data != null ? wrapper.data : payload;
+    const deltaWrapper = (() => {
+      if (wrapper && Array.isArray((wrapper as any).t)) return wrapper;
+      if (wrapper && isObject((wrapper as any).data) && Array.isArray((wrapper as any).data.t)) return (wrapper as any).data;
+      return null;
+    })();
+    const wrapperUpdateTypeRaw =
+      (deltaWrapper && typeof (deltaWrapper as any)._v_ch === 'string' ? (deltaWrapper as any)._v_ch : '') ||
+      (wrapper && typeof (wrapper as any)._v_ch === 'string' ? (wrapper as any)._v_ch : '');
+    const stage = resolveTrenchesStageByFid(deltaWrapper?.fid ?? wrapper?.fid);
+    const inner = deltaWrapper?.t ?? (wrapper && wrapper.data != null ? wrapper.data : payload);
     const items = toArrayPayload(inner);
     const list = items.length ? items : [inner];
+    const addedAddrs = new Set<string>(
+      Array.isArray(deltaWrapper?.a)
+        ? (deltaWrapper!.a as any[])
+          .map((x) => asAddress(x))
+          .filter((x): x is string => typeof x === 'string' && !!x)
+          .map((x) => x.toLowerCase())
+        : [],
+    );
     for (const item of list) {
       const tokenData = normalizeTrenchesTokenData(item);
       if (!tokenData.tokenAddress) continue;
+      const tokenAddrLower = tokenData.tokenAddress.toLowerCase();
+      const hasPrevSnapshot = tokenByAddress.has(tokenAddrLower);
+      const rawF = isObject((item as any)?.f) ? (item as any).f : null;
+      const hasCreateFields = Boolean(
+        rawF &&
+        (
+          typeof (rawF as any).ct === 'number' ||
+          typeof (rawF as any).sid === 'string' ||
+          typeof (rawF as any).lp === 'string' ||
+          typeof (rawF as any).lpp === 'string' ||
+          typeof (rawF as any).ot === 'number'
+        ),
+      );
+      // bsc_nc 也可能是增量：只有首次出现或具备明显建池字段时，才回流到 new_pool。
+      const isNewPoolByToken =
+        stage === 'new_created' &&
+        (!hasPrevSnapshot || addedAddrs.has(tokenAddrLower) || hasCreateFields);
       const updateTypeRaw = typeof (item as any)?._v_ch === 'string' ? (item as any)._v_ch : wrapperUpdateTypeRaw;
       const updateType = typeof updateTypeRaw === 'string' ? String(updateTypeRaw).trim().toLowerCase() : '';
       emitTrenchesTokenEvent(tokenData, now);
       updateTokenSnapshot(tokenData, now);
-      const mx = (item as any)?.m_x ?? wrapper?.m_x;
+      const mx = (item as any)?.m_x ?? (item as any)?.f?.m_x ?? deltaWrapper?.m_x ?? wrapper?.m_x;
       if (
         (typeof mx === 'string' && /status\/\d{6,}/i.test(mx)) ||
         (typeof mx === 'string' && mx.trim() && updateType.includes('social'))
@@ -1558,9 +1610,12 @@ export function initGmgnWsMonitor(options: {
         lastSignalAt: now,
         signalCount: wsStatus.signalCount + 1,
       };
-      pushLog('signal', `trenches > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${tokenData.chain ? ` ${tokenData.chain}` : ''}`);
+      pushLog(
+        'signal',
+        `${isNewPoolByToken ? 'new_pool' : 'trenches'} > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${tokenData.chain ? ` ${tokenData.chain}` : ''}`,
+      );
       emitMarketSignal({
-        source: 'token_update',
+        source: isNewPoolByToken ? 'new_pool' : 'token_update',
         channel,
         tokenAddress: tokenData.tokenAddress,
         chain: tokenData.chain ? String(tokenData.chain) : undefined,
@@ -1578,6 +1633,7 @@ export function initGmgnWsMonitor(options: {
     public_broadcast: handlePublicBroadcastChannel,
     new_pool_info: handleNewPoolInfoChannel,
     trenches_update: handleTrenchesUpdateChannel,
+    trenches_delta: handleTrenchesUpdateChannel,
     twitter_user_monitor_basic: (data, channel, payload, now) => {
       handleTwitterChannel(data, channel, payload, now);
     },
