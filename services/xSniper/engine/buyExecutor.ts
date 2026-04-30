@@ -447,6 +447,34 @@ export const tryAutoBuyOnce = async (input: {
       isBundle: (rsp as any)?.isBundle,
     });
 
+
+    // PreApproveForAutoSell
+    if (tradeFromAddress) {
+      const approveStartAtMs = Date.now();
+      void (async () => {
+        try {
+          const approveTx = await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfoForTrade, {
+            fromAddress: tradeFromAddress,
+          });
+          if (approveTx) {
+            console.log('[xsniper.buy.post_approve][submitted]', {
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              approveTx,
+              elapsedMs: Date.now() - approveStartAtMs,
+            });
+          }
+        } catch (e: any) {
+          console.warn('[xsniper.buy.post_approve][failed]', {
+            chainId: input.chainId,
+            tokenAddress: input.tokenAddress,
+            error: String(e?.shortMessage || e?.message || e || ''),
+            elapsedMs: Date.now() - approveStartAtMs,
+          });
+        }
+      })();
+    }
+
     const entryPriceUsd = await input.getEntryPriceUsd(
       input.chainId,
       input.tokenAddress,
