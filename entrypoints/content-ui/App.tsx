@@ -129,6 +129,8 @@ export default function App() {
     () => resolveSelectedTradeWallets(state?.wallet, settings),
     [state?.wallet, settings]
   );
+  const multiWalletBuyMode: 'uniform' | 'child_custom' = settings?.multiWalletBuyMode === 'child_custom' ? 'child_custom' : 'uniform';
+  const childWalletBuyAmountsBnb: Record<string, string> = settings?.childWalletBuyAmountsBnb ?? {};
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
   const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
@@ -1136,10 +1138,41 @@ export default function App() {
       if (!tokenAddressNormalized) throw new Error('Invalid token');
       const wallets = selectedTradeWallets;
       if (wallets.length <= 0) throw new Error('No wallet selected');
-      const amountIn = parseEther(amountStr);
-      if (!amountIn) throw new Error('Invalid amount');
-      const required = amountIn * BigInt(wallets.length);
-      if (BigInt(nativeBalanceWei || '0') < required) throw new Error('Insufficient balance');
+      const mainWalletLower = (() => {
+        const activeLower = String(address || '').toLowerCase();
+        if (activeLower && wallets.some((w) => w.toLowerCase() === activeLower)) return activeLower;
+        return wallets[0].toLowerCase();
+      })();
+      const parseAmountWei = (rawAmount: string, walletAddress: `0x${string}`) => {
+        const normalized = String(rawAmount || '').trim();
+        if (!normalized) throw new Error(`钱包 ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)} 金额为空`);
+        const wei = parseEther(normalized);
+        if (wei <= 0n) throw new Error(`钱包 ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)} 金额必须大于 0`);
+        return wei;
+      };
+      const buyPlan = wallets.map((walletAddress) => {
+        const lower = walletAddress.toLowerCase();
+        const isMainWallet = lower === mainWalletLower;
+        const customAmountRaw = childWalletBuyAmountsBnb[lower];
+        const shouldUseCustom = multiWalletBuyMode === 'child_custom' && !isMainWallet && typeof customAmountRaw === 'string' && customAmountRaw.trim().length > 0;
+        const amountRaw = shouldUseCustom ? customAmountRaw : amountStr;
+        const amountWei = parseAmountWei(amountRaw, walletAddress);
+        return { walletAddress, amountWei };
+      });
+      const executablePlan: Array<{ walletAddress: `0x${string}`; amountWei: bigint }> = [];
+      const insufficientWallets: `0x${string}`[] = [];
+      for (const item of buyPlan) {
+        const walletBal = BigInt(walletNativeBalancesWei[item.walletAddress.toLowerCase()] || '0');
+        if (walletBal < item.amountWei) {
+          insufficientWallets.push(item.walletAddress);
+        } else {
+          executablePlan.push(item);
+        }
+      }
+      if (executablePlan.length <= 0) throw new Error('Insufficient balance');
+      if (insufficientWallets.length > 0) {
+        toast.error(`余额不足，已跳过 ${insufficientWallets.length} 个钱包`, { icon: '⚠️' });
+      }
       ensureTradeSuccessAudioReady();
       const sym = tokenSymbol ?? '';
       const flowToastId = getTradeToastId('buy', tokenAddressNormalized);
@@ -1148,11 +1181,11 @@ export default function App() {
 
       const mainTrade = (async () => {
         const results = await Promise.allSettled(
-          wallets.map(async (walletAddress) => {
+          executablePlan.map(async ({ walletAddress, amountWei }) => {
             const buyInput = {
               chainId: settings.chainId,
               tokenAddress: tokenAddressNormalized,
-              bnbAmountWei: amountIn.toString(),
+              bnbAmountWei: amountWei.toString(),
               fromAddress: walletAddress,
               priorityFeeBnb: resolvePriorityFee('buy'),
               tokenInfo: tokenInfo ?? undefined,
@@ -1181,7 +1214,7 @@ export default function App() {
         const tokenMinOutWei = first.tokenMinOutWei ?? null;
         setTxHash(first.txHash);
         setPendingBuyTokenMinOutWei(tokenMinOutWei);
-        toast.success(`买入成功 ${successes.length}/${wallets.length} 个钱包`, { id: flowToastId, icon: '✅' });
+        toast.success(`买入成功 ${successes.length}/${executablePlan.length} 个钱包`, { id: flowToastId, icon: '✅' });
         if (failures.length > 0) {
           toast.error(`买入失败 ${failures.length} 个钱包`, { icon: '⚠️' });
         }
@@ -1280,7 +1313,7 @@ export default function App() {
             // await new Promise((resolve) => setTimeout(resolve, 300));
             await GmgnAPI.buyToken({
               tokenAddress: tokenAddressNormalized,
-              amount: amountIn.toString(),
+              amount: executablePlan[0].amountWei.toString(),
             });
           } catch (e) {
             console.error('GMGN buy failed', e);
@@ -1683,6 +1716,33 @@ export default function App() {
     } as const).then(() => refreshAll());
   };
 
+  const handleChangeMultiWalletBuyMode = (mode: 'uniform' | 'child_custom') => {
+    if (!settings) return;
+    void call({
+      type: 'settings:set',
+      settings: {
+        ...settings,
+        multiWalletBuyMode: mode,
+      },
+    } as const).then(() => refreshAll());
+  };
+
+  const handleUpdateChildWalletBuyAmount = (walletAddress: `0x${string}`, amountBnb: string) => {
+    if (!settings) return;
+    const key = walletAddress.toLowerCase();
+    const next = { ...(settings.childWalletBuyAmountsBnb ?? {}) };
+    const normalized = String(amountBnb || '').trim();
+    if (!normalized) delete next[key];
+    else next[key] = normalized;
+    void call({
+      type: 'settings:set',
+      settings: {
+        ...settings,
+        childWalletBuyAmountsBnb: next,
+      },
+    } as const).then(() => refreshAll());
+  };
+
   const handleUnlock = () => {
     call({ type: 'bg:openPopup' });
   };
@@ -1786,6 +1846,10 @@ export default function App() {
               activeWalletAddress={address as `0x${string}` | null}
               selectedTradeWallets={selectedTradeWallets}
               onToggleTradeWallet={handleToggleTradeWallet}
+              multiWalletBuyMode={multiWalletBuyMode}
+              childWalletBuyAmountsBnb={childWalletBuyAmountsBnb}
+              onChangeMultiWalletBuyMode={handleChangeMultiWalletBuyMode}
+              onUpdateChildWalletBuyAmount={handleUpdateChildWalletBuyAmount}
               walletNativeBalancesWei={walletNativeBalancesWei}
               walletTokenBalancesWei={walletTokenBalancesWei}
               tokenDecimals={tokenDecimals}

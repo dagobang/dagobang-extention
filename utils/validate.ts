@@ -93,6 +93,21 @@ export function validateSettings(input: Settings): Settings | null {
     ? ((input as any).selectedTradeWallets as unknown[])
       .filter((v): v is `0x${string}` => typeof v === 'string' && /^0x[a-fA-F0-9]{40}$/.test(v))
     : ((defaults as any).selectedTradeWallets ?? []);
+  const inputMultiWalletBuyMode = (input as any).multiWalletBuyMode;
+  const multiWalletBuyMode: 'uniform' | 'child_custom' =
+    inputMultiWalletBuyMode === 'child_custom' ? 'child_custom' : 'uniform';
+  const rawChildWalletBuyAmounts = (input as any).childWalletBuyAmountsBnb;
+  const childWalletBuyAmountsBnb: Record<string, string> = {};
+  if (rawChildWalletBuyAmounts && typeof rawChildWalletBuyAmounts === 'object') {
+    for (const [rawAddr, rawAmount] of Object.entries(rawChildWalletBuyAmounts as Record<string, unknown>)) {
+      const addr = String(rawAddr || '').trim().toLowerCase();
+      if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) continue;
+      if (typeof rawAmount !== 'string') continue;
+      const amount = rawAmount.trim();
+      if (!amount) continue;
+      childWalletBuyAmountsBnb[addr] = amount;
+    }
+  }
   const limitOrderScanIntervalOptionsMs = [1000, 3000, 5000, 10000, 30000, 60000, 120000] as const;
   const inputLimitOrderScanIntervalMs = Number((input as any).limitOrderScanIntervalMs);
   const limitOrderScanIntervalMs = Number.isFinite(inputLimitOrderScanIntervalMs) && limitOrderScanIntervalOptionsMs.includes(Math.floor(inputLimitOrderScanIntervalMs) as any)
@@ -681,6 +696,8 @@ export function validateSettings(input: Settings): Settings | null {
     autoLockSeconds,
     lastSelectedAddress: input.lastSelectedAddress,
     selectedTradeWallets,
+    multiWalletBuyMode,
+    childWalletBuyAmountsBnb,
     locale,
     accountAliases,
     toastPosition,

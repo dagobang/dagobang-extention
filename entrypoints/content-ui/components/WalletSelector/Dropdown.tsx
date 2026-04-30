@@ -12,6 +12,10 @@ type WalletSelectorDropdownProps = {
   walletNativeBalancesWei: Record<string, string>;
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
+  multiWalletBuyMode: 'uniform' | 'child_custom';
+  childWalletBuyAmountsBnb: Record<string, string>;
+  onChangeMultiWalletBuyMode: (mode: 'uniform' | 'child_custom') => void;
+  onUpdateChildWalletBuyAmount: (address: `0x${string}`, amountBnb: string) => void;
   className?: string;
   onRequestClose: () => void;
 };
@@ -47,6 +51,10 @@ export function WalletSelectorDropdown({
   walletNativeBalancesWei,
   walletTokenBalancesWei,
   tokenDecimals,
+  multiWalletBuyMode,
+  childWalletBuyAmountsBnb,
+  onChangeMultiWalletBuyMode,
+  onUpdateChildWalletBuyAmount,
   className,
   onRequestClose,
 }: WalletSelectorDropdownProps) {
@@ -73,8 +81,17 @@ export function WalletSelectorDropdown({
       className={className || 'absolute left-2 right-2 top-1 z-30 rounded-lg border border-zinc-700 bg-[#141416] p-2 shadow-xl'}
       onPointerDown={(e: ReactPointerEvent<HTMLDivElement>) => e.stopPropagation()}
     >
-      <div className="mb-2 text-[11px] text-zinc-400">
-        已选钱包 {selectedTradeWallets.length}/{walletAccounts.length}
+      <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-zinc-400">
+        <span>已选钱包 {selectedTradeWallets.length}/{walletAccounts.length}</span>
+        <label className="inline-flex cursor-pointer items-center gap-1.5 text-zinc-300 select-none">
+          <input
+            type="checkbox"
+            className="h-3.5 w-3.5 rounded border-zinc-600 bg-zinc-900"
+            checked={multiWalletBuyMode === 'child_custom'}
+            onChange={(e) => onChangeMultiWalletBuyMode(e.target.checked ? 'child_custom' : 'uniform')}
+          />
+          <span>子钱包独立金额</span>
+        </label>
       </div>
       <div className="dagobang-scrollbar max-h-56 overflow-auto space-y-1 pr-1">
         {walletAccounts.map((acc) => {
@@ -114,6 +131,18 @@ export function WalletSelectorDropdown({
                   <span className={`text-[11px] ${bnbToneClass}`}>{nativeBal} BNB</span>
                 </span>
               </label>
+              {multiWalletBuyMode === 'child_custom' && checked && !isActive && (
+                <div className="mt-1 flex items-center gap-2 pl-5">
+                  <span className="text-[11px] text-zinc-400">买入</span>
+                  <input
+                    className="w-24 rounded border border-zinc-600 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-200 outline-none focus:border-emerald-500"
+                    value={childWalletBuyAmountsBnb[addrLower] ?? ''}
+                    onChange={(e) => onUpdateChildWalletBuyAmount(acc.address, e.target.value)}
+                    placeholder="跟随主钱包"
+                  />
+                  <span className="text-[11px] text-zinc-500">BNB</span>
+                </div>
+              )}
             </div>
           );
         })}

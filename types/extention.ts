@@ -310,6 +310,8 @@ export type Settings = {
   autoLockSeconds: number;
   lastSelectedAddress?: `0x${string}`;
   selectedTradeWallets?: `0x${string}`[];
+  multiWalletBuyMode?: 'uniform' | 'child_custom';
+  childWalletBuyAmountsBnb?: Record<string, string>;
   locale: 'zh_CN' | 'zh_TW' | 'en';
   accountAliases?: Record<string, string>;
   toastPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';

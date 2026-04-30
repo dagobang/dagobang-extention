@@ -64,6 +64,10 @@ type QuickTradePanelProps = {
   activeWalletAddress: `0x${string}` | null;
   selectedTradeWallets: `0x${string}`[];
   onToggleTradeWallet: (address: `0x${string}`) => void;
+  multiWalletBuyMode: 'uniform' | 'child_custom';
+  childWalletBuyAmountsBnb: Record<string, string>;
+  onChangeMultiWalletBuyMode: (mode: 'uniform' | 'child_custom') => void;
+  onUpdateChildWalletBuyAmount: (address: `0x${string}`, amountBnb: string) => void;
   walletNativeBalancesWei: Record<string, string>;
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
@@ -124,6 +128,10 @@ export function QuickTradePanel({
   activeWalletAddress,
   selectedTradeWallets,
   onToggleTradeWallet,
+  multiWalletBuyMode,
+  childWalletBuyAmountsBnb,
+  onChangeMultiWalletBuyMode,
+  onUpdateChildWalletBuyAmount,
   walletNativeBalancesWei,
   walletTokenBalancesWei,
   tokenDecimals,
@@ -183,6 +191,10 @@ export function QuickTradePanel({
               walletAccounts={walletAccounts}
               activeWalletAddress={activeWalletAddress}
               onToggleTradeWallet={onToggleTradeWallet}
+              multiWalletBuyMode={multiWalletBuyMode}
+              childWalletBuyAmountsBnb={childWalletBuyAmountsBnb}
+              onChangeMultiWalletBuyMode={onChangeMultiWalletBuyMode}
+              onUpdateChildWalletBuyAmount={onUpdateChildWalletBuyAmount}
               walletNativeBalancesWei={walletNativeBalancesWei}
               walletTokenBalancesWei={walletTokenBalancesWei}
               tokenDecimals={tokenDecimals}

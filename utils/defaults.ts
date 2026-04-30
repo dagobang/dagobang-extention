@@ -322,6 +322,8 @@ export function defaultSettings(): Settings {
     },
     autoLockSeconds: 30 * 60, // 30 minutes
     selectedTradeWallets: [],
+    multiWalletBuyMode: 'uniform',
+    childWalletBuyAmountsBnb: {},
     locale: 'zh_CN',
     accountAliases: {},
     toastPosition: 'top-center',
