@@ -26,7 +26,7 @@ type SettingsViewProps = {
 };
 
 export function SettingsView({ initialSettings, onRefresh, onError, onBack, onBackup, locale, onLocaleChange }: SettingsViewProps) {
-  const [settingsDraft, setSettingsDraft] = useState<Settings>(initialSettings);
+  const [settingsDraft, setSettingsDraft] = useState<Settings>(() => validateSettings(initialSettings) ?? defaultSettings());
   const [busy, setBusy] = useState(false);
   const [section, setSection] = useState<SettingsSectionId>('root');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);

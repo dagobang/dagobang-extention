@@ -65,12 +65,13 @@ type QuickTradePanelProps = {
   selectedTradeWallets: `0x${string}`[];
   onToggleTradeWallet: (address: `0x${string}`) => void;
   multiWalletBuyMode: 'uniform' | 'child_custom';
-  childWalletBuyAmountsBnb: Record<string, string>;
+  childWalletBuyAmountsNative: Record<string, string>;
   onChangeMultiWalletBuyMode: (mode: 'uniform' | 'child_custom') => void;
-  onUpdateChildWalletBuyAmount: (address: `0x${string}`, amountBnb: string) => void;
+  onUpdateChildWalletBuyAmount: (address: `0x${string}`, amountNative: string) => void;
   walletNativeBalancesWei: Record<string, string>;
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
+  nativeSymbol: string;
 };
 
 export function QuickTradePanel({
@@ -129,12 +130,13 @@ export function QuickTradePanel({
   selectedTradeWallets,
   onToggleTradeWallet,
   multiWalletBuyMode,
-  childWalletBuyAmountsBnb,
+  childWalletBuyAmountsNative,
   onChangeMultiWalletBuyMode,
   onUpdateChildWalletBuyAmount,
   walletNativeBalancesWei,
   walletTokenBalancesWei,
   tokenDecimals,
+  nativeSymbol,
 }: QuickTradePanelProps) {
   const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
 
@@ -192,12 +194,13 @@ export function QuickTradePanel({
               activeWalletAddress={activeWalletAddress}
               onToggleTradeWallet={onToggleTradeWallet}
               multiWalletBuyMode={multiWalletBuyMode}
-              childWalletBuyAmountsBnb={childWalletBuyAmountsBnb}
+              childWalletBuyAmountsNative={childWalletBuyAmountsNative}
               onChangeMultiWalletBuyMode={onChangeMultiWalletBuyMode}
               onUpdateChildWalletBuyAmount={onUpdateChildWalletBuyAmount}
               walletNativeBalancesWei={walletNativeBalancesWei}
               walletTokenBalancesWei={walletTokenBalancesWei}
               tokenDecimals={tokenDecimals}
+              nativeSymbol={nativeSymbol}
               onRequestClose={() => setWalletSelectorOpen(false)}
             />
           )}

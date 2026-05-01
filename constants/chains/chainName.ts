@@ -1,6 +1,7 @@
 import { ChainId } from "./chainId";
 
 export const chainNames: Record<ChainId | number, string> = {
+  [ChainId.ETH]: "eth",
   [ChainId.BNB]: "bsc",
   [ChainId.SOL]: "sol",
 };
@@ -20,4 +21,4 @@ export const getChainIdByName = (name: string) => {
   return Number(chainNameToChainId[name.toLocaleLowerCase()]);
 };
 
-export const SUPPORTED_CHAINS = ['bsc', 'sol']
+export const SUPPORTED_CHAINS = ['eth', 'bsc', 'sol']

@@ -1,9 +1,9 @@
 import { createPublicClient, http, fallback, keccak256, parseEther, type PublicClient } from 'viem';
-import { bsc } from 'viem/chains';
 import { SettingsService } from './settings';
 import BloxRouterAPI from '@/services/api/bloxRouter';
 import { classifyBroadcastError } from '@/utils/txErrorClassify';
 import { isAllowanceLikeText } from '@/utils/txErrorClassify';
+import { getChainRuntime } from '@/constants/chains';
 
 export type BroadcastTxVia = 'bloxroute' | 'rpc';
 export type BroadcastTxResult = {
@@ -56,15 +56,17 @@ export class RpcService {
     return out;
   }
 
-  private static getClientForUrl(url: string): PublicClient {
-    const existing = this.clientByUrl.get(url);
+  private static getClientForUrl(url: string, chainId?: number): PublicClient {
+    const resolvedChainId = chainId ?? this.clientCache?.chainId ?? 56;
+    const cacheKey = `${resolvedChainId}:${url}`;
+    const existing = this.clientByUrl.get(cacheKey);
     if (existing) return existing;
-    const chain = bsc;
+    const chain = getChainRuntime(resolvedChainId).viemChain;
     const client = createPublicClient({
       chain,
       transport: http(url),
     });
-    this.clientByUrl.set(url, client);
+    this.clientByUrl.set(cacheKey, client);
     return client;
   }
 
@@ -155,7 +157,7 @@ export class RpcService {
     if (urls.length === 0) return null;
     const values = await Promise.allSettled(
       urls.map(async (url) => {
-        const client = this.getClientForUrl(url);
+        const client = this.getClientForUrl(url, input.chainId);
         return await client.getTransactionCount({ address: input.address, blockTag: 'pending' });
       }),
     );
@@ -186,7 +188,7 @@ export class RpcService {
     }
 
     const tasks = urls.map(async (url) => {
-      const client = this.getClientForUrl(url) as any;
+      const client = this.getClientForUrl(url, chainId) as any;
       return await client.waitForTransactionReceipt({ hash, timeout: timeoutMs });
     });
 
@@ -196,7 +198,7 @@ export class RpcService {
       // One last direct receipt probe across all routes in case polling timeout was hit right before inclusion.
       const probes = await Promise.allSettled(
         urls.map(async (url) => {
-          const client = this.getClientForUrl(url) as any;
+          const client = this.getClientForUrl(url, chainId) as any;
           return await client.getTransactionReceipt({ hash });
         }),
       );
@@ -250,7 +252,7 @@ export class RpcService {
       return this.clientCache.client;
     }
 
-    const chain = bsc;
+    const chain = getChainRuntime(settings.chainId).viemChain;
     // Use fallback transport with ranking to optimize for latency
     const transports = urls.map((url) => http(url));
 
@@ -269,7 +271,8 @@ export class RpcService {
   }
 
   static async measureLatency(url: string): Promise<number> {
-    const chain = bsc;
+    const settings = await SettingsService.get();
+    const chain = getChainRuntime(settings.chainId).viemChain;
     const client = createPublicClient({
       chain,
       transport: http(url),
@@ -310,7 +313,7 @@ export class RpcService {
       const lastAt = this.prewarmedAtByUrl.get(url) ?? 0;
       if (!force && now - lastAt < this.prewarmWindowMs) return;
       this.prewarmedAtByUrl.set(url, now);
-      const client = this.getClientForUrl(url);
+      const client = this.getClientForUrl(url, settings.chainId);
       try {
         await Promise.race([
           client.getBlockNumber(),
@@ -341,7 +344,9 @@ export class RpcService {
     }
 
     const settings = await SettingsService.get();
-    const chainConfig = settings.chains[settings.chainId];
+    const targetChainId = opts?.signerContext?.chainId ?? settings.chainId;
+    const chainConfig = settings.chains[targetChainId];
+    const runtime = getChainRuntime(targetChainId);
     const txSide = opts?.txSide;
     const bundleSignerContext = opts?.signerContext;
     const priorityFeeBnb =
@@ -400,12 +405,12 @@ export class RpcService {
             value: priorityFeeWei,
             gas: this.bloxrouteDynamicFeeTxGas,
             gasPrice: bundleSignerContext.gasPrice,
-            chain: bsc,
+            chain: runtime.viemChain,
             chainId: bundleSignerContext.chainId,
             nonce: bundleSignerContext.nonce + 1,
             data: '0x',
           });
-          await BloxRouterAPI.sendBscBundle([signedTx, tipTx]);
+          await BloxRouterAPI.sendBundle(targetChainId, [signedTx, tipTx]);
           return { txHash: keccak256(signedTx) as `0x${string}`, via: 'bloxroute', isBundle: true } as BroadcastTxResult;
         };
         for (const url of urls) {
@@ -413,14 +418,14 @@ export class RpcService {
           if (!tipReceiver) continue;
           rpcBundlePromises.push(
             (async () => {
-              const client = this.getClientForUrl(url);
+              const client = this.getClientForUrl(url, targetChainId);
               try {
                 const tipTx = await bundleSignerContext.account.signTransaction({
                   to: tipReceiver,
                   value: priorityFeeWei,
                   gas: 21000n,
                   gasPrice: bundleSignerContext.gasPrice,
-                  chain: bsc,
+                  chain: runtime.viemChain,
                   chainId: bundleSignerContext.chainId,
                   nonce: bundleSignerContext.nonce + 1,
                   data: '0x',
@@ -472,7 +477,7 @@ export class RpcService {
 
       let rawDeterministicError: string | null = null;
       const runBloxRaw = async (): Promise<BroadcastTxResult> => {
-        const txHash = await BloxRouterAPI.sendBscPrivateTx(signedTx);
+        const txHash = await BloxRouterAPI.sendPrivateTx(targetChainId, signedTx);
         if (!txHash) throw new Error('BloxRoute did not return tx hash');
         return { txHash, via: 'bloxroute' };
       };
@@ -481,7 +486,7 @@ export class RpcService {
       for (const url of urls) {
         rpcRawPromises.push(
           (async () => {
-            const client = this.getClientForUrl(url);
+            const client = this.getClientForUrl(url, targetChainId);
             try {
               const txHash = await client.sendRawTransaction({ serializedTransaction: signedTx });
               return { txHash, via: 'rpc', rpcUrl: url, isBundle: false };

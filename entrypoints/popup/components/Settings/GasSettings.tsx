@@ -1,9 +1,16 @@
 import type { SettingsDraftProps } from './types';
+import { defaultSettings } from '@/utils/defaults';
+import { getNativeSymbol } from '@/constants/chains';
 
 type GasSettingsProps = SettingsDraftProps;
 
 export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettingsProps) {
   const priorityDefaults = { none: '0', slow: '0.000025', standard: '0.00004', fast: '0.0001' } as const;
+  const defaults = defaultSettings();
+  const chainId = settingsDraft.chainId;
+  const fallbackChainDraft = defaults.chains[defaults.chainId];
+  const chainDraft = settingsDraft.chains[chainId] ?? defaults.chains[chainId] ?? fallbackChainDraft;
+  const nativeSymbol = getNativeSymbol(chainId);
 
   return (
     <div className="space-y-6">
@@ -14,14 +21,14 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
             <div className="text-[14px] text-zinc-400">{tt('popup.settings.gasPreset')}</div>
             <select
               className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
-              value={settingsDraft.chains[settingsDraft.chainId].gasPreset}
+              value={chainDraft.gasPreset}
               onChange={(e) =>
                 setSettingsDraft((s) => ({
                   ...s,
                   chains: {
                     ...s.chains,
                     [s.chainId]: {
-                      ...s.chains[s.chainId],
+                      ...(s.chains[s.chainId] ?? defaults.chains[s.chainId] ?? fallbackChainDraft),
                       gasPreset: e.target.value as any,
                     },
                   },
@@ -34,6 +41,33 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
               <option value="turbo">{tt('popup.settings.gas.turbo')}</option>
             </select>
           </label>
+          <label className="block space-y-1">
+            <div className="text-[14px] text-zinc-400">Gas 计费模式</div>
+            <select
+              className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+              value={chainDraft.gasPriceMode ?? 'fixed'}
+              onChange={(e) =>
+                setSettingsDraft((s) => ({
+                  ...s,
+                  chains: {
+                    ...s.chains,
+                    [s.chainId]: {
+                      ...(s.chains[s.chainId] ?? defaults.chains[s.chainId] ?? fallbackChainDraft),
+                      gasPriceMode: e.target.value === 'dynamic' ? 'dynamic' : 'fixed',
+                    },
+                  },
+                }))
+              }
+            >
+              <option value="fixed">固定 Gas（使用本页预设）</option>
+              <option value="dynamic">动态 Gas（实时估算，ETH 推荐）</option>
+            </select>
+          </label>
+          {(chainDraft.gasPriceMode ?? 'fixed') === 'dynamic' ? (
+            <div className="rounded-md border border-cyan-800/40 bg-cyan-950/20 px-3 py-2 text-[11px] text-cyan-200">
+              动态模式下，快捷面板的慢/标准/快/抢跑表示费率倍率（如 1.0x/1.1x/1.2x/1.4x），不是固定 gwei。
+            </div>
+          ) : null}
 
           <div className="space-y-1">
             <div className="text-[14px] text-zinc-400">{tt('popup.settings.buyGasGwei')}</div>
@@ -43,16 +77,16 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
                   <span className="w-8 shrink-0 whitespace-nowrap text-[11px] text-zinc-500">{tt(`popup.settings.gas.${k}`)}</span>
                   <input
                     className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-1 py-0.5 text-[12px] outline-none"
-                    value={settingsDraft.chains[settingsDraft.chainId].buyGasGwei?.[k] ?? ''}
+                    value={chainDraft.buyGasGwei?.[k] ?? ''}
                     onChange={(e) =>
                       setSettingsDraft((s) => ({
                         ...s,
                         chains: {
                           ...s.chains,
                           [s.chainId]: {
-                            ...s.chains[s.chainId],
+                            ...(s.chains[s.chainId] ?? defaults.chains[s.chainId] ?? fallbackChainDraft),
                             buyGasGwei: {
-                              ...s.chains[s.chainId].buyGasGwei,
+                              ...(s.chains[s.chainId]?.buyGasGwei ?? defaults.chains[s.chainId]?.buyGasGwei ?? fallbackChainDraft.buyGasGwei),
                               [k]: e.target.value,
                             },
                           },
@@ -74,16 +108,16 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
                   <span className="w-8 shrink-0 whitespace-nowrap text-[11px] text-zinc-500">{tt(`popup.settings.gas.${k}`)}</span>
                   <input
                     className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-1 py-0.5 text-[12px] outline-none"
-                    value={settingsDraft.chains[settingsDraft.chainId].sellGasGwei?.[k] ?? ''}
+                    value={chainDraft.sellGasGwei?.[k] ?? ''}
                     onChange={(e) =>
                       setSettingsDraft((s) => ({
                         ...s,
                         chains: {
                           ...s.chains,
                           [s.chainId]: {
-                            ...s.chains[s.chainId],
+                            ...(s.chains[s.chainId] ?? defaults.chains[s.chainId] ?? fallbackChainDraft),
                             sellGasGwei: {
-                              ...s.chains[s.chainId].sellGasGwei,
+                              ...(s.chains[s.chainId]?.sellGasGwei ?? defaults.chains[s.chainId]?.sellGasGwei ?? fallbackChainDraft.sellGasGwei),
                               [k]: e.target.value,
                             },
                           },
@@ -101,14 +135,14 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
             <div className="text-[14px] text-zinc-400">{tt('popup.settings.approveGasGwei')}</div>
             <input
               className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
-              value={settingsDraft.chains[settingsDraft.chainId].approveGasGwei ?? ''}
+              value={chainDraft.approveGasGwei ?? ''}
               onChange={(e) =>
                 setSettingsDraft((s) => ({
                   ...s,
                   chains: {
                     ...s.chains,
                     [s.chainId]: {
-                      ...s.chains[s.chainId],
+                      ...(s.chains[s.chainId] ?? defaults.chains[s.chainId] ?? fallbackChainDraft),
                       approveGasGwei: e.target.value,
                     },
                   },
@@ -127,17 +161,17 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
         </div>
         <div className="space-y-3">
           <div className="space-y-1">
-            <div className="text-[14px] text-zinc-400">买入优先费预设值(BNB)</div>
+            <div className="text-[14px] text-zinc-400">买入优先费预设值({nativeSymbol})</div>
             <div className="grid grid-cols-2 gap-1">
               {(['none', 'slow', 'standard', 'fast'] as const).map((k) => (
                 <div key={k} className="flex items-center gap-1">
                   <span className="w-8 shrink-0 whitespace-nowrap text-[11px] text-zinc-500">{k === 'none' ? '无' : tt(`popup.settings.gas.${k}`)}</span>
                   <input
                     className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-1 py-0.5 text-[12px] outline-none"
-                    value={settingsDraft.chains[settingsDraft.chainId].buyPriorityFeePresets?.[k] ?? priorityDefaults[k]}
+                    value={chainDraft.buyPriorityFeePresets?.[k] ?? priorityDefaults[k]}
                     onChange={(e) =>
                       setSettingsDraft((s) => {
-                        const chain = s.chains[s.chainId];
+                        const chain = s.chains[s.chainId] ?? defaults.chains[s.chainId] ?? fallbackChainDraft;
                         const nextPresets = {
                           none: chain.buyPriorityFeePresets?.none ?? priorityDefaults.none,
                           slow: chain.buyPriorityFeePresets?.slow ?? priorityDefaults.slow,
@@ -164,17 +198,17 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
             </div>
           </div>
           <div className="space-y-1">
-            <div className="text-[14px] text-zinc-400">卖出优先费预设值(BNB)</div>
+            <div className="text-[14px] text-zinc-400">卖出优先费预设值({nativeSymbol})</div>
             <div className="grid grid-cols-2 gap-1">
               {(['none', 'slow', 'standard', 'fast'] as const).map((k) => (
                 <div key={k} className="flex items-center gap-1">
                   <span className="w-8 shrink-0 whitespace-nowrap text-[11px] text-zinc-500">{k === 'none' ? '无' : tt(`popup.settings.gas.${k}`)}</span>
                   <input
                     className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-1 py-0.5 text-[12px] outline-none"
-                    value={settingsDraft.chains[settingsDraft.chainId].sellPriorityFeePresets?.[k] ?? priorityDefaults[k]}
+                    value={chainDraft.sellPriorityFeePresets?.[k] ?? priorityDefaults[k]}
                     onChange={(e) =>
                       setSettingsDraft((s) => {
-                        const chain = s.chains[s.chainId];
+                        const chain = s.chains[s.chainId] ?? defaults.chains[s.chainId] ?? fallbackChainDraft;
                         const nextPresets = {
                           none: chain.sellPriorityFeePresets?.none ?? priorityDefaults.none,
                           slow: chain.sellPriorityFeePresets?.slow ?? priorityDefaults.slow,

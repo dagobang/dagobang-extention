@@ -5,7 +5,7 @@ import { getBnbToBridgeTokenPoolConfig, getBridgeTokenAddresses } from '../../co
 import { DeployAddress } from '../../constants/contracts/address';
 import { ContractNames } from '../../constants/contracts/names';
 import { factoryV2Abi, factoryV3Abi, pairV2Abi, poolV3Abi, quoterV2Abi } from '@/constants/contracts/abi';
-import { Address, DexExactInOpts, DexExactInQuote, QUOTER_V2_BSC, SwapType, toQuoteToken, ZERO_ADDRESS } from './tradeTypes';
+import { Address, DexExactInOpts, DexExactInQuote, SwapType, getQuoterV2, toQuoteToken, ZERO_ADDRESS } from './tradeTypes';
 
 const V3_POOL_CACHE_MS = 5 * 60_000;
 const v3PoolCache = new Map<string, { ts: number; pool: Address }>();
@@ -51,7 +51,7 @@ export function getBridgeToken(chainId: number, tokenAddress: string, quoteToken
 }
 
 function getQuoter(chainId: number) {
-  return chainId === 56 ? (QUOTER_V2_BSC as Address) : (ZERO_ADDRESS as Address);
+  return getQuoterV2(chainId);
 }
 
 export async function getQuote(chainId: number, tokenIn: Address, tokenOut: Address, amountIn: bigint, fee: number) {

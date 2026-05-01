@@ -53,6 +53,7 @@ export const metricsFromUnifiedToken = (t: UnifiedSignalToken): TokenMetrics | n
   if (devHoldPercent == null && tokenAgeMsForDev != null && tokenAgeMsForDev > 3000) devHoldPercent = 0;
   return {
     tokenAddress,
+    chain: typeof (t as any).chain === 'string' ? String((t as any).chain).trim().toLowerCase() : undefined,
     tokenSymbol: typeof (t as any).tokenSymbol === 'string' ? String((t as any).tokenSymbol) : undefined,
     launchpadPlatform: extractTokenPlatform(t) || undefined,
     marketCapUsd: sanitizeMarketCapUsd((t as any).marketCapUsd) ?? undefined,

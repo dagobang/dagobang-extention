@@ -4,6 +4,7 @@ export type GasPreset = 'slow' | 'standard' | 'fast' | 'turbo';
 export type PriorityFeePreset = 'none' | 'slow' | 'standard' | 'fast';
 
 export type ExecutionMode = 'default' | 'turbo';
+export type GasPriceMode = 'fixed' | 'dynamic';
 
 export const SLIPPAGE_BPS_OPTIONS = [3000, 4000, 5000, 9000] as const;
 export type SlippageBpsOption = (typeof SLIPPAGE_BPS_OPTIONS)[number];
@@ -30,6 +31,7 @@ export type ChainSettings = {
   antiMev: boolean;
   gasPreset: GasPreset;
   executionMode: ExecutionMode;
+  gasPriceMode?: GasPriceMode;
   slippageBps: number;
   deadlineSeconds: number;
   buyPresets: string[];
@@ -59,6 +61,7 @@ export type AutoTradeTriggerSound = {
 export type AutoTradeStrategyBase = {
   enabled: boolean;
   autoSellEnabled: boolean;
+  buyAmountNative?: string;
   buyAmountBnb: string;
   buyNewCaCount: string;
   buyOgCount: string;
@@ -157,6 +160,7 @@ export type NewCoinXmodeSnipeTask = {
   keywords: string[];
   matchMode?: 'any' | 'all';
   maxTokenAgeSeconds?: string;
+  buyAmountNative?: string;
   buyAmountBnb?: string;
   buyGasGwei?: string;
   buyBribeBnb?: string;
@@ -175,6 +179,7 @@ export type TokenSnipeTask = {
   targetUrls: string[];
   keywords?: string[];
   autoBuy: boolean;
+  buyAmountNative?: string;
   buyAmountBnb: string;
   buyGasGwei?: string;
   buyBribeBnb?: string;
@@ -305,7 +310,7 @@ export type TelegramPollStatus = {
 };
 
 export type Settings = {
-  chainId: 56;
+  chainId: number;
   chains: Record<number, ChainSettings>;
   autoLockSeconds: number;
   lastSelectedAddress?: `0x${string}`;
@@ -379,12 +384,14 @@ export type WalletUnlockInput = {
 export type TxBuyInput = {
   chainId: number;
   tokenAddress: `0x${string}`;
+  nativeAmountWei?: string;
   bnbAmountWei: string;
   fromAddress?: `0x${string}`;
   poolFee?: number;
   slippageBps?: number;
   gasPreset?: GasPreset;
   gasPriceGwei?: string;
+  priorityFeeNative?: string;
   priorityFeeBnb?: string;
   deadlineSeconds?: number;
   tokenInfo?: TokenInfo;
@@ -400,6 +407,7 @@ export type TxSellInput = {
   poolFee?: number;
   slippageBps?: number;
   gasPreset?: GasPreset;
+  priorityFeeNative?: string;
   priorityFeeBnb?: string;
   deadlineSeconds?: number;
   tokenInfo?: TokenInfo;
@@ -427,6 +435,7 @@ export type LimitOrder = {
   rollingFloorPercent?: number;
   rollingEntryPriceUsd?: number;
   rollingIsFloor?: boolean;
+  buyNativeAmountWei?: string;
   buyBnbAmountWei?: string;
   sellPercentBps?: number;
   sellTokenAmountWei?: string;
@@ -454,6 +463,7 @@ export type LimitOrderCreateInput = {
   rollingFloorPercent?: number;
   rollingEntryPriceUsd?: number;
   rollingIsFloor?: boolean;
+  buyNativeAmountWei?: string;
   buyBnbAmountWei?: string;
   sellPercentBps?: number;
   sellTokenAmountWei?: string;
@@ -578,6 +588,7 @@ export type XSniperBuyRecord = {
   tokenAddress: string;
   tokenSymbol?: string;
   tokenName?: string;
+  buyAmountNative?: number;
   buyAmountBnb?: number;
   sellPercent?: number;
   sellPercentOfOriginal?: number;

@@ -13,9 +13,11 @@ import { loadXSniperHistory } from '@/services/xSniper/xSniperHistory';
 import { createTelegramPoller } from './poller';
 import { isTelegramConfigured, telegramSendMessageWithOptions, type TelegramApiConfig } from './api';
 import { formatCountShort } from '@/utils/format';
+import { chainNames, getChainIdByName, getNativeSymbol } from '@/constants/chains';
 
 const TG_LIMIT_ORDER_DISPLAY_MODE_KEY = 'dagobang_limit_order_price_display_mode_v1';
 const TG_DEFAULT_TOKEN_SUPPLY = 1_000_000_000;
+const TG_SUPPORTED_CHAIN_NAMES = ['bsc', 'eth'] as const;
 
 type TelegramNotifierLike = {
   notifyQuickTrade?: (text: string) => Promise<any>;
@@ -28,7 +30,7 @@ export function createTelegramController(deps: {
   fetchGmgnHoldings?: (chain: string, walletAddress: string) => Promise<any[]>;
   fetchGmgnHoldingDetail?: (chain: string, walletAddress: string, tokenAddress: string) => Promise<any | null>;
 }) {
-  const pendingInputByChat = new Map<string, 'buyAmountBnb' | 'buyNewCaCount' | 'quickBuyPresets' | 'quickSellPresets'>();
+  const pendingInputByChat = new Map<string, 'buyAmountNative' | 'buyNewCaCount' | 'quickBuyPresets' | 'quickSellPresets'>();
   const getTelegramConfigFromSettings = async (): Promise<TelegramApiConfig | null> => {
     const settings = await SettingsService.get();
     const tg = (settings as any).telegram;
@@ -210,7 +212,7 @@ export function createTelegramController(deps: {
     return n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') || '0';
   };
 
-  const buildTokenActionKeyboard = (tokenAddress: `0x${string}`, buyPresets: string[], sellPresets: string[]) => {
+  const buildTokenActionKeyboard = (tokenAddress: `0x${string}`, nativeSymbol: string, buyPresets: string[], sellPresets: string[]) => {
     const buyBase = buyPresets && buyPresets.length ? buyPresets : ['0.1', '0.5', '1', '2'];
     const sellBase = sellPresets && sellPresets.length ? sellPresets : ['25', '50', '75', '100'];
     const buy4 = [...buyBase.slice(0, 4)];
@@ -223,12 +225,12 @@ export function createTelegramController(deps: {
         { text: '🔄 刷新', callbackData: `act:token:${tokenAddress}` },
       ],
       [
-        { text: `买 ${buy4[0]} BNB`, callbackData: `act:buy:${tokenAddress}:${buy4[0]}` },
-        { text: `买 ${buy4[1]} BNB`, callbackData: `act:buy:${tokenAddress}:${buy4[1]}` },
+        { text: `买 ${buy4[0]} ${nativeSymbol}`, callbackData: `act:buy:${tokenAddress}:${buy4[0]}` },
+        { text: `买 ${buy4[1]} ${nativeSymbol}`, callbackData: `act:buy:${tokenAddress}:${buy4[1]}` },
       ],
       [
-        { text: `买 ${buy4[2]} BNB`, callbackData: `act:buy:${tokenAddress}:${buy4[2]}` },
-        { text: `买 ${buy4[3]} BNB`, callbackData: `act:buy:${tokenAddress}:${buy4[3]}` },
+        { text: `买 ${buy4[2]} ${nativeSymbol}`, callbackData: `act:buy:${tokenAddress}:${buy4[2]}` },
+        { text: `买 ${buy4[3]} ${nativeSymbol}`, callbackData: `act:buy:${tokenAddress}:${buy4[3]}` },
       ],
       [
         { text: `🔴 卖 ${sell4[0]}%`, callbackData: `act:sell:${tokenAddress}:${sell4[0]}` },
@@ -247,7 +249,8 @@ export function createTelegramController(deps: {
   const buildMainMenuKeyboard = () => [
     [{ text: '插件状态', callbackData: 'act:status' }, { text: '挂单列表', callbackData: 'act:orders' }],
     [{ text: '持仓列表', callbackData: 'act:holdings' }, { text: '钱包列表', callbackData: 'act:wallets' }],
-    [{ text: '⚙️ 设置', callbackData: 'act:settings' }, { text: '当前钱包', callbackData: 'act:whoami' }],
+    [{ text: '切换链', callbackData: 'act:chain' }, { text: '当前钱包', callbackData: 'act:whoami' }],
+    [{ text: '⚙️ 设置', callbackData: 'act:settings' }],
     [{ text: '使用说明', callbackData: 'act:menu' }],
   ];
   const buildSettingsMenuKeyboard = () => [
@@ -255,7 +258,7 @@ export function createTelegramController(deps: {
     [{ text: '⚡ 快捷交易', callbackData: 'act:qset' }],
     [{ text: '↩️ 返回菜单', callbackData: 'act:menu' }],
   ];
-  const buildXSniperSettingsKeyboard = (input: { dryRun: boolean; autoSellEnabled: boolean; buyAmountBnb: string; buyNewCaCount: number }) => ([
+  const buildXSniperSettingsKeyboard = (input: { dryRun: boolean; autoSellEnabled: boolean; buyAmountNative: string; buyNewCaCount: number }) => ([
     [
       { text: `${input.dryRun ? '✅' : '❌'} DryRun`, callbackData: `act:xsdry:${input.dryRun ? '0' : '1'}` },
       { text: `${input.autoSellEnabled ? '✅' : '❌'} 自动卖出`, callbackData: `act:xsell:${input.autoSellEnabled ? '0' : '1'}` },
@@ -294,6 +297,15 @@ export function createTelegramController(deps: {
     autoTrade.twitterSnipe = twitterSnipe;
     return autoTrade;
   };
+  const getTwitterSnipeBuyAmountNative = (settings: any): string => {
+    const buyAmountRaw = String((settings as any)?.autoTrade?.twitterSnipe?.buyAmountNative ?? (settings as any)?.autoTrade?.twitterSnipe?.buyAmountBnb ?? '0.1').trim();
+    return Number.isFinite(Number(buyAmountRaw)) && Number(buyAmountRaw) > 0 ? buyAmountRaw : '0.1';
+  };
+  const buildTwitterSnipeBuyAmountPatch = (amountNative: string) => ({
+    buyAmountNative: amountNative,
+    // Keep legacy field for backward compatibility with existing strategy schema.
+    buyAmountBnb: amountNative,
+  });
   const sendTelegramSettingsMenu = async () => {
     await sendTelegramReply(
       ['⚙️ 设置', '', '可配置项：', '1) 推文狙击'].join('\n'),
@@ -302,10 +314,10 @@ export function createTelegramController(deps: {
   };
   const sendTelegramXSniperSettings = async () => {
     const settings = await SettingsService.get();
+    const nativeSymbol = getNativeSymbol(settings.chainId);
     const dryRun = (settings as any)?.autoTrade?.twitterSnipe?.dryRun === true;
     const autoSellEnabled = (settings as any)?.autoTrade?.twitterSnipe?.autoSellEnabled === true;
-    const buyAmountRaw = String((settings as any)?.autoTrade?.twitterSnipe?.buyAmountBnb ?? '0.1').trim();
-    const buyAmountBnb = Number.isFinite(Number(buyAmountRaw)) && Number(buyAmountRaw) > 0 ? buyAmountRaw : '0.1';
+    const buyAmountNative = getTwitterSnipeBuyAmountNative(settings);
     const buyNewCaCount = Number((settings as any)?.autoTrade?.twitterSnipe?.buyNewCaCount ?? 1);
     const buyCaCount = Number.isFinite(buyNewCaCount) ? Math.max(0, Math.floor(buyNewCaCount)) : 1;
     await sendTelegramReply(
@@ -314,15 +326,16 @@ export function createTelegramController(deps: {
         '',
         `DryRun: ${dryRun ? '开启' : '关闭'}`,
         `自动卖出: ${autoSellEnabled ? '开启' : '关闭'}`,
-        `策略买入金额(BNB): ${buyAmountBnb}`,
+        `策略买入金额(${nativeSymbol}): ${buyAmountNative}`,
         `买入CA数量: ${buyCaCount}`,
       ].join('\n'),
-      { inlineKeyboard: buildXSniperSettingsKeyboard({ dryRun, autoSellEnabled, buyAmountBnb, buyNewCaCount: buyCaCount }) }
+      { inlineKeyboard: buildXSniperSettingsKeyboard({ dryRun, autoSellEnabled, buyAmountNative, buyNewCaCount: buyCaCount }) }
     );
   };
   const sendTelegramQuickTradeSettings = async () => {
     const settings = await SettingsService.get();
     const chainId = settings.chainId;
+    const nativeSymbol = getNativeSymbol(chainId);
     const chain = (settings.chains as any)?.[chainId] ?? {};
     const buyPresets = Array.isArray(chain.buyPresets) ? chain.buyPresets.map((x: any) => String(x).trim()).filter(Boolean).slice(0, 4) : ['0.1', '0.5', '1.0', '2.0'];
     const sellPresets = Array.isArray(chain.sellPresets) ? chain.sellPresets.map((x: any) => String(x).trim()).filter(Boolean).slice(0, 4) : ['25', '50', '75', '100'];
@@ -330,7 +343,7 @@ export function createTelegramController(deps: {
       [
         '⚡ 快捷交易设置',
         '',
-        `买入金额(BNB): ${buyPresets.join(',')}`,
+        `买入金额(${nativeSymbol}): ${buyPresets.join(',')}`,
         `卖出金额(%): ${sellPresets.join(',')}`,
         '',
         '输入规则: 4个数字，英文逗号分隔',
@@ -339,12 +352,50 @@ export function createTelegramController(deps: {
     );
   };
   const sendTelegramMenu = async () => {
+    const settings = await SettingsService.get();
+    const chainName = String(chainNames[settings.chainId] || settings.chainId).toUpperCase();
+    const nativeSymbol = getNativeSymbol(settings.chainId);
     await sendTelegramReply(
-      ['Dagobang Telegram 菜单', '', '1) 直接发送 tokenAddress 查看快照与持仓', '2) 使用按钮快速查看状态、持仓和挂单', '3) Token 快照里可一键买卖', '', '命令:', '/menu', '/settings', '/status', '/holdings', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/token <tokenAddress>'].join('\n'),
+      ['Dagobang Telegram 菜单', '', `当前链: ${chainName} (${nativeSymbol})`, '', '1) 直接发送 tokenAddress 查看快照与持仓', '2) 使用按钮快速查看状态、持仓和挂单', '3) Token 快照里可一键买卖', '', '命令:', '/menu', '/chain', '/chain <eth|bsc>', '/settings', '/status', '/holdings', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/token <tokenAddress>'].join('\n'),
       { inlineKeyboard: buildMainMenuKeyboard() }
     );
   };
   const shortAddress = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+  const formatChainLabel = (chainId: number) => {
+    const chainName = String(chainNames[chainId] || chainId).toUpperCase();
+    const nativeSymbol = getNativeSymbol(chainId);
+    return `${chainName} (${nativeSymbol})`;
+  };
+  const resolveSupportedChainId = (targetRaw: string): number | null => {
+    const target = String(targetRaw || '').trim().toLowerCase();
+    if (!target) return null;
+    const byNum = Number(target);
+    if (Number.isFinite(byNum) && TG_SUPPORTED_CHAIN_NAMES.includes(String(chainNames[byNum] || '').toLowerCase() as any)) {
+      return byNum;
+    }
+    const byName = getChainIdByName(target);
+    if (Number.isFinite(byName) && TG_SUPPORTED_CHAIN_NAMES.includes(String(chainNames[byName] || '').toLowerCase() as any)) {
+      return byName;
+    }
+    return null;
+  };
+  const buildChainSwitchKeyboard = (currentChainId: number) => {
+    const rows = TG_SUPPORTED_CHAIN_NAMES.map((chainName) => {
+      const id = getChainIdByName(chainName);
+      const selected = id === currentChainId;
+      const label = String(chainName).toUpperCase();
+      return [{ text: `${selected ? '✅' : '▫️'} ${label}`, callbackData: `act:schain:${chainName}` }];
+    });
+    rows.push([{ text: '↩️ 返回菜单', callbackData: 'act:menu' }]);
+    return rows;
+  };
+  const sendTelegramChainMenu = async () => {
+    const settings = await SettingsService.get();
+    await sendTelegramReply(
+      ['🌐 链设置', `当前链: ${formatChainLabel(settings.chainId)}`, '', '可切换: ETH / BSC', '命令: /chain <eth|bsc>'].join('\n'),
+      { inlineKeyboard: buildChainSwitchKeyboard(settings.chainId) }
+    );
+  };
   const buildWalletListKeyboard = (accounts: Array<{ address: string; name?: string }>) => {
     const rows = accounts.slice(0, 12).map((acc, idx) => ([
       { text: `切换 #${idx + 1}`, callbackData: `act:switch:${acc.address}` },
@@ -364,15 +415,17 @@ export function createTelegramController(deps: {
     );
   };
 
-  const resolveQuickTradeTokenInfo = async (tokenAddress: `0x${string}`): Promise<TokenInfo | null> => {
+  const resolveQuickTradeTokenInfo = async (tokenAddress: `0x${string}`, chainId: number): Promise<TokenInfo | null> => {
+    const chainCode = chainNames[chainId] ?? 'bsc';
+    const nativeSymbol = getNativeSymbol(chainId);
     try {
-      const byHttp = await FourmemeAPI.getTokenInfo('bsc', tokenAddress);
+      const byHttp = await FourmemeAPI.getTokenInfo(chainCode, tokenAddress);
       if (byHttp) return byHttp;
     } catch { }
     try {
       const meta = await TokenService.getMeta(tokenAddress);
       return {
-        chain: 'bsc',
+        chain: chainCode,
         address: tokenAddress,
         name: meta?.symbol || tokenAddress,
         symbol: meta?.symbol || 'TOKEN',
@@ -382,7 +435,7 @@ export function createTelegramController(deps: {
         launchpad_progress: 0,
         launchpad_platform: '',
         launchpad_status: 1,
-        quote_token: 'WBNB',
+        quote_token: `W${nativeSymbol}`,
         quote_token_address: ZERO_ADDRESS,
       };
     } catch {
@@ -393,7 +446,7 @@ export function createTelegramController(deps: {
   const buildTelegramTokenSnapshot = async (tokenAddress: `0x${string}`) => {
     const settings = await SettingsService.get();
     const chainId = settings.chainId;
-    const tokenInfo = await resolveQuickTradeTokenInfo(tokenAddress);
+    const tokenInfo = await resolveQuickTradeTokenInfo(tokenAddress, chainId);
     if (!tokenInfo) return null;
     const symbol = tokenInfo.symbol || 'TOKEN';
     const name = tokenInfo.name || symbol;
@@ -541,7 +594,7 @@ export function createTelegramController(deps: {
         `📈 价格与PnL`,
         `${pnlIcon} PnL(MCap): ${formatPnlPct(pnlPct)} | ${athPnlIcon} ATH PnL: ${formatPnlPct(pnlAthPct)}`,
         `${priceIcon} 市值: 入场 ${formatUsd(entryMcap)} | 当前 ${formatUsd(latestMcap)} | ATH ${formatUsd(athMcap)}`,
-        `买入: ${parent.buyAmountBnb != null ? `${parent.buyAmountBnb} BNB` : '-'} | 入场价: ${formatPrice(parent.entryPriceUsd)}`,
+        `买入: ${parent.buyAmountBnb != null ? `${parent.buyAmountBnb} ${getNativeSymbol(parent.chainId)}` : '-'} | 入场价: ${formatPrice(parent.entryPriceUsd)}`,
         '',
         `📊 市场指标`,
         `持有人: ${Number.isFinite(parent.holders) ? Number(parent.holders) : '-'} | KOL: ${Number.isFinite(parent.kol) ? Number(parent.kol) : '-'} | Smart: ${Number.isFinite(parent.smartMoney) ? Number(parent.smartMoney) : '-'}`,
@@ -565,19 +618,19 @@ export function createTelegramController(deps: {
     );
   };
 
-  const runTelegramQuickBuy = async (tokenAddress: `0x${string}`, amountBnb: string) => {
+  const runTelegramQuickBuy = async (tokenAddress: `0x${string}`, amountNative: string) => {
     const settings = await SettingsService.get();
     const status = await WalletService.getStatus();
     if (status.locked) {
       await sendTelegramReply('买入失败: 钱包未解锁');
       return { ok: false, error: { message: 'wallet_locked' } };
     }
-    const tokenInfo = await resolveQuickTradeTokenInfo(tokenAddress);
+    const tokenInfo = await resolveQuickTradeTokenInfo(tokenAddress, settings.chainId);
     if (!tokenInfo) {
       await sendTelegramReply('买入失败: 无法获取 Token 信息');
       return { ok: false, error: { message: 'token_info_missing' } };
     }
-    const amountWei = parseEther(String(amountBnb).trim()).toString();
+    const amountWei = parseEther(String(amountNative).trim()).toString();
     const rsp = await TradeService.buyWithReceiptAndNonceRecovery({ chainId: settings.chainId, tokenAddress, bnbAmountWei: amountWei, tokenInfo }, {
       maxRetry: 1,
       onSubmitted: async (ctx) => {
@@ -596,7 +649,7 @@ export function createTelegramController(deps: {
       await sendTelegramReply('卖出失败: 钱包未解锁');
       return { ok: false, error: { message: 'wallet_locked' } };
     }
-    const tokenInfo = await resolveQuickTradeTokenInfo(tokenAddress);
+    const tokenInfo = await resolveQuickTradeTokenInfo(tokenAddress, settings.chainId);
     if (!tokenInfo) {
       await sendTelegramReply('卖出失败: 无法获取 Token 信息');
       return { ok: false, error: { message: 'token_info_missing' } };
@@ -674,7 +727,7 @@ export function createTelegramController(deps: {
       const sign = pct > 0 ? '+' : '';
       return `${sign}${pct.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`;
     };
-    const chainCode = chainId === 56 ? 'bsc' : String(chainId);
+    const chainCode = chainNames[chainId] ?? String(chainId);
     try {
       const gmgnHoldings = await deps.fetchGmgnHoldings?.(chainCode, walletAddress);
       if (Array.isArray(gmgnHoldings) && gmgnHoldings.length > 0) {
@@ -723,7 +776,7 @@ export function createTelegramController(deps: {
           });
           const viewRows = top.slice(0, 6).map((r, i) => ([{ text: `🔍 查看#${i + 1} ${compactTokenLabel(r.symbol, 8)}`, callbackData: `act:token:${r.tokenAddress}` }]));
           await sendTelegramReply(
-            ['💼 持仓', `地址: ${shortAddress(walletAddress)}`, `总估值: ${formatUsd(totalUsd)}`, `显示: ${top.length}/${normalized.length}`, '', ...lines].join('\n'),
+            ['💼 持仓', `链: ${formatChainLabel(chainId)}`, `地址: ${shortAddress(walletAddress)}`, `总估值: ${formatUsd(totalUsd)}`, `显示: ${top.length}/${normalized.length}`, '', ...lines].join('\n'),
             { inlineKeyboard: [...viewRows, [{ text: '🔄 刷新持仓', callbackData: 'act:holdings' }, { text: '↩️ 菜单', callbackData: 'act:menu' }]] }
           );
           return;
@@ -750,7 +803,7 @@ export function createTelegramController(deps: {
         const decimals = Number(meta?.decimals ?? 18);
         const amountNum = Number(formatUnits(bal, decimals));
         if (!Number.isFinite(amountNum) || amountNum <= 0) return null;
-        const tokenInfo = await resolveQuickTradeTokenInfo(tokenAddress).catch(() => null);
+        const tokenInfo = await resolveQuickTradeTokenInfo(tokenAddress, chainId).catch(() => null);
         const px = await TokenService.getTokenPriceUsdFromRpc({
           chainId,
           tokenAddress,
@@ -785,7 +838,7 @@ export function createTelegramController(deps: {
     });
     const viewRows = top.slice(0, 6).map((r, i) => ([{ text: `🔍 查看#${i + 1} ${compactTokenLabel(r.symbol, 8)}`, callbackData: `act:token:${r.tokenAddress}` }]));
     await sendTelegramReply(
-      ['💼 持仓', `钱包: ${walletAddress}`, `总估值: ${formatUsd(totalUsd)}`, `显示: ${top.length}/${rows.length}`, '', ...lines].join('\n'),
+      ['💼 持仓', `链: ${formatChainLabel(chainId)}`, `钱包: ${walletAddress}`, `总估值: ${formatUsd(totalUsd)}`, `显示: ${top.length}/${rows.length}`, '', ...lines].join('\n'),
       { inlineKeyboard: [...viewRows, [{ text: '🔄 刷新持仓', callbackData: 'act:holdings' }, { text: '↩️ 菜单', callbackData: 'act:menu' }]] }
     );
   };
@@ -811,6 +864,8 @@ export function createTelegramController(deps: {
         const isSellAction = command.type === 'sell' || command.type === 'actionSell';
         const isMenuAction = command.type === 'menu' || command.type === 'start' || command.type === 'actionMenu';
         const isSettingsAction = command.type === 'settings' || command.type === 'actionSettings';
+        const isChainAction = command.type === 'chain' || command.type === 'actionChainMenu';
+        const isSwitchChainAction = command.type === 'switchChain' || command.type === 'actionSwitchChain';
         const isXSniperSettingsAction = command.type === 'actionXSniperSettings';
         const isQuickTradeSettingsAction = command.type === 'actionQuickTradeSettings';
         const isSetXSniperDryRunAction = command.type === 'actionSetXSniperDryRun';
@@ -836,6 +891,25 @@ export function createTelegramController(deps: {
           await sendTelegramSettingsMenu();
           return;
         }
+        if (isChainAction) {
+          await sendTelegramChainMenu();
+          return;
+        }
+        if (isSwitchChainAction) {
+          const targetChain = resolveSupportedChainId(command.chain);
+          if (!targetChain) {
+            await sendTelegramReply(`不支持的链: ${command.chain}。仅支持: ${TG_SUPPORTED_CHAIN_NAMES.join(', ')}`);
+            return;
+          }
+          if (targetChain !== settings.chainId) {
+            await SettingsService.update({ chainId: targetChain } as any);
+            await deps.broadcastStateChange();
+          }
+          await sendTelegramReply(`已切换到: ${formatChainLabel(targetChain)}`, {
+            inlineKeyboard: buildMainMenuKeyboard(),
+          });
+          return;
+        }
         if (isXSniperSettingsAction) {
           await sendTelegramXSniperSettings();
           return;
@@ -845,8 +919,8 @@ export function createTelegramController(deps: {
           return;
         }
         if (isInputXSniperBuyAmountAction) {
-          pendingInputByChat.set(chatId, 'buyAmountBnb');
-          await sendTelegramReply('请输入策略买入金额(BNB)，例如: 0.1');
+          pendingInputByChat.set(chatId, 'buyAmountNative');
+          await sendTelegramReply(`请输入策略买入金额(${getNativeSymbol(settings.chainId)})，例如: 0.1`);
           return;
         }
         if (isInputXSniperBuyCaCountAction) {
@@ -869,7 +943,7 @@ export function createTelegramController(deps: {
           const patch: Record<string, any> = {};
           if (isSetXSniperDryRunAction) patch.dryRun = command.enabled;
           if (isSetXSniperAutoSellAction) patch.autoSellEnabled = command.enabled;
-          if (isSetXSniperBuyAmountAction) patch.buyAmountBnb = command.amountBnb;
+          if (isSetXSniperBuyAmountAction) Object.assign(patch, buildTwitterSnipeBuyAmountPatch(command.amountBnb));
           if (isSetXSniperBuyCaCountAction) patch.buyNewCaCount = command.count;
           const autoTrade = applyTwitterSnipePatch(nextSettings, patch);
           await SettingsService.update({ autoTrade } as any);
@@ -879,7 +953,7 @@ export function createTelegramController(deps: {
         }
         if (command.type === 'unknown') {
           const pending = pendingInputByChat.get(chatId);
-          if (pending === 'buyAmountBnb') {
+          if (pending === 'buyAmountNative') {
             const v = String(rawText || '').trim();
             const n = Number(v);
             if (!Number.isFinite(n) || n <= 0) {
@@ -887,7 +961,7 @@ export function createTelegramController(deps: {
               return;
             }
             const nextSettings = await SettingsService.get();
-            const autoTrade = applyTwitterSnipePatch(nextSettings, { buyAmountBnb: v });
+            const autoTrade = applyTwitterSnipePatch(nextSettings, buildTwitterSnipeBuyAmountPatch(v));
             await SettingsService.update({ autoTrade } as any);
             pendingInputByChat.delete(chatId);
             await sendTelegramXSniperSettings();
@@ -934,12 +1008,12 @@ export function createTelegramController(deps: {
         }
         if (isStatusAction) {
           const status = await WalletService.getStatus();
-          await sendTelegramReply(['插件状态', `链: ${settings.chainId}`, `钱包: ${status.locked ? '已锁定' : '已解锁'}`, `地址: ${status.address || '-'}`].join('\n'), { inlineKeyboard: buildMainMenuKeyboard() });
+          await sendTelegramReply(['插件状态', `链: ${formatChainLabel(settings.chainId)}`, `钱包: ${status.locked ? '已锁定' : '已解锁'}`, `地址: ${status.address || '-'}`].join('\n'), { inlineKeyboard: buildMainMenuKeyboard() });
           return;
         }
         if (isWhoamiAction) {
           const status = await WalletService.getStatus();
-          await sendTelegramReply(['当前钱包', `状态: ${status.locked ? '已锁定' : '已解锁'}`, `地址: ${status.address || '-'}`].join('\n'), { inlineKeyboard: buildMainMenuKeyboard() });
+          await sendTelegramReply(['当前钱包', `链: ${formatChainLabel(settings.chainId)}`, `状态: ${status.locked ? '已锁定' : '已解锁'}`, `地址: ${status.address || '-'}`].join('\n'), { inlineKeyboard: buildMainMenuKeyboard() });
           return;
         }
         if (isHoldingsAction) {
@@ -1008,8 +1082,9 @@ export function createTelegramController(deps: {
           const lines = visible.map((o, idx) => {
             const triggerText = triggerTextByMode(o.triggerPriceUsd, triggerDisplayMode).replace('触发价: ', '').replace('触发市值: ', '');
             const targetText = typeof o.targetChangePercent === 'number' && Number.isFinite(o.targetChangePercent) ? `${o.targetChangePercent > 0 ? '+' : ''}${o.targetChangePercent}%` : '-';
+            const nativeSymbol = getNativeSymbol(settings.chainId);
             const actionText = o.side === 'buy'
-              ? `买${formatTokenAmount(o.buyBnbAmountWei || '0', 18)} BNB`
+              ? `买${formatTokenAmount(o.buyBnbAmountWei || '0', 18)} ${nativeSymbol}`
               : o.sellPercentBps
                 ? `卖${(o.sellPercentBps / 100).toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`
                 : `卖${formatTokenAmount(o.sellTokenAmountWei || '0', Number(o.tokenInfo?.decimals ?? 18))} ${o.tokenSymbol || 'Token'}`;
@@ -1023,7 +1098,7 @@ export function createTelegramController(deps: {
           if (currentPage < totalPages) navRow.push({ text: `下一页(${currentPage + 1}) ➡️`, callbackData: `act:ordersp:${currentPage + 1}` });
           if (navRow.length) keyboard.push(navRow);
           keyboard.push([{ text: '🔄 刷新', callbackData: `act:ordersp:${currentPage}` }, { text: '↩️ 菜单', callbackData: 'act:menu' }]);
-          await sendTelegramReply(['📋 挂单面板', `📊 等待 ${open.length} | 触发中 ${triggered.length} | 已执行 ${executed.length} | 失败 ${failed.length}`, `🧾 显示: ${pageStart + (visible.length ? 1 : 0)}-${pageStart + visible.length}/${actionable.length} | 第 ${currentPage}/${totalPages} 页`, '', lines.join('\n')].join('\n'), { inlineKeyboard: keyboard });
+          await sendTelegramReply(['📋 挂单面板', `链: ${formatChainLabel(settings.chainId)}`, `📊 等待 ${open.length} | 触发中 ${triggered.length} | 已执行 ${executed.length} | 失败 ${failed.length}`, `🧾 显示: ${pageStart + (visible.length ? 1 : 0)}-${pageStart + visible.length}/${actionable.length} | 第 ${currentPage}/${totalPages} 页`, '', lines.join('\n')].join('\n'), { inlineKeyboard: keyboard });
           return;
         }
         if (isTokenAction) {
@@ -1038,8 +1113,9 @@ export function createTelegramController(deps: {
           const tokenOrderLines = tokenOrders.slice(0, 6).map((o, idx) => {
             const triggerText = triggerTextByMode(o.triggerPriceUsd, triggerDisplayMode).replace('触发价: ', '').replace('触发市值: ', '');
             const targetText = typeof o.targetChangePercent === 'number' && Number.isFinite(o.targetChangePercent) ? `${o.targetChangePercent > 0 ? '+' : ''}${o.targetChangePercent}%` : '-';
+            const nativeSymbol = getNativeSymbol(settings.chainId);
             const actionText = o.side === 'buy'
-              ? `买${formatTokenAmount(o.buyBnbAmountWei || '0', 18)} BNB`
+              ? `买${formatTokenAmount(o.buyBnbAmountWei || '0', 18)} ${nativeSymbol}`
               : o.sellPercentBps
                 ? `卖${(o.sellPercentBps / 100).toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`
                 : `卖${formatTokenAmount(o.sellTokenAmountWei || '0', Number(o.tokenInfo?.decimals ?? 18))} ${o.tokenSymbol || 'Token'}`;
@@ -1067,7 +1143,7 @@ export function createTelegramController(deps: {
           };
           let holdingPnlText = '⚪PnL - (-)';
           if (snapshot.holderAddress) {
-            const chainCode = settings.chainId === 56 ? 'bsc' : String(settings.chainId);
+            const chainCode = chainNames[settings.chainId] ?? String(settings.chainId);
             try {
               const detail = await deps.fetchGmgnHoldingDetail?.(chainCode, snapshot.holderAddress, tokenAddress);
               if (detail) {
@@ -1114,7 +1190,7 @@ export function createTelegramController(deps: {
               `📋 该代币挂单列表 (${tokenOrders.length})`,
               ...(tokenOrderLines.length ? tokenOrderLines : ['暂无挂单']),
             ].join('\n'),
-            { inlineKeyboard: [...tokenOrderButtons, ...buildTokenActionKeyboard(snapshot.tokenAddress, chainSettings?.buyPresets ?? [], chainSettings?.sellPresets ?? [])] }
+            { inlineKeyboard: [...tokenOrderButtons, ...buildTokenActionKeyboard(snapshot.tokenAddress, getNativeSymbol(settings.chainId), chainSettings?.buyPresets ?? [], chainSettings?.sellPresets ?? [])] }
           );
           return;
         }
@@ -1129,9 +1205,12 @@ export function createTelegramController(deps: {
           await sendTelegramReply(`已取消挂单: ${command.orderId}`, { inlineKeyboard: buttons });
           return;
         }
-        if (isBuyAction) return void await runTelegramQuickBuy(command.tokenAddress, command.amountBnb);
+        if (isBuyAction) {
+          const amountNative = command.amountBnb;
+          return void await runTelegramQuickBuy(command.tokenAddress, amountNative);
+        }
         if (isSellAction) return void await runTelegramQuickSell(command.tokenAddress, command.sellPercent);
-        await sendTelegramReply(['未知命令: ' + rawText, '支持:', '/settings', '/status', '/holdings', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/cancel <orderId>', '/buy <tokenAddress> <bnb>', '/sell <tokenAddress> <percent>', '/token <tokenAddress>', '/menu', '/start', '或直接发送 tokenAddress'].join('\n'), { inlineKeyboard: buildMainMenuKeyboard() });
+        await sendTelegramReply(['未知命令: ' + rawText, '支持:', '/settings', '/chain', '/chain <eth|bsc>', '/status', '/holdings', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/cancel <orderId>', '/buy <tokenAddress> <nativeAmount>', '/sell <tokenAddress> <percent>', '/token <tokenAddress>', '/menu', '/start', '或直接发送 tokenAddress'].join('\n'), { inlineKeyboard: buildMainMenuKeyboard() });
       } catch (e: any) {
         await sendTelegramReply(`命令执行失败: ${String(e?.message || e || 'unknown_error')}`);
       }

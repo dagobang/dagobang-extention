@@ -5,6 +5,7 @@ import type { BgGetStateResponse } from '@/types/extention';
 import { Lock, Copy, Check, Settings, KeyRound, Send } from 'lucide-react';
 import { t, type Locale } from '@/utils/i18n';
 import { formatEther, isAddress } from 'viem';
+import { getNativeSymbol } from '@/constants/chains';
 
 type HomeViewProps = {
   state: BgGetStateResponse;
@@ -12,11 +13,12 @@ type HomeViewProps = {
   onRefresh: () => Promise<void>;
   onError: (msg: string) => void;
   onSettingsClick: () => void;
+  onChainChange: (chainId: number) => void;
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
 };
 
-export function HomeView({ state, balances, onRefresh, onError, onSettingsClick, locale, onLocaleChange }: HomeViewProps) {
+export function HomeView({ state, balances, onRefresh, onError, onSettingsClick, onChainChange, locale, onLocaleChange }: HomeViewProps) {
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [isImport, setIsImport] = useState(false);
   const [newAccountName, setNewAccountName] = useState('');
@@ -37,6 +39,7 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
   const [busy, setBusy] = useState(false);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
+  const nativeSymbol = getNativeSymbol(state.settings.chainId);
 
   async function withBusy(fn: () => Promise<void>) {
     if (busy) return;
@@ -139,7 +142,8 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
   return (
     <div className="relative w-[360px]  h-full bg-zinc-950 text-zinc-100 flex flex-col">
       <Header
-        chainId={state.network.chainId}
+        chainId={state.settings.chainId}
+        onChainChange={onChainChange}
         isUnlocked={state.wallet.isUnlocked}
         onSettingsClick={onSettingsClick}
         locale={locale}
@@ -268,7 +272,7 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
                       </button>
                   </div>
                   <div className="text-[14px] text-zinc-400 font-mono mt-0.5">
-                    {formatBalance(acc.address)} BNB
+                    {formatBalance(acc.address)} {nativeSymbol}
                   </div>
                 </div>
               </div>
@@ -459,7 +463,7 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
               <div className="flex items-center justify-between">
                 <div className="text-[14px] text-zinc-400">{tt('popup.home.transfer.amount')}</div>
                 <div className="text-[12px] text-zinc-500">
-                  {tt('popup.home.transfer.available')} {getTransferBalanceBnb() ?? '...'} BNB
+                  {tt('popup.home.transfer.available')} {getTransferBalanceBnb() ?? '...'} {nativeSymbol}
                 </div>
               </div>
               <div className="flex items-center gap-2">

@@ -5,13 +5,13 @@ import { Wallet } from 'lucide-react';
 import type { Account, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { TokenAPI } from '@/hooks/TokenAPI';
-import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
 import { formatPriceValue, parseNumberLoose, formatTime } from '@/utils/format';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { WalletSelectorDropdown, WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
+import { getChainRuntime, getExplorerTxUrl, getNativeSymbol } from '@/constants/chains';
 
 const normalizeWalletAddr = (addr?: string | null): `0x${string}` | null => {
   const raw = typeof addr === 'string' ? addr.trim() : '';
@@ -277,13 +277,14 @@ export function LimitTradePanel({
 
   const toTokenKey = (chainId2: number, tokenAddress2: string) => `${chainId2}:${tokenAddress2.toLowerCase()}`;
   const getWNativeAddress = (chainId2: number) => {
-    if (chainId2 === 56) return bscTokens.wbnb.address;
-    return null;
+    try {
+      return getChainRuntime(chainId2).wrappedNativeAddress;
+    } catch {
+      return null;
+    }
   };
 
-  const explorerTxUrl = (txHash: string) => {
-    return `https://bscscan.com/tx/${txHash}`;
-  };
+  const explorerTxUrl = (txHash: string) => getExplorerTxUrl(chainId, txHash);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const copyToClipboard = async (text: string) => {
     try {
@@ -432,7 +433,8 @@ export function LimitTradePanel({
     if (o.side === 'buy') {
       const wei = o.buyBnbAmountWei ? BigInt(o.buyBnbAmountWei) : 0n;
       const v = Number(formatEther(wei));
-      return Number.isFinite(v) && v > 0 ? `${v} BNB` : '-';
+      const symbol = getNativeSymbol(o.chainId);
+      return Number.isFinite(v) && v > 0 ? `${v} ${symbol}` : '-';
     }
     const fixedAmountWei = (() => {
       try {
@@ -1496,6 +1498,11 @@ export function LimitTradePanel({
             walletNativeBalancesWei={walletNativeBalancesWei}
             walletTokenBalancesWei={walletTokenBalancesWei}
             tokenDecimals={tokenDecimals}
+            multiWalletBuyMode={settings?.multiWalletBuyMode ?? 'uniform'}
+            childWalletBuyAmountsNative={settings?.childWalletBuyAmountsBnb ?? {}}
+            onChangeMultiWalletBuyMode={() => {}}
+            onUpdateChildWalletBuyAmount={() => {}}
+            nativeSymbol={getNativeSymbol(chainId)}
             className="absolute right-3 top-11 z-30 w-[340px] rounded-lg border border-zinc-700 bg-[#141416] p-2 shadow-xl"
             onRequestClose={() => setWalletSelectorOpen(false)}
           />

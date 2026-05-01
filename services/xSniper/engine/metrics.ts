@@ -2,6 +2,7 @@ import type { UnifiedTwitterSignal } from '@/types/extention';
 
 export type TokenMetrics = {
   tokenAddress?: `0x${string}`;
+  chain?: string;
   tokenSymbol?: string;
   launchpadPlatform?: string;
   marketCapUsd?: number;

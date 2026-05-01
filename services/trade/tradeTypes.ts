@@ -1,7 +1,7 @@
+import { getChainRuntime } from "@/constants/chains";
+
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 export const ZERO32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
-export const QUOTER_V2_BSC = '0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997';
-export const WBNB_BSC = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
 
 export enum SwapType {
   V2_EXACT_IN = 0,
@@ -41,7 +41,12 @@ export type DexExactInQuote = {
 export type DexExactInOpts = { v3Fee?: number; poolPair?: string; prefer?: 'v2' | 'v3' | string };
 
 export function getWNative(chainId: number): Address {
-  return WBNB_BSC as Address;
+  return getChainRuntime(chainId).wrappedNativeAddress as Address;
+}
+
+export function getQuoterV2(chainId: number): Address {
+  const q = getChainRuntime(chainId).quoterV2;
+  return (q ?? ZERO_ADDRESS) as Address;
 }
 
 export function toQuoteToken(chainId: number, routerToken: Address): Address {

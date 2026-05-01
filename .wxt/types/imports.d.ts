@@ -5,6 +5,7 @@ declare global {
   const BNBCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').BNBCoinIcon
   const ChainCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').ChainCoinIcon
   const ContentScriptContext: typeof import('wxt/utils/content-script-context').ContentScriptContext
+  const ETHCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').ETHCoinIcon
   const FlapAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI').default
   const GmgnAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI').default
   const InvalidMatchPattern: typeof import('wxt/utils/match-patterns').InvalidMatchPattern

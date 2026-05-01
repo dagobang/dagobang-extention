@@ -1,9 +1,9 @@
 import { decodeAbiParameters } from 'viem';
-import { bsc } from 'viem/chains';
 import { RpcService } from '../rpc';
 import type { ChainSettings, GasPreset } from '../../types/extention';
 import { classifyBroadcastError, collectErrorText, extractNextNonceHintFromText, getNonceErrorKindFromText } from '../../utils/txErrorClassify';
 import { parseGweiToWei } from '../../utils/dexUtils';
+import { getChainRuntime } from '@/constants/chains';
 
 export function getGasPriceWei(chainSettings: ChainSettings, preset: GasPreset, side: 'buy' | 'sell'): bigint {
   const baseConfig = side === 'buy' ? chainSettings.buyGasGwei : chainSettings.sellGasGwei;
@@ -303,7 +303,7 @@ export async function sendTransaction(
   value: bigint,
   gasPriceWei: bigint,
   chainId: number,
-  opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; priorityFeeBnbOverride?: string }
+  opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
 ) {
   const flowKey = `${chainId}:${String(account?.address ?? '').toLowerCase()}`;
   const releaseFlow = await acquireTxFlowLock(flowKey);
@@ -342,18 +342,72 @@ export async function sendTransaction(
 
   const nonce = await noncePromise;
 
+  const runtime = getChainRuntime(chainId);
+  const shouldUseDynamicFee = opts?.feeMode === 'dynamic' && chainId === 1;
+  const multiplierBpsByPreset: Record<GasPreset, bigint> = {
+    slow: 10000n,
+    standard: 11000n,
+    fast: 12000n,
+    turbo: 14000n,
+  };
+  const dynamicMultiplierBps = multiplierBpsByPreset[opts?.gasPreset ?? 'standard'] ?? 10000n;
+  const applyMultiplier = (value: bigint) => {
+    if (value <= 0n) return value;
+    const scaled = (value * dynamicMultiplierBps + 9999n) / 10000n;
+    return scaled > 0n ? scaled : 1n;
+  };
+
+  const resolveDynamicFees = async () => {
+    const feeStart = Date.now();
+    try {
+      const estimated = await client.estimateFeesPerGas();
+      const maxPriorityFeePerGas = typeof estimated?.maxPriorityFeePerGas === 'bigint' && estimated.maxPriorityFeePerGas > 0n
+        ? estimated.maxPriorityFeePerGas
+        : parseGweiToWei('1');
+      const maxFeePerGas = typeof estimated?.maxFeePerGas === 'bigint' && estimated.maxFeePerGas > 0n
+        ? estimated.maxFeePerGas
+        : (maxPriorityFeePerGas * 2n);
+      trace?.('estimateFeesPerGas', Date.now() - feeStart);
+      return {
+        maxFeePerGas: applyMultiplier(maxFeePerGas),
+        maxPriorityFeePerGas: applyMultiplier(maxPriorityFeePerGas),
+      };
+    } catch {
+      const fallbackPriority = parseGweiToWei('1');
+      const fallbackMax = gasPriceWei > 0n ? gasPriceWei : parseGweiToWei('2');
+      trace?.('estimateFeesPerGasFallback', Date.now() - feeStart);
+      return {
+        maxFeePerGas: applyMultiplier(fallbackMax),
+        maxPriorityFeePerGas: applyMultiplier(fallbackPriority),
+      };
+    }
+  };
+
   const signAndBroadcast = async (useNonce: number, labelPrefix: string) => {
+    const dynamicFees = shouldUseDynamicFee ? await resolveDynamicFees() : null;
     const signStart = Date.now();
-    const signed = await account.signTransaction({
-      to: to as `0x${string}`,
-      data,
-      value,
-      gas: gasLimit,
-      gasPrice: gasPriceWei,
-      chain: bsc,
-      chainId,
-      nonce: useNonce,
-    });
+    const signed = shouldUseDynamicFee
+      ? await account.signTransaction({
+        to: to as `0x${string}`,
+        data,
+        value,
+        gas: gasLimit,
+        maxFeePerGas: dynamicFees!.maxFeePerGas,
+        maxPriorityFeePerGas: dynamicFees!.maxPriorityFeePerGas,
+        chain: runtime.viemChain,
+        chainId,
+        nonce: useNonce,
+      })
+      : await account.signTransaction({
+        to: to as `0x${string}`,
+        data,
+        value,
+        gas: gasLimit,
+        gasPrice: gasPriceWei,
+        chain: runtime.viemChain,
+        chainId,
+        nonce: useNonce,
+      });
     trace?.(`${labelPrefix}signTransaction`, Date.now() - signStart);
 
     const broadcastStart = Date.now();
@@ -365,7 +419,7 @@ export async function sendTransaction(
         chainId,
         nonce: useNonce,
         gas: gasLimit,
-        gasPrice: gasPriceWei,
+        gasPrice: dynamicFees?.maxFeePerGas ?? gasPriceWei,
       },
     });
     trace?.(`${labelPrefix}broadcastTx`, Date.now() - broadcastStart);

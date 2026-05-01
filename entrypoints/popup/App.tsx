@@ -162,6 +162,15 @@ function App() {
         onRefresh={refresh}
         onError={handleChildError}
         onSettingsClick={() => setView('settings')}
+        onChainChange={(chainId: number) =>
+          void call({
+            type: 'settings:set',
+            settings: {
+              ...(state?.settings ?? defaultSettings()),
+              chainId,
+            },
+          }).then(refresh)
+        }
         locale={locale}
         onLocaleChange={handleLocaleChange}
       />

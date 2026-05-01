@@ -1,4 +1,5 @@
 import type { Settings, ChainSettings, AutoTradeConfig, GasGweiConfig, AdvancedAutoSellConfig } from '../types/extention';
+import { ChainId } from '@/constants/chains';
 
 const DEFAULT_GAS_GWEI: GasGweiConfig = {
   slow: '0.06',
@@ -39,6 +40,7 @@ const BSC_MAINNET: ChainSettings = {
   buyGasPreset: 'standard',
   sellGasPreset: 'standard',
   executionMode: 'default',
+  gasPriceMode: 'fixed',
   slippageBps: 4000,
   deadlineSeconds: 60,
   buyPresets: ['0.1', '0.5', '1.0', '2.0'],
@@ -46,6 +48,43 @@ const BSC_MAINNET: ChainSettings = {
   buyGasGwei: DEFAULT_GAS_GWEI,
   sellGasGwei: DEFAULT_GAS_GWEI,
   approveGasGwei: '0.06',
+  buyPriorityFeePreset: 'standard',
+  sellPriorityFeePreset: 'standard',
+  buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  sellPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  bloxrouteBuyEnabled: true,
+  bloxrouteSellEnabled: true,
+};
+
+const ETH_GAS_GWEI: GasGweiConfig = {
+  slow: '1',
+  standard: '2',
+  fast: '5',
+  turbo: '15',
+};
+
+const ETH_MAINNET: ChainSettings = {
+  rpcUrls: [
+    'https://eth.llamarpc.com',
+    'https://ethereum.publicnode.com',
+    'https://rpc.ankr.com/eth',
+  ],
+  protectedRpcUrls: [],
+  protectedRpcUrlsBuy: [],
+  protectedRpcUrlsSell: [],
+  antiMev: false,
+  gasPreset: 'standard',
+  buyGasPreset: 'standard',
+  sellGasPreset: 'standard',
+  executionMode: 'default',
+  gasPriceMode: 'dynamic',
+  slippageBps: 4000,
+  deadlineSeconds: 60,
+  buyPresets: ['0.01', '0.05', '0.1', '0.2'],
+  sellPresets: ['25', '50', '75', '100'],
+  buyGasGwei: ETH_GAS_GWEI,
+  sellGasGwei: ETH_GAS_GWEI,
+  approveGasGwei: '2',
   buyPriorityFeePreset: 'standard',
   sellPriorityFeePreset: 'standard',
   buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
@@ -69,6 +108,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
     dryRunBuyDelayMs: '1000',
     dryRunSellDelayMs: '2000',
     autoSellEnabled: true,
+    buyAmountNative: '0.01',
     buyAmountBnb: '0.01',
     buyNewCaCount: '1',
     buyOgCount: '0',
@@ -122,6 +162,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
           dryRunBuyDelayMs: '1000',
           dryRunSellDelayMs: '2000',
           autoSellEnabled: true,
+          buyAmountNative: '0.006',
           buyAmountBnb: '0.006',
           buyNewCaCount: '1',
           buyOgCount: '0',
@@ -176,6 +217,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
           dryRunBuyDelayMs: '1000',
           dryRunSellDelayMs: '2000',
           autoSellEnabled: true,
+          buyAmountNative: '0.008',
           buyAmountBnb: '0.008',
           buyNewCaCount: '2',
           buyOgCount: '0',
@@ -231,6 +273,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
     dryRunBuyDelayMs: '1000',
     dryRunSellDelayMs: '2000',
     autoSellEnabled: true,
+    buyAmountNative: '0.006',
     buyAmountBnb: '0.006',
     buyGasGwei: '',
     buyBribeBnb: '',
@@ -316,9 +359,10 @@ const DEFAULT_ADVANCED_AUTO_SELL: AdvancedAutoSellConfig = {
 
 export function defaultSettings(): Settings {
   return {
-    chainId: 56,
+    chainId: ChainId.BNB,
     chains: {
-      56: BSC_MAINNET,
+      [ChainId.ETH]: ETH_MAINNET,
+      [ChainId.BNB]: BSC_MAINNET,
     },
     autoLockSeconds: 30 * 60, // 30 minutes
     selectedTradeWallets: [],

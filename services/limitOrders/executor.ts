@@ -111,11 +111,13 @@ export const createLimitOrderExecutor = (deps: {
   const executeLimitOrder = async (order: LimitOrder, ctx?: { priceUsd?: number }) => {
     if (!order.tokenInfo) throw new Error('Token info required');
     if (order.side === 'buy') {
-      if (!order.buyBnbAmountWei) throw new Error('Buy amount required');
+      const buyAmountWei = order.buyNativeAmountWei || order.buyBnbAmountWei;
+      if (!buyAmountWei) throw new Error('Buy amount required');
       const res = await TradeService.buyWithReceiptAndNonceRecovery({
         chainId: order.chainId,
         tokenAddress: order.tokenAddress,
-        bnbAmountWei: order.buyBnbAmountWei,
+        nativeAmountWei: buyAmountWei,
+        bnbAmountWei: buyAmountWei,
         fromAddress: order.fromAddress,
         tokenInfo: order.tokenInfo,
       }, {

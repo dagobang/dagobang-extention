@@ -14,6 +14,7 @@ import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoRes
 import { maybeUpdateXSniperHistoryEvaluations } from '@/services/xSniper/xSniperHistory';
 import { TokenService } from '@/services/token';
 import { extractLaunchpadPlatform } from '@/constants/launchpad';
+import { getChainIdByName } from '@/constants/chains';
 
 export const createXSniperTrade = (deps: {
   onStateChanged: () => void;
@@ -21,6 +22,15 @@ export const createXSniperTrade = (deps: {
     notifyXSniperOrderCard?: (record: XSniperBuyRecord) => Promise<any>;
   };
 }) => {
+  const resolveTradeChainId = (rawChain: unknown, fallbackChainId: number, settings: any) => {
+    const chainName = typeof rawChain === 'string' ? rawChain.trim() : '';
+    if (!chainName) return fallbackChainId;
+    const chainIdFromToken = getChainIdByName(chainName);
+    if (!Number.isFinite(chainIdFromToken) || chainIdFromToken <= 0) return fallbackChainId;
+    if (!settings?.chains?.[chainIdFromToken]) return fallbackChainId;
+    return chainIdFromToken;
+  };
+
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
   const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
 
@@ -486,12 +496,13 @@ export const createXSniperTrade = (deps: {
       const perTweetMax = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
       const dryRun = strategy?.dryRun === true;
       let boughtCount = 0;
-      for (const { m } of picked) {
+      for (const { t, m } of picked) {
         if (!m?.tokenAddress) continue;
+        const tradeChainId = resolveTradeChainId((t as any)?.chain, settings.chainId, settings);
         let bought = false;
         try {
           currentSignalContext = signal;
-          bought = await tryAutoBuyOnce({ chainId: settings.chainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
+          bought = await tryAutoBuyOnce({ chainId: tradeChainId, tokenAddress: m.tokenAddress, metrics: m, strategy, signal });
         } catch (e) {
           console.error('XSniperTrade buy attempt failed', {
             tokenAddress: m.tokenAddress,

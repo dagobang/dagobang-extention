@@ -10,6 +10,7 @@ import { parseCurrentUrl, parseCurrentUrlFull, type SiteInfo } from '@/utils/sit
 import { call } from '@/utils/messaging';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import GmgnAPI from '@/hooks/GmgnAPI';
+import { getChainIdByName, getNativeSymbol } from '@/constants/chains';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import {
   buildStrategyRollingTakeProfitOrderInputs,
@@ -130,7 +131,11 @@ export default function App() {
     [state?.wallet, settings]
   );
   const multiWalletBuyMode: 'uniform' | 'child_custom' = settings?.multiWalletBuyMode === 'child_custom' ? 'child_custom' : 'uniform';
-  const childWalletBuyAmountsBnb: Record<string, string> = settings?.childWalletBuyAmountsBnb ?? {};
+  const childWalletBuyAmountsNative: Record<string, string> = settings?.childWalletBuyAmountsBnb ?? {};
+  const nativeSymbol = useMemo(() => {
+    const chainId = settings?.chainId || getChainIdByName(siteInfo?.chain || 'bsc') || 56;
+    return getNativeSymbol(chainId);
+  }, [settings?.chainId, siteInfo?.chain]);
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
   const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
@@ -172,6 +177,21 @@ export default function App() {
       (window as any).__DAGOBANG_SETTINGS__ = settings;
     }
   }, [settings]);
+
+  useEffect(() => {
+    if (!settings || !siteInfo?.chain) return;
+    const targetChainId = getChainIdByName(siteInfo.chain);
+    if (!Number.isFinite(targetChainId) || targetChainId <= 0) return;
+    if (settings.chainId === targetChainId) return;
+    if (!settings.chains[targetChainId]) return;
+    void call({
+      type: 'settings:set',
+      settings: {
+        ...settings,
+        chainId: targetChainId,
+      },
+    } as const).catch(() => { });
+  }, [settings, siteInfo?.chain]);
 
   useEffect(() => {
     keyboardEnabledRef.current = keyboardShortcutsEnabled;
@@ -1153,7 +1173,7 @@ export default function App() {
       const buyPlan = wallets.map((walletAddress) => {
         const lower = walletAddress.toLowerCase();
         const isMainWallet = lower === mainWalletLower;
-        const customAmountRaw = childWalletBuyAmountsBnb[lower];
+        const customAmountRaw = childWalletBuyAmountsNative[lower];
         const shouldUseCustom = multiWalletBuyMode === 'child_custom' && !isMainWallet && typeof customAmountRaw === 'string' && customAmountRaw.trim().length > 0;
         const amountRaw = shouldUseCustom ? customAmountRaw : amountStr;
         const amountWei = parseAmountWei(amountRaw, walletAddress);
@@ -1847,12 +1867,13 @@ export default function App() {
               selectedTradeWallets={selectedTradeWallets}
               onToggleTradeWallet={handleToggleTradeWallet}
               multiWalletBuyMode={multiWalletBuyMode}
-              childWalletBuyAmountsBnb={childWalletBuyAmountsBnb}
+              childWalletBuyAmountsNative={childWalletBuyAmountsNative}
               onChangeMultiWalletBuyMode={handleChangeMultiWalletBuyMode}
               onUpdateChildWalletBuyAmount={handleUpdateChildWalletBuyAmount}
               walletNativeBalancesWei={walletNativeBalancesWei}
               walletTokenBalancesWei={walletTokenBalancesWei}
               tokenDecimals={tokenDecimals}
+              nativeSymbol={nativeSymbol}
               formattedNativeBalance={formattedNativeBalance}
               busy={busy}
               isUnlocked={isUnlocked}

@@ -1,6 +1,7 @@
 import type { Settings, AutoTradeConfig, AdvancedAutoSellConfig } from '../types/extention';
 import { TRADE_SUCCESS_SOUND_PRESETS } from '../types/extention';
 import { defaultSettings } from './defaults';
+import { ChainId } from '@/constants/chains';
 
 // Simple normalization helper (could be moved to a formatter util if needed)
 function normalizeAddress(addr: string | undefined): `0x${string}` | '' {
@@ -64,6 +65,14 @@ function clampStringNumber(value: any, fallback: string) {
   return trimmed;
 }
 
+function readAmountStringAlias(input: any, fallback: string) {
+  const next = clampStringNumber(input?.buyAmountNative, '');
+  if (next) return next;
+  const legacy = clampStringNumber(input?.buyAmountBnb, '');
+  if (legacy) return legacy;
+  return fallback;
+}
+
 function isAllowedProtectedRpcUrl(raw: string): boolean {
   const url = (raw ?? '').trim();
   if (!url) return false;
@@ -82,12 +91,19 @@ function isAllowedProtectedRpcUrl(raw: string): boolean {
   if (host.includes('pancakeswap.finance')) return true;
   if (host.includes('dagobang.site')) return true;
   if (host.includes('blxrbdn.com')) return true;
+  if (host.includes('flashbots.net')) return true;
+  if (host.includes('alchemy.com')) return true;
+  if (host.includes('infura.io')) return true;
   return false;
 }
 
 export function validateSettings(input: Settings): Settings | null {
   const defaults = defaultSettings();
-  const chainId = 56;
+  const supportedChainIds = [ChainId.ETH, ChainId.BNB] as const;
+  const inputChainId = Number((input as any).chainId);
+  const chainId = supportedChainIds.includes(inputChainId as any)
+    ? inputChainId
+    : defaults.chainId;
   const autoLockSeconds = clampNumber(input.autoLockSeconds, 30, 3600, defaults.autoLockSeconds);
   const selectedTradeWallets = Array.isArray((input as any).selectedTradeWallets)
     ? ((input as any).selectedTradeWallets as unknown[])
@@ -169,7 +185,7 @@ export function validateSettings(input: Settings): Settings | null {
   const chains = { ...defaults.chains };
 
   if (input.chains) {
-    ([56] as const).forEach((cid) => {
+    supportedChainIds.forEach((cid) => {
       const cInput = input.chains[cid];
       const cDef = defaults.chains[cid];
       if (cInput) {
@@ -178,6 +194,7 @@ export function validateSettings(input: Settings): Settings | null {
         const inputBuyGasPreset = (cInput as any).buyGasPreset as any;
         const inputSellGasPreset = (cInput as any).sellGasPreset as any;
         const allowedGasPresets = ['slow', 'standard', 'fast', 'turbo'] as const;
+        const allowedGasPriceModes = ['fixed', 'dynamic'] as const;
         const allowedPriorityFeePresets = ['none', 'slow', 'standard', 'fast'] as const;
         const buyGasGwei = {
           slow: typeof inputBuyGas?.slow === 'string' && inputBuyGas.slow.trim() ? inputBuyGas.slow.trim() : cDef.buyGasGwei.slow,
@@ -253,6 +270,9 @@ export function validateSettings(input: Settings): Settings | null {
         const defaultSellGasPreset = (cDef as any).sellGasPreset ?? cDef.gasPreset;
         const buyGasPreset = allowedGasPresets.includes(inputBuyGasPreset) ? inputBuyGasPreset : defaultBuyGasPreset;
         const sellGasPreset = allowedGasPresets.includes(inputSellGasPreset) ? inputSellGasPreset : defaultSellGasPreset;
+        const gasPriceMode = allowedGasPriceModes.includes((cInput as any).gasPriceMode)
+          ? (cInput as any).gasPriceMode
+          : ((allowedGasPriceModes.includes((cDef as any).gasPriceMode) ? (cDef as any).gasPriceMode : 'fixed') as (typeof allowedGasPriceModes)[number]);
         const protectedRpcUrls = (cInput.protectedRpcUrls || [])
           .map((x) => x.trim())
           .filter(Boolean)
@@ -282,6 +302,7 @@ export function validateSettings(input: Settings): Settings | null {
           gasPreset: ['slow', 'standard', 'fast', 'turbo'].includes(cInput.gasPreset) ? cInput.gasPreset : cDef.gasPreset,
           buyGasPreset,
           sellGasPreset,
+          gasPriceMode,
           executionMode: cInput.executionMode === 'turbo' ? 'turbo' : cDef.executionMode,
           slippageBps: clampNumber(cInput.slippageBps, 0, 9000, cDef.slippageBps),
           deadlineSeconds: clampNumber(cInput.deadlineSeconds, 10, 3600, cDef.deadlineSeconds),
@@ -406,7 +427,8 @@ export function validateSettings(input: Settings): Settings | null {
     autoSellEnabled: typeof rawInput?.autoSellEnabled === 'boolean'
       ? rawInput.autoSellEnabled
       : fallbackInput.autoSellEnabled,
-    buyAmountBnb: clampStringNumber(rawInput?.buyAmountBnb, fallbackInput.buyAmountBnb),
+    buyAmountNative: readAmountStringAlias(rawInput, fallbackInput.buyAmountBnb),
+    buyAmountBnb: readAmountStringAlias(rawInput, fallbackInput.buyAmountBnb),
     buyNewCaCount: clampStringNumber(rawInput?.buyNewCaCount, fallbackInput.buyNewCaCount),
     buyOgCount: clampStringNumber(rawInput?.buyOgCount, fallbackInput.buyOgCount),
     minMarketCapUsd: clampStringNumber(rawInput?.minMarketCapUsd, fallbackInput.minMarketCapUsd),
@@ -539,8 +561,10 @@ export function validateSettings(input: Settings): Settings | null {
         const keywords = parseCommaOrLineListInput(raw?.keywords, [])
           .map((x) => x.trim())
           .filter(Boolean);
+        const buyAmountNativeRaw = typeof raw?.buyAmountNative === 'string' ? raw.buyAmountNative.trim() : '';
         const buyAmountBnbRaw = typeof raw?.buyAmountBnb === 'string' ? raw.buyAmountBnb.trim() : '';
-        const buyAmountBnb = buyAmountBnbRaw || '0';
+        const buyAmountRaw = buyAmountNativeRaw || buyAmountBnbRaw;
+        const buyAmountBnb = buyAmountRaw || '0';
         const buyGasGwei = clampStringNumber(raw?.buyGasGwei, '');
         const buyBribeBnbRaw = clampStringNumber(raw?.buyBribeBnb, '');
         const buyBribeNum = Number(buyBribeBnbRaw);
@@ -563,6 +587,7 @@ export function validateSettings(input: Settings): Settings | null {
           targetUrls,
           keywords,
           autoBuy: typeof raw?.autoBuy === 'boolean' ? raw.autoBuy : true,
+          buyAmountNative: buyAmountBnb,
           buyAmountBnb,
           buyGasGwei: buyGasGwei || undefined,
           buyBribeBnb: buyBribeBnb || undefined,

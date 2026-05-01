@@ -8,6 +8,8 @@ const LAST_UPDATE_ID_KEY = 'dagobang_telegram_last_update_id_v1';
 export type ParsedTelegramCommand =
   | { type: 'start' }
   | { type: 'menu' }
+  | { type: 'chain' }
+  | { type: 'switchChain'; chain: string }
   | { type: 'settings' }
   | { type: 'status' }
   | { type: 'holdings' }
@@ -26,6 +28,8 @@ export type ParsedTelegramCommand =
   | { type: 'actionBuy'; tokenAddress: `0x${string}`; amountBnb: string }
   | { type: 'actionSell'; tokenAddress: `0x${string}`; sellPercent: number }
   | { type: 'actionMenu' }
+  | { type: 'actionChainMenu' }
+  | { type: 'actionSwitchChain'; chain: string }
   | { type: 'actionStatus' }
   | { type: 'actionHoldings' }
   | { type: 'actionWallets' }
@@ -55,6 +59,8 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
       return { type: 'actionOrdersPage', page: Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1 };
     }
     if (action === 'menu') return { type: 'actionMenu' };
+    if (action === 'chain') return { type: 'actionChainMenu' };
+    if (action === 'schain' && (arg1 || '').trim()) return { type: 'actionSwitchChain', chain: (arg1 || '').trim() };
     if (action === 'settings') return { type: 'actionSettings' };
     if (action === 'xset') return { type: 'actionXSniperSettings' };
     if (action === 'qset') return { type: 'actionQuickTradeSettings' };
@@ -97,6 +103,11 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
   }
   if (cmd === '/start') return { type: 'start' };
   if (cmd === '/menu') return { type: 'menu' };
+  if (cmd === '/chain') {
+    const target = (rest[0] || '').trim();
+    if (!target) return { type: 'chain' };
+    return { type: 'switchChain', chain: target };
+  }
   if (cmd === '/settings') return { type: 'settings' };
   if (cmd === '/status') return { type: 'status' };
   if (cmd === '/holdings') return { type: 'holdings' };

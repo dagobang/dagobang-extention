@@ -68,6 +68,20 @@ export function BuySection({
   const gasValue =
     (chainSettings?.buyGasGwei && chainSettings.buyGasGwei[gasPreset]) ||
     defaultGasGwei[gasPreset as keyof typeof defaultGasGwei];
+  const isDynamicGas = chainSettings?.gasPriceMode === 'dynamic';
+  const dynamicMultiplierMap: Record<string, string> = {
+    slow: '1.0x',
+    standard: '1.1x',
+    fast: '1.2x',
+    turbo: '1.4x',
+  };
+  const dynamicMultiplierLabel = dynamicMultiplierMap[gasPreset] ?? '1.0x';
+  const gasLabel = isDynamicGas
+    ? `${t(`popup.settings.gas.${gasPreset}`, locale)} ${dynamicMultiplierLabel}`
+    : t(`popup.settings.gas.${gasPreset}`, locale);
+  const gasTitle = isDynamicGas
+    ? `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} (Dynamic)`
+    : `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} ${gasValue} gwei`;
   const priorityPresets = chainSettings?.buyPriorityFeePresets ?? {
     none: '0',
     slow: '0.000025',
@@ -144,11 +158,11 @@ export function BuySection({
           </div>
           <div
             className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-            title={`${t('contentUi.slippage.toggleGas', locale)}: ${t(`popup.settings.gas.${gasPreset}`, locale)} ${gasValue} gwei`}
+            title={gasTitle}
             onClick={onToggleGas}
           >
             <Fuel size={10} />
-            <span className="whitespace-nowrap">{t(`popup.settings.gas.${gasPreset}`, locale)}</span>
+            <span className="whitespace-nowrap">{gasLabel}</span>
           </div>
           <div
             className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"

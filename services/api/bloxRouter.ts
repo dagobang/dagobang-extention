@@ -1,4 +1,5 @@
 import { SettingsService } from '../settings';
+import { getChainRuntime } from '@/constants/chains';
 
 export class BloxRouterAPI {
   private static readonly BASE_URL_HTTPS = "https://api.blxrbdn.com";
@@ -39,12 +40,14 @@ export class BloxRouterAPI {
     return json;
   }
 
-  static async sendBscPrivateTx(signedTx: string): Promise<`0x${string}` | null> {
+  static async sendPrivateTx(chainId: number, signedTx: string): Promise<`0x${string}` | null> {
     const rawTx = signedTx.startsWith("0x") ? signedTx.slice(2) : signedTx;
+    const runtime = getChainRuntime(chainId);
+    const method = runtime.bloxroutePrivateTxMethod || 'eth_private_tx';
     const json = await this.post({
       jsonrpc: "2.0",
       id: "1",
-      method: "bsc_private_tx",
+      method,
       params: {
         transaction: rawTx,
         mev_builders: ["all"],
@@ -57,7 +60,7 @@ export class BloxRouterAPI {
     return hash.startsWith("0x") ? hash : `0x${hash}`;
   }
 
-  static async sendBscBundle(signedTxs: string[]): Promise<`0x${string}`> {
+  static async sendBundle(chainId: number, signedTxs: string[]): Promise<`0x${string}`> {
     if (!Array.isArray(signedTxs) || signedTxs.length === 0) {
       throw new Error('Bloxroute bundle txs is empty');
     }
@@ -66,13 +69,14 @@ export class BloxRouterAPI {
       if (!v) throw new Error('Invalid bundle tx');
       return v.startsWith('0x') ? v.slice(2) : v;
     });
+    const runtime = getChainRuntime(chainId);
     const json = await this.post({
       jsonrpc: "2.0",
       id: "1",
       method: "blxr_submit_bundle",
       params: {
         txs,
-        blockchain_network: "BSC-Mainnet",
+        blockchain_network: runtime.bloxrouteNetwork || 'Mainnet',
         mev_builders: { all: "" },
       },
     });
@@ -80,6 +84,14 @@ export class BloxRouterAPI {
     if (!bundleHash) throw new Error('Bloxroute did not return bundle hash');
     console.log('Bloxroute bundle hash:', bundleHash);
     return bundleHash;
+  }
+
+  static async sendBscPrivateTx(signedTx: string): Promise<`0x${string}` | null> {
+    return this.sendPrivateTx(56, signedTx);
+  }
+
+  static async sendBscBundle(signedTxs: string[]): Promise<`0x${string}`> {
+    return this.sendBundle(56, signedTxs);
   }
 
   static async prewarm(opts?: { timeoutMs?: number }): Promise<void> {

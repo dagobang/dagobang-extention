@@ -9,6 +9,21 @@ type AddressMapping = {
 };
 
 export const DeployAddress: AddressMapping = {
+  [ChainId.ETH]: {
+    // TODO: replace with your deployed DagobangRouterEth proxy/router address.
+    [ContractNames.DagobangRouter]: {
+      address: "",
+    },
+    [ContractNames.WETH]: {
+      address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    },
+    [ContractNames.UniswapFactoryV2]: {
+      address: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+    },
+    [ContractNames.UniswapFactoryV3]: {
+      address: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+    },
+  },
   [ChainId.BNB]: {
     [ContractNames.DagobangRouter]: {
       address: "0x1E2FbB5DD674244D6185571153Ca56297a5F2406",

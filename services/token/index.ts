@@ -1,7 +1,9 @@
 import { erc20Abi, pairV2Abi } from '@/constants/contracts/abi/swapAbi';
 import { formatUnits } from 'viem';
 import type { TokenInfo } from '@/types/token';
+import { ChainId } from '@/constants/chains';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
+import { ethTokens } from '@/constants/tokens/chains/eth';
 
 import { RpcService } from '../rpc';
 import { TradeService } from '../trade';
@@ -131,24 +133,29 @@ export class TokenService {
       return Number.isFinite(f) ? f : 0;
     };
 
-    const stableByAddress = new Map<string, { address: `0x${string}`; decimals: number }>([
-      [bscTokens.usdt.address.toLowerCase(), { address: bscTokens.usdt.address as `0x${string}`, decimals: bscTokens.usdt.decimals }],
-      [bscTokens.usdc.address.toLowerCase(), { address: bscTokens.usdc.address as `0x${string}`, decimals: bscTokens.usdc.decimals }],
-      [bscTokens.usd1.address.toLowerCase(), { address: bscTokens.usd1.address as `0x${string}`, decimals: bscTokens.usd1.decimals }],
-    ]);
+    const isEth = chainId === ChainId.ETH;
+    const wNativeAddress = (isEth ? ethTokens.weth.address : bscTokens.wbnb.address) as `0x${string}`;
+    const wNativeDecimals = isEth ? ethTokens.weth.decimals : bscTokens.wbnb.decimals;
+    const usdtToken = isEth ? ethTokens.usdt : bscTokens.usdt;
+    const usdcToken = isEth ? ethTokens.usdc : bscTokens.usdc;
+    const stableByAddress = new Map<string, { address: `0x${string}`; decimals: number }>();
+    stableByAddress.set(usdtToken.address.toLowerCase(), { address: usdtToken.address as `0x${string}`, decimals: usdtToken.decimals });
+    stableByAddress.set(usdcToken.address.toLowerCase(), { address: usdcToken.address as `0x${string}`, decimals: usdcToken.decimals });
+    if (!isEth) {
+      stableByAddress.set(bscTokens.usd1.address.toLowerCase(), { address: bscTokens.usd1.address as `0x${string}`, decimals: bscTokens.usd1.decimals });
+    }
 
-    const getBnbPriceUsd = async () => {
+    const getNativePriceUsd = async () => {
       const now2 = Date.now();
       if (this.bnbUsdCache.value > 0 && now2 - this.bnbUsdCache.ts < 30_000) return this.bnbUsdCache.value;
-      if (chainId !== 56) return 0;
       const amountOut = (await TradeService.quoteBestExactIn(
         chainId,
-        bscTokens.wbnb.address as `0x${string}`,
-        bscTokens.usdt.address as `0x${string}`,
+        wNativeAddress as `0x${string}`,
+        usdtToken.address as `0x${string}`,
         10n ** 18n,
         { v3Fee: 500 }
       )).amountOut;
-      const v = amountOut > 0n ? toNumberFromUnits(amountOut, bscTokens.usdt.decimals) : 0;
+      const v = amountOut > 0n ? toNumberFromUnits(amountOut, usdtToken.decimals) : 0;
       if (v > 0) {
         this.bnbUsdCache.ts = now2;
         this.bnbUsdCache.value = v;
@@ -172,16 +179,16 @@ export class TokenService {
           const quoteAddrLower = quoteAddrRaw.toLowerCase();
           const quoteAddr =
             !quoteAddrRaw || quoteAddrLower === ZERO_ADDRESS
-              ? (bscTokens.wbnb.address as `0x${string}`)
+              ? (wNativeAddress as `0x${string}`)
               : (quoteAddrRaw as `0x${string}`);
           const priceInQuote = contractInfo.lastPrice / 1e18;
           if (Number.isFinite(priceInQuote) && priceInQuote > 0) {
             const stable = stableByAddress.get(quoteAddr.toLowerCase());
             if (stable) {
               priceUsd = priceInQuote;
-            } else if (quoteAddr.toLowerCase() === bscTokens.wbnb.address.toLowerCase()) {
-              const bnbUsd = await getBnbPriceUsd();
-              if (bnbUsd > 0) priceUsd = priceInQuote * bnbUsd;
+            } else if (quoteAddr.toLowerCase() === wNativeAddress.toLowerCase()) {
+              const nativeUsd = await getNativePriceUsd();
+              if (nativeUsd > 0) priceUsd = priceInQuote * nativeUsd;
             }
           }
         }
@@ -200,7 +207,7 @@ export class TokenService {
           const quoteAddrLower = quoteAddrRaw.toLowerCase();
           const quoteAddr =
             !quoteAddrRaw || quoteAddrLower === ZERO_ADDRESS
-              ? (bscTokens.wbnb.address as `0x${string}`)
+              ? (wNativeAddress as `0x${string}`)
               : (quoteAddrRaw as `0x${string}`);
 
           const priceWei = (() => {
@@ -216,9 +223,9 @@ export class TokenService {
             const stable = stableByAddress.get(quoteAddr.toLowerCase());
             if (stable) {
               priceUsd = priceInQuote;
-            } else if (quoteAddr.toLowerCase() === bscTokens.wbnb.address.toLowerCase()) {
-              const bnbUsd = await getBnbPriceUsd();
-              if (bnbUsd > 0) priceUsd = priceInQuote * bnbUsd;
+            } else if (quoteAddr.toLowerCase() === wNativeAddress.toLowerCase()) {
+              const nativeUsd = await getNativePriceUsd();
+              if (nativeUsd > 0) priceUsd = priceInQuote * nativeUsd;
             }
           }
         }
@@ -246,15 +253,15 @@ export class TokenService {
       const q = await TradeService.quoteBestExactIn(
         chainId,
         tokenAddress,
-        bscTokens.wbnb.address as `0x${string}`,
+        wNativeAddress as `0x${string}`,
         oneToken,
         { poolPair: tokenInfo?.pool_pair }
       );
       if (q.amountOut > 0n) {
-        const outBnb = toNumberFromUnits(q.amountOut, bscTokens.wbnb.decimals);
-        const bnbUsd = await getBnbPriceUsd();
-        if (bnbUsd > 0 && outBnb > 0) {
-          priceUsd = outBnb * bnbUsd;
+        const outNative = toNumberFromUnits(q.amountOut, wNativeDecimals);
+        const nativeUsd = await getNativePriceUsd();
+        if (nativeUsd > 0 && outNative > 0) {
+          priceUsd = outNative * nativeUsd;
         }
       }
     }

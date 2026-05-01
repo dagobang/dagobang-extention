@@ -13,9 +13,10 @@ type WalletSelectorDropdownProps = {
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
   multiWalletBuyMode: 'uniform' | 'child_custom';
-  childWalletBuyAmountsBnb: Record<string, string>;
+  childWalletBuyAmountsNative: Record<string, string>;
   onChangeMultiWalletBuyMode: (mode: 'uniform' | 'child_custom') => void;
-  onUpdateChildWalletBuyAmount: (address: `0x${string}`, amountBnb: string) => void;
+  onUpdateChildWalletBuyAmount: (address: `0x${string}`, amountNative: string) => void;
+  nativeSymbol?: string;
   className?: string;
   onRequestClose: () => void;
 };
@@ -32,12 +33,12 @@ const formatWeiToText = (wei: string | undefined, decimals: number, maxFraction 
   }
 };
 
-const getBnbBalanceToneClass = (wei: string | undefined) => {
+const getNativeBalanceToneClass = (wei: string | undefined) => {
   const value = BigInt(wei || '0');
-  const oneBnb = 10n ** 18n;
-  const oneTenthBnb = oneBnb / 10n;
-  if (value >= oneBnb) return 'text-emerald-300';
-  if (value >= oneTenthBnb) return 'text-cyan-300';
+  const oneNative = 10n ** 18n;
+  const oneTenthNative = oneNative / 10n;
+  if (value >= oneNative) return 'text-emerald-300';
+  if (value >= oneTenthNative) return 'text-cyan-300';
   if (value > 0n) return 'text-amber-300';
   return 'text-zinc-500';
 };
@@ -52,9 +53,10 @@ export function WalletSelectorDropdown({
   walletTokenBalancesWei,
   tokenDecimals,
   multiWalletBuyMode,
-  childWalletBuyAmountsBnb,
+  childWalletBuyAmountsNative,
   onChangeMultiWalletBuyMode,
   onUpdateChildWalletBuyAmount,
+  nativeSymbol = 'NATIVE',
   className,
   onRequestClose,
 }: WalletSelectorDropdownProps) {
@@ -101,7 +103,7 @@ export function WalletSelectorDropdown({
           const nativeWei = walletNativeBalancesWei[addrLower];
           const nativeBal = formatWeiToText(walletNativeBalancesWei[addrLower], 18, 4);
           const tokenBal = formatWeiToText(walletTokenBalancesWei[addrLower], tokenDecimals ?? 18, 4);
-          const bnbToneClass = getBnbBalanceToneClass(nativeWei);
+          const nativeToneClass = getNativeBalanceToneClass(nativeWei);
           return (
             <div
               key={acc.address}
@@ -128,7 +130,7 @@ export function WalletSelectorDropdown({
                     <Coins size={11} />
                     {tokenBal}
                   </span>
-                  <span className={`text-[11px] ${bnbToneClass}`}>{nativeBal} BNB</span>
+                  <span className={`text-[11px] ${nativeToneClass}`}>{nativeBal} {nativeSymbol}</span>
                 </span>
               </label>
               {multiWalletBuyMode === 'child_custom' && checked && !isActive && (
@@ -136,11 +138,11 @@ export function WalletSelectorDropdown({
                   <span className="text-[11px] text-zinc-400">买入</span>
                   <input
                     className="w-24 rounded border border-zinc-600 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-200 outline-none focus:border-emerald-500"
-                    value={childWalletBuyAmountsBnb[addrLower] ?? ''}
+                    value={childWalletBuyAmountsNative[addrLower] ?? ''}
                     onChange={(e) => onUpdateChildWalletBuyAmount(acc.address, e.target.value)}
                     placeholder="跟随主钱包"
                   />
-                  <span className="text-[11px] text-zinc-500">BNB</span>
+                  <span className="text-[11px] text-zinc-500">{nativeSymbol}</span>
                 </div>
               )}
             </div>

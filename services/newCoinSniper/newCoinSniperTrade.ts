@@ -13,10 +13,29 @@ import { metricsFromUnifiedToken } from '@/services/xSniper/engine/signalSelecti
 import { tryAutoBuyOnce as tryAutoBuyOnceFromMod } from '@/services/xSniper/engine/buyExecutor';
 import { maybeUpdateNewCoinSniperHistoryEvaluations, pushNewCoinSniperHistory } from '@/services/newCoinSniper/newCoinSniperHistory';
 import { TokenService } from '@/services/token';
+import { getChainIdByName } from '@/constants/chains';
 
 export const createNewCoinSniperTrade = (deps: {
   onStateChanged: () => void;
 }) => {
+  const resolveTradeChainId = (input: {
+    tokenChain?: string;
+    signalChain?: string;
+    fallbackChainId: number;
+    settings: any;
+  }) => {
+    const candidates = [input.tokenChain, input.signalChain];
+    for (const raw of candidates) {
+      const name = typeof raw === 'string' ? raw.trim() : '';
+      if (!name) continue;
+      const chainId = getChainIdByName(name);
+      if (!Number.isFinite(chainId) || chainId <= 0) continue;
+      if (!input.settings?.chains?.[chainId]) continue;
+      return chainId;
+    }
+    return input.fallbackChainId;
+  };
+
   const DEFAULT_PLATFORM_FILTERS = ['fourmeme', 'fourmeme_agent', 'xmode', 'xmode_agent'] as const;
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
   const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_new_coin_sniper_bought_once_v1';
@@ -772,6 +791,7 @@ export const createNewCoinSniperTrade = (deps: {
     signal: UnifiedMarketSignal;
     strategy: any;
     chainId: number;
+    settings: any;
   }) => {
     const tasks = normalizeXmodeTasks(input.strategy?.xmodeTasks).filter((x) => x.enabled !== false);
     if (!tasks.length) return;
@@ -786,6 +806,12 @@ export const createNewCoinSniperTrade = (deps: {
         const matchText = buildTokenMatchText(t);
         const match = matchTaskKeywords(task, matchText);
         if (!match.pass) continue;
+        const tradeChainId = resolveTradeChainId({
+          tokenChain: (t as any)?.chain,
+          signalChain: input.signal?.chain,
+          fallbackChainId: input.chainId,
+          settings: input.settings,
+        });
         currentSignalContext = input.signal;
         currentStrategyMode = 'xmode_task';
         currentTaskContext = {
@@ -800,7 +826,7 @@ export const createNewCoinSniperTrade = (deps: {
           const gasPriceGweiOverride = String(task.buyGasGwei ?? '').trim() || undefined;
           const priorityFeeBnbOverride = String(task.buyBribeBnb ?? '').trim() || undefined;
           bought = await tryAutoBuyOnce({
-            chainId: input.chainId,
+            chainId: tradeChainId,
             tokenAddress,
             metrics: m,
             strategy: task.autoSellEnabled === false ? { ...input.strategy, autoSellEnabled: false } : input.strategy,
@@ -919,6 +945,7 @@ export const createNewCoinSniperTrade = (deps: {
           signal,
           strategy,
           chainId: settings.chainId,
+          settings,
         });
       }
       if (!effectiveAutoModeEnabled) return;
@@ -929,8 +956,14 @@ export const createNewCoinSniperTrade = (deps: {
       const picked = pickCandidates(signal, strategy);
       let boughtCount = 0;
       const dryRun = strategy?.dryRun === true;
-      for (const { m } of picked) {
+      for (const { t, m } of picked) {
         if (!m?.tokenAddress) continue;
+        const tradeChainId = resolveTradeChainId({
+          tokenChain: (t as any)?.chain,
+          signalChain: signal?.chain,
+          fallbackChainId: settings.chainId,
+          settings,
+        });
         const pseudoSignal = buildPseudoSignalFromMarketSignal(signal);
         currentSignalContext = signal;
         currentStrategyMode = 'auto_filter';
@@ -940,7 +973,7 @@ export const createNewCoinSniperTrade = (deps: {
           const gasPriceGweiOverride = String(strategy?.buyGasGwei ?? '').trim() || undefined;
           const priorityFeeBnbOverride = String(strategy?.buyBribeBnb ?? '').trim() || undefined;
           bought = await tryAutoBuyOnce({
-            chainId: settings.chainId,
+            chainId: tradeChainId,
             tokenAddress: m.tokenAddress,
             metrics: m,
             strategy,

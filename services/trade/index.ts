@@ -2,7 +2,7 @@ import { encodeFunctionData, erc20Abi } from 'viem';
 import { RpcService } from '../rpc';
 import { WalletService } from '../wallet';
 import { SettingsService } from '../settings';
-import type { TxBuyInput, TxSellInput } from '../../types/extention';
+import type { GasPreset, TxBuyInput, TxSellInput } from '../../types/extention';
 import { TokenInfo } from '../../types/token';
 import { ContractNames } from '../../constants/contracts/names';
 import { DeployAddress } from '../../constants/contracts/address';
@@ -19,6 +19,7 @@ import { getDexPoolPrefer, parseGweiToWei } from '@/utils/dexUtils';
 import { classifyBroadcastError, collectErrorText, isAllowanceLikeText } from '@/utils/txErrorClassify';
 import { tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { token } from 'viem/tempo/actions';
+import { getNativeSymbol } from '@/constants/chains';
 
 export class TradeService {
   private static sellInFlightByToken = new Set<string>();
@@ -283,6 +284,21 @@ export class TradeService {
     return null;
   }
 
+  private static resolveNativeAmountWei(input: TxBuyInput): string {
+    const raw = (typeof input.nativeAmountWei === 'string' && input.nativeAmountWei.trim())
+      ? input.nativeAmountWei
+      : input.bnbAmountWei;
+    return String(raw || '0').trim();
+  }
+
+  private static resolvePriorityFeeNative(input: TxBuyInput | TxSellInput): string | undefined {
+    const v = (typeof (input as any).priorityFeeNative === 'string' && (input as any).priorityFeeNative.trim())
+      ? (input as any).priorityFeeNative
+      : (typeof input.priorityFeeBnb === 'string' ? input.priorityFeeBnb : '');
+    const t = String(v || '').trim();
+    return t || undefined;
+  }
+
   static async buy(input: TxBuyInput) {
     const settings = await SettingsService.get();
     const routerAddress = DeployAddress[input.chainId as ChainId]?.DagobangRouter?.address;
@@ -293,11 +309,13 @@ export class TradeService {
     const account = await WalletService.getSigner(input.fromAddress);
     const client = await RpcService.getClient();
 
-    const amountIn = BigInt(input.bnbAmountWei);
+    const amountIn = BigInt(this.resolveNativeAmountWei(input));
+    const nativeSymbol = getNativeSymbol(input.chainId);
     const baseFee = input.poolFee ?? 2500;
     const executionMode = settings.chains[input.chainId]?.executionMode ?? 'default';
     const isTurbo = executionMode === 'turbo';
     const chainSettings = settings.chains[input.chainId];
+    const gasPriceMode = chainSettings.gasPriceMode ?? 'fixed';
     const gasPreset = input.gasPreset ?? chainSettings.buyGasPreset ?? chainSettings.gasPreset;
     const gasPriceFromInput = typeof input.gasPriceGwei === 'string' ? parseGweiToWei(input.gasPriceGwei) : 0n;
     const configuredGasPriceWei = gasPriceFromInput > 0n
@@ -332,7 +350,7 @@ export class TradeService {
     let currentAmount = amountIn;
 
     if (bridgeToken) {
-      // Hop 1: [BNB] -> [Quote]
+      // Hop 1: [Native] -> [Quote]
       const bridgePrefer = getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken);
       const needAmountOut = !isTurbo;
       const q1 = await timeStep('quote:bridge', () =>
@@ -348,16 +366,16 @@ export class TradeService {
       );
       if (isTurbo) {
         if (!q1.poolAddress || q1.poolAddress === ZERO_ADDRESS) {
-          throw new Error('找不到 BNB/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+          throw new Error(`找不到 ${nativeSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
         }
       } else {
         try {
           assertDexQuoteOk(q1);
         } catch {
-          throw new Error('找不到 BNB/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+          throw new Error(`找不到 ${nativeSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
         }
         if (q1.amountOut <= 0n) {
-          throw new Error('找不到 BNB/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+          throw new Error(`找不到 ${nativeSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
         }
       }
       descs.push(getRouterSwapDesc({
@@ -371,7 +389,7 @@ export class TradeService {
       currentAmount = isTurbo ? 1n : q1.amountOut;
     }
 
-    // Hop 2: [BNB/USD1] -> Meme
+    // Hop 2: [Native/Quote] -> Meme
     const tokenOut = input.tokenAddress;
     let minOut = 0n;
 
@@ -474,7 +492,7 @@ export class TradeService {
       args: [
         descs,
         ZERO_ADDRESS, // feeToken
-        amountIn,     // amountIn (BNB)
+        amountIn,     // amountIn (native)
         minOut,       // minReturn
         deadline
       ]
@@ -485,7 +503,9 @@ export class TradeService {
       gasLimit: 900000n,
       trace,
       txSide: 'buy' as const,
-      priorityFeeBnbOverride: typeof input.priorityFeeBnb === 'string' ? input.priorityFeeBnb.trim() : undefined,
+      priorityFeeBnbOverride: this.resolvePriorityFeeNative(input),
+      feeMode: gasPriceMode,
+      gasPreset,
     };
     const { txHash, broadcastVia, broadcastUrl, isBundle } = await timeStep('sendTransaction', () =>
       this.sendTransaction(client, account, routerAddress, data, amountIn, gasPriceWei, input.chainId, txOpts)
@@ -761,12 +781,14 @@ export class TradeService {
       const client = await RpcService.getClient();
 
       let amountIn = BigInt(input.tokenAmountWei);
+      const nativeSymbol = getNativeSymbol(input.chainId);
       const baseFee = input.poolFee ?? 2500;
       const executionMode = settings.chains[input.chainId]?.executionMode ?? 'default';
       const isTurbo = executionMode === 'turbo';
       const percentBps = isTurbo ? (input.sellPercentBps ?? 0) : 0;
       if (!isTurbo && amountIn <= 0n) throw new Error('Invalid amount');
       const chainSettings = settings.chains[input.chainId];
+      const gasPriceMode = chainSettings.gasPriceMode ?? 'fixed';
       const gasPreset = input.gasPreset ?? chainSettings.sellGasPreset ?? chainSettings.gasPreset;
       const configuredGasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
       const gasPriceWei = configuredGasPriceWei;
@@ -862,7 +884,7 @@ export class TradeService {
             )
           );
           if (!hop2.poolAddress || hop2.poolAddress === ZERO_ADDRESS) {
-            throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+            throw new Error(`找不到 Quote/${nativeSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
           }
           descs.push(getRouterSwapDesc({
             swapType: hop2.swapType,
@@ -948,17 +970,17 @@ export class TradeService {
           );
           if (isTurbo) {
             if (!hop2.poolAddress || hop2.poolAddress === ZERO_ADDRESS) {
-              throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+              throw new Error(`找不到 Quote/${nativeSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
             }
           } else {
             try {
               assertDexQuoteOk(hop2);
             } catch {
-              throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+              throw new Error(`找不到 Quote/${nativeSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
             }
           }
           if (!isTurbo && hop2.amountOut <= 0n) {
-            throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+            throw new Error(`找不到 Quote/${nativeSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
           }
           descs.push(getRouterSwapDesc({
             swapType: hop2.swapType,
@@ -1015,7 +1037,9 @@ export class TradeService {
         gasLimit: 900000n,
         trace,
         txSide: 'sell' as const,
-        priorityFeeBnbOverride: typeof input.priorityFeeBnb === 'string' ? input.priorityFeeBnb.trim() : undefined,
+        priorityFeeBnbOverride: this.resolvePriorityFeeNative(input),
+        feeMode: gasPriceMode,
+        gasPreset,
       };
       const traceId = runtimeOpts?.traceId;
       const attempt = runtimeOpts?.attempt;
@@ -1122,11 +1146,12 @@ export class TradeService {
     const account = await WalletService.getSigner(fromAddress);
     const client = await RpcService.getClient();
     const chainSettings = settings.chains[chainId];
+    const gasPriceMode = chainSettings.gasPriceMode ?? 'fixed';
+    const gasPreset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;
     const approveGasGwei = typeof chainSettings.approveGasGwei === 'string' ? chainSettings.approveGasGwei.trim() : '';
     let configuredGasPriceWei = approveGasGwei ? parseGweiToWei(approveGasGwei) : 0n;
     if (configuredGasPriceWei <= 0n) {
-      const preset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;
-      configuredGasPriceWei = getGasPriceWei(chainSettings, preset, 'sell');
+      configuredGasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
     }
     if (configuredGasPriceWei <= 0n) configuredGasPriceWei = parseGweiToWei('0.12');
     const gasPriceWei = configuredGasPriceWei;
@@ -1145,7 +1170,7 @@ export class TradeService {
       0n,
       gasPriceWei,
       chainId,
-      { skipEstimateGas: true, gasLimit: 900000n }
+      { skipEstimateGas: true, gasLimit: 900000n, feeMode: gasPriceMode, gasPreset }
     );
     return txHash;
   }
@@ -1158,7 +1183,7 @@ export class TradeService {
     value: bigint,
     gasPriceWei: bigint,
     chainId: number,
-    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; priorityFeeBnbOverride?: string }
+    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
   ) {
     return await sendTransaction(client, account, to, data, value, gasPriceWei, chainId, opts);
   }

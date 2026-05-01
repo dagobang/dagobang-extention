@@ -1,17 +1,19 @@
 import { Globe, Settings } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
-import { chainNames } from '@/constants/chains';
+import { ChainCoinIcon } from '@/components/Coins';
+import { ChainId } from '@/constants/chains/chainId';
 
 type HeaderProps = {
   chainId?: number;
+  onChainChange?: (chainId: number) => void;
   isUnlocked?: boolean;
   onSettingsClick?: () => void;
   locale?: Locale;
   onLocaleChange?: (locale: Locale) => void;
 };
 
-export function Header({ chainId, isUnlocked, onSettingsClick, locale: localeInput, onLocaleChange }: HeaderProps) {
+export function Header({ chainId, onChainChange, isUnlocked, onSettingsClick, locale: localeInput, onLocaleChange }: HeaderProps) {
   const locale = normalizeLocale(localeInput);
   return (
     <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3 bg-zinc-900/50">
@@ -21,10 +23,17 @@ export function Header({ chainId, isUnlocked, onSettingsClick, locale: localeInp
       </div>
       <div className="flex items-center gap-2">
         {chainId && (
-          <div className="text-[12px] bg-zinc-800 px-2 py-0.5 rounded text-zinc-400 flex flex-row gap-1 items-center">
+          <label className="text-[12px] bg-zinc-800 px-2 py-0.5 rounded text-zinc-400 flex flex-row gap-1 items-center">
             <ChainCoinIcon chainId={chainId} size={{ width: '12px', height: '12px' }} />
-            <span className="uppercase">{chainNames[chainId]}</span>
-          </div>
+            <select
+              className="bg-transparent outline-none text-zinc-200"
+              value={chainId}
+              onChange={(e) => onChainChange?.(Number(e.target.value))}
+            >
+              <option value={ChainId.BNB}>BSC</option>
+              <option value={ChainId.ETH}>ETH</option>
+            </select>
+          </label>
         )}
         <div className="flex flex-row items-center gap-1">
           <Globe size={14} />

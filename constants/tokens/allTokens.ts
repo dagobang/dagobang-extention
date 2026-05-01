@@ -4,12 +4,17 @@ import { ERC20Token } from './_base'
 import { bscTokens } from './chains/bsc'
 import { bscBridgeTokenAddresses } from './chains/bsc'
 import { bscBnbBridgePoolConfigByTokenAddress, type BscBnbBridgePoolConfig } from './chains/bsc'
+import { ethTokens } from './chains/eth'
+import { ethBridgeTokenAddresses } from './chains/eth'
+import { ethEthBridgePoolConfigByTokenAddress, type EthNativeBridgePoolConfig } from './chains/eth'
 
 export const allTokens: Partial<Record<ChainId, Record<string, ERC20Token>>> = {
-    [ChainId.BNB]: bscTokens
+    [ChainId.ETH]: ethTokens,
+    [ChainId.BNB]: bscTokens,
 }
 
 export const bridgeTokenAddressesByChain: Partial<Record<ChainId, readonly `0x${string}`[]>> = {
+    [ChainId.ETH]: ethBridgeTokenAddresses as unknown as readonly `0x${string}`[],
     [ChainId.BNB]: bscBridgeTokenAddresses as unknown as readonly `0x${string}`[],
     [ChainId.SOL]: [],
 }
@@ -33,6 +38,12 @@ export function getQuoteTokenAddress(chainId: ChainId, symbol: string): string {
 }
 
 export function getBridgeTokenDexPreference(chainId: ChainId, address: string): 'v2' | 'v3' | null {
+    if (chainId === ChainId.ETH) {
+        const addr = address.toLowerCase();
+        if (addr === ethTokens.usdt.address.toLowerCase()) return 'v2';
+        if (addr === ethTokens.usdc.address.toLowerCase()) return 'v3';
+        return null;
+    }
     if (chainId !== ChainId.BNB) return null;
     const addr = address.toLowerCase();
     if (addr === bscTokens.usdt.address.toLowerCase()) return 'v2';
@@ -45,10 +56,16 @@ export function getBridgeTokenDexPreference(chainId: ChainId, address: string): 
     return null;
 }
 
-export type BridgeHopPoolConfig = BscBnbBridgePoolConfig
+export type BridgeHopPoolConfig = BscBnbBridgePoolConfig | EthNativeBridgePoolConfig
 
 export function getBnbToBridgeTokenPoolConfig(chainId: ChainId, tokenOutAddress: string): BridgeHopPoolConfig | null {
+    if (chainId === ChainId.ETH) {
+        const k = tokenOutAddress.toLowerCase();
+        return ethEthBridgePoolConfigByTokenAddress[k] ?? null;
+    }
     if (chainId !== ChainId.BNB) return null
     const k = tokenOutAddress.toLowerCase()
     return bscBnbBridgePoolConfigByTokenAddress[k] ?? null
 }
+
+export const getNativeToBridgeTokenPoolConfig = getBnbToBridgeTokenPoolConfig

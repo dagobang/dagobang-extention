@@ -19,6 +19,7 @@ import type { BgRequest, LimitOrderScanStatus } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import FourmemeAPI from '@/services/api/fourmeme';
+import { chainNames } from '@/constants/chains';
 import BloxRouterAPI from '@/services/api/bloxRouter';
 import { isAddress, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -120,7 +121,8 @@ export default defineBackground(() => {
       marketCapUsd: null,
     };
     try {
-      const chain = (chainId ?? 56) === 56 ? 'bsc' : String(chainId ?? 56);
+      const resolvedChainId = chainId ?? 56;
+      const chain = chainNames[resolvedChainId] ?? String(resolvedChainId);
       const tokenInfo = await FourmemeAPI.getTokenInfo(chain, addr as `0x${string}`);
       const mcapRaw = Number((tokenInfo as any)?.tokenPrice?.marketCap ?? 0);
       out.marketCapUsd = Number.isFinite(mcapRaw) && mcapRaw > 0 ? mcapRaw : null;
