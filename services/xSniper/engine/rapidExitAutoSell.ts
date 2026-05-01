@@ -34,6 +34,7 @@ type RapidExitConfig = {
   takeProfitStepUpPct: number;
   takeProfitBatchPct: number;
   takeProfitFloorPct: number;
+  maxReceiptRetries: number;
 };
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -52,6 +53,15 @@ export const readRapidExitConfig = (strategy: any): RapidExitConfig => {
   const takeProfitStepUpPct = clamp(parseUnknownNumber(strategy?.rapidTakeProfitStepUpPct) ?? 25, 0, 1000);
   const takeProfitBatchPct = clamp(parseUnknownNumber(strategy?.rapidTakeProfitBatchPct) ?? 15, 1, 100);
   const takeProfitFloorPct = clamp(parseUnknownNumber(strategy?.rapidTakeProfitFloorPct) ?? 40, -50, 5000);
+  const maxReceiptRetries = clamp(
+    Math.floor(
+      parseUnknownNumber(strategy?.rapidReceiptRetryCount)
+      ?? parseUnknownNumber(strategy?.rapidRetryMaxFailCount)
+      ?? 1,
+    ),
+    1,
+    3,
+  );
   return {
     enabled,
     evalStepSec,
@@ -60,6 +70,7 @@ export const readRapidExitConfig = (strategy: any): RapidExitConfig => {
     takeProfitStepUpPct,
     takeProfitBatchPct,
     takeProfitFloorPct,
+    maxReceiptRetries,
   };
 };
 
@@ -203,6 +214,25 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       pos.lastEvalSlot = evalSlot;
 
       const sellPercentOfOriginal = async (portionOfOriginalPct: number, reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop') => {
+        const markReceiptFailureAndBackoff = (nextPos: RapidExitPosition, nowMs: number) => {
+          const failCount = Math.max(0, Math.floor(Number(nextPos.failCount) || 0)) + 1;
+          nextPos.failCount = failCount;
+          if (failCount > cfg.maxReceiptRetries) {
+            console.warn('[rapidExit][disabled_after_receipt_retries]', {
+              chainId: nextPos.chainId,
+              tokenAddress: nextPos.tokenAddress,
+              failCount,
+              maxReceiptRetries: cfg.maxReceiptRetries,
+              reason,
+            });
+            cleanup();
+            return;
+          }
+          const backoffMs = Math.min(120_000, 30_000 * (2 ** Math.min(2, failCount - 1)));
+          nextPos.nextRetryAtMs = nowMs + backoffMs;
+          input.rapidExitByPosKey.set(posKey, nextPos);
+        };
+
         const nowRemaining = Number.isFinite(pos.remainingPercent) ? Math.max(0, Math.min(100, Number(pos.remainingPercent))) : 100;
         if (!(nowRemaining > 0)) return false;
         const targetPortion = Math.max(0, Math.min(nowRemaining, portionOfOriginalPct));
@@ -218,11 +248,10 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
             const cur = input.rapidExitByPosKey.get(posKey) ?? pos;
             const nowRemaining2 = Number.isFinite(cur.remainingPercent) ? Math.max(0, Math.min(100, Number(cur.remainingPercent))) : 100;
             cur.remainingPercent = Math.max(0, Math.min(100, nowRemaining2 + targetPortion));
-            const failCount = Math.max(0, Math.floor(Number(cur.failCount) || 0)) + 1;
-            cur.failCount = failCount;
-            const backoffMs = Math.min(120_000, 30_000 * (2 ** Math.min(2, failCount - 1)));
-            cur.nextRetryAtMs = Date.now() + backoffMs;
-            input.rapidExitByPosKey.set(posKey, cur);
+            // If the position was cleaned up right after submit-success, restore it into a retryable state.
+            cur.evalInProgress = false;
+            cur.lastEvalSlot = -1;
+            markReceiptFailureAndBackoff(cur, Date.now());
           },
           meta: {
             tweetAtMs: pos.tweetAtMs,
@@ -238,10 +267,13 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
           },
         });
         if (!sold) {
-          const failCount = Math.max(0, Math.floor(Number(pos.failCount) || 0)) + 1;
-          pos.failCount = failCount;
-          const backoffMs = Math.min(120_000, 30_000 * (2 ** Math.min(2, failCount - 1)));
-          pos.nextRetryAtMs = input.nowMs + backoffMs;
+          // Only receipt-failed trades are retryable; submit-stage failures should not loop forever.
+          console.warn('[rapidExit][disabled_after_non_receipt_failure]', {
+            chainId: pos.chainId,
+            tokenAddress: pos.tokenAddress,
+            reason,
+          });
+          cleanup();
           return false;
         }
         pos.failCount = 0;

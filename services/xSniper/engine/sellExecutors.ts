@@ -36,6 +36,32 @@ export const createSellExecutors = (deps: {
 }) => {
   const deleteSellInFlight = new Set<string>();
   const rapidSellInFlight = new Set<string>();
+  const classifySellFailureReason = (error: unknown, phase: 'submit' | 'receipt') => {
+    const e = error as any;
+    const text = String(
+      e?.shortMessage ??
+      e?.message ??
+      e?.cause?.shortMessage ??
+      e?.cause?.message ??
+      e ??
+      '',
+    ).toLowerCase();
+    if (!text) return phase === 'submit' ? 'sell_submit_failed_unknown' : 'sell_receipt_failed_unknown';
+    if (text.includes('nonce')) return phase === 'submit' ? 'sell_submit_failed_nonce' : 'sell_receipt_failed_nonce';
+    if (text.includes('allowance') || text.includes('insufficient allowance')) {
+      return phase === 'submit' ? 'sell_submit_failed_allowance' : 'sell_receipt_failed_allowance';
+    }
+    if (text.includes('pool') || text.includes('liquidity') || text.includes('route') || text.includes('pair')) {
+      return phase === 'submit' ? 'sell_submit_failed_route' : 'sell_receipt_failed_route';
+    }
+    if (text.includes('token info') || text.includes('token_info')) {
+      return phase === 'submit' ? 'sell_submit_failed_token_info' : 'sell_receipt_failed_token_info';
+    }
+    if (text.includes('timeout') || text.includes('timed out')) {
+      return phase === 'submit' ? 'sell_submit_failed_timeout' : 'sell_receipt_failed_timeout';
+    }
+    return phase === 'submit' ? 'sell_submit_failed_unknown' : 'sell_receipt_failed_unknown';
+  };
   const readDryRunSellDelayMs = async () => {
     try {
       const settings = await SettingsService.get();
@@ -343,6 +369,7 @@ export const createSellExecutors = (deps: {
       } catch {}
       let tokenInfoForTrade = tokenInfo;
       let submittedTxHash: `0x${string}` | null = null;
+      let submitFailedReason: string = 'sell_submit_failed_unknown';
       let submittedSettled = false;
       let resolveSubmitted: (() => void) | null = null;
       let rejectSubmitted: ((e: unknown) => void) | null = null;
@@ -395,10 +422,11 @@ export const createSellExecutors = (deps: {
               isBundle: (doneRsp as any)?.isBundle,
             });
           })
-          .catch(async () => {
+          .catch(async (err) => {
             if (!submittedSettled) {
               submittedSettled = true;
-              rejectSubmitted?.(new Error('sell_submit_failed'));
+              submitFailedReason = classifySellFailureReason(err, 'submit');
+              rejectSubmitted?.(new Error(submitFailedReason));
               return;
             }
             const txHash = submittedTxHash as any;
@@ -407,7 +435,7 @@ export const createSellExecutors = (deps: {
               dryRun: false,
               sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
               txHash,
-              reason: 'sell_receipt_failed',
+              reason: classifySellFailureReason(err, 'receipt'),
             } as any);
             try {
               await input.onReceiptFailed?.();
@@ -422,7 +450,7 @@ export const createSellExecutors = (deps: {
           ...baseRecord,
           dryRun: false,
           sellTokenAmountWei: amountWei.toString(),
-          reason: 'sell_submit_failed',
+          reason: submitFailedReason,
         });
         return false;
       }

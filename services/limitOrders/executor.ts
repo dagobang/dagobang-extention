@@ -13,6 +13,7 @@ import {
 } from './advancedAutoSell';
 import { applyTrailingStopUpdate, cancelAllSellLimitOrdersForToken, createLimitOrder, hitLimitOrder, normalizeLimitOrderType, patchLimitOrder } from './store';
 import { extractRevertReasonFromError, tryGetReceiptRevertReason } from '@/services/tx/errors';
+import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import type { LimitOrder } from '@/types/extention';
 
 const erc20AbiLite = parseAbi([
@@ -78,6 +79,7 @@ export const createLimitOrderExecutor = (deps: {
     isBundle?: boolean;
   }) => void;
 }) => {
+  const { fetchTokenInfoFresh, buildGenericTokenInfo } = createTokenInfoResolvers();
   const ensureTxSuccess = async (
     txHash: `0x${string}`,
     chainId: number,
@@ -109,7 +111,21 @@ export const createLimitOrderExecutor = (deps: {
   };
 
   const executeLimitOrder = async (order: LimitOrder, ctx?: { priceUsd?: number }) => {
-    if (!order.tokenInfo) throw new Error('Token info required');
+    const resolveLatestTokenInfo = async () => {
+      const refreshed =
+        (await fetchTokenInfoFresh(order.chainId, order.tokenAddress)) ??
+        (await buildGenericTokenInfo(order.chainId, order.tokenAddress));
+      if (!refreshed) return order.tokenInfo ?? null;
+      if (!order.tokenInfo || JSON.stringify(order.tokenInfo) !== JSON.stringify(refreshed)) {
+        try {
+          await patchLimitOrder(order.id, { tokenInfo: refreshed });
+        } catch {
+        }
+      }
+      return refreshed;
+    };
+    const tokenInfo = await resolveLatestTokenInfo();
+    if (!tokenInfo) throw new Error('Token info required');
     if (order.side === 'buy') {
       const buyAmountWei = order.buyNativeAmountWei || order.buyBnbAmountWei;
       if (!buyAmountWei) throw new Error('Buy amount required');
@@ -119,7 +135,7 @@ export const createLimitOrderExecutor = (deps: {
         nativeAmountWei: buyAmountWei,
         bnbAmountWei: buyAmountWei,
         fromAddress: order.fromAddress,
-        tokenInfo: order.tokenInfo,
+        tokenInfo,
       }, {
         maxRetry: 1,
         onSubmitted: (ctx) => {
@@ -149,7 +165,7 @@ export const createLimitOrderExecutor = (deps: {
           chainId: order.chainId,
           tokenAddress: order.tokenAddress,
           tokenSymbol: order.tokenSymbol ?? null,
-          tokenInfo: order.tokenInfo,
+          tokenInfo,
           basePriceUsd,
         });
         for (const o of orders) {
@@ -166,7 +182,7 @@ export const createLimitOrderExecutor = (deps: {
               chainId: order.chainId,
               tokenAddress: order.tokenAddress,
               tokenSymbol: order.tokenSymbol ?? null,
-              tokenInfo: order.tokenInfo,
+              tokenInfo,
               basePriceUsd,
               entryPriceUsd,
             });
@@ -179,7 +195,7 @@ export const createLimitOrderExecutor = (deps: {
               chainId: order.chainId,
               tokenAddress: order.tokenAddress,
               tokenSymbol: order.tokenSymbol ?? null,
-              tokenInfo: order.tokenInfo,
+              tokenInfo,
               entryPriceUsd,
             });
             if (floor) {
@@ -192,7 +208,7 @@ export const createLimitOrderExecutor = (deps: {
               chainId: order.chainId,
               tokenAddress: order.tokenAddress,
               tokenSymbol: order.tokenSymbol ?? null,
-              tokenInfo: order.tokenInfo,
+              tokenInfo,
               basePriceUsd,
             });
             if (trailing) {
@@ -224,8 +240,8 @@ export const createLimitOrderExecutor = (deps: {
       }
     })();
     const percentBps = order.sellPercentBps ?? 0;
-    const platform = order.tokenInfo?.launchpad_platform?.toLowerCase() || '';
-    const isInnerFourMeme = !!order.tokenInfo?.launchpad && (platform.includes('four')) && order.tokenInfo.launchpad_status !== 1;
+    const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
+    const isInnerFourMeme = !!tokenInfo.launchpad && (platform.includes('four')) && tokenInfo.launchpad_status !== 1;
     const amountByPercent = (Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000)
       ? (() => {
         const raw = (balance * BigInt(percentBps)) / 10000n;
@@ -243,7 +259,7 @@ export const createLimitOrderExecutor = (deps: {
       tokenAddress: order.tokenAddress,
       tokenAmountWei: amountIn.toString(),
       fromAddress: order.fromAddress,
-      tokenInfo: order.tokenInfo,
+      tokenInfo,
       sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
     } as const;
 
@@ -280,7 +296,7 @@ export const createLimitOrderExecutor = (deps: {
           chainId: order.chainId,
           tokenAddress: order.tokenAddress,
           tokenSymbol: order.tokenSymbol ?? null,
-          tokenInfo: order.tokenInfo,
+          tokenInfo,
           basePriceUsd,
           entryPriceUsd: Number.isFinite(entryPriceUsd) && entryPriceUsd > 0 ? entryPriceUsd : basePriceUsd,
         });
@@ -292,7 +308,7 @@ export const createLimitOrderExecutor = (deps: {
             chainId: order.chainId,
             tokenAddress: order.tokenAddress,
             tokenSymbol: order.tokenSymbol ?? null,
-            tokenInfo: order.tokenInfo,
+            tokenInfo,
             entryPriceUsd,
           });
           if (floor) await createLimitOrder({ ...floor, fromAddress: order.fromAddress });
@@ -338,7 +354,7 @@ export const createLimitOrderExecutor = (deps: {
                 chainId: order.chainId,
                 tokenAddress: order.tokenAddress,
                 tokenSymbol: order.tokenSymbol ?? null,
-                tokenInfo: order.tokenInfo,
+                tokenInfo,
                 basePriceUsd,
                 entryPriceUsd,
               });
@@ -350,7 +366,7 @@ export const createLimitOrderExecutor = (deps: {
                 chainId: order.chainId,
                 tokenAddress: order.tokenAddress,
                 tokenSymbol: order.tokenSymbol ?? null,
-                tokenInfo: order.tokenInfo,
+                tokenInfo,
                 entryPriceUsd,
               });
               if (floor) await createLimitOrder({ ...floor, fromAddress: order.fromAddress });
@@ -361,7 +377,7 @@ export const createLimitOrderExecutor = (deps: {
                 chainId: order.chainId,
                 tokenAddress: order.tokenAddress,
                 tokenSymbol: order.tokenSymbol ?? null,
-                tokenInfo: order.tokenInfo,
+                tokenInfo,
                 basePriceUsd,
               });
               if (input) {
