@@ -108,6 +108,8 @@ export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
   rapidTakeProfitTriggerPct?: string;
   rapidTakeProfitStepUpPct?: string;
   rapidTakeProfitBatchPct?: string;
+  rapidProtectQuotaPct?: string;
+  rapidTailSellPctOfRemaining?: string;
   rapidTakeProfitFloorPct?: string;
   targetUsers: string[];
   interactionTypes: AutoTradeInteractionType[];

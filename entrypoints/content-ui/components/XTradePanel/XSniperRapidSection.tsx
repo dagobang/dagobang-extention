@@ -60,8 +60,9 @@ export function XSniperRapidSection({
             <div className="font-medium text-cyan-100">使用说明</div>
             <div>1. 固定评估间隔到点后，按当前市值相对买入市值的涨跌幅判断是否卖出。</div>
             <div>2. 先触发硬止损：跌到“硬止损阈值”以下时，直接卖出剩余全部仓位。</div>
-            <div>3. 达到“首档止盈触发”后，每次再上涨“后续递增阈值”，按“每档卖出占比”继续分批卖。</div>
-            <div>4. 一旦进入止盈阶段，若回撤到“绝对涨幅清仓地板”以下，会触发地板清仓（卖出剩余仓位）。</div>
+            <div>3. 达到“首档止盈触发”后，每次再上涨“后续递增阈值”，先按“每档卖出占比”卖到“前段保本仓位占比”。</div>
+            <div>4. 当前段仓位卖完后，改为每档按“后段每档卖出(剩余仓位)”继续卖，尽量吃单边趋势。</div>
+            <div>5. 一旦进入止盈阶段，若回撤到“绝对涨幅清仓地板”以下，会触发地板清仓（卖出剩余仓位）。</div>
           </div>
 
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -71,6 +72,8 @@ export function XSniperRapidSection({
             {numInput('首档止盈触发(%)', 'rapidTakeProfitTriggerPct')}
             {numInput('后续递增阈值(%)', 'rapidTakeProfitStepUpPct')}
             {numInput('每档卖出占比(%)', 'rapidTakeProfitBatchPct')}
+            {numInput('前段保本仓位占比(%)', 'rapidProtectQuotaPct')}
+            {numInput('后段每档卖出(剩余仓位%)', 'rapidTailSellPctOfRemaining')}
             {numInput('绝对涨幅清仓地板(%)', 'rapidTakeProfitFloorPct')}
           </div>
         </div>

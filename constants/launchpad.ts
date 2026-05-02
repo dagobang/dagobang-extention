@@ -2,6 +2,8 @@ import { ChainId } from "./chains";
 
 export const SUPPORTED_LAUNCHPADS: Partial<Record<ChainId, string[]>> = ({
     [ChainId.BNB]: ["fourmeme", "fourmeme_agent", "bn_fourmeme", "four_xmode_agent", "xmode", "xmode_agent", "flap"],
+
+    [ChainId.ETH]: ["livo", "trench"],
 });
 
 
@@ -11,6 +13,11 @@ export const PLATFORM_OPTIONS = [
     { value: 'xmode', label: 'X Mode' },
     { value: 'xmode_agent', label: 'X Mode Agent' },
     { value: 'flap', label: 'Flap' },
+] as const;
+
+export const PLATFORM_OPTIONS_ETH = [
+    { value: 'livo', label: 'Livo' },
+    { value: 'trench', label: 'Trenches' },
 ] as const;
 
 

@@ -33,6 +33,8 @@ type RapidExitConfig = {
   takeProfitTriggerPct: number;
   takeProfitStepUpPct: number;
   takeProfitBatchPct: number;
+  protectQuotaPct: number;
+  tailSellPctOfRemaining: number;
   takeProfitFloorPct: number;
   maxReceiptRetries: number;
 };
@@ -52,6 +54,8 @@ export const readRapidExitConfig = (strategy: any): RapidExitConfig => {
   const takeProfitTriggerPct = clamp(parseUnknownNumber(strategy?.rapidTakeProfitTriggerPct) ?? 45, 0, 1000);
   const takeProfitStepUpPct = clamp(parseUnknownNumber(strategy?.rapidTakeProfitStepUpPct) ?? 25, 0, 1000);
   const takeProfitBatchPct = clamp(parseUnknownNumber(strategy?.rapidTakeProfitBatchPct) ?? 15, 1, 100);
+  const protectQuotaPct = clamp(parseUnknownNumber(strategy?.rapidProtectQuotaPct) ?? 40, 0, 100);
+  const tailSellPctOfRemaining = clamp(parseUnknownNumber(strategy?.rapidTailSellPctOfRemaining) ?? 15, 0, 100);
   const takeProfitFloorPct = clamp(parseUnknownNumber(strategy?.rapidTakeProfitFloorPct) ?? 40, -50, 5000);
   const maxReceiptRetries = clamp(
     Math.floor(
@@ -69,6 +73,8 @@ export const readRapidExitConfig = (strategy: any): RapidExitConfig => {
     takeProfitTriggerPct,
     takeProfitStepUpPct,
     takeProfitBatchPct,
+    protectQuotaPct,
+    tailSellPctOfRemaining,
     takeProfitFloorPct,
     maxReceiptRetries,
   };
@@ -213,7 +219,11 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       }
       pos.lastEvalSlot = evalSlot;
 
-      const sellPercentOfOriginal = async (portionOfOriginalPct: number, reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop') => {
+      const executeSell = async (inputSell: {
+        targetPortionOfOriginalPct: number;
+        percentOfCurrent: number;
+        reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
+      }) => {
         const markReceiptFailureAndBackoff = (nextPos: RapidExitPosition, nowMs: number) => {
           const failCount = Math.max(0, Math.floor(Number(nextPos.failCount) || 0)) + 1;
           nextPos.failCount = failCount;
@@ -223,7 +233,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
               tokenAddress: nextPos.tokenAddress,
               failCount,
               maxReceiptRetries: cfg.maxReceiptRetries,
-              reason,
+              reason: inputSell.reason,
             });
             cleanup();
             return;
@@ -235,15 +245,16 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
 
         const nowRemaining = Number.isFinite(pos.remainingPercent) ? Math.max(0, Math.min(100, Number(pos.remainingPercent))) : 100;
         if (!(nowRemaining > 0)) return false;
-        const targetPortion = Math.max(0, Math.min(nowRemaining, portionOfOriginalPct));
+        const targetPortion = Math.max(0, Math.min(nowRemaining, inputSell.targetPortionOfOriginalPct));
         if (!(targetPortion > 0)) return false;
-        const percentOfCurrent = clamp((targetPortion / nowRemaining) * 100, 0, 100);
+        const percentOfCurrent = clamp(inputSell.percentOfCurrent, 0, 100);
+        if (!(percentOfCurrent > 0)) return false;
         const sold = await input.tryRapidExitSellOnce({
           chainId: pos.chainId,
           tokenAddress: pos.tokenAddress,
           percent: percentOfCurrent,
           dryRun: pos.dryRun,
-          reason,
+          reason: inputSell.reason,
           onReceiptFailed: () => {
             const cur = input.rapidExitByPosKey.get(posKey) ?? pos;
             const nowRemaining2 = Number.isFinite(cur.remainingPercent) ? Math.max(0, Math.min(100, Number(cur.remainingPercent))) : 100;
@@ -271,7 +282,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
           console.warn('[rapidExit][disabled_after_non_receipt_failure]', {
             chainId: pos.chainId,
             tokenAddress: pos.tokenAddress,
-            reason,
+            reason: inputSell.reason,
           });
           cleanup();
           return false;
@@ -280,6 +291,37 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
         pos.nextRetryAtMs = 0;
         pos.remainingPercent = Math.max(0, nowRemaining - targetPortion);
         return true;
+      };
+      const sellPercentOfOriginal = async (
+        portionOfOriginalPct: number,
+        reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop',
+      ) => {
+        const nowRemaining = Number.isFinite(pos.remainingPercent) ? Math.max(0, Math.min(100, Number(pos.remainingPercent))) : 100;
+        if (!(nowRemaining > 0)) return false;
+        const targetPortion = Math.max(0, Math.min(nowRemaining, portionOfOriginalPct));
+        if (!(targetPortion > 0)) return false;
+        const percentOfCurrent = clamp((targetPortion / nowRemaining) * 100, 0, 100);
+        return executeSell({
+          targetPortionOfOriginalPct: targetPortion,
+          percentOfCurrent,
+          reason,
+        });
+      };
+      const sellPercentOfRemaining = async (
+        percentOfRemaining: number,
+        reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop',
+      ) => {
+        const nowRemaining = Number.isFinite(pos.remainingPercent) ? Math.max(0, Math.min(100, Number(pos.remainingPercent))) : 100;
+        if (!(nowRemaining > 0)) return false;
+        const percentOfCurrent = clamp(percentOfRemaining, 0, 100);
+        if (!(percentOfCurrent > 0)) return false;
+        const targetPortion = clamp((nowRemaining * percentOfCurrent) / 100, 0, nowRemaining);
+        if (!(targetPortion > 0)) return false;
+        return executeSell({
+          targetPortionOfOriginalPct: targetPortion,
+          percentOfCurrent,
+          reason,
+        });
       };
 
       const armed = pos.armed === true;
@@ -296,7 +338,11 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       }
 
       if (!armed && pnlPct >= cfg.takeProfitTriggerPct) {
-        const sold = await sellPercentOfOriginal(cfg.takeProfitBatchPct, 'rapid_take_profit');
+        const soldOriginalPct = clamp(100 - remainingPercent, 0, 100);
+        const protectLeftPct = clamp(cfg.protectQuotaPct - soldOriginalPct, 0, 100);
+        const sold = protectLeftPct > 0
+          ? await sellPercentOfOriginal(Math.min(cfg.takeProfitBatchPct, protectLeftPct), 'rapid_take_profit')
+          : await sellPercentOfRemaining(cfg.tailSellPctOfRemaining, 'rapid_take_profit');
         if (sold) {
           pos.armed = true;
           pos.lastTakeProfitPnlPct = pnlPct;
@@ -304,7 +350,11 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       } else if (armed) {
         const lastMilestone = Number.isFinite(pos.lastTakeProfitPnlPct) ? Number(pos.lastTakeProfitPnlPct) : cfg.takeProfitTriggerPct;
         if (pnlPct >= lastMilestone + cfg.takeProfitStepUpPct) {
-          const sold = await sellPercentOfOriginal(cfg.takeProfitBatchPct, 'rapid_take_profit');
+          const soldOriginalPct = clamp(100 - remainingPercent, 0, 100);
+          const protectLeftPct = clamp(cfg.protectQuotaPct - soldOriginalPct, 0, 100);
+          const sold = protectLeftPct > 0
+            ? await sellPercentOfOriginal(Math.min(cfg.takeProfitBatchPct, protectLeftPct), 'rapid_take_profit')
+            : await sellPercentOfRemaining(cfg.tailSellPctOfRemaining, 'rapid_take_profit');
           if (sold) pos.lastTakeProfitPnlPct = pnlPct;
         }
       }

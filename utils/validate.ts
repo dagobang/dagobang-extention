@@ -470,6 +470,8 @@ export function validateSettings(input: Settings): Settings | null {
     rapidTakeProfitTriggerPct: clampStringNumber((rawInput as any)?.rapidTakeProfitTriggerPct, (fallbackInput as any)?.rapidTakeProfitTriggerPct),
     rapidTakeProfitStepUpPct: clampStringNumber((rawInput as any)?.rapidTakeProfitStepUpPct, (fallbackInput as any)?.rapidTakeProfitStepUpPct),
     rapidTakeProfitBatchPct: clampStringNumber((rawInput as any)?.rapidTakeProfitBatchPct, (fallbackInput as any)?.rapidTakeProfitBatchPct),
+    rapidProtectQuotaPct: clampStringNumber((rawInput as any)?.rapidProtectQuotaPct, (fallbackInput as any)?.rapidProtectQuotaPct),
+    rapidTailSellPctOfRemaining: clampStringNumber((rawInput as any)?.rapidTailSellPctOfRemaining, (fallbackInput as any)?.rapidTailSellPctOfRemaining),
     rapidTakeProfitFloorPct: clampStringNumber((rawInput as any)?.rapidTakeProfitFloorPct, (fallbackInput as any)?.rapidTakeProfitFloorPct),
     deleteTweetSellPercent: clampStringNumber(rawInput?.deleteTweetSellPercent, fallbackInput.deleteTweetSellPercent),
     deleteTweetPlaySound: typeof rawInput?.deleteTweetPlaySound === 'boolean'
