@@ -68,8 +68,6 @@ function clampStringNumber(value: any, fallback: string) {
 function readAmountStringAlias(input: any, fallback: string) {
   const next = clampStringNumber(input?.buyAmountNative, '');
   if (next) return next;
-  const legacy = clampStringNumber(input?.buyAmountBnb, '');
-  if (legacy) return legacy;
   return fallback;
 }
 
@@ -427,8 +425,7 @@ export function validateSettings(input: Settings): Settings | null {
     autoSellEnabled: typeof rawInput?.autoSellEnabled === 'boolean'
       ? rawInput.autoSellEnabled
       : fallbackInput.autoSellEnabled,
-    buyAmountNative: readAmountStringAlias(rawInput, fallbackInput.buyAmountBnb),
-    buyAmountBnb: readAmountStringAlias(rawInput, fallbackInput.buyAmountBnb),
+    buyAmountNative: readAmountStringAlias(rawInput, fallbackInput.buyAmountNative),
     buyNewCaCount: clampStringNumber(rawInput?.buyNewCaCount, fallbackInput.buyNewCaCount),
     buyOgCount: clampStringNumber(rawInput?.buyOgCount, fallbackInput.buyOgCount),
     minMarketCapUsd: clampStringNumber(rawInput?.minMarketCapUsd, fallbackInput.minMarketCapUsd),
@@ -564,9 +561,8 @@ export function validateSettings(input: Settings): Settings | null {
           .map((x) => x.trim())
           .filter(Boolean);
         const buyAmountNativeRaw = typeof raw?.buyAmountNative === 'string' ? raw.buyAmountNative.trim() : '';
-        const buyAmountBnbRaw = typeof raw?.buyAmountBnb === 'string' ? raw.buyAmountBnb.trim() : '';
-        const buyAmountRaw = buyAmountNativeRaw || buyAmountBnbRaw;
-        const buyAmountBnb = buyAmountRaw || '0';
+        const buyAmountRaw = buyAmountNativeRaw;
+        const buyAmountNative = buyAmountRaw || '0';
         const buyGasGwei = clampStringNumber(raw?.buyGasGwei, '');
         const buyBribeBnbRaw = clampStringNumber(raw?.buyBribeBnb, '');
         const buyBribeNum = Number(buyBribeBnbRaw);
@@ -589,8 +585,7 @@ export function validateSettings(input: Settings): Settings | null {
           targetUrls,
           keywords,
           autoBuy: typeof raw?.autoBuy === 'boolean' ? raw.autoBuy : true,
-          buyAmountNative: buyAmountBnb,
-          buyAmountBnb,
+          buyAmountNative,
           buyGasGwei: buyGasGwei || undefined,
           buyBribeBnb: buyBribeBnb || undefined,
           buyMethod: buyMethod as any,

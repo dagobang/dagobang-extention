@@ -205,7 +205,7 @@ export function createTelegramNotifier(deps: {
       `📈 价格与PnL`,
       `⚪ PnL(MCap): - | ${athPnlIcon} ATH PnL: ${formatPnlPct(pnlAthPct)}`,
       `市值: 入场 ${formatUsd(entryMcap)} | ATH ${formatUsd(athMcap)}`,
-      `买入: ${record.buyAmountBnb != null ? `${record.buyAmountBnb} BNB` : '-'} | 入场价: ${record.entryPriceUsd != null ? `$${record.entryPriceUsd}` : '-'}`,
+      `买入: ${record.buyAmountNative != null ? `${record.buyAmountNative} BNB` : '-'} | 入场价: ${record.entryPriceUsd != null ? `$${record.entryPriceUsd}` : '-'}`,
       '',
       `📊 市场指标`,
       `持有人: ${Number.isFinite(record.holders) ? Number(record.holders) : '-'} | KOL: ${Number.isFinite(record.kol) ? Number(record.kol) : '-'} | Smart: ${Number.isFinite(record.smartMoney) ? Number(record.smartMoney) : '-'}`,

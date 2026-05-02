@@ -103,7 +103,7 @@ export function XTokenSniperTaskList(props: {
           const targetUrls = Array.isArray(task.targetUrls) ? task.targetUrls : [];
           const keywords = Array.isArray(task.keywords) ? task.keywords : [];
           const shortAddressLabel = formatShortAddress(task.tokenAddress);
-          const buyAmountLabel = `${task.buyAmountBnb || '0'} BNB`;
+          const buyAmountLabel = `${task.buyAmountNative || '0'} BNB`;
           const buyGasGweiLabel = typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() : '';
           const buyBribeBnbLabel = typeof task.buyBribeBnb === 'string' ? String(task.buyBribeBnb).trim() : '';
           const buyMethodLabel = formatBuyMethodLabel(task, tt);

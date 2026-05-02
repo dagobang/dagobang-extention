@@ -38,7 +38,7 @@ export const tryAutoBuyOnce = async (input: {
   metrics: TokenMetrics;
   strategy: any;
   signal?: UnifiedTwitterSignal;
-  amountBnbOverride?: number;
+  amountNativeOverride?: number;
   gasPriceGweiOverride?: string;
   priorityFeeBnbOverride?: string;
   tokenAgeMode?: 'signal_delta' | 'now_age';
@@ -78,7 +78,7 @@ export const tryAutoBuyOnce = async (input: {
     tokenAddress: `0x${string}`;
     dryRun: boolean;
     entryMcapUsd: number | null;
-    buyAmountBnb: number;
+    buyAmountNative: number;
     openedAtMs: number;
     tweetAtMs?: number;
     tweetUrl?: string;
@@ -95,7 +95,7 @@ export const tryAutoBuyOnce = async (input: {
   const dryRun = input.strategy?.dryRun === true;
   const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun });
   const emitBuyFailure = (reason: string, extras?: {
-    buyAmountBnb?: number;
+    buyAmountNative?: number;
     metrics?: TokenMetrics;
     tokenInfo?: TokenInfo | null;
     confirm?: { windowMs?: number; stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number } };
@@ -111,7 +111,7 @@ export const tryAutoBuyOnce = async (input: {
         signalId: input.signal?.id ? String(input.signal.id) : undefined,
         signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
         signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
-        buyAmountBnb: extras?.buyAmountBnb,
+        buyAmountNative: extras?.buyAmountNative,
         confirmWindowMs: extras?.confirm?.windowMs,
         confirmStats: extras?.confirm?.stats,
       });
@@ -139,7 +139,7 @@ export const tryAutoBuyOnce = async (input: {
       tokenSymbol: extras?.tokenInfo?.symbol ? String(extras.tokenInfo.symbol) : (m.tokenSymbol ? String(m.tokenSymbol) : undefined),
       tokenName: extras?.tokenInfo?.name ? String(extras.tokenInfo.name) : undefined,
       launchpadPlatform: m.launchpadPlatform,
-      buyAmountBnb: extras?.buyAmountBnb,
+      buyAmountNative: extras?.buyAmountNative,
       dryRun: false,
       reason,
       marketCapUsd: m.marketCapUsd,
@@ -178,11 +178,11 @@ export const tryAutoBuyOnce = async (input: {
   }
   input.buyInFlight.add(key);
   try {
-    const amountNumber = (typeof input.amountBnbOverride === 'number' && Number.isFinite(input.amountBnbOverride)
-      ? input.amountBnbOverride
-      : (parseNumber(input.strategy.buyAmountBnb) ?? 0));
+    const amountNumber = (typeof input.amountNativeOverride === 'number' && Number.isFinite(input.amountNativeOverride)
+      ? input.amountNativeOverride
+      : (parseNumber(input.strategy.buyAmountNative) ?? 0));
     if (amountNumber <= 0) {
-      emitBuyFailure('buy_invalid_amount', { buyAmountBnb: amountNumber });
+      emitBuyFailure('buy_invalid_amount', { buyAmountNative: amountNumber });
       return false;
     }
 
@@ -205,7 +205,7 @@ export const tryAutoBuyOnce = async (input: {
             tokenAddress: input.tokenAddress,
             tokenSymbol: input.metrics.tokenSymbol,
             launchpadPlatform: input.metrics.launchpadPlatform,
-            buyAmountBnb: amountNumber,
+            buyAmountNative: amountNumber,
             dryRun: true,
             reason: 'ws_confirm_failed',
             marketCapUsd: input.metrics.marketCapUsd,
@@ -236,7 +236,7 @@ export const tryAutoBuyOnce = async (input: {
         }
       }
       emitBuyFailure('ws_confirm_failed', {
-        buyAmountBnb: amountNumber,
+        buyAmountNative: amountNumber,
         confirm,
       });
       return false;
@@ -244,7 +244,7 @@ export const tryAutoBuyOnce = async (input: {
 
     const status = await WalletService.getStatus();
     if (!dryRun && (status.locked || !status.address)) {
-      emitBuyFailure('wallet_locked', { buyAmountBnb: amountNumber, confirm });
+      emitBuyFailure('wallet_locked', { buyAmountNative: amountNumber, confirm });
       return false;
     }
     const tradeFromAddress =
@@ -256,7 +256,7 @@ export const tryAutoBuyOnce = async (input: {
       (await input.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ??
       (await input.buildGenericTokenInfo(input.chainId, input.tokenAddress));
     if (!tokenInfo) {
-      emitBuyFailure('token_info_missing', { buyAmountBnb: amountNumber, confirm });
+      emitBuyFailure('token_info_missing', { buyAmountNative: amountNumber, confirm });
       return false;
     }
 
@@ -276,7 +276,7 @@ export const tryAutoBuyOnce = async (input: {
       tokenAgeMode: input.tokenAgeMode,
     })) {
       emitBuyFailure('buy_filter_mismatch_after_refresh', {
-        buyAmountBnb: amountNumber,
+        buyAmountNative: amountNumber,
         metrics: refreshedMetrics,
         tokenInfo,
         confirm,
@@ -332,7 +332,7 @@ export const tryAutoBuyOnce = async (input: {
         tokenAddress: input.tokenAddress,
         dryRun: true,
         entryMcapUsd: dryRunEntryMcapAnchor,
-        buyAmountBnb: amountNumber,
+        buyAmountNative: amountNumber,
         openedAtMs,
         tweetAtMs,
         tweetUrl,
@@ -356,7 +356,7 @@ export const tryAutoBuyOnce = async (input: {
         tokenSymbol: delayedTokenInfo.symbol ? String(delayedTokenInfo.symbol) : undefined,
         tokenName: delayedTokenInfo.name ? String(delayedTokenInfo.name) : undefined,
         launchpadPlatform: dryRunMetrics.launchpadPlatform,
-        buyAmountBnb: amountNumber,
+        buyAmountNative: amountNumber,
         txHash: undefined,
         entryPriceUsd: entryPriceUsd ?? undefined,
         dryRun: true,
@@ -425,7 +425,7 @@ export const tryAutoBuyOnce = async (input: {
         tokenAddress: input.tokenAddress,
       });
       emitBuyFailure('buy_submit_failed', {
-        buyAmountBnb: amountNumber,
+        buyAmountNative: amountNumber,
         metrics: refreshedMetrics,
         tokenInfo: tokenInfoForTrade,
         confirm,
@@ -515,7 +515,7 @@ export const tryAutoBuyOnce = async (input: {
       tokenAddress: input.tokenAddress,
       dryRun: false,
       entryMcapUsd: entryMcapAnchor,
-      buyAmountBnb: amountNumber,
+      buyAmountNative: amountNumber,
       openedAtMs,
       tweetAtMs,
       tweetUrl,
@@ -541,7 +541,7 @@ export const tryAutoBuyOnce = async (input: {
       tokenSymbol: tokenInfoForTrade.symbol ? String(tokenInfoForTrade.symbol) : undefined,
       tokenName: tokenInfoForTrade.name ? String(tokenInfoForTrade.name) : undefined,
       launchpadPlatform: refreshedMetrics.launchpadPlatform,
-      buyAmountBnb: amountNumber,
+      buyAmountNative: amountNumber,
       txHash: typeof (rsp as any)?.txHash === 'string' ? ((rsp as any).txHash as any) : undefined,
       entryPriceUsd: effectiveEntryPriceUsd ?? undefined,
       dryRun: false,

@@ -312,7 +312,7 @@
       "targetTweetUrlsPlaceholder": "目標推文連結（可多個）",
       "keywordsPlaceholder": "關鍵字（可多個，逗號或換行分隔）",
       "autoBuy": "自動買入",
-      "buyAmountBnbPlaceholder": "買入BNB",
+      "buyAmountNativePlaceholder": "買入BNB",
       "buyGasGweiPlaceholder": "買入Gas(Gwei)",
       "buyBribeBnbPlaceholder": "買入賄賂費(BNB)",
       "buyMethodTitle": "買入方式",

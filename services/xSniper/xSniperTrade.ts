@@ -349,7 +349,7 @@ export const createXSniperTrade = (deps: {
     metrics: TokenMetrics;
     strategy: any;
     signal?: UnifiedTwitterSignal;
-    amountBnbOverride?: number;
+    amountNativeOverride?: number;
   }) =>
     tryAutoBuyOnceFromMod({
       ...input,
@@ -392,7 +392,7 @@ export const createXSniperTrade = (deps: {
     tokenAddress: `0x${string}`;
     dryRun: boolean;
     entryMcapUsd: number | null;
-    buyAmountBnb: number;
+    buyAmountNative: number;
     openedAtMs: number;
     tweetAtMs?: number;
     tweetUrl?: string;

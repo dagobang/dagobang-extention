@@ -273,7 +273,7 @@ export function XTokenSniperContent({
     setTargetUrlsInput(Array.isArray(task.targetUrls) ? task.targetUrls.join('\n') : '');
     setKeywordsInput(Array.isArray(task.keywords) ? task.keywords.join('\n') : '');
     setAutoBuyInput(task.autoBuy);
-    setBuyAmountInput(task.buyAmountBnb);
+    setBuyAmountInput(task.buyAmountNative);
     setBuyGasGweiInput(typeof task.buyGasGwei === 'string' ? task.buyGasGwei : '');
     setBuyBribeBnbInput(typeof task.buyBribeBnb === 'string' ? task.buyBribeBnb : '');
     setBuyMethodInput(normalizeBuyMethod(task));
@@ -344,7 +344,7 @@ export function XTokenSniperContent({
       targetUrls,
       keywords,
       autoBuy: autoBuyInput,
-      buyAmountBnb: buyAmountInput.trim() || '0',
+      buyAmountNative: buyAmountInput.trim() || '0',
       buyGasGwei: buyGasGweiInput.trim() || undefined,
       buyBribeBnb: buyBribeBnbRaw || undefined,
       buyMethod: buyMethodInput,
@@ -525,7 +525,7 @@ export function XTokenSniperContent({
               </label>
               <input
                 className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[12px] text-zinc-200 outline-none"
-                placeholder={tt('contentUi.tokenSniper.buyAmountBnbPlaceholder')}
+                placeholder={tt('contentUi.tokenSniper.buyAmountNativePlaceholder')}
                 value={buyAmountInput}
                 onChange={(e) => setBuyAmountInput(e.target.value)}
               />

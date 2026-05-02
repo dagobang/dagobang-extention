@@ -373,7 +373,7 @@ export const createNewCoinSniperTrade = (deps: {
       tokenAddress: record.tokenAddress,
       tokenSymbol: record.tokenSymbol,
       tokenName: record.tokenName,
-      buyAmountBnb: record.buyAmountBnb,
+      buyAmountNative: record.buyAmountNative,
       sellPercent: record.sellPercent,
       sellPercentOfOriginal: record.sellPercentOfOriginal,
       sellPercentOfCurrent: record.sellPercentOfCurrent,
@@ -478,11 +478,11 @@ export const createNewCoinSniperTrade = (deps: {
     return list.length ? Array.from(new Set(list)) : ['fourmeme', 'fourmeme_agent'];
   };
 
-  const readDefaultTaskBuyAmountBnb = (strategy: any): string => {
-    const raw = String(strategy?.buyAmountBnb ?? '').trim();
+  const readDefaultTaskBuyAmountNative = (strategy: any): string => {
+    const raw = String(strategy?.buyAmountNative ?? '').trim();
     const n = parseNumber(raw);
     if (typeof n === 'number' && Number.isFinite(n) && n > 0) return raw;
-    const fallback = String((defaultSettings().autoTrade as any)?.newCoinSnipe?.buyAmountBnb ?? '').trim();
+    const fallback = String((defaultSettings().autoTrade as any)?.newCoinSnipe?.buyAmountNative ?? '').trim();
     const f = parseNumber(fallback);
     if (typeof f === 'number' && Number.isFinite(f) && f > 0) return fallback;
     return '0.006';
@@ -563,7 +563,7 @@ export const createNewCoinSniperTrade = (deps: {
       : Math.max(100, Math.min(50_000_000, athThresholdRaw));
     const maxPerSignal = parsePositiveInt(input.strategy?.autoTaskMaxPerSignal, 5, 1, 50);
     const tasks = normalizeXmodeTasks(input.strategy?.xmodeTasks);
-    const defaultTaskBuyAmountBnb = readDefaultTaskBuyAmountBnb(input.strategy);
+    const defaultTaskBuyAmountNative = readDefaultTaskBuyAmountNative(input.strategy);
     const existingKeywordKeySet = new Set(tasks.map((t) => buildTaskKeywordKey(t.keywords)));
     const tokens = normalizeSignalTokens(input.signal);
     const additions: NewCoinXmodeSnipeTask[] = [];
@@ -593,7 +593,7 @@ export const createNewCoinSniperTrade = (deps: {
         keywords,
         matchMode: 'any',
         maxTokenAgeSeconds: String(parsePositiveInt(input.strategy?.maxTokenAgeSeconds, 600, 1, 3600)),
-        buyAmountBnb: defaultTaskBuyAmountBnb,
+        buyAmountNative: defaultTaskBuyAmountNative,
         buyGasGwei: '',
         buyBribeBnb: '',
         autoSellEnabled: input.strategy?.autoSellEnabled !== false,
@@ -647,7 +647,7 @@ export const createNewCoinSniperTrade = (deps: {
         keywords,
         matchMode: (item as any).matchMode === 'all' ? 'all' : 'any',
         maxTokenAgeSeconds: typeof (item as any).maxTokenAgeSeconds === 'string' ? String((item as any).maxTokenAgeSeconds).trim() : '600',
-        buyAmountBnb: typeof (item as any).buyAmountBnb === 'string' ? String((item as any).buyAmountBnb).trim() : '',
+        buyAmountNative: typeof (item as any).buyAmountNative === 'string' ? String((item as any).buyAmountNative).trim() : '',
         buyGasGwei: typeof (item as any).buyGasGwei === 'string' ? String((item as any).buyGasGwei).trim() : '',
         buyBribeBnb: typeof (item as any).buyBribeBnb === 'string' ? String((item as any).buyBribeBnb).trim() : '',
         autoSellEnabled: (item as any).autoSellEnabled !== false,
@@ -822,7 +822,7 @@ export const createNewCoinSniperTrade = (deps: {
         };
         let bought = false;
         try {
-          const amountOverride = parseNumber(task.buyAmountBnb);
+          const amountOverride = parseNumber(task.buyAmountNative);
           const gasPriceGweiOverride = String(task.buyGasGwei ?? '').trim() || undefined;
           const priorityFeeBnbOverride = String(task.buyBribeBnb ?? '').trim() || undefined;
           bought = await tryAutoBuyOnce({
@@ -831,7 +831,7 @@ export const createNewCoinSniperTrade = (deps: {
             metrics: m,
             strategy: task.autoSellEnabled === false ? { ...input.strategy, autoSellEnabled: false } : input.strategy,
             signal: pseudoSignal,
-            amountBnbOverride: typeof amountOverride === 'number' && Number.isFinite(amountOverride) && amountOverride > 0
+            amountNativeOverride: typeof amountOverride === 'number' && Number.isFinite(amountOverride) && amountOverride > 0
               ? amountOverride
               : undefined,
             gasPriceGweiOverride,
@@ -854,7 +854,7 @@ export const createNewCoinSniperTrade = (deps: {
     metrics: TokenMetrics;
     strategy: any;
     signal?: UnifiedTwitterSignal;
-    amountBnbOverride?: number;
+    amountNativeOverride?: number;
     gasPriceGweiOverride?: string;
     priorityFeeBnbOverride?: string;
   }) =>
@@ -886,7 +886,7 @@ export const createNewCoinSniperTrade = (deps: {
     tokenAddress: `0x${string}`;
     dryRun: boolean;
     entryMcapUsd: number | null;
-    buyAmountBnb: number;
+    buyAmountNative: number;
     openedAtMs: number;
     tweetAtMs?: number;
     tweetUrl?: string;

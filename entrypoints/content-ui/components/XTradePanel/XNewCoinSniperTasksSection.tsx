@@ -142,7 +142,7 @@ export function XNewCoinSniperTasksSection({
                       </button>
                     </div>
                     <div className="mt-0.5 truncate text-[11px] text-zinc-500">
-                      关键词 {task.keywords.length} 个 · 买入 {task.buyAmountBnb || '-'} BNB
+                      关键词 {task.keywords.length} 个 · 买入 {task.buyAmountNative || '-'} BNB
                     </div>
                     {expanded ? (
                       <div className="mt-1.5 space-y-1 border-t border-zinc-800/60 pt-1.5 text-[11px] text-zinc-400">

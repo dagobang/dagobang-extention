@@ -126,9 +126,9 @@ export function XNewCoinSniperTaskModal({
               <input
                 type="number"
                 className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-                value={taskEditor.buyAmountBnb ?? ''}
+                value={taskEditor.buyAmountNative ?? ''}
                 disabled={!canEdit || saving}
-                onChange={(e) => onTaskEditorChange({ buyAmountBnb: e.target.value })}
+                onChange={(e) => onTaskEditorChange({ buyAmountNative: e.target.value })}
               />
             </label>
             <div />

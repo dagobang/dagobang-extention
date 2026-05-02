@@ -435,10 +435,11 @@ export function XSniperContent({
   };
 
   const updateTwitterSnipe = (patch: Partial<AutoTradeConfig['twitterSnipe']>) => {
+    const normalizedPatch = { ...(patch as any) } as any;
     setIsDirty(true);
     setDraft((prev) =>
       prev
-        ? applyTwitterSnipePatch(prev, patch)
+        ? applyTwitterSnipePatch(prev, normalizedPatch)
         : prev
     );
   };
@@ -668,7 +669,7 @@ export function XSniperContent({
               onExportActivePresetAsJson={exportActivePresetAsJson}
               onTargetUsersInputChange={handleTargetUsersInputChange}
               onInteractionTypeChange={handleInteractionTypeChange}
-              onBuyAmountBnbChange={(value) => updateTwitterSnipe({ buyAmountBnb: value })}
+              onBuyAmountNativeChange={(value) => updateTwitterSnipe({ buyAmountNative: value })}
               onBuyNewCaCountChange={(value) => updateTwitterSnipe({ buyNewCaCount: value })}
             />
             <XSniperFilterSection

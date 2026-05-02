@@ -201,7 +201,7 @@ const buildNotBoughtReason = (input: {
 
   const perTweetMax = Math.max(0, Math.floor(parseNumber(input.strategy?.buyNewCaCount) ?? 0));
   if (perTweetMax <= 0) return input.tt('contentUi.xMonitor.notBought.reason.buyNewCaCountZero');
-  const amount = parseNumber(input.strategy?.buyAmountBnb) ?? 0;
+  const amount = parseNumber(input.strategy?.buyAmountNative) ?? 0;
   if (amount <= 0) return input.tt('contentUi.xMonitor.notBought.reason.buyAmountZero');
 
   const token = input.token as any;

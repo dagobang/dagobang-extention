@@ -670,7 +670,7 @@ export function XSniperHistoryView({
                             <span className="text-zinc-200">
                               {isSell
                                 ? formatSellPercentText(r)
-                                : formatBnbAmount(r.buyAmountBnb)}
+                                : formatBnbAmount(r.buyAmountNative)}
                             </span>
                           </div>
                           <div>
@@ -836,7 +836,7 @@ export function XSniperHistoryView({
                       const isSell = c.side === 'sell';
                       const primary = isSell
                         ? `${tt('contentUi.autoTradeStrategy.snipeHistorySellPercent')}: ${formatSellPercentText(c)}`
-                        : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnbAmount(c.buyAmountBnb)}`;
+                        : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnbAmount(c.buyAmountNative)}`;
                       const showTriggerMcap =
                         isSell
                         && (c.reason === 'rapid_take_profit' || c.reason === 'rapid_stop_loss' || c.reason === 'rapid_trailing_stop')

@@ -119,7 +119,7 @@ type TokenSniperOrderRecord = {
   tokenAddress: string;
   tokenSymbol?: string;
   tokenName?: string;
-  buyAmountBnb?: number;
+  buyAmountNative?: number;
   signalId?: string;
   signalType?: string;
   signalAtMs?: number;
@@ -505,7 +505,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
           deps.onStateChanged();
           continue;
         }
-        const amountBnb = parseNumber(task.buyAmountBnb) ?? 0;
+        const amountBnb = parseNumber(task.buyAmountNative) ?? 0;
         if (!(amountBnb > 0)) {
           await updateTaskStatus(task.id, { state: 'failed', message: '买入金额无效' });
           await pushTokenSniperHistory({
@@ -518,7 +518,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             tokenAddress: task.tokenAddress,
             tokenSymbol: task.tokenSymbol,
             tokenName: task.tokenName,
-            buyAmountBnb: amountBnb,
+            buyAmountNative: amountBnb,
             signalId: stableSignalId,
             signalType,
             signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
@@ -549,7 +549,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
               tokenAddress: task.tokenAddress,
               tokenSymbol: task.tokenSymbol,
               tokenName: task.tokenName,
-              buyAmountBnb: amountBnb,
+              buyAmountNative: amountBnb,
               signalId: stableSignalId,
               signalType,
               signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
@@ -682,7 +682,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             tokenAddress: task.tokenAddress,
             tokenSymbol: task.tokenSymbol,
             tokenName: task.tokenName,
-            buyAmountBnb: amountBnb,
+            buyAmountNative: amountBnb,
             signalId: stableSignalId,
             signalType,
             signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
@@ -816,7 +816,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                 tokenAddress: task.tokenAddress,
                 tokenSymbol: task.tokenSymbol,
                 tokenName: task.tokenName,
-                buyAmountBnb: amountBnb,
+                buyAmountNative: amountBnb,
                 signalId: stableSignalId,
                 signalType,
                 signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,
@@ -846,7 +846,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             tokenAddress: task.tokenAddress,
             tokenSymbol: task.tokenSymbol,
             tokenName: task.tokenName,
-            buyAmountBnb: amountBnb,
+            buyAmountNative: amountBnb,
             signalId: stableSignalId,
             signalType,
             signalAtMs: signalAtMs > 0 ? signalAtMs : undefined,

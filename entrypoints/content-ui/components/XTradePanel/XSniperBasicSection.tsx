@@ -29,7 +29,7 @@ type XSniperBasicSectionProps = {
   onExportActivePresetAsJson: () => void;
   onTargetUsersInputChange: (value: string) => void;
   onInteractionTypeChange: (interactionType: AutoTradeInteractionType, checked: boolean) => void;
-  onBuyAmountBnbChange: (value: string) => void;
+  onBuyAmountNativeChange: (value: string) => void;
   onBuyNewCaCountChange: (value: string) => void;
 };
 
@@ -53,7 +53,7 @@ export function XSniperBasicSection({
   onExportActivePresetAsJson,
   onTargetUsersInputChange,
   onInteractionTypeChange,
-  onBuyAmountBnbChange,
+  onBuyAmountNativeChange,
   onBuyNewCaCountChange,
 }: XSniperBasicSectionProps) {
   return (
@@ -182,9 +182,9 @@ export function XSniperBasicSection({
           <input
             type="number"
             className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
-            value={twitterSnipe?.buyAmountBnb ?? ''}
+            value={twitterSnipe?.buyAmountNative ?? ''}
             disabled={!canEdit}
-            onChange={(e) => onBuyAmountBnbChange(e.target.value)}
+            onChange={(e) => onBuyAmountNativeChange(e.target.value)}
           />
         </label>
         <label className="block space-y-1">

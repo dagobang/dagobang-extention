@@ -88,7 +88,7 @@ export const registerRapidExitPosition = (input: {
   tokenAddress: `0x${string}`;
   dryRun: boolean;
   entryMcapUsd: number | null;
-  buyAmountBnb: number;
+  buyAmountNative: number;
   openedAtMs: number;
   tweetAtMs?: number;
   tweetUrl?: string;
@@ -102,7 +102,7 @@ export const registerRapidExitPosition = (input: {
   const cfg = readRapidExitConfig(input.strategy);
   if (!cfg.enabled) return;
   if (!(input.entryMcapUsd != null && Number.isFinite(input.entryMcapUsd) && input.entryMcapUsd > 0)) return;
-  const sizeBnb = Number(input.buyAmountBnb);
+  const sizeBnb = Number(input.buyAmountNative);
   if (!(Number.isFinite(sizeBnb) && sizeBnb > 0)) return;
   input.rapidExitByPosKey.set(input.posKey, {
     chainId: input.chainId,

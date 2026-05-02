@@ -61,8 +61,7 @@ export type AutoTradeTriggerSound = {
 export type AutoTradeStrategyBase = {
   enabled: boolean;
   autoSellEnabled: boolean;
-  buyAmountNative?: string;
-  buyAmountBnb: string;
+  buyAmountNative: string;
   buyNewCaCount: string;
   buyOgCount: string;
   minMarketCapUsd: string;
@@ -163,7 +162,6 @@ export type NewCoinXmodeSnipeTask = {
   matchMode?: 'any' | 'all';
   maxTokenAgeSeconds?: string;
   buyAmountNative?: string;
-  buyAmountBnb?: string;
   buyGasGwei?: string;
   buyBribeBnb?: string;
   autoSellEnabled?: boolean;
@@ -181,8 +179,7 @@ export type TokenSnipeTask = {
   targetUrls: string[];
   keywords?: string[];
   autoBuy: boolean;
-  buyAmountNative?: string;
-  buyAmountBnb: string;
+  buyAmountNative: string;
   buyGasGwei?: string;
   buyBribeBnb?: string;
   buyMethod?: TokenSnipeBuyMethod;
@@ -591,7 +588,6 @@ export type XSniperBuyRecord = {
   tokenSymbol?: string;
   tokenName?: string;
   buyAmountNative?: number;
-  buyAmountBnb?: number;
   sellPercent?: number;
   sellPercentOfOriginal?: number;
   sellPercentOfCurrent?: number;

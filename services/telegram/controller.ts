@@ -298,13 +298,11 @@ export function createTelegramController(deps: {
     return autoTrade;
   };
   const getTwitterSnipeBuyAmountNative = (settings: any): string => {
-    const buyAmountRaw = String((settings as any)?.autoTrade?.twitterSnipe?.buyAmountNative ?? (settings as any)?.autoTrade?.twitterSnipe?.buyAmountBnb ?? '0.1').trim();
+    const buyAmountRaw = String((settings as any)?.autoTrade?.twitterSnipe?.buyAmountNative ?? '0.1').trim();
     return Number.isFinite(Number(buyAmountRaw)) && Number(buyAmountRaw) > 0 ? buyAmountRaw : '0.1';
   };
   const buildTwitterSnipeBuyAmountPatch = (amountNative: string) => ({
     buyAmountNative: amountNative,
-    // Keep legacy field for backward compatibility with existing strategy schema.
-    buyAmountBnb: amountNative,
   });
   const sendTelegramSettingsMenu = async () => {
     await sendTelegramReply(
@@ -594,7 +592,7 @@ export function createTelegramController(deps: {
         `📈 价格与PnL`,
         `${pnlIcon} PnL(MCap): ${formatPnlPct(pnlPct)} | ${athPnlIcon} ATH PnL: ${formatPnlPct(pnlAthPct)}`,
         `${priceIcon} 市值: 入场 ${formatUsd(entryMcap)} | 当前 ${formatUsd(latestMcap)} | ATH ${formatUsd(athMcap)}`,
-        `买入: ${parent.buyAmountBnb != null ? `${parent.buyAmountBnb} ${getNativeSymbol(parent.chainId)}` : '-'} | 入场价: ${formatPrice(parent.entryPriceUsd)}`,
+        `买入: ${parent.buyAmountNative != null ? `${parent.buyAmountNative} ${getNativeSymbol(parent.chainId)}` : '-'} | 入场价: ${formatPrice(parent.entryPriceUsd)}`,
         '',
         `📊 市场指标`,
         `持有人: ${Number.isFinite(parent.holders) ? Number(parent.holders) : '-'} | KOL: ${Number.isFinite(parent.kol) ? Number(parent.kol) : '-'} | Smart: ${Number.isFinite(parent.smartMoney) ? Number(parent.smartMoney) : '-'}`,

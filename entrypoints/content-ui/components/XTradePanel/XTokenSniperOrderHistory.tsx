@@ -12,7 +12,7 @@ export type TokenSniperOrderRecord = {
   tokenAddress: string;
   tokenSymbol?: string;
   tokenName?: string;
-  buyAmountBnb?: number;
+  buyAmountNative?: number;
   accountScreen?: string;
   signalType?: string;
   signalId?: string;

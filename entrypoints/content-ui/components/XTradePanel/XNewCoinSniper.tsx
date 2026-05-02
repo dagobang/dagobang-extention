@@ -73,7 +73,7 @@ const normalizeXmodeTasks = (input: unknown): NewCoinXmodeSnipeTask[] => {
       keywords: normalizeTaskKeywords((item as any).keywords),
       matchMode: (item as any).matchMode === 'all' ? 'all' : 'any',
       maxTokenAgeSeconds: String((item as any).maxTokenAgeSeconds ?? '600'),
-      buyAmountBnb: String((item as any).buyAmountBnb ?? ''),
+      buyAmountNative: String((item as any).buyAmountNative ?? ''),
       buyGasGwei: String((item as any).buyGasGwei ?? ''),
       buyBribeBnb: String((item as any).buyBribeBnb ?? ''),
       autoSellEnabled: (item as any).autoSellEnabled !== false,
@@ -442,10 +442,10 @@ export function XNewCoinSniperContent({
     }
     presetKeywords = Array.from(new Set(presetKeywords.map((x) => x.toLowerCase()).filter(Boolean)));
     const defaultBuyAmount = (() => {
-      const raw = String(draft?.buyAmountBnb ?? '').trim();
+      const raw = String(draft?.buyAmountNative ?? '').trim();
       const n = Number(raw);
       if (Number.isFinite(n) && n > 0) return raw;
-      const fallback = String(defaultSettings().autoTrade.newCoinSnipe.buyAmountBnb ?? '').trim();
+      const fallback = String(defaultSettings().autoTrade.newCoinSnipe.buyAmountNative ?? '').trim();
       return fallback || '0.006';
     })();
     const newTask: NewCoinXmodeSnipeTask = {
@@ -456,7 +456,7 @@ export function XNewCoinSniperContent({
       keywords: presetKeywords,
       matchMode: 'any',
       maxTokenAgeSeconds: '600',
-      buyAmountBnb: defaultBuyAmount,
+      buyAmountNative: defaultBuyAmount,
       buyGasGwei: '',
       buyBribeBnb: '',
       autoSellEnabled: true,
@@ -497,7 +497,7 @@ export function XNewCoinSniperContent({
       setTaskModalError('任务关键词不能为空');
       return;
     }
-    const buyAmount = Number(taskEditor.buyAmountBnb);
+    const buyAmount = Number(taskEditor.buyAmountNative);
     if (!Number.isFinite(buyAmount) || buyAmount <= 0) {
       setTaskModalError('买入 BNB 不能为空，且必须大于 0');
       return;
@@ -637,9 +637,9 @@ export function XNewCoinSniperContent({
                       <input
                         type="number"
                         className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
-                        value={draft.buyAmountBnb ?? ''}
+                        value={draft.buyAmountNative ?? ''}
                         disabled={!canEdit || saving}
-                        onChange={(e) => updateDraft({ buyAmountBnb: e.target.value })}
+                        onChange={(e) => updateDraft({ buyAmountNative: e.target.value })}
                       />
                     </label>
                     <label className="block space-y-1">

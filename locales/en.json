@@ -312,7 +312,7 @@
       "targetTweetUrlsPlaceholder": "Target tweet URLs (multiple)",
       "keywordsPlaceholder": "Keywords (multiple, comma or newline separated)",
       "autoBuy": "Auto buy",
-      "buyAmountBnbPlaceholder": "Buy BNB",
+      "buyAmountNativePlaceholder": "Buy BNB",
       "buyGasGweiPlaceholder": "Buy Gas (Gwei)",
       "buyBribeBnbPlaceholder": "Buy bribe fee (BNB)",
       "buyMethodTitle": "Buy method",

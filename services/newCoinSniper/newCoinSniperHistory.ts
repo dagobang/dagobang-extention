@@ -13,7 +13,7 @@ export type NewCoinSniperOrderRecord = {
   tokenAddress: string;
   tokenSymbol?: string;
   tokenName?: string;
-  buyAmountBnb?: number;
+  buyAmountNative?: number;
   sellPercent?: number;
   sellPercentOfOriginal?: number;
   sellPercentOfCurrent?: number;
