@@ -100,6 +100,8 @@ const resolveReasonLabel = (tt: (key: string, subs?: Array<string | number>) => 
     rapid_take_profit: '里程碑分批止盈',
     rapid_stop_loss: '硬止损',
     rapid_trailing_stop: '地板清仓',
+    position_reduced_manually: '手动减仓',
+    position_closed_manually: '手动全平（仓位归零）',
   };
   return fallbackMap[raw] ?? raw;
 };
@@ -291,6 +293,19 @@ export function XSniperHistoryView({
         const detail = sellRes.revertReason || sellRes.error?.shortMessage || sellRes.error?.message;
         throw new Error(detail || 'Sell failed');
       }
+      const triggerSource = String((record as any)?.triggerSource || '').trim();
+      const manualSellType = triggerSource
+        ? 'newCoinSniper:manualPositionSold'
+        : 'xsniper:manualPositionSold';
+      await call({
+        type: manualSellType as any,
+        input: {
+          chainId,
+          tokenAddress: tokenAddressNormalized,
+          sellPercent: pct,
+          txHash: (sellRes as any)?.txHash,
+        },
+      } as const);
     } finally {
       setSellingKey((prev) => (prev === key ? null : prev));
     }

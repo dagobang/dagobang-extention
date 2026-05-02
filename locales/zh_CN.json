@@ -546,6 +546,8 @@
         "rapid_take_profit": "里程碑止盈",
         "rapid_stop_loss": "硬止损",
         "rapid_trailing_stop": "地板清仓",
+        "position_reduced_manually": "手动减仓",
+        "position_closed_manually": "手动全平（仓位归零）",
         "staged_scout": "分段试探买入",
         "staged_add": "分段二段买入",
         "dry_run_take_profit": "模拟止盈",

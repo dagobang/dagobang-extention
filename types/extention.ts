@@ -693,6 +693,42 @@ export type BgRequest =
   | { type: 'telegram:getStatus' }
   | { type: 'telegram:quickBuy'; tokenAddress: `0x${string}`; amountBnb: string }
   | { type: 'telegram:quickSell'; tokenAddress: `0x${string}`; sellPercent: number }
+  | {
+    type: 'xsniper:manualPositionClosed';
+    input: {
+      chainId: number;
+      tokenAddress: `0x${string}`;
+      sellPercent?: number;
+      txHash?: `0x${string}`;
+    };
+  }
+  | {
+    type: 'xsniper:manualPositionSold';
+    input: {
+      chainId: number;
+      tokenAddress: `0x${string}`;
+      sellPercent: number;
+      txHash?: `0x${string}`;
+    };
+  }
+  | {
+    type: 'newCoinSniper:manualPositionClosed';
+    input: {
+      chainId: number;
+      tokenAddress: `0x${string}`;
+      sellPercent?: number;
+      txHash?: `0x${string}`;
+    };
+  }
+  | {
+    type: 'newCoinSniper:manualPositionSold';
+    input: {
+      chainId: number;
+      tokenAddress: `0x${string}`;
+      sellPercent: number;
+      txHash?: `0x${string}`;
+    };
+  }
   | { type: 'twitter:signal'; payload: UnifiedTwitterSignal }
   | { type: 'market:signal'; payload: UnifiedMarketSignal }
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
@@ -811,6 +847,14 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
     | ({ ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
     | { ok: false; error?: TxWaitForReceiptError | { message: string } }
   )
+  : T extends { type: 'xsniper:manualPositionClosed' }
+  ? { ok: true; updated: boolean }
+  : T extends { type: 'xsniper:manualPositionSold' }
+  ? { ok: true; updated: boolean }
+  : T extends { type: 'newCoinSniper:manualPositionClosed' }
+  ? { ok: true; updated: boolean }
+  : T extends { type: 'newCoinSniper:manualPositionSold' }
+  ? { ok: true; updated: boolean }
   : T extends { type: 'twitter:signal' }
   ? { ok: true }
   : T extends { type: 'market:signal' }

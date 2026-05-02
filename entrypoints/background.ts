@@ -999,6 +999,28 @@ export default defineBackground(() => {
             return await telegramController.runQuickSell(msg.tokenAddress, msg.sellPercent);
           }
 
+          case 'xsniper:manualPositionClosed': {
+            const updated = (AutoTrade as any).markPositionClosedManually?.(msg.input) === true;
+            if (updated) broadcastStateChange();
+            return { ok: true, updated };
+          }
+          case 'xsniper:manualPositionSold': {
+            const updated = (AutoTrade as any).markPositionSoldManually?.(msg.input) === true;
+            if (updated) broadcastStateChange();
+            return { ok: true, updated };
+          }
+
+          case 'newCoinSniper:manualPositionClosed': {
+            const updated = (NewCoinSniperTrade as any).markPositionClosedManually?.(msg.input) === true;
+            if (updated) broadcastStateChange();
+            return { ok: true, updated };
+          }
+          case 'newCoinSniper:manualPositionSold': {
+            const updated = (NewCoinSniperTrade as any).markPositionSoldManually?.(msg.input) === true;
+            if (updated) broadcastStateChange();
+            return { ok: true, updated };
+          }
+
           case 'tx:waitForReceipt': {
             try {
               const receipt = await RpcService.waitForTransactionReceiptAny(msg.hash, { chainId: msg.chainId, timeoutMs: 20_000 });

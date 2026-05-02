@@ -546,6 +546,8 @@
         "rapid_take_profit": "Rapid take profit",
         "rapid_stop_loss": "Rapid stop loss",
         "rapid_trailing_stop": "Rapid trailing stop",
+        "position_reduced_manually": "Position reduced manually",
+        "position_closed_manually": "Position closed manually",
         "staged_scout": "Staged scout buy",
         "staged_add": "Staged second-leg buy",
         "dry_run_take_profit": "Dry take profit",

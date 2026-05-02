@@ -48,6 +48,7 @@ export const createNewCoinSniperTrade = (deps: {
   const wsSnapshotsByAddr = new Map<string, WsSnapshot[]>();
   const dryRunAutoSellByPosKey = new Map<string, DryRunAutoSellPos>();
   const rapidExitByPosKey = new Map<string, RapidExitPosition>();
+  const manuallyClosedPosKeys = new Map<string, number>();
   const rapidWatchdogRpcAtMs = new Map<string, number>();
   const latestModeMetaByToken = new Map<string, { strategyMode: 'auto_filter' | 'xmode_task'; taskId?: string; taskName?: string; matchKeywords?: string[]; matchText?: string }>();
   let currentSignalContext: UnifiedMarketSignal | null = null;
@@ -135,6 +136,7 @@ export const createNewCoinSniperTrade = (deps: {
         wsSnapshotsByAddr,
         rapidExitByPosKey,
         cleanupPosKey,
+        isPosMarkedManuallyClosed: (posKey) => manuallyClosedPosKeys.has(posKey),
         tryRapidExitSellOnce,
       });
     }
@@ -199,6 +201,7 @@ export const createNewCoinSniperTrade = (deps: {
       wsSnapshotsByAddr,
       rapidExitByPosKey,
       cleanupPosKey,
+      isPosMarkedManuallyClosed: (posKey) => manuallyClosedPosKeys.has(posKey),
       tryRapidExitSellOnce,
     });
   }
@@ -897,10 +900,13 @@ export const createNewCoinSniperTrade = (deps: {
     signalTweetId?: string;
     entryPriceUsd?: number | null;
   }) =>
-    registerRapidExitPositionFromMod({
-      rapidExitByPosKey,
-      ...input,
-    });
+    (() => {
+      manuallyClosedPosKeys.delete(input.posKey);
+      registerRapidExitPositionFromMod({
+        rapidExitByPosKey,
+        ...input,
+      });
+    })();
 
   const { tryRapidExitSellOnce } = createSellExecutors({
     cleanupPosKey,
@@ -997,5 +1003,86 @@ export const createNewCoinSniperTrade = (deps: {
     }
   };
 
-  return { handleMarketSignal };
+  const markPositionSoldManually = (input: {
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    sellPercent?: number;
+    txHash?: string;
+  }) => {
+    const tokenKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+    const keysToTouch: string[] = [];
+    for (const key of rapidExitByPosKey.keys()) {
+      if (key.startsWith('dry:')) continue;
+      if (key !== tokenKey && !key.startsWith(`${tokenKey}:`)) continue;
+      keysToTouch.push(key);
+    }
+    if (!keysToTouch.length) return false;
+    const pctCurrentRaw = Number(input.sellPercent);
+    const pctCurrent = Number.isFinite(pctCurrentRaw) ? Math.max(0, Math.min(100, pctCurrentRaw)) : 0;
+    if (!(pctCurrent > 0)) return false;
+    let soldOriginalTotal = 0;
+    let updated = false;
+    for (const key of keysToTouch) {
+      const pos = rapidExitByPosKey.get(key);
+      if (!pos) continue;
+      const nowRemaining = Number.isFinite(pos.remainingPercent)
+        ? Math.max(0, Math.min(100, Number(pos.remainingPercent)))
+        : 100;
+      if (!(nowRemaining > 0)) {
+        cleanupPosKey(key);
+        continue;
+      }
+      const soldOriginal = Math.max(0, Math.min(nowRemaining, (nowRemaining * pctCurrent) / 100));
+      if (!(soldOriginal > 0)) continue;
+      soldOriginalTotal += soldOriginal;
+      const nextRemaining = Math.max(0, Math.min(100, nowRemaining - soldOriginal));
+      if (!(nextRemaining > 0)) {
+        manuallyClosedPosKeys.set(key, Date.now());
+        cleanupPosKey(key);
+      } else {
+        pos.remainingPercent = nextRemaining;
+        pos.failCount = 0;
+        pos.nextRetryAtMs = 0;
+        rapidExitByPosKey.set(key, pos);
+      }
+      updated = true;
+    }
+    if (!updated) return false;
+    let hasRemainingTrackedPos = false;
+    for (const key of rapidExitByPosKey.keys()) {
+      if (key.startsWith('dry:')) continue;
+      if (key !== tokenKey && !key.startsWith(`${tokenKey}:`)) continue;
+      hasRemainingTrackedPos = true;
+      break;
+    }
+    const snapshots = wsSnapshotsByAddr.get(input.tokenAddress) ?? [];
+    const latest = snapshots.length ? snapshots[snapshots.length - 1] : null;
+    const now = Date.now();
+    emitRecord({
+      id: `${now}-${Math.random().toString(16).slice(2)}`,
+      side: 'sell',
+      tsMs: now,
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      sellPercent: pctCurrent,
+      sellPercentOfOriginal: Math.max(0, Math.min(100, soldOriginalTotal)),
+      sellPercentOfCurrent: pctCurrent,
+      txHash: input.txHash,
+      dryRun: false,
+      marketCapUsd: latest?.marketCapUsd,
+      reason: hasRemainingTrackedPos ? 'position_reduced_manually' : 'position_closed_manually',
+    } as any);
+    return true;
+  };
+  const markPositionClosedManually = (input: {
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    txHash?: string;
+  }) =>
+    markPositionSoldManually({
+      ...input,
+      sellPercent: 100,
+    });
+
+  return { handleMarketSignal, markPositionSoldManually, markPositionClosedManually };
 };

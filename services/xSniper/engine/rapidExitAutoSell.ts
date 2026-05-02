@@ -143,6 +143,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>;
   rapidExitByPosKey: Map<string, RapidExitPosition>;
   cleanupPosKey: (posKey: string) => void;
+  isPosMarkedManuallyClosed?: (posKey: string) => boolean;
   tryRapidExitSellOnce: (args: {
     chainId: number;
     tokenAddress: `0x${string}`;
@@ -256,6 +257,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
           dryRun: pos.dryRun,
           reason: inputSell.reason,
           onReceiptFailed: () => {
+            if (input.isPosMarkedManuallyClosed?.(posKey)) return;
             const cur = input.rapidExitByPosKey.get(posKey) ?? pos;
             const nowRemaining2 = Number.isFinite(cur.remainingPercent) ? Math.max(0, Math.min(100, Number(cur.remainingPercent))) : 100;
             cur.remainingPercent = Math.max(0, Math.min(100, nowRemaining2 + targetPortion));
@@ -362,6 +364,11 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       input.rapidExitByPosKey.set(posKey, pos);
     } finally {
       if (!cleanedUp) {
+        if (input.isPosMarkedManuallyClosed?.(posKey)) {
+          input.cleanupPosKey(posKey);
+          continue;
+        }
+        if (!input.rapidExitByPosKey.has(posKey)) continue;
         pos.evalInProgress = false;
         input.rapidExitByPosKey.set(posKey, pos);
       }

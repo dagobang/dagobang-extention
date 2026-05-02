@@ -546,6 +546,8 @@
         "rapid_take_profit": "快速止盈",
         "rapid_stop_loss": "快速止損",
         "rapid_trailing_stop": "快速移動止損",
+        "position_reduced_manually": "手動減倉",
+        "position_closed_manually": "手動全平（倉位歸零）",
         "staged_scout": "分段試探買入",
         "staged_add": "分段二段買入",
         "dry_run_take_profit": "模擬止盈",
