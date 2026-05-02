@@ -13,9 +13,9 @@ type WalletSelectorDropdownProps = {
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
   multiWalletBuyMode: 'uniform' | 'child_custom';
-  childWalletBuyAmountsNative: Record<string, string>;
+  childWalletBuyPresetAmountsNative: Record<string, string[]>;
   onChangeMultiWalletBuyMode: (mode: 'uniform' | 'child_custom') => void;
-  onUpdateChildWalletBuyAmount: (address: `0x${string}`, amountNative: string) => void;
+  onUpdateChildWalletBuyPresetAmount: (address: `0x${string}`, presetIndex: number, amountNative: string) => void;
   nativeSymbol?: string;
   className?: string;
   onRequestClose: () => void;
@@ -53,9 +53,9 @@ export function WalletSelectorDropdown({
   walletTokenBalancesWei,
   tokenDecimals,
   multiWalletBuyMode,
-  childWalletBuyAmountsNative,
+  childWalletBuyPresetAmountsNative,
   onChangeMultiWalletBuyMode,
-  onUpdateChildWalletBuyAmount,
+  onUpdateChildWalletBuyPresetAmount,
   nativeSymbol = 'NATIVE',
   className,
   onRequestClose,
@@ -134,15 +134,20 @@ export function WalletSelectorDropdown({
                 </span>
               </label>
               {multiWalletBuyMode === 'child_custom' && checked && !isActive && (
-                <div className="mt-1 flex items-center gap-2 pl-5">
-                  <span className="text-[11px] text-zinc-400">买入</span>
-                  <input
-                    className="w-24 rounded border border-zinc-600 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-200 outline-none focus:border-emerald-500"
-                    value={childWalletBuyAmountsNative[addrLower] ?? ''}
-                    onChange={(e) => onUpdateChildWalletBuyAmount(acc.address, e.target.value)}
-                    placeholder="跟随主钱包"
-                  />
-                  <span className="text-[11px] text-zinc-500">{nativeSymbol}</span>
+                <div className="mt-1 grid grid-cols-4 gap-1 pl-5">
+                  {[0, 1, 2, 3].map((presetIndex) => (
+                    <div key={presetIndex} className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-zinc-500">
+                        {(['Q', 'W', 'E', 'R'] as const)[presetIndex]}
+                      </span>
+                      <input
+                        className="w-full rounded border border-zinc-600 bg-zinc-900 px-1 py-0.5 text-[11px] text-zinc-200 outline-none focus:border-emerald-500"
+                        value={childWalletBuyPresetAmountsNative[addrLower]?.[presetIndex] ?? ''}
+                        onChange={(e) => onUpdateChildWalletBuyPresetAmount(acc.address, presetIndex, e.target.value)}
+                        placeholder="0"
+                      />
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

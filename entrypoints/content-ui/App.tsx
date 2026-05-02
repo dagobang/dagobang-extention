@@ -100,7 +100,7 @@ export default function App() {
   const isEditingRef = useRef(false);
   const keyboardEnabledRef = useRef(false);
   const spaceHeldRef = useRef(false);
-  const handleBuyRef = useRef<(amountStr: string) => void>(() => { });
+  const handleBuyRef = useRef<(amountStr: string, presetIndex: number) => void>(() => { });
   const handleSellRef = useRef<(pct: number) => void>(() => { });
   const prewarmedTurboRef = useRef<Set<string>>(new Set());
   const prewarmedRpcRef = useRef<Set<string>>(new Set());
@@ -131,11 +131,58 @@ export default function App() {
     [state?.wallet, settings]
   );
   const multiWalletBuyMode: 'uniform' | 'child_custom' = settings?.multiWalletBuyMode === 'child_custom' ? 'child_custom' : 'uniform';
-  const childWalletBuyAmountsNative: Record<string, string> = settings?.childWalletBuyAmountsBnb ?? {};
+  const childWalletBuyPresetAmountsNative: Record<string, string[]> = settings?.childWalletBuyPresetAmountsNative ?? {};
+  const childPresetActiveWalletCounts = useMemo<[number, number, number, number]>(() => {
+    if (multiWalletBuyMode !== 'child_custom') return [0, 0, 0, 0];
+    if (selectedTradeWallets.length <= 0) return [0, 0, 0, 0];
+    const mainWalletLower = (() => {
+      const activeLower = String(address || '').toLowerCase();
+      if (activeLower && selectedTradeWallets.some((w) => w.toLowerCase() === activeLower)) return activeLower;
+      return selectedTradeWallets[0].toLowerCase();
+    })();
+    const counts: [number, number, number, number] = [0, 0, 0, 0];
+    for (const walletAddress of selectedTradeWallets) {
+      const lower = walletAddress.toLowerCase();
+      if (lower === mainWalletLower) continue;
+      const presets = childWalletBuyPresetAmountsNative[lower];
+      for (const idx of [0, 1, 2, 3] as const) {
+        const raw = String(presets?.[idx] || '').trim();
+        const num = Number(raw);
+        if (raw && Number.isFinite(num) && num > 0) counts[idx] += 1;
+      }
+    }
+    return counts;
+  }, [multiWalletBuyMode, selectedTradeWallets, address, childWalletBuyPresetAmountsNative]);
   const nativeSymbol = useMemo(() => {
     const chainId = settings?.chainId || getChainIdByName(siteInfo?.chain || 'bsc') || 56;
     return getNativeSymbol(chainId);
   }, [settings?.chainId, siteInfo?.chain]);
+  const childPresetTooltipTexts = useMemo<[string, string, string, string]>(() => {
+    const totals: [number, number, number, number] = [0, 0, 0, 0];
+    if (multiWalletBuyMode === 'child_custom' && selectedTradeWallets.length > 0) {
+      const mainWalletLower = (() => {
+        const activeLower = String(address || '').toLowerCase();
+        if (activeLower && selectedTradeWallets.some((w) => w.toLowerCase() === activeLower)) return activeLower;
+        return selectedTradeWallets[0].toLowerCase();
+      })();
+      for (const walletAddress of selectedTradeWallets) {
+        const lower = walletAddress.toLowerCase();
+        if (lower === mainWalletLower) continue;
+        const presets = childWalletBuyPresetAmountsNative[lower];
+        for (const idx of [0, 1, 2, 3] as const) {
+          const raw = String(presets?.[idx] || '').trim();
+          const num = Number(raw);
+          if (raw && Number.isFinite(num) && num > 0) totals[idx] += num;
+        }
+      }
+    }
+    const formatAmount = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 6 });
+    return ([0, 1, 2, 3] as const).map((idx) => {
+      const count = childPresetActiveWalletCounts[idx];
+      if (count <= 0) return '';
+      return `子钱包 ${count} 个，合计 ${formatAmount(totals[idx])} ${nativeSymbol}`;
+    }) as [string, string, string, string];
+  }, [multiWalletBuyMode, selectedTradeWallets, address, childWalletBuyPresetAmountsNative, childPresetActiveWalletCounts, nativeSymbol]);
   const locale: Locale = normalizeLocale(settings?.locale);
   const toastPosition = settings?.toastPosition ?? 'top-center';
   const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
@@ -303,7 +350,7 @@ export default function App() {
         const presets = s.chains[s.chainId]?.buyPresets ?? ['0.01', '0.2', '0.5', '1.0'];
         const amt = presets[idx];
         if (!amt) return;
-        handleBuyRef.current(amt);
+        handleBuyRef.current(amt, idx);
         return;
       }
 
@@ -513,7 +560,7 @@ export default function App() {
     if (!tokenAddressNormalized) return;
     if (!tokenInfo) return;
     if (tokenAddressNormalized.toLowerCase() !== pendingQuickBuy.tokenAddress) return;
-    handleBuy(pendingQuickBuy.amount);
+    handleBuy(pendingQuickBuy.amount, -1);
     setPendingQuickBuy(null);
   }, [pendingQuickBuy, tokenAddressNormalized, tokenInfo, settings]);
 
@@ -1152,7 +1199,7 @@ export default function App() {
   const getTradeToastId = (side: 'buy' | 'sell', tokenAddress?: string | null) =>
     `trade-flow:${side}:${String(tokenAddress || '').toLowerCase()}`;
 
-  const handleBuy = (amountStr: string) => {
+  const handleBuy = (amountStr: string, presetIndex: number) => {
     withBusy(async () => {
       if (!settings) throw new Error('Settings not ready');
       if (!tokenAddressNormalized) throw new Error('Invalid token');
@@ -1170,15 +1217,34 @@ export default function App() {
         if (wei <= 0n) throw new Error(`钱包 ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)} 金额必须大于 0`);
         return wei;
       };
-      const buyPlan = wallets.map((walletAddress) => {
+      const hasValidPresetIndex = Number.isInteger(presetIndex) && presetIndex >= 0 && presetIndex < 4;
+      const buyPlan: Array<{ walletAddress: `0x${string}`; amountWei: bigint }> = [];
+      const skippedByPreset: `0x${string}`[] = [];
+      for (const walletAddress of wallets) {
         const lower = walletAddress.toLowerCase();
         const isMainWallet = lower === mainWalletLower;
-        const customAmountRaw = childWalletBuyAmountsNative[lower];
-        const shouldUseCustom = multiWalletBuyMode === 'child_custom' && !isMainWallet && typeof customAmountRaw === 'string' && customAmountRaw.trim().length > 0;
-        const amountRaw = shouldUseCustom ? customAmountRaw : amountStr;
-        const amountWei = parseAmountWei(amountRaw, walletAddress);
-        return { walletAddress, amountWei };
-      });
+        if (multiWalletBuyMode === 'child_custom' && !isMainWallet && hasValidPresetIndex) {
+          const customAmountRaw = childWalletBuyPresetAmountsNative[lower]?.[presetIndex];
+          const trimmed = String(customAmountRaw || '').trim();
+          const num = Number(trimmed);
+          if (!trimmed || !Number.isFinite(num) || num <= 0) {
+            skippedByPreset.push(walletAddress);
+            continue;
+          }
+          try {
+            const amountWei = parseAmountWei(trimmed, walletAddress);
+            buyPlan.push({ walletAddress, amountWei });
+          } catch {
+            skippedByPreset.push(walletAddress);
+          }
+          continue;
+        }
+        const amountWei = parseAmountWei(amountStr, walletAddress);
+        buyPlan.push({ walletAddress, amountWei });
+      }
+      if (skippedByPreset.length > 0) {
+        toast(`子钱包金额为 0，已跳过 ${skippedByPreset.length} 个钱包`, { icon: 'ℹ️', duration: 1800 });
+      }
       const executablePlan: Array<{ walletAddress: `0x${string}`; amountWei: bigint }> = [];
       const insufficientWallets: `0x${string}`[] = [];
       for (const item of buyPlan) {
@@ -1747,18 +1813,22 @@ export default function App() {
     } as const).then(() => refreshAll());
   };
 
-  const handleUpdateChildWalletBuyAmount = (walletAddress: `0x${string}`, amountBnb: string) => {
+  const handleUpdateChildWalletBuyPresetAmount = (walletAddress: `0x${string}`, presetIndex: number, amountNative: string) => {
     if (!settings) return;
+    if (!Number.isInteger(presetIndex) || presetIndex < 0 || presetIndex > 3) return;
     const key = walletAddress.toLowerCase();
-    const next = { ...(settings.childWalletBuyAmountsBnb ?? {}) };
-    const normalized = String(amountBnb || '').trim();
-    if (!normalized) delete next[key];
-    else next[key] = normalized;
+    const next = { ...(settings.childWalletBuyPresetAmountsNative ?? {}) } as Record<string, string[]>;
+    const curr = Array.isArray(next[key]) ? next[key].slice(0, 4) : ['', '', '', ''];
+    while (curr.length < 4) curr.push('');
+    const normalized = String(amountNative || '').trim();
+    curr[presetIndex] = normalized;
+    if (curr.every((x) => !String(x || '').trim())) delete next[key];
+    else next[key] = curr;
     void call({
       type: 'settings:set',
       settings: {
         ...settings,
-        childWalletBuyAmountsBnb: next,
+        childWalletBuyPresetAmountsNative: next,
       },
     } as const).then(() => refreshAll());
   };
@@ -1867,9 +1937,11 @@ export default function App() {
               selectedTradeWallets={selectedTradeWallets}
               onToggleTradeWallet={handleToggleTradeWallet}
               multiWalletBuyMode={multiWalletBuyMode}
-              childWalletBuyAmountsNative={childWalletBuyAmountsNative}
+              childWalletBuyPresetAmountsNative={childWalletBuyPresetAmountsNative}
+              childPresetActiveWalletCounts={childPresetActiveWalletCounts}
+              childPresetTooltipTexts={childPresetTooltipTexts}
               onChangeMultiWalletBuyMode={handleChangeMultiWalletBuyMode}
-              onUpdateChildWalletBuyAmount={handleUpdateChildWalletBuyAmount}
+              onUpdateChildWalletBuyPresetAmount={handleUpdateChildWalletBuyPresetAmount}
               walletNativeBalancesWei={walletNativeBalancesWei}
               walletTokenBalancesWei={walletTokenBalancesWei}
               tokenDecimals={tokenDecimals}

@@ -372,6 +372,7 @@ export function defaultSettings(): Settings {
     selectedTradeWallets: [],
     multiWalletBuyMode: 'uniform',
     childWalletBuyAmountsBnb: {},
+    childWalletBuyPresetAmountsNative: {},
     locale: 'zh_CN',
     accountAliases: {},
     toastPosition: 'top-center',

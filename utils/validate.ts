@@ -122,6 +122,21 @@ export function validateSettings(input: Settings): Settings | null {
       childWalletBuyAmountsBnb[addr] = amount;
     }
   }
+  const rawChildWalletBuyPresetAmounts = (input as any).childWalletBuyPresetAmountsNative;
+  const childWalletBuyPresetAmountsNative: Record<string, string[]> = {};
+  if (rawChildWalletBuyPresetAmounts && typeof rawChildWalletBuyPresetAmounts === 'object') {
+    for (const [rawAddr, rawPresets] of Object.entries(rawChildWalletBuyPresetAmounts as Record<string, unknown>)) {
+      const addr = String(rawAddr || '').trim().toLowerCase();
+      if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) continue;
+      if (!Array.isArray(rawPresets)) continue;
+      const normalized = [0, 1, 2, 3].map((idx) => {
+        const item = rawPresets[idx];
+        return typeof item === 'string' ? item.trim() : '';
+      });
+      if (!normalized.some((x) => !!x)) continue;
+      childWalletBuyPresetAmountsNative[addr] = normalized;
+    }
+  }
   const limitOrderScanIntervalOptionsMs = [1000, 3000, 5000, 10000, 30000, 60000, 120000] as const;
   const inputLimitOrderScanIntervalMs = Number((input as any).limitOrderScanIntervalMs);
   const limitOrderScanIntervalMs = Number.isFinite(inputLimitOrderScanIntervalMs) && limitOrderScanIntervalOptionsMs.includes(Math.floor(inputLimitOrderScanIntervalMs) as any)
@@ -720,6 +735,7 @@ export function validateSettings(input: Settings): Settings | null {
     selectedTradeWallets,
     multiWalletBuyMode,
     childWalletBuyAmountsBnb,
+    childWalletBuyPresetAmountsNative,
     locale,
     accountAliases,
     toastPosition,

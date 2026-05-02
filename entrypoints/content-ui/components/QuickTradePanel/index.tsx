@@ -33,7 +33,7 @@ type QuickTradePanelProps = {
   formattedNativeBalance: string;
   busy: boolean;
   isUnlocked: boolean;
-  onBuy: (amountStr: string) => void;
+  onBuy: (amountStr: string, presetIndex: number) => void;
   settings: Settings | null;
   onToggleMode: () => void;
   onToggleBuyGas: () => void;
@@ -65,9 +65,11 @@ type QuickTradePanelProps = {
   selectedTradeWallets: `0x${string}`[];
   onToggleTradeWallet: (address: `0x${string}`) => void;
   multiWalletBuyMode: 'uniform' | 'child_custom';
-  childWalletBuyAmountsNative: Record<string, string>;
+  childWalletBuyPresetAmountsNative: Record<string, string[]>;
+  childPresetActiveWalletCounts: [number, number, number, number];
+  childPresetTooltipTexts: [string, string, string, string];
   onChangeMultiWalletBuyMode: (mode: 'uniform' | 'child_custom') => void;
-  onUpdateChildWalletBuyAmount: (address: `0x${string}`, amountNative: string) => void;
+  onUpdateChildWalletBuyPresetAmount: (address: `0x${string}`, presetIndex: number, amountNative: string) => void;
   walletNativeBalancesWei: Record<string, string>;
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
@@ -130,9 +132,11 @@ export function QuickTradePanel({
   selectedTradeWallets,
   onToggleTradeWallet,
   multiWalletBuyMode,
-  childWalletBuyAmountsNative,
+  childWalletBuyPresetAmountsNative,
+  childPresetActiveWalletCounts,
+  childPresetTooltipTexts,
   onChangeMultiWalletBuyMode,
-  onUpdateChildWalletBuyAmount,
+  onUpdateChildWalletBuyPresetAmount,
   walletNativeBalancesWei,
   walletTokenBalancesWei,
   tokenDecimals,
@@ -194,9 +198,9 @@ export function QuickTradePanel({
               activeWalletAddress={activeWalletAddress}
               onToggleTradeWallet={onToggleTradeWallet}
               multiWalletBuyMode={multiWalletBuyMode}
-              childWalletBuyAmountsNative={childWalletBuyAmountsNative}
+              childWalletBuyPresetAmountsNative={childWalletBuyPresetAmountsNative}
               onChangeMultiWalletBuyMode={onChangeMultiWalletBuyMode}
-              onUpdateChildWalletBuyAmount={onUpdateChildWalletBuyAmount}
+              onUpdateChildWalletBuyPresetAmount={onUpdateChildWalletBuyPresetAmount}
               walletNativeBalancesWei={walletNativeBalancesWei}
               walletTokenBalancesWei={walletTokenBalancesWei}
               tokenDecimals={tokenDecimals}
@@ -220,6 +224,8 @@ export function QuickTradePanel({
             locale={locale}
             showHotkeys={showBuyHotkeys}
             hotkeyLabels={['Q', 'W', 'E', 'R'] as [string, string, string, string]}
+            childPresetActiveWalletCounts={childPresetActiveWalletCounts}
+            childPresetTooltipTexts={childPresetTooltipTexts}
             gmgnVisible={false}
             gmgnEnabled={gmgnBuyEnabled}
             onToggleGmgn={onToggleGmgnBuy}

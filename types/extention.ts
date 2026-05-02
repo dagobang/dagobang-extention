@@ -316,6 +316,7 @@ export type Settings = {
   selectedTradeWallets?: `0x${string}`[];
   multiWalletBuyMode?: 'uniform' | 'child_custom';
   childWalletBuyAmountsBnb?: Record<string, string>;
+  childWalletBuyPresetAmountsNative?: Record<string, string[]>;
   locale: 'zh_CN' | 'zh_TW' | 'en';
   accountAliases?: Record<string, string>;
   toastPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';

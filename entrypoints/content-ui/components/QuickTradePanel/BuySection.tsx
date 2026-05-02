@@ -8,7 +8,7 @@ type BuySectionProps = {
   formattedNativeBalance: string;
   busy: boolean;
   isUnlocked: boolean;
-  onBuy: (amountStr: string) => void;
+  onBuy: (amountStr: string, presetIndex: number) => void;
   settings: Settings | null;
   onToggleMode: () => void;
   onToggleGas: () => void;
@@ -20,6 +20,8 @@ type BuySectionProps = {
   locale: Locale;
   showHotkeys?: boolean;
   hotkeyLabels?: [string, string, string, string];
+  childPresetActiveWalletCounts?: [number, number, number, number];
+  childPresetTooltipTexts?: [string, string, string, string];
   gmgnVisible: boolean;
   gmgnEnabled: boolean;
   onToggleGmgn: () => void;
@@ -43,6 +45,8 @@ export function BuySection({
   locale,
   showHotkeys,
   hotkeyLabels,
+  childPresetActiveWalletCounts,
+  childPresetTooltipTexts,
   gmgnVisible,
   gmgnEnabled,
   onToggleGmgn,
@@ -119,7 +123,7 @@ export function BuySection({
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-2 mb-2">
+      <div className="grid grid-cols-4 gap-2 mb-1.5">
         {buyPresets.map((amt, idx) => (
           isEditing ? (
             <input
@@ -132,9 +136,15 @@ export function BuySection({
             <button
               key={idx}
               disabled={busy || !isUnlocked}
-              onClick={() => onBuy(amt)}
+              onClick={() => onBuy(amt, idx)}
               className="relative rounded border border-emerald-500/30 bg-emerald-500/10 py-1.5 text-center text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              title={childPresetTooltipTexts?.[idx]}
             >
+              {!!childPresetActiveWalletCounts?.[idx] && childPresetActiveWalletCounts[idx] > 0 && (
+                <span className="absolute left-1 top-0.5 rounded-full bg-emerald-400/20 px-1 text-[10px] leading-3 text-emerald-300">
+                  {childPresetActiveWalletCounts[idx]}
+                </span>
+              )}
               {showHotkeys && hotkeyLabels?.[idx] && (
                 <span className="absolute right-1 top-0.5 text-[12px] font-semibold text-zinc-300">
                   {hotkeyLabels[idx]}
