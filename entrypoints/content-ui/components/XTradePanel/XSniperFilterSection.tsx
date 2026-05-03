@@ -276,6 +276,83 @@ export function XSniperFilterSection({
                 </div>
               </div>
             </div>
+            <div className="flex items-center gap-3">
+              <div className="w-16 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.filterDevMaxBuy')}</div>
+              <div className="grid flex-1 grid-cols-2 gap-2">
+                <div className="relative">
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMin')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-6 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.minDevMaxBuyPercent ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ minDevMaxBuyPercent: e.target.value } as any)}
+                  />
+                  <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">%</div>
+                </div>
+                <div className="relative">
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMax')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 pr-6 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.maxDevMaxBuyPercent ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ maxDevMaxBuyPercent: e.target.value } as any)}
+                  />
+                  <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-500">%</div>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-16 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.filterViewerCount')}</div>
+              <div className="grid flex-1 grid-cols-2 gap-2">
+                <div>
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMin')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.minViewerCount ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ minViewerCount: e.target.value } as any)}
+                  />
+                </div>
+                <div>
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMax')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.maxViewerCount ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ maxViewerCount: e.target.value } as any)}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-16 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.filterDevCreatedCount')}</div>
+              <div className="grid flex-1 grid-cols-2 gap-2">
+                <div>
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMin')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.minDevCreatedTokenCount ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ minDevCreatedTokenCount: e.target.value } as any)}
+                  />
+                </div>
+                <div>
+                  <input
+                    type="number"
+                    placeholder={tt('contentUi.autoTradeStrategy.placeholderMax')}
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.maxDevCreatedTokenCount ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ maxDevCreatedTokenCount: e.target.value } as any)}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
           <label className="flex items-center gap-2 text-[12px] text-zinc-300">
             <input

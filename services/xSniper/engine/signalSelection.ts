@@ -51,6 +51,13 @@ export const metricsFromUnifiedToken = (t: UnifiedSignalToken): TokenMetrics | n
         : devHoldPercentRaw
       : undefined;
   if (devHoldPercent == null && tokenAgeMsForDev != null && tokenAgeMsForDev > 3000) devHoldPercent = 0;
+  const devMaxBuyPercentRaw = typeof (t as any).devMaxBuyPercent === 'number' ? (t as any).devMaxBuyPercent : undefined;
+  const devMaxBuyPercent =
+    typeof devMaxBuyPercentRaw === 'number' && Number.isFinite(devMaxBuyPercentRaw)
+      ? devMaxBuyPercentRaw >= 0 && devMaxBuyPercentRaw <= 1
+        ? devMaxBuyPercentRaw * 100
+        : devMaxBuyPercentRaw
+      : undefined;
   return {
     tokenAddress,
     chain: typeof (t as any).chain === 'string' ? String((t as any).chain).trim().toLowerCase() : undefined,
@@ -70,6 +77,9 @@ export const metricsFromUnifiedToken = (t: UnifiedSignalToken): TokenMetrics | n
     updatedAtMs: normalizeEpochMs((t as any).updatedAtMs) ?? undefined,
     devAddress: normalizeAddress((t as any).devAddress) ?? undefined,
     devHoldPercent,
+    devMaxBuyPercent,
+    viewerCount: typeof (t as any).viewerCount === 'number' ? (t as any).viewerCount : undefined,
+    devCreatedTokenCount: typeof (t as any).devCreatedTokenCount === 'number' ? (t as any).devCreatedTokenCount : undefined,
     devHasSold: typeof (t as any).devHasSold === 'boolean'
       ? (t as any).devHasSold
       : (typeof (t as any).devTokenStatus === 'string' ? String((t as any).devTokenStatus).toLowerCase().includes('sell') : undefined),

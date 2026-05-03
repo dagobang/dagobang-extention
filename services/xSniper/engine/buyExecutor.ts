@@ -154,6 +154,9 @@ export const tryAutoBuyOnce = async (input: {
       createdAtMs: m.createdAtMs,
       devAddress: m.devAddress,
       devHoldPercent: m.devHoldPercent,
+      devMaxBuyPercent: (m as any).devMaxBuyPercent,
+      viewerCount: (m as any).viewerCount,
+      devCreatedTokenCount: (m as any).devCreatedTokenCount,
       devHasSold: m.devHasSold,
       confirmWindowMs: extras?.confirm?.windowMs,
       confirmMcapChangePct: extras?.confirm?.stats?.mcapChangePct,
@@ -166,7 +169,7 @@ export const tryAutoBuyOnce = async (input: {
       signalId: input.signal?.id ? String(input.signal.id) : undefined,
       signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
       signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
-    });
+    } as XSniperBuyRecord);
   };
   if (input.boughtOnceAtMs.has(key)) {
     emitBuyFailure('buy_skipped_recently_bought');
@@ -220,6 +223,9 @@ export const tryAutoBuyOnce = async (input: {
             createdAtMs: input.metrics.createdAtMs,
             devAddress: input.metrics.devAddress,
             devHoldPercent: input.metrics.devHoldPercent,
+            devMaxBuyPercent: (input.metrics as any).devMaxBuyPercent,
+            viewerCount: (input.metrics as any).viewerCount,
+            devCreatedTokenCount: (input.metrics as any).devCreatedTokenCount,
             devHasSold: input.metrics.devHasSold,
             confirmWindowMs: confirm.windowMs,
             confirmMcapChangePct: confirm.stats?.mcapChangePct ?? undefined,
@@ -232,7 +238,7 @@ export const tryAutoBuyOnce = async (input: {
             signalId: input.signal?.id ? String(input.signal.id) : undefined,
             signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
             signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
-          });
+          } as XSniperBuyRecord);
         }
       }
       emitBuyFailure('ws_confirm_failed', {
@@ -373,6 +379,9 @@ export const tryAutoBuyOnce = async (input: {
         createdAtMs: dryRunMetrics.createdAtMs,
         devAddress: dryRunMetrics.devAddress,
         devHoldPercent: dryRunMetrics.devHoldPercent,
+        devMaxBuyPercent: (dryRunMetrics as any).devMaxBuyPercent,
+        viewerCount: (dryRunMetrics as any).viewerCount,
+        devCreatedTokenCount: (dryRunMetrics as any).devCreatedTokenCount,
         devHasSold: dryRunMetrics.devHasSold,
         confirmWindowMs: confirm.windowMs,
         confirmMcapChangePct: confirm.stats?.mcapChangePct ?? undefined,
@@ -385,7 +394,7 @@ export const tryAutoBuyOnce = async (input: {
         signalId: input.signal?.id ? String(input.signal.id) : undefined,
         signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
         signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
-      });
+      } as XSniperBuyRecord);
       return true;
     }
 
@@ -558,6 +567,9 @@ export const tryAutoBuyOnce = async (input: {
       createdAtMs: refreshedMetrics.createdAtMs,
       devAddress: refreshedMetrics.devAddress,
       devHoldPercent: refreshedMetrics.devHoldPercent,
+      devMaxBuyPercent: (refreshedMetrics as any).devMaxBuyPercent,
+      viewerCount: (refreshedMetrics as any).viewerCount,
+      devCreatedTokenCount: (refreshedMetrics as any).devCreatedTokenCount,
       devHasSold: refreshedMetrics.devHasSold,
       confirmWindowMs: confirm.windowMs,
       confirmMcapChangePct: confirm.stats?.mcapChangePct ?? undefined,
@@ -570,7 +582,7 @@ export const tryAutoBuyOnce = async (input: {
       signalId,
       signalEventId,
       signalTweetId,
-    });
+    } as XSniperBuyRecord);
 
     console.log('XSniperTrade buy tx', (rsp as any)?.txHash ?? '');
     return true;

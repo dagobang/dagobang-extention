@@ -457,6 +457,12 @@ export function validateSettings(input: Settings): Settings | null {
     maxTweetAgeSeconds: clampStringNumber((rawInput as any)?.maxTweetAgeSeconds, (fallbackInput as any)?.maxTweetAgeSeconds),
     minDevHoldPercent: clampStringNumber(rawInput?.minDevHoldPercent, fallbackInput.minDevHoldPercent),
     maxDevHoldPercent: clampStringNumber(rawInput?.maxDevHoldPercent, fallbackInput.maxDevHoldPercent),
+    minDevMaxBuyPercent: clampStringNumber((rawInput as any)?.minDevMaxBuyPercent, (fallbackInput as any)?.minDevMaxBuyPercent),
+    maxDevMaxBuyPercent: clampStringNumber((rawInput as any)?.maxDevMaxBuyPercent, (fallbackInput as any)?.maxDevMaxBuyPercent),
+    minViewerCount: clampStringNumber((rawInput as any)?.minViewerCount, (fallbackInput as any)?.minViewerCount),
+    maxViewerCount: clampStringNumber((rawInput as any)?.maxViewerCount, (fallbackInput as any)?.maxViewerCount),
+    minDevCreatedTokenCount: clampStringNumber((rawInput as any)?.minDevCreatedTokenCount, (fallbackInput as any)?.minDevCreatedTokenCount),
+    maxDevCreatedTokenCount: clampStringNumber((rawInput as any)?.maxDevCreatedTokenCount, (fallbackInput as any)?.maxDevCreatedTokenCount),
     blockIfDevSell: typeof rawInput?.blockIfDevSell === 'boolean'
       ? rawInput.blockIfDevSell
       : fallbackInput.blockIfDevSell,

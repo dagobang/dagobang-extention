@@ -724,6 +724,31 @@ export function XSniperHistoryView({
                             ) : null}
                           </div>
                           <div>
+                            <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryDevMaxBuy')}:</span>{' '}
+                            <span className="text-zinc-200">
+                              {typeof (r as any).devMaxBuyPercent === 'number' && Number.isFinite((r as any).devMaxBuyPercent)
+                                ? `${Number((r as any).devMaxBuyPercent).toFixed(2)}%`
+                                : '-'}
+                            </span>
+                            {latest && typeof (latest as any).devMaxBuyPercent === 'number' ? (
+                              <span className="text-zinc-500"> → {Number((latest as any).devMaxBuyPercent).toFixed(2)}%</span>
+                            ) : null}
+                          </div>
+                          <div>
+                            <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryViewerCount')}:</span>{' '}
+                            <span className="text-zinc-200">{formatCompactNumber((r as any).viewerCount) ?? '-'}</span>
+                            {latest && typeof (latest as any).viewerCount === 'number' ? (
+                              <span className="text-zinc-500"> → {formatCompactNumber((latest as any).viewerCount) ?? '-'}</span>
+                            ) : null}
+                          </div>
+                          <div>
+                            <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryDevCreatedCount')}:</span>{' '}
+                            <span className="text-zinc-200">{formatCompactNumber((r as any).devCreatedTokenCount) ?? '-'}</span>
+                            {latest && typeof (latest as any).devCreatedTokenCount === 'number' ? (
+                              <span className="text-zinc-500"> → {formatCompactNumber((latest as any).devCreatedTokenCount) ?? '-'}</span>
+                            ) : null}
+                          </div>
+                          <div>
                             <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryDevSold')}:</span>{' '}
                             <span className="text-zinc-200">
                               {r.devHasSold === true ? tt('contentUi.autoTradeStrategy.snipeHistoryYes') : r.devHasSold === false ? tt('contentUi.autoTradeStrategy.snipeHistoryNo') : '-'}

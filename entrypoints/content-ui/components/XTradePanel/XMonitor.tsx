@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AlarmClockCheck, Trophy, ChefHat, Users, X, UserStar } from 'lucide-react';
+import { AlarmClockCheck, Trophy, ChefHat, Users, X, UserStar, Eye, Coins, Flame } from 'lucide-react';
 import type { Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber, formatCountShort } from '@/utils/format';
@@ -561,6 +561,10 @@ const normalizeSignalTokensForDisplay = (signal: UnifiedTwitterSignal): UnifiedS
       liquidityUsd: t.liquidityUsd,
       holders: t.holders,
       kol: (t as any).kol,
+      devHoldPercent: (t as any).devHoldPercent,
+      devMaxBuyPercent: (t as any).devMaxBuyPercent,
+      viewerCount: (t as any).viewerCount,
+      devCreatedTokenCount: (t as any).devCreatedTokenCount,
       devBuyRatio: t.devBuyRatio,
       top10HoldRatio: t.top10HoldRatio,
       devTokenStatus: t.devTokenStatus,
@@ -1445,12 +1449,22 @@ export function XMonitorContent({
                         const tokenName = token.tokenName?.trim() || '';
                         const name = symbol || tokenName || shortAddr;
                         const mc = typeof token.marketCapUsd === 'number' ? token.marketCapUsd : null;
-      const devBuyRatioPct =
-        typeof token.devBuyRatio === 'number'
-          ? token.devBuyRatio * 100
-          : typeof token.devHoldPercent === 'number' && Number.isFinite(token.devHoldPercent)
-            ? token.devHoldPercent
-            : null;
+                        const devHoldPercent =
+                          typeof (token as any).devHoldPercent === 'number' && Number.isFinite((token as any).devHoldPercent)
+                            ? Number((token as any).devHoldPercent)
+                            : null;
+                        const devMaxBuyPercent =
+                          typeof (token as any).devMaxBuyPercent === 'number' && Number.isFinite((token as any).devMaxBuyPercent)
+                            ? Number((token as any).devMaxBuyPercent)
+                            : typeof token.devBuyRatio === 'number'
+                              ? token.devBuyRatio * 100
+                              : null;
+                        const viewerCount = typeof (token as any).viewerCount === 'number' && Number.isFinite((token as any).viewerCount)
+                          ? Number((token as any).viewerCount)
+                          : null;
+                        const devCreatedTokenCount = typeof (token as any).devCreatedTokenCount === 'number' && Number.isFinite((token as any).devCreatedTokenCount)
+                          ? Number((token as any).devCreatedTokenCount)
+                          : null;
                         const top10HoldRatioPct = typeof token.top10HoldRatio === 'number' ? token.top10HoldRatio * 100 : null;
                         const age = typeof token.createdAtMs === 'number' ? formatAgeShort(token.createdAtMs) : null;
                         const getRatioClassName = (pct: number | null) => {
@@ -1459,7 +1473,8 @@ export function XMonitorContent({
                           if (pct > 10) return 'text-rose-300';
                           return '';
                         };
-                        const devRatioClassName = getRatioClassName(devBuyRatioPct);
+                        const devHoldClassName = getRatioClassName(devHoldPercent);
+                        const devMaxBuyClassName = getRatioClassName(devMaxBuyPercent);
                         const top10RatioClassName = getRatioClassName(top10HoldRatioPct);
                         return (
                           <div
@@ -1507,12 +1522,10 @@ export function XMonitorContent({
                             <div className="mt-1 flex items-center justify-between gap-2">
                               <div className="min-w-0 truncate font-mono text-[11px] text-zinc-500">{shortAddr}</div>
                               <div className="flex flex-shrink-0 items-center gap-2 text-[11px] text-zinc-500">
-                                {devBuyRatioPct != null ? (
-                                  <span className={`inline-flex items-center gap-1 ${devRatioClassName}`} title={tt('contentUi.xMonitor.tooltip.devBuyRatio')}>
-                                    <ChefHat size={12} />
-                                    {devBuyRatioPct < 0.0001 ? '0%' : `${devBuyRatioPct.toFixed(2)}%`}
-                                  </span>
-                                ) : null}
+                                <span className={`inline-flex items-center gap-1 ${devHoldClassName}`} title={tt('contentUi.xMonitor.tooltip.devHoldPercent')}>
+                                  <ChefHat size={12} />
+                                  {devHoldPercent == null ? '-' : (devHoldPercent < 0.0001 ? '0%' : `${devHoldPercent.toFixed(2)}%`)}
+                                </span>
                                 {top10HoldRatioPct != null ? (
                                   <span className={`inline-flex items-center gap-1 ${top10RatioClassName}`} title={tt('contentUi.xMonitor.tooltip.top10HoldRatio')}>
                                     <UserStar size={12} />
@@ -1564,6 +1577,20 @@ export function XMonitorContent({
                                   </span>
                                 ) : null}
                               </div>
+                            </div>
+                            <div className="mt-1 flex items-center justify-end gap-3 text-[11px] text-zinc-500">
+                              <span className={`inline-flex items-center gap-1 ${devMaxBuyClassName}`} title={tt('contentUi.xMonitor.tooltip.devBuyRatio')}>
+                                <Flame size={12} />
+                                {devMaxBuyPercent == null ? '-' : (devMaxBuyPercent < 0.0001 ? '0%' : `${devMaxBuyPercent.toFixed(2)}%`)}
+                              </span>
+                              <span className="inline-flex items-center gap-1" title={tt('contentUi.xMonitor.tooltip.viewerCount')}>
+                                <Eye size={12} />
+                                {viewerCount == null ? '-' : (formatCompactNumber(viewerCount) ?? '-')}
+                              </span>
+                              <span className="inline-flex items-center gap-1" title={tt('contentUi.xMonitor.tooltip.devCreatedTokenCount')}>
+                                <Coins size={12} />
+                                {devCreatedTokenCount == null ? '-' : (formatCompactNumber(devCreatedTokenCount) ?? '-')}
+                              </span>
                             </div>
                             <div className="mt-1 text-[10px] text-zinc-500">
                               <span>

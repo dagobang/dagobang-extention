@@ -170,6 +170,8 @@ const normalizeTrenchesTokenData = (item: any) => {
   const smartMoney = extractNumber(merged, ['smt']);
   const priceUsd = extractNumber(merged, ['p']);
   const devHoldRatio = extractNumber(merged, ['d_br']);
+  const viewerCount = extractNumber(merged, ['v_c']);
+  const devCreatedTokenCount = extractNumber(merged, ['d_ccc']);
   const top10HoldRatio = extractNumber(merged, ['t10']);
   const devTokenStatus = typeof (merged as any)?.d_ts === 'string' ? (merged as any).d_ts.trim() : undefined;
   const tokenLogo = typeof (merged as any)?.l === 'string' && (merged as any).l.trim() ? (merged as any).l.trim() : undefined;
@@ -188,8 +190,11 @@ const normalizeTrenchesTokenData = (item: any) => {
     createdAtMs: createdAtMs ?? undefined,
     devAddress: asAddress((merged as any)?.d_ct) ?? undefined,
     devHoldPercent: normalizePercentValue(devHoldRatio ?? null),
+    devMaxBuyPercent: normalizePercentValue(devHoldRatio ?? null),
     devHasSold: typeof (merged as any)?.d_ts === 'string' ? (merged as any).d_ts.toLowerCase().includes('sell') : undefined,
     devBuyRatio: devHoldRatio ?? undefined,
+    viewerCount: viewerCount ?? undefined,
+    devCreatedTokenCount: devCreatedTokenCount ?? undefined,
     top10HoldRatio: top10HoldRatio ?? undefined,
     devTokenStatus,
     tokenLogo,
@@ -400,6 +405,9 @@ type TokenSnapshot = {
   smartMoney?: number;
   devAddress?: string;
   devHoldPercent?: number;
+  devMaxBuyPercent?: number;
+  viewerCount?: number;
+  devCreatedTokenCount?: number;
   devHasSold?: boolean;
   devBuyRatio?: number;
   top10HoldRatio?: number;
@@ -449,6 +457,9 @@ const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken
       smartMoney: (t as any).smartMoney,
       devAddress: (t as any).devAddress,
       devHoldPercent: (t as any).devHoldPercent,
+      devMaxBuyPercent: (t as any).devMaxBuyPercent,
+      viewerCount: (t as any).viewerCount,
+      devCreatedTokenCount: (t as any).devCreatedTokenCount,
       devHasSold: (t as any).devHasSold,
       devBuyRatio: t.devBuyRatio,
       top10HoldRatio: t.top10HoldRatio,
@@ -484,6 +495,9 @@ const mergeTokenFields = (prev: UnifiedSignalToken, next: Partial<UnifiedSignalT
     smartMoney: pickFiniteNumber((next as any).smartMoney, (prev as any).smartMoney),
     devAddress: pickNonEmptyString(next.devAddress, prev.devAddress),
     devHoldPercent: pickFiniteNumber(next.devHoldPercent, prev.devHoldPercent),
+    devMaxBuyPercent: pickFiniteNumber((next as any).devMaxBuyPercent, (prev as any).devMaxBuyPercent),
+    viewerCount: pickFiniteNumber((next as any).viewerCount, (prev as any).viewerCount),
+    devCreatedTokenCount: pickFiniteNumber((next as any).devCreatedTokenCount, (prev as any).devCreatedTokenCount),
     devHasSold: typeof next.devHasSold === 'boolean' ? next.devHasSold : prev.devHasSold,
     devBuyRatio: pickFiniteNumber(next.devBuyRatio, prev.devBuyRatio),
     top10HoldRatio: pickFiniteNumber(next.top10HoldRatio, prev.top10HoldRatio),
@@ -534,6 +548,9 @@ const upsertSignalToken = (
     (mergedWithTimes as any).smartMoney === (prev as any).smartMoney &&
     mergedWithTimes.devAddress === (prev as any).devAddress &&
     mergedWithTimes.devHoldPercent === (prev as any).devHoldPercent &&
+    (mergedWithTimes as any).devMaxBuyPercent === (prev as any).devMaxBuyPercent &&
+    (mergedWithTimes as any).viewerCount === (prev as any).viewerCount &&
+    (mergedWithTimes as any).devCreatedTokenCount === (prev as any).devCreatedTokenCount &&
     mergedWithTimes.devHasSold === (prev as any).devHasSold &&
     mergedWithTimes.devBuyRatio === prev.devBuyRatio &&
     mergedWithTimes.top10HoldRatio === prev.top10HoldRatio &&
@@ -568,6 +585,9 @@ const applySnapshotToSignal = (signal: UnifiedTwitterSignal, snapshot: TokenSnap
     smartMoney: snapshot.smartMoney,
     devAddress: snapshot.devAddress,
     devHoldPercent: snapshot.devHoldPercent,
+    devMaxBuyPercent: snapshot.devMaxBuyPercent,
+    viewerCount: snapshot.viewerCount,
+    devCreatedTokenCount: snapshot.devCreatedTokenCount,
     devHasSold: snapshot.devHasSold,
     devBuyRatio: snapshot.devBuyRatio,
     top10HoldRatio: snapshot.top10HoldRatio,
@@ -620,6 +640,9 @@ const snapshotToUnifiedToken = (snapshot: TokenSnapshot, now: number): UnifiedSi
   smartMoney: snapshot.smartMoney,
   devAddress: snapshot.devAddress,
   devHoldPercent: snapshot.devHoldPercent,
+  devMaxBuyPercent: snapshot.devMaxBuyPercent,
+  viewerCount: snapshot.viewerCount,
+  devCreatedTokenCount: snapshot.devCreatedTokenCount,
   devHasSold: snapshot.devHasSold,
   devBuyRatio: snapshot.devBuyRatio,
   top10HoldRatio: snapshot.top10HoldRatio,
@@ -1275,13 +1298,44 @@ export function initGmgnWsMonitor(options: {
       const next = normalizePercentValue(raw ?? null);
       return pickFiniteNumber(next, prev?.devHoldPercent);
     })();
-    const devBuyRatio = pickFiniteNumber(
+    const rawDevBuyRatio = pickFiniteNumber(
       typeof tokenData?.devBuyRatio === 'number'
         ? tokenData.devBuyRatio
         : preferDevMetrics
           ? extractNumber(tokenData, ['d_br'])
           : undefined,
       prev?.devBuyRatio,
+    );
+    const normalizedDevBuyPercent = normalizePercentValue(rawDevBuyRatio ?? null);
+    const devMaxBuyPercent = (() => {
+      const prevMax = typeof prev?.devMaxBuyPercent === 'number' && Number.isFinite(prev.devMaxBuyPercent)
+        ? prev.devMaxBuyPercent
+        : null;
+      const nextNow = typeof tokenData?.devMaxBuyPercent === 'number'
+        ? tokenData.devMaxBuyPercent
+        : normalizedDevBuyPercent;
+      const nextNorm = typeof nextNow === 'number' && Number.isFinite(nextNow)
+        ? (nextNow >= 0 && nextNow <= 1 ? nextNow * 100 : nextNow)
+        : null;
+      if (prevMax == null) return nextNorm ?? undefined;
+      if (nextNorm == null) return prevMax;
+      return Math.max(prevMax, nextNorm);
+    })();
+    const devBuyRatio = pickFiniteNumber(
+      rawDevBuyRatio,
+      prev?.devBuyRatio,
+    );
+    const viewerCount = pickFiniteNumber(
+      typeof tokenData?.viewerCount === 'number'
+        ? tokenData.viewerCount
+        : extractNumber(tokenData, ['v_c']),
+      prev?.viewerCount,
+    );
+    const devCreatedTokenCount = pickFiniteNumber(
+      typeof tokenData?.devCreatedTokenCount === 'number'
+        ? tokenData.devCreatedTokenCount
+        : extractNumber(tokenData, ['d_ccc']),
+      prev?.devCreatedTokenCount,
     );
     const top10HoldRatio = pickFiniteNumber(
       typeof tokenData?.top10HoldRatio === 'number'
@@ -1396,6 +1450,9 @@ export function initGmgnWsMonitor(options: {
       smartMoney,
       devAddress: pickNonEmptyString(tokenData?.devAddress ?? tokenData?.d_ct, prev?.devAddress),
       devHoldPercent,
+      devMaxBuyPercent,
+      viewerCount,
+      devCreatedTokenCount,
       devHasSold,
       devBuyRatio,
       top10HoldRatio,

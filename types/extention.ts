@@ -78,6 +78,12 @@ export type AutoTradeStrategyBase = {
   maxTweetAgeSeconds?: string;
   minDevHoldPercent: string;
   maxDevHoldPercent: string;
+  minDevMaxBuyPercent?: string;
+  maxDevMaxBuyPercent?: string;
+  minViewerCount?: string;
+  maxViewerCount?: string;
+  minDevCreatedTokenCount?: string;
+  maxDevCreatedTokenCount?: string;
   blockIfDevSell: boolean;
 };
 
@@ -517,6 +523,9 @@ export type UnifiedSignalToken = {
   smartMoney?: number;
   devAddress?: string;
   devHoldPercent?: number;
+  devMaxBuyPercent?: number;
+  viewerCount?: number;
+  devCreatedTokenCount?: number;
   devHasSold?: boolean;
   devBuyRatio?: number;
   top10HoldRatio?: number;
@@ -609,6 +618,9 @@ export type XSniperBuyRecord = {
   createdAtMs?: number;
   devAddress?: string;
   devHoldPercent?: number;
+  devMaxBuyPercent?: number;
+  viewerCount?: number;
+  devCreatedTokenCount?: number;
   devHasSold?: boolean;
   confirmWindowMs?: number;
   confirmMcapChangePct?: number;

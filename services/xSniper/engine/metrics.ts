@@ -19,6 +19,9 @@ export type TokenMetrics = {
   updatedAtMs?: number;
   devAddress?: `0x${string}`;
   devHoldPercent?: number;
+  devMaxBuyPercent?: number;
+  viewerCount?: number;
+  devCreatedTokenCount?: number;
   devHasSold?: boolean;
   priceUsd?: number;
 };
@@ -200,6 +203,49 @@ export const shouldBuyByConfig = (
     if (devHoldPct == null) return false;
     if (devHoldPct > maxDevPct) return false;
   }
+
+  const minDevMaxBuyPct = parseNumber((config as any).minDevMaxBuyPercent);
+  const maxDevMaxBuyPct = parseNumber((config as any).maxDevMaxBuyPercent);
+  const devMaxBuyPct = typeof metrics.devMaxBuyPercent === 'number' && Number.isFinite(metrics.devMaxBuyPercent)
+    ? metrics.devMaxBuyPercent
+    : null;
+  if (minDevMaxBuyPct != null) {
+    if (devMaxBuyPct == null) return false;
+    if (devMaxBuyPct < minDevMaxBuyPct) return false;
+  }
+  if (maxDevMaxBuyPct != null) {
+    if (devMaxBuyPct == null) return false;
+    if (devMaxBuyPct > maxDevMaxBuyPct) return false;
+  }
+
+  const minViewerCount = parseNumber((config as any).minViewerCount);
+  const maxViewerCount = parseNumber((config as any).maxViewerCount);
+  const viewerCount = typeof metrics.viewerCount === 'number' && Number.isFinite(metrics.viewerCount)
+    ? metrics.viewerCount
+    : null;
+  if (minViewerCount != null) {
+    if (viewerCount == null) return false;
+    if (viewerCount < minViewerCount) return false;
+  }
+  if (maxViewerCount != null) {
+    if (viewerCount == null) return false;
+    if (viewerCount > maxViewerCount) return false;
+  }
+
+  const minDevCreatedTokenCount = parseNumber((config as any).minDevCreatedTokenCount);
+  const maxDevCreatedTokenCount = parseNumber((config as any).maxDevCreatedTokenCount);
+  const devCreatedTokenCount = typeof metrics.devCreatedTokenCount === 'number' && Number.isFinite(metrics.devCreatedTokenCount)
+    ? metrics.devCreatedTokenCount
+    : null;
+  if (minDevCreatedTokenCount != null) {
+    if (devCreatedTokenCount == null) return false;
+    if (devCreatedTokenCount < minDevCreatedTokenCount) return false;
+  }
+  if (maxDevCreatedTokenCount != null) {
+    if (devCreatedTokenCount == null) return false;
+    if (devCreatedTokenCount > maxDevCreatedTokenCount) return false;
+  }
+
   if (config.blockIfDevSell && metrics.devHasSold === true) return false;
   return true;
 };
