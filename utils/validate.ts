@@ -683,9 +683,7 @@ export function validateSettings(input: Settings): Settings | null {
     100,
     typeof defaultTrailingStop?.rollingSellPercent === 'number'
       ? defaultTrailingStop.rollingSellPercent
-      : (typeof inputTrailingStop?.sellPercent === 'number'
-        ? inputTrailingStop.sellPercent
-        : (typeof defaultTrailingStop?.sellPercent === 'number' ? defaultTrailingStop.sellPercent : 15))
+      : 15
   );
   const trailingMode = inputTrailingStop?.mode === 'rolling_take_profit' || inputTrailingStop?.mode === 'trailing_stop'
     ? inputTrailingStop.mode

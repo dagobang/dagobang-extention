@@ -119,10 +119,9 @@ export function buildStrategyRollingTakeProfitOrderInputs(input: {
   const rawStep = Number(trailing?.rollingStepPercent);
   const stepPercent = Number.isFinite(rawStep) ? clamp(rawStep, 0.1, 100000) : 30;
   const rawSellPercent = Number(trailing?.rollingSellPercent);
-  const fallbackSellPercent = Number(trailing?.sellPercent);
   const sellPercent = Number.isFinite(rawSellPercent)
     ? clamp(rawSellPercent, 1, 100)
-    : (Number.isFinite(fallbackSellPercent) ? clamp(fallbackSellPercent, 1, 100) : 15);
+    : 15;
   const sellPercentBps = Math.round(sellPercent * 100);
   const triggerPriceUsd = basePriceUsd * (1 + stepPercent / 100);
   if (!(Number.isFinite(triggerPriceUsd) && triggerPriceUsd > 0 && sellPercentBps > 0 && sellPercentBps <= 10000)) return null;

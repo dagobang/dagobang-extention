@@ -388,12 +388,12 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
                           <input
                             type="number"
                             className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
-                            value={rollingSellPercent}
+                            value={trailingSellPercent}
                             disabled={!canEdit || !trailingEnabled}
                             onChange={(e) => {
                               const v = e.target.value;
-                              setRollingSellPercent(v);
-                              commit({ rollingSellPercent: v });
+                              setTrailingSellPercent(v);
+                              commit({ trailingSellPercent: v });
                             }}
                           />
                           <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>
@@ -471,12 +471,12 @@ export function AutoSell({ canEdit, locale, value, onChange }: AutoSellProps) {
                           <input
                             type="number"
                             className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 pr-6 text-[12px] outline-none disabled:opacity-60"
-                            value={trailingSellPercent}
+                            value={rollingSellPercent}
                             disabled={!canEdit || !trailingEnabled}
                             onChange={(e) => {
                               const v = e.target.value;
-                              setTrailingSellPercent(v);
-                              commit({ trailingSellPercent: v });
+                              setRollingSellPercent(v);
+                              commit({ rollingSellPercent: v });
                             }}
                           />
                           <span className="absolute right-2 top-1.5 text-[12px] text-zinc-500">%</span>

@@ -33,7 +33,14 @@ export const tickLimitOrdersForToken = async (input: {
 
   const all = await getLimitOrders();
   const keyAddr = tokenAddress.toLowerCase();
-  const candidates = all.filter((o) => o.chainId === chainId && o.status === 'open' && o.tokenAddress.toLowerCase() === keyAddr);
+  const nowMs = Date.now();
+  const candidates = all.filter((o) => {
+    if (o.chainId !== chainId) return false;
+    if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+    if (!(o.status === 'open' || o.status === 'triggered')) return false;
+    if (typeof o.retryAtMs === 'number' && Number.isFinite(o.retryAtMs) && o.retryAtMs > nowMs) return false;
+    return true;
+  });
   if (!candidates.length) {
     return { triggered: [], executed: [], failed: [] as Array<{ id: string; error: string }> };
   }
@@ -45,20 +52,46 @@ export const tickLimitOrdersForToken = async (input: {
   for (const o of candidates) {
     const prepared = await applyTrailingStopUpdate(o, priceUsd);
     const orderType = normalizeLimitOrderType(prepared.orderType, prepared.side);
-    const hit = hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
+    const hit = prepared.status === 'triggered'
+      ? true
+      : hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
     if (!hit) continue;
 
     triggered.push(o.id);
-    await patchLimitOrder(o.id, { status: 'triggered' as const });
+    if (prepared.status !== 'triggered') {
+      await patchLimitOrder(o.id, { status: 'triggered' as const });
+    }
 
     try {
       const txHash = await executeLimitOrder({ ...prepared, status: 'triggered' }, { priceUsd });
       executed.push(o.id);
-      await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
+      await patchLimitOrder(o.id, {
+        status: 'executed' as const,
+        txHash,
+        retryCount: 0,
+        retryAtMs: undefined,
+        lastError: undefined,
+      });
     } catch (e: any) {
       const msg = typeof e?.message === 'string' ? e.message : String(e);
-      failed.push({ id: o.id, error: msg });
-      await patchLimitOrder(o.id, { status: 'failed' as const, lastError: msg });
+      const nextRetryCount = Math.max(0, Math.floor(Number(prepared.retryCount) || 0)) + 1;
+      if (nextRetryCount <= 2) {
+        const backoffMs = nextRetryCount === 1 ? 1000 : 3000;
+        await patchLimitOrder(o.id, {
+          status: 'open' as const,
+          retryCount: nextRetryCount,
+          retryAtMs: Date.now() + backoffMs,
+          lastError: msg,
+        });
+      } else {
+        failed.push({ id: o.id, error: msg });
+        await patchLimitOrder(o.id, {
+          status: 'failed' as const,
+          retryCount: nextRetryCount,
+          retryAtMs: undefined,
+          lastError: msg,
+        });
+      }
     }
   }
 
