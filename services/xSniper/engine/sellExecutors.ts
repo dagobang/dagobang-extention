@@ -251,7 +251,7 @@ export const createSellExecutors = (deps: {
     percent: number;
     dryRun: boolean;
     reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
-    onReceiptFailed?: () => void | Promise<void>;
+    onReceiptFailed?: (meta?: { reason?: string }) => void | Promise<void>;
     meta: {
       tweetAtMs?: number;
       tweetUrl?: string;
@@ -437,8 +437,9 @@ export const createSellExecutors = (deps: {
               txHash,
               reason: classifySellFailureReason(err, 'receipt'),
             } as any);
+            const reason = classifySellFailureReason(err, 'receipt');
             try {
-              await input.onReceiptFailed?.();
+              await input.onReceiptFailed?.({ reason });
             } catch {
             }
           });

@@ -61,7 +61,7 @@ export const readRapidExitConfig = (strategy: any): RapidExitConfig => {
     Math.floor(
       parseUnknownNumber(strategy?.rapidReceiptRetryCount)
       ?? parseUnknownNumber(strategy?.rapidRetryMaxFailCount)
-      ?? 1,
+      ?? 2,
     ),
     1,
     3,
@@ -150,7 +150,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
     percent: number;
     dryRun: boolean;
     reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
-    onReceiptFailed?: () => void | Promise<void>;
+    onReceiptFailed?: (meta?: { reason?: string }) => void | Promise<void>;
     meta: {
       tweetAtMs?: number;
       tweetUrl?: string;
@@ -224,8 +224,13 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
         targetPortionOfOriginalPct: number;
         percentOfCurrent: number;
         reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
+        onReceiptFailedLocal?: () => void;
       }) => {
-        const markReceiptFailureAndBackoff = (nextPos: RapidExitPosition, nowMs: number) => {
+        const markReceiptFailureAndBackoff = (
+          nextPos: RapidExitPosition,
+          nowMs: number,
+          failReason?: string,
+        ) => {
           const failCount = Math.max(0, Math.floor(Number(nextPos.failCount) || 0)) + 1;
           nextPos.failCount = failCount;
           if (failCount > cfg.maxReceiptRetries) {
@@ -239,7 +244,18 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
             cleanup();
             return;
           }
-          const backoffMs = Math.min(120_000, 30_000 * (2 ** Math.min(2, failCount - 1)));
+          const reason = String(failReason || '').toLowerCase();
+          const isNonceOrAllowance = reason.includes('nonce') || reason.includes('allowance');
+          const isTimeout = reason.includes('timeout');
+          const isRoute = reason.includes('route') || reason.includes('pool') || reason.includes('liquidity') || reason.includes('pair');
+          const backoffPlanMs = isNonceOrAllowance
+            ? [1000, 1500, 2000]
+            : isTimeout
+              ? [1000, 2000, 3000]
+              : isRoute
+                ? [1500, 2500, 3000]
+                : [1000, 2000, 3000];
+          const backoffMs = backoffPlanMs[Math.min(backoffPlanMs.length - 1, failCount - 1)];
           nextPos.nextRetryAtMs = nowMs + backoffMs;
           input.rapidExitByPosKey.set(posKey, nextPos);
         };
@@ -256,15 +272,19 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
           percent: percentOfCurrent,
           dryRun: pos.dryRun,
           reason: inputSell.reason,
-          onReceiptFailed: () => {
+          onReceiptFailed: (meta) => {
             if (input.isPosMarkedManuallyClosed?.(posKey)) return;
+            try {
+              inputSell.onReceiptFailedLocal?.();
+            } catch {
+            }
             const cur = input.rapidExitByPosKey.get(posKey) ?? pos;
             const nowRemaining2 = Number.isFinite(cur.remainingPercent) ? Math.max(0, Math.min(100, Number(cur.remainingPercent))) : 100;
             cur.remainingPercent = Math.max(0, Math.min(100, nowRemaining2 + targetPortion));
             // If the position was cleaned up right after submit-success, restore it into a retryable state.
             cur.evalInProgress = false;
             cur.lastEvalSlot = -1;
-            markReceiptFailureAndBackoff(cur, Date.now());
+            markReceiptFailureAndBackoff(cur, Date.now(), meta?.reason);
           },
           meta: {
             tweetAtMs: pos.tweetAtMs,
@@ -297,6 +317,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       const sellPercentOfOriginal = async (
         portionOfOriginalPct: number,
         reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop',
+        opts?: { onReceiptFailedLocal?: () => void },
       ) => {
         const nowRemaining = Number.isFinite(pos.remainingPercent) ? Math.max(0, Math.min(100, Number(pos.remainingPercent))) : 100;
         if (!(nowRemaining > 0)) return false;
@@ -307,11 +328,13 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
           targetPortionOfOriginalPct: targetPortion,
           percentOfCurrent,
           reason,
+          onReceiptFailedLocal: opts?.onReceiptFailedLocal,
         });
       };
       const sellPercentOfRemaining = async (
         percentOfRemaining: number,
         reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop',
+        opts?: { onReceiptFailedLocal?: () => void },
       ) => {
         const nowRemaining = Number.isFinite(pos.remainingPercent) ? Math.max(0, Math.min(100, Number(pos.remainingPercent))) : 100;
         if (!(nowRemaining > 0)) return false;
@@ -323,6 +346,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
           targetPortionOfOriginalPct: targetPortion,
           percentOfCurrent,
           reason,
+          onReceiptFailedLocal: opts?.onReceiptFailedLocal,
         });
       };
 
@@ -340,23 +364,51 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       }
 
       if (!armed && pnlPct >= cfg.takeProfitTriggerPct) {
+        const prevArmed = pos.armed === true;
+        const prevLastTakeProfitPnlPct = Number.isFinite(pos.lastTakeProfitPnlPct)
+          ? Number(pos.lastTakeProfitPnlPct)
+          : undefined;
         const soldOriginalPct = clamp(100 - remainingPercent, 0, 100);
         const protectLeftPct = clamp(cfg.protectQuotaPct - soldOriginalPct, 0, 100);
         const sold = protectLeftPct > 0
-          ? await sellPercentOfOriginal(Math.min(cfg.takeProfitBatchPct, protectLeftPct), 'rapid_take_profit')
-          : await sellPercentOfRemaining(cfg.tailSellPctOfRemaining, 'rapid_take_profit');
+          ? await sellPercentOfOriginal(Math.min(cfg.takeProfitBatchPct, protectLeftPct), 'rapid_take_profit', {
+            onReceiptFailedLocal: () => {
+              pos.armed = prevArmed;
+              pos.lastTakeProfitPnlPct = prevLastTakeProfitPnlPct;
+            },
+          })
+          : await sellPercentOfRemaining(cfg.tailSellPctOfRemaining, 'rapid_take_profit', {
+            onReceiptFailedLocal: () => {
+              pos.armed = prevArmed;
+              pos.lastTakeProfitPnlPct = prevLastTakeProfitPnlPct;
+            },
+          });
         if (sold) {
           pos.armed = true;
           pos.lastTakeProfitPnlPct = pnlPct;
         }
       } else if (armed) {
+        const prevArmed = pos.armed === true;
+        const prevLastTakeProfitPnlPct = Number.isFinite(pos.lastTakeProfitPnlPct)
+          ? Number(pos.lastTakeProfitPnlPct)
+          : undefined;
         const lastMilestone = Number.isFinite(pos.lastTakeProfitPnlPct) ? Number(pos.lastTakeProfitPnlPct) : cfg.takeProfitTriggerPct;
         if (pnlPct >= lastMilestone + cfg.takeProfitStepUpPct) {
           const soldOriginalPct = clamp(100 - remainingPercent, 0, 100);
           const protectLeftPct = clamp(cfg.protectQuotaPct - soldOriginalPct, 0, 100);
           const sold = protectLeftPct > 0
-            ? await sellPercentOfOriginal(Math.min(cfg.takeProfitBatchPct, protectLeftPct), 'rapid_take_profit')
-            : await sellPercentOfRemaining(cfg.tailSellPctOfRemaining, 'rapid_take_profit');
+            ? await sellPercentOfOriginal(Math.min(cfg.takeProfitBatchPct, protectLeftPct), 'rapid_take_profit', {
+              onReceiptFailedLocal: () => {
+                pos.armed = prevArmed;
+                pos.lastTakeProfitPnlPct = prevLastTakeProfitPnlPct;
+              },
+            })
+            : await sellPercentOfRemaining(cfg.tailSellPctOfRemaining, 'rapid_take_profit', {
+              onReceiptFailedLocal: () => {
+                pos.armed = prevArmed;
+                pos.lastTakeProfitPnlPct = prevLastTakeProfitPnlPct;
+              },
+            });
           if (sold) pos.lastTakeProfitPnlPct = pnlPct;
         }
       }
