@@ -1,5 +1,6 @@
 import type { Settings, XSniperBuyRecord } from '@/types/extention';
 import { isTelegramConfigured, telegramSendMessage, telegramSendMessageWithOptions, type TelegramApiConfig } from './api';
+import { chainNames, getNativeSymbol } from '@/constants/chains';
 
 function shortAddr(addr: string | undefined): string {
   const v = String(addr || '').trim();
@@ -112,25 +113,66 @@ export function createTelegramNotifier(deps: {
   const notifyTradeSuccess = async (input: {
     source?: string;
     side?: 'buy' | 'sell';
+    chainId?: number;
     tokenAddress?: string;
     tokenName?: string;
     tokenSymbol?: string;
+    amountNative?: string | number;
+    sellPercent?: number;
+    strategyOrderCount?: number;
     marketCapUsd?: number | null;
     txHash?: string;
     submitElapsedMs?: number;
     receiptElapsedMs?: number;
   }) => {
     const side = input.side === 'sell' ? '卖出' : '买入';
+    const chainId = Number(input.chainId);
+    const hasChain = Number.isFinite(chainId) && chainId > 0;
+    const chainText = hasChain
+      ? `${String(chainNames[chainId] || chainId).toUpperCase()} (${getNativeSymbol(chainId)})`
+      : '-';
+    const amountText = (() => {
+      if (input.side !== 'buy') return '';
+      const raw = String(input.amountNative ?? '').trim();
+      if (!raw) return '';
+      if (hasChain) return `买入金额: ${raw} ${getNativeSymbol(chainId)}`;
+      return `买入金额: ${raw}`;
+    })();
+    const sellText = (() => {
+      if (input.side !== 'sell') return '';
+      const n = Number(input.sellPercent);
+      if (!Number.isFinite(n) || n <= 0) return '';
+      return `卖出比例: ${Math.floor(n)}%`;
+    })();
+    const strategyText = (() => {
+      const n = Number(input.strategyOrderCount);
+      if (!Number.isFinite(n) || n <= 0) return '';
+      return `策略挂单: 已创建 ${Math.floor(n)} 个`;
+    })();
     const text = [
       `成功: ${side}`,
       `来源: ${input.source || '-'}`,
+      `链: ${chainText}`,
       `代币: ${tokenLabel(input)}`,
       `地址: ${shortAddr(input.tokenAddress) || '-'}`,
+      amountText,
+      sellText,
+      strategyText,
       `市值: ${formatUsd(input.marketCapUsd)}`,
       `Tx: ${input.txHash || '-'}`,
       timingLine(input.submitElapsedMs, input.receiptElapsedMs).trim(),
     ].filter(Boolean).join('\n');
-    return await sendText(text, (settings) => !!(settings as any).telegram?.notifyTradeSuccess);
+    const rows: Array<Array<{ text: string; callbackData: string }>> = [];
+    const tokenAddress = String(input.tokenAddress || '').trim();
+    if (/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
+      rows.push([{ text: '🔍 查看代币', callbackData: `act:token:${tokenAddress}` }]);
+    }
+    rows.push([{ text: '↩️ 返回菜单', callbackData: 'act:menu' }]);
+    return await sendText(
+      text,
+      (settings) => !!(settings as any).telegram?.notifyTradeSuccess,
+      { inlineKeyboard: rows }
+    );
   };
 
   const notifyRetrying = async (input: {

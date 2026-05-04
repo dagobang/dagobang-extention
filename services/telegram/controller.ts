@@ -4,12 +4,24 @@ import { SettingsService } from '@/services/settings';
 import { WalletService } from '@/services/wallet';
 import { TradeService } from '@/services/trade';
 import { TokenService } from '@/services/token';
-import { cancelLimitOrder, listLimitOrders } from '@/services/limitOrders/store';
+import {
+  buildStrategyRollingTakeProfitOrderInputs,
+  buildStrategySellOrderInputs,
+  buildStrategyTrailingSellOrderInputs,
+  getAdvancedAutoSellMode,
+} from '@/services/limitOrders/advancedAutoSell';
+import {
+  cancelAllSellLimitOrdersForToken,
+  cancelLimitOrder,
+  createLimitOrder,
+  listLimitOrders,
+} from '@/services/limitOrders/store';
 import FourmemeAPI from '@/services/api/fourmeme';
 import type { TokenInfo } from '@/types/token';
 import type { XSniperBuyRecord } from '@/types/extention';
 import { ZERO_ADDRESS } from '@/services/trade/tradeTypes';
 import { loadXSniperHistory } from '@/services/xSniper/xSniperHistory';
+import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import { createTelegramPoller } from './poller';
 import { isTelegramConfigured, telegramSendMessageWithOptions, type TelegramApiConfig } from './api';
 import { formatCountShort } from '@/utils/format';
@@ -30,6 +42,7 @@ export function createTelegramController(deps: {
   fetchGmgnHoldings?: (chain: string, walletAddress: string) => Promise<any[]>;
   fetchGmgnHoldingDetail?: (chain: string, walletAddress: string, tokenAddress: string) => Promise<any | null>;
 }) {
+  const { getEntryPriceUsd } = createTokenInfoResolvers();
   const pendingInputByChat = new Map<
     string,
     'buyAmountNative' | 'buyNewCaCount' | 'newCoinBuyAmountNative' | 'newCoinBuyNewCaCount' | 'quickBuyPresets' | 'quickSellPresets'
@@ -248,7 +261,7 @@ export function createTelegramController(deps: {
     while (sell4.length < 4) sell4.push(sell4[sell4.length - 1] || '50');
     return [
       [
-        { text: '📋 挂单', callbackData: 'act:orders' },
+        { text: '持仓', callbackData: 'act:holdings' },
         { text: '🔄 刷新', callbackData: `act:token:${tokenAddress}` },
       ],
       [
@@ -708,8 +721,76 @@ export function createTelegramController(deps: {
         await deps.broadcastTradeSuccess({ type: 'bg:tradeSubmitted', source: 'telegram', side: 'buy', chainId: settings.chainId, tokenAddress, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs });
       },
     });
-    await deps.broadcastTradeSuccess({ type: 'bg:tradeSuccess', source: 'telegram', side: 'buy', chainId: settings.chainId, tokenAddress, txHash: (rsp as any)?.txHash, submitElapsedMs: (rsp as any)?.submitElapsedMs, receiptElapsedMs: (rsp as any)?.receiptElapsedMs, totalElapsedMs: (rsp as any)?.totalElapsedMs, broadcastVia: (rsp as any)?.broadcastVia, broadcastUrl: (rsp as any)?.broadcastUrl, isBundle: (rsp as any)?.isBundle });
-    await deps.notifier?.notifyQuickTrade?.(`Telegram 快速买入成功\nToken: ${tokenAddress}\nTx: ${(rsp as any)?.txHash || '-'}`);
+    let createdSellOrders = 0;
+    const advancedAutoSell = (settings as any)?.advancedAutoSell;
+    if (advancedAutoSell?.enabled === true) {
+      try {
+        const entryPriceUsd = await getEntryPriceUsd(
+          settings.chainId,
+          tokenAddress,
+          tokenInfo,
+          null,
+          null,
+        );
+        if (entryPriceUsd != null && entryPriceUsd > 0) {
+          const fromAddress = status.address ? (status.address as `0x${string}`) : undefined;
+          await TradeService.approveMaxForSellIfNeeded(settings.chainId, tokenAddress, tokenInfo, { fromAddress });
+          await cancelAllSellLimitOrdersForToken(settings.chainId, tokenAddress, fromAddress);
+          const baseOrders = buildStrategySellOrderInputs({
+            config: advancedAutoSell,
+            chainId: settings.chainId,
+            tokenAddress,
+            tokenSymbol: tokenInfo.symbol,
+            tokenInfo,
+            basePriceUsd: entryPriceUsd,
+          });
+          const trailingMode = (advancedAutoSell as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
+          const isRolling = getAdvancedAutoSellMode(advancedAutoSell) === 'rolling_take_profit';
+          const specialOrder = trailingMode === 'immediate'
+            ? (isRolling
+              ? buildStrategyRollingTakeProfitOrderInputs({
+                config: advancedAutoSell,
+                chainId: settings.chainId,
+                tokenAddress,
+                tokenSymbol: tokenInfo.symbol,
+                tokenInfo,
+                basePriceUsd: entryPriceUsd,
+                entryPriceUsd,
+              })
+              : buildStrategyTrailingSellOrderInputs({
+                config: advancedAutoSell,
+                chainId: settings.chainId,
+                tokenAddress,
+                tokenSymbol: tokenInfo.symbol,
+                tokenInfo,
+                basePriceUsd: entryPriceUsd,
+              }))
+            : null;
+          const allOrders = specialOrder ? [...baseOrders, specialOrder] : baseOrders;
+          for (const item of allOrders) {
+            await createLimitOrder({ ...item, fromAddress });
+            createdSellOrders += 1;
+          }
+        }
+      } catch {
+      }
+    }
+    await deps.broadcastTradeSuccess({
+      type: 'bg:tradeSuccess',
+      source: 'telegram',
+      side: 'buy',
+      chainId: settings.chainId,
+      tokenAddress,
+      amountNative,
+      strategyOrderCount: createdSellOrders,
+      txHash: (rsp as any)?.txHash,
+      submitElapsedMs: (rsp as any)?.submitElapsedMs,
+      receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
+      totalElapsedMs: (rsp as any)?.totalElapsedMs,
+      broadcastVia: (rsp as any)?.broadcastVia,
+      broadcastUrl: (rsp as any)?.broadcastUrl,
+      isBundle: (rsp as any)?.isBundle,
+    });
     return { ok: true, ...rsp };
   };
 
@@ -738,8 +819,21 @@ export function createTelegramController(deps: {
         await deps.broadcastTradeSuccess({ type: 'bg:tradeSubmitted', source: 'telegram', side: 'sell', chainId: settings.chainId, tokenAddress, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs });
       },
     });
-    await deps.broadcastTradeSuccess({ type: 'bg:tradeSuccess', source: 'telegram', side: 'sell', chainId: settings.chainId, tokenAddress, txHash: (rsp as any)?.txHash, submitElapsedMs: (rsp as any)?.submitElapsedMs, receiptElapsedMs: (rsp as any)?.receiptElapsedMs, totalElapsedMs: (rsp as any)?.totalElapsedMs, broadcastVia: (rsp as any)?.broadcastVia, broadcastUrl: (rsp as any)?.broadcastUrl, isBundle: (rsp as any)?.isBundle });
-    await deps.notifier?.notifyQuickTrade?.(`Telegram 快速卖出成功\nToken: ${tokenAddress}\n比例: ${pct}%\nTx: ${(rsp as any)?.txHash || '-'}`);
+    await deps.broadcastTradeSuccess({
+      type: 'bg:tradeSuccess',
+      source: 'telegram',
+      side: 'sell',
+      chainId: settings.chainId,
+      tokenAddress,
+      sellPercent: pct,
+      txHash: (rsp as any)?.txHash,
+      submitElapsedMs: (rsp as any)?.submitElapsedMs,
+      receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
+      totalElapsedMs: (rsp as any)?.totalElapsedMs,
+      broadcastVia: (rsp as any)?.broadcastVia,
+      broadcastUrl: (rsp as any)?.broadcastUrl,
+      isBundle: (rsp as any)?.isBundle,
+    });
     return { ok: true, ...rsp };
   };
 

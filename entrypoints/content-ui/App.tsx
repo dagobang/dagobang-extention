@@ -876,10 +876,13 @@ export default function App() {
         playAutoTradePreset(preset);
         return;
       }
-      if (message.type === 'bg:newCoinSniper:matched') {
+      if (message.type === 'bg:newCoinSniper:order') {
+        const record = message?.record as any;
         const newCoinSnipe = (settingsRef.current?.autoTrade as any)?.newCoinSnipe;
         if (newCoinSnipe?.playSound === false) return;
-        const preset = (message?.preset ?? newCoinSnipe?.soundPreset ?? autoTradeSoundPreset) as TradeSuccessSoundPreset;
+        // Only play once when a real buy order record is created.
+        if (record?.side !== 'buy' || record?.reason) return;
+        const preset = (newCoinSnipe?.soundPreset ?? autoTradeSoundPreset) as TradeSuccessSoundPreset;
         ensureAutoTradeAudioReady();
         playAutoTradePreset(preset);
         return;
