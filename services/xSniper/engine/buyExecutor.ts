@@ -33,6 +33,17 @@ const resolveEntryMcapAnchor = (input: {
 };
 
 const terminalFailedBuyKeys = new Map<string, number>();
+const globalBuyInFlightKeys = new Set<string>();
+const globalBoughtLockKeys = new Set<string>();
+
+const buildGlobalBuyLockKey = (input: {
+  chainId: number;
+  tokenAddress: `0x${string}`;
+  walletAddress?: `0x${string}`;
+}) => {
+  const walletKey = input.walletAddress ? String(input.walletAddress).toLowerCase() : 'all-wallets';
+  return `${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}`;
+};
 
 export const tryAutoBuyOnce = async (input: {
   chainId: number;
@@ -101,13 +112,22 @@ export const tryAutoBuyOnce = async (input: {
       ? (String(status.address).toLowerCase() as `0x${string}`)
       : undefined;
   const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun, walletAddress: tradeFromAddress });
+  const globalLockKey = !dryRun
+    ? buildGlobalBuyLockKey({ chainId: input.chainId, tokenAddress: input.tokenAddress, walletAddress: tradeFromAddress })
+    : null;
   const emitBuyFailure = (reason: string, extras?: {
     buyAmountNative?: number;
     metrics?: TokenMetrics;
     tokenInfo?: TokenInfo | null;
     confirm?: { windowMs?: number; stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number } };
   }) => {
-    if (reason === 'buy_skipped_recently_bought' || reason === 'buy_skipped_in_flight' || reason === 'buy_skipped_terminal_failed') return;
+    if (
+      reason === 'buy_skipped_recently_bought'
+      || reason === 'buy_skipped_in_flight'
+      || reason === 'buy_skipped_terminal_failed'
+      || reason === 'buy_skipped_global_in_flight'
+      || reason === 'buy_skipped_global_locked'
+    ) return;
     if (dryRun) {
       const m = extras?.metrics ?? input.metrics;
       console.log('XSniperTrade dry-run buy skipped', {
@@ -190,7 +210,16 @@ export const tryAutoBuyOnce = async (input: {
     emitBuyFailure('buy_skipped_in_flight');
     return false;
   }
+  if (globalLockKey && globalBoughtLockKeys.has(globalLockKey)) {
+    emitBuyFailure('buy_skipped_global_locked');
+    return false;
+  }
+  if (globalLockKey && globalBuyInFlightKeys.has(globalLockKey)) {
+    emitBuyFailure('buy_skipped_global_in_flight');
+    return false;
+  }
   input.buyInFlight.add(key);
+  if (globalLockKey) globalBuyInFlightKeys.add(globalLockKey);
   try {
     const amountNumber = (typeof input.amountNativeOverride === 'number' && Number.isFinite(input.amountNativeOverride)
       ? input.amountNativeOverride
@@ -530,6 +559,7 @@ export const tryAutoBuyOnce = async (input: {
       fallbackMcapUsd: refreshedMetrics.marketCapUsd ?? null,
     });
     input.boughtOnceAtMs.set(key, Date.now());
+    if (globalLockKey) globalBoughtLockKeys.add(globalLockKey);
     terminalFailedBuyKeys.delete(key);
     void input.persistBoughtOnce();
     input.onStateChanged();
@@ -614,5 +644,6 @@ export const tryAutoBuyOnce = async (input: {
     return true;
   } finally {
     input.buyInFlight.delete(key);
+    if (globalLockKey) globalBuyInFlightKeys.delete(globalLockKey);
   }
 };
