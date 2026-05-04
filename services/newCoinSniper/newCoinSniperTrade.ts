@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import { SettingsService } from '@/services/settings';
 import { defaultSettings } from '@/utils/defaults';
-import type { NewCoinXmodeSnipeTask, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
+import { TRADE_SUCCESS_SOUND_PRESETS, type NewCoinXmodeSnipeTask, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import { maybeEvaluateDryRunAutoSell as maybeEvaluateDryRunAutoSellFromMod, type DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
 import { maybeEvaluateRapidExitAutoSell as maybeEvaluateRapidExitAutoSellFromMod, registerRapidExitPosition as registerRapidExitPositionFromMod, type RapidExitPosition } from '@/services/xSniper/engine/rapidExitAutoSell';
@@ -228,6 +228,18 @@ export const createNewCoinSniperTrade = (deps: {
     }
   };
 
+  const broadcastMatchedSound = async (strategy: any, tokenAddress?: `0x${string}`) => {
+    if (strategy?.playSound === false) return;
+    const rawPreset = (strategy as any)?.soundPreset;
+    const preset = TRADE_SUCCESS_SOUND_PRESETS.includes(rawPreset) ? rawPreset : 'Boom';
+    await broadcastToTabs({
+      type: 'bg:newCoinSniper:matched',
+      source: 'newCoinSniper',
+      tokenAddress,
+      preset,
+    });
+  };
+
   const normalizeAutoTrade = (input: any) => {
     const defaults = defaultSettings().autoTrade;
     const merged = !input ? defaults : {
@@ -396,6 +408,9 @@ export const createNewCoinSniperTrade = (deps: {
       createdAtMs: record.createdAtMs,
       devAddress: record.devAddress,
       devHoldPercent: record.devHoldPercent,
+      devMaxBuyPercent: record.devMaxBuyPercent,
+      viewerCount: record.viewerCount,
+      devCreatedTokenCount: record.devCreatedTokenCount,
       devHasSold: record.devHasSold,
       confirmWindowMs: record.confirmWindowMs,
       confirmMcapChangePct: record.confirmMcapChangePct,
@@ -795,6 +810,7 @@ export const createNewCoinSniperTrade = (deps: {
     strategy: any;
     chainId: number;
     settings: any;
+    onMatched?: (tokenAddress?: `0x${string}`) => Promise<void> | void;
   }) => {
     const tasks = normalizeXmodeTasks(input.strategy?.xmodeTasks).filter((x) => x.enabled !== false);
     if (!tasks.length) return;
@@ -803,6 +819,10 @@ export const createNewCoinSniperTrade = (deps: {
     for (const task of tasks) {
       const candidates = pickTaskCandidates(input.signal, input.strategy, task);
       if (!candidates.length) continue;
+      const firstTokenAddress = candidates[0]?.m?.tokenAddress;
+      if (firstTokenAddress) {
+        await input.onMatched?.(firstTokenAddress);
+      }
       for (const { t, m } of candidates) {
         if (!m?.tokenAddress) continue;
         const tokenAddress = m.tokenAddress;
@@ -947,11 +967,18 @@ export const createNewCoinSniperTrade = (deps: {
       const effectiveAutoModeEnabled = autoModeEnabled && !taskModeEnabled;
       if (!effectiveAutoModeEnabled && !effectiveTaskModeEnabled) return;
       if (effectiveTaskModeEnabled) {
+        let matchedSoundPlayed = false;
+        const playMatchedSoundOnce = async (tokenAddress?: `0x${string}`) => {
+          if (matchedSoundPlayed) return;
+          matchedSoundPlayed = true;
+          await broadcastMatchedSound(strategy, tokenAddress);
+        };
         await executeXmodeTaskBuys({
           signal,
           strategy,
           chainId: settings.chainId,
           settings,
+          onMatched: playMatchedSoundOnce,
         });
       }
       if (!effectiveAutoModeEnabled) return;
@@ -960,6 +987,9 @@ export const createNewCoinSniperTrade = (deps: {
       if (perSignalMax <= 0) return;
 
       const picked = pickCandidates(signal, strategy);
+      if (picked.length) {
+        await broadcastMatchedSound(strategy, picked[0]?.m?.tokenAddress);
+      }
       let boughtCount = 0;
       const dryRun = strategy?.dryRun === true;
       for (const { t, m } of picked) {

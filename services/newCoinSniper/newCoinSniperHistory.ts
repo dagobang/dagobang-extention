@@ -33,6 +33,9 @@ export type NewCoinSniperOrderRecord = {
   createdAtMs?: number;
   devAddress?: string;
   devHoldPercent?: number;
+  devMaxBuyPercent?: number;
+  viewerCount?: number;
+  devCreatedTokenCount?: number;
   devHasSold?: boolean;
   confirmWindowMs?: number;
   confirmMcapChangePct?: number;

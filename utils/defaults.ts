@@ -291,6 +291,8 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
     enabled: false,
     taskModeEnabled: true,
     dryRun: true,
+    playSound: true,
+    soundPreset: 'Boom',
     dryRunBuyDelayMs: '1000',
     dryRunSellDelayMs: '2000',
     autoSellEnabled: true,

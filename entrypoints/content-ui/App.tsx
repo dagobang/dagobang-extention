@@ -876,6 +876,14 @@ export default function App() {
         playAutoTradePreset(preset);
         return;
       }
+      if (message.type === 'bg:newCoinSniper:matched') {
+        const newCoinSnipe = (settingsRef.current?.autoTrade as any)?.newCoinSnipe;
+        if (newCoinSnipe?.playSound === false) return;
+        const preset = (message?.preset ?? newCoinSnipe?.soundPreset ?? autoTradeSoundPreset) as TradeSuccessSoundPreset;
+        ensureAutoTradeAudioReady();
+        playAutoTradePreset(preset);
+        return;
+      }
       if (message.type === 'bg:tradeSuccess') {
         const source = String(message?.source || '');
         const isAutoSource = source === 'limitOrder' || source === 'xsniper' || source === 'tokenSniper';

@@ -623,6 +623,14 @@ export function validateSettings(input: Settings): Settings | null {
     soundPreset: tokenSnipeSoundPreset,
     tasks: tokenSnipeTasks,
   };
+  const inputNewCoinSnipe = (inputAutoTrade as any)?.newCoinSnipe ?? {};
+  const defaultNewCoinSnipe = (defaultAutoTrade as any).newCoinSnipe ?? {};
+  const newCoinSnipePlaySound = typeof inputNewCoinSnipe?.playSound === 'boolean'
+    ? inputNewCoinSnipe.playSound
+    : (defaultNewCoinSnipe.playSound !== false);
+  const newCoinSnipeSoundPreset = TRADE_SUCCESS_SOUND_PRESETS.includes((inputNewCoinSnipe as any)?.soundPreset)
+    ? (inputNewCoinSnipe as any).soundPreset
+    : (((defaultNewCoinSnipe as any)?.soundPreset ?? 'Boom') as any);
 
   const autoTrade: AutoTradeConfig = {
     takeProfitMultiple: typeof inputAutoTrade?.takeProfitMultiple === 'string'
@@ -642,8 +650,10 @@ export function validateSettings(input: Settings): Settings | null {
     },
     twitterSnipe,
     newCoinSnipe: {
-      ...((defaultAutoTrade as any).newCoinSnipe ?? {}),
-      ...((inputAutoTrade as any)?.newCoinSnipe ?? {}),
+      ...defaultNewCoinSnipe,
+      ...inputNewCoinSnipe,
+      playSound: newCoinSnipePlaySound,
+      soundPreset: newCoinSnipeSoundPreset,
     },
     tokenSnipe,
   };

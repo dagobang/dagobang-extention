@@ -139,6 +139,8 @@ export type AutoTradeNewCoinSnipeConfig = Omit<
   | 'deleteTweetPlaySound'
   | 'deleteTweetSoundPreset'
 > & {
+  playSound?: boolean;
+  soundPreset?: TradeSuccessSoundPreset;
   signalSources?: Array<'new_pool' | 'token_update'>;
   platforms?: string[];
   taskModeEnabled?: boolean;

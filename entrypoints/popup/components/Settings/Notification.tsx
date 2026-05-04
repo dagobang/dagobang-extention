@@ -15,6 +15,8 @@ export function Notification({ settingsDraft, setSettingsDraft, tt }: SettingsDr
   const tradeSuccessSoundPresetSell = isPreset(settingsDraft.tradeSuccessSoundPresetSell) ? settingsDraft.tradeSuccessSoundPresetSell : 'Coins';
   const tokenSnipeSoundEnabled = settingsDraft.autoTrade.tokenSnipe?.playSound !== false;
   const tokenSnipeSoundPreset = isPreset(settingsDraft.autoTrade.tokenSnipe?.soundPreset) ? settingsDraft.autoTrade.tokenSnipe.soundPreset : 'Boom';
+  const newCoinSnipeSoundEnabled = settingsDraft.autoTrade.newCoinSnipe?.playSound !== false;
+  const newCoinSnipeSoundPreset = isPreset(settingsDraft.autoTrade.newCoinSnipe?.soundPreset) ? settingsDraft.autoTrade.newCoinSnipe.soundPreset : 'Boom';
   const xSniperTriggerSoundEnabled = settingsDraft.autoTrade.triggerSound?.enabled !== false;
   const xSniperTriggerSoundPreset = isPreset(settingsDraft.autoTrade.triggerSound?.preset) ? settingsDraft.autoTrade.triggerSound.preset : 'Boom';
   const xSniperDeleteTweetSoundEnabled = settingsDraft.autoTrade.twitterSnipe?.deleteTweetPlaySound !== false;
@@ -26,6 +28,7 @@ export function Notification({ settingsDraft, setSettingsDraft, tt }: SettingsDr
   const buySelectValue = tradeSuccessSoundEnabled ? tradeSuccessSoundPresetBuy : OFF_VALUE;
   const sellSelectValue = tradeSuccessSoundEnabled ? tradeSuccessSoundPresetSell : OFF_VALUE;
   const tokenSnipeSelectValue = tokenSnipeSoundEnabled ? tokenSnipeSoundPreset : OFF_VALUE;
+  const newCoinSnipeSelectValue = newCoinSnipeSoundEnabled ? newCoinSnipeSoundPreset : OFF_VALUE;
   const xSniperTriggerSelectValue = xSniperTriggerSoundEnabled ? xSniperTriggerSoundPreset : OFF_VALUE;
   const xSniperDeleteTweetSelectValue = xSniperDeleteTweetSoundEnabled ? xSniperDeleteTweetSoundPreset : OFF_VALUE;
 
@@ -271,6 +274,64 @@ export function Notification({ settingsDraft, setSettingsDraft, tt }: SettingsDr
                 onClick={() => {
                   if (xSniperTriggerSelectValue === OFF_VALUE) return;
                   play(xSniperTriggerSoundPreset);
+                }}
+                title={tt('popup.settings.previewSound')}
+              >
+                <Play size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[14px] text-zinc-400">{tt('contentUi.autoTradeStrategy.newCoinSnipe')} · {tt('contentUi.autoTradeStrategy.sectionSound')}</div>
+            <div className="flex items-center gap-2">
+              <select
+                className="flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+                value={newCoinSnipeSelectValue}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === OFF_VALUE) {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      autoTrade: {
+                        ...s.autoTrade,
+                        newCoinSnipe: {
+                          ...s.autoTrade.newCoinSnipe,
+                          playSound: false,
+                        },
+                      },
+                    }));
+                    return;
+                  }
+                  const next = v as TradeSuccessSoundPreset;
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    autoTrade: {
+                      ...s.autoTrade,
+                      newCoinSnipe: {
+                        ...s.autoTrade.newCoinSnipe,
+                        playSound: true,
+                        soundPreset: next,
+                      },
+                    },
+                  }));
+                  play(next);
+                }}
+              >
+                <option value={OFF_VALUE}>{tt('popup.settings.tradeSuccessSoundOff')}</option>
+                {TRADE_SUCCESS_SOUND_PRESETS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 hover:bg-zinc-800 disabled:opacity-50"
+                disabled={newCoinSnipeSelectValue === OFF_VALUE}
+                onClick={() => {
+                  if (newCoinSnipeSelectValue === OFF_VALUE) return;
+                  play(newCoinSnipeSoundPreset);
                 }}
                 title={tt('popup.settings.previewSound')}
               >
