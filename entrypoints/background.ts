@@ -165,9 +165,13 @@ export default defineBackground(() => {
         await telegramNotifier.notifyTradeSuccess({
           source: payload?.source,
           side: payload?.side,
+          chainId: payload?.chainId,
           tokenAddress: payload?.tokenAddress,
           tokenName: brief.tokenName,
           tokenSymbol: brief.tokenSymbol,
+          amountNative: payload?.amountNative,
+          sellPercent: payload?.sellPercent,
+          strategyOrderCount: payload?.strategyOrderCount,
           marketCapUsd: brief.marketCapUsd,
           txHash: payload?.txHash,
           submitElapsedMs: payload?.submitElapsedMs,
