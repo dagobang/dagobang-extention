@@ -420,9 +420,10 @@ export const createXSniperTrade = (deps: {
     };
   };
 
-  const getKey = (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean }) => {
+  const getKey = (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean; walletAddress?: `0x${string}` }) => {
     const dry = opts?.dry === true;
-    return `${dry ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}:full`;
+    const walletKey = !dry && opts?.walletAddress ? String(opts.walletAddress).toLowerCase() : 'all-wallets';
+    return `${dry ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}:${walletKey}:full`;
   };
 
   const { fetchTokenInfoFresh, buildGenericTokenInfo, getEntryPriceUsd } = createTokenInfoResolvers();

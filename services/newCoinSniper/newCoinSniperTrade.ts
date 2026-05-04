@@ -261,9 +261,10 @@ export const createNewCoinSniperTrade = (deps: {
     return merged;
   };
 
-  const getKey = (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean }) => {
+  const getKey = (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean; walletAddress?: `0x${string}` }) => {
     const dry = opts?.dry === true;
-    return `${dry ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}:new-coin`;
+    const walletKey = !dry && opts?.walletAddress ? String(opts.walletAddress).toLowerCase() : 'all-wallets';
+    return `${dry ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}:${walletKey}:new-coin`;
   };
 
   const loadBoughtOnceIfNeeded = async () => {

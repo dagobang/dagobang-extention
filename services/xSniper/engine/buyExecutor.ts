@@ -32,6 +32,8 @@ const resolveEntryMcapAnchor = (input: {
   return sanitizeMarketCapUsd(input.fallbackMcapUsd);
 };
 
+const terminalFailedBuyKeys = new Map<string, number>();
+
 export const tryAutoBuyOnce = async (input: {
   chainId: number;
   tokenAddress: `0x${string}`;
@@ -45,7 +47,7 @@ export const tryAutoBuyOnce = async (input: {
   onStateChanged: () => void;
   loadBoughtOnceIfNeeded: () => Promise<void>;
   persistBoughtOnce: () => Promise<void>;
-  getKey: (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean }) => string;
+  getKey: (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean; walletAddress?: `0x${string}` }) => string;
   boughtOnceAtMs: Map<string, number>;
   buyInFlight: Set<string>;
   computeWsConfirm: (tokenAddress: `0x${string}`, nowMs: number, strategy: any) => {
@@ -93,14 +95,19 @@ export const tryAutoBuyOnce = async (input: {
 }) => {
   await input.loadBoughtOnceIfNeeded();
   const dryRun = input.strategy?.dryRun === true;
-  const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun });
+  const status = dryRun ? null : await WalletService.getStatus();
+  const tradeFromAddress =
+    !dryRun && status?.address
+      ? (String(status.address).toLowerCase() as `0x${string}`)
+      : undefined;
+  const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun, walletAddress: tradeFromAddress });
   const emitBuyFailure = (reason: string, extras?: {
     buyAmountNative?: number;
     metrics?: TokenMetrics;
     tokenInfo?: TokenInfo | null;
     confirm?: { windowMs?: number; stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number } };
   }) => {
-    if (reason === 'buy_skipped_recently_bought' || reason === 'buy_skipped_in_flight') return;
+    if (reason === 'buy_skipped_recently_bought' || reason === 'buy_skipped_in_flight' || reason === 'buy_skipped_terminal_failed') return;
     if (dryRun) {
       const m = extras?.metrics ?? input.metrics;
       console.log('XSniperTrade dry-run buy skipped', {
@@ -173,6 +180,10 @@ export const tryAutoBuyOnce = async (input: {
   };
   if (input.boughtOnceAtMs.has(key)) {
     emitBuyFailure('buy_skipped_recently_bought');
+    return false;
+  }
+  if (!dryRun && terminalFailedBuyKeys.has(key)) {
+    emitBuyFailure('buy_skipped_terminal_failed');
     return false;
   }
   if (input.buyInFlight.has(key)) {
@@ -248,15 +259,10 @@ export const tryAutoBuyOnce = async (input: {
       return false;
     }
 
-    const status = await WalletService.getStatus();
-    if (!dryRun && (status.locked || !status.address)) {
+    if (!dryRun && (!status || status.locked || !status.address)) {
       emitBuyFailure('wallet_locked', { buyAmountNative: amountNumber, confirm });
       return false;
     }
-    const tradeFromAddress =
-      !dryRun && status.address
-        ? (String(status.address) as `0x${string}`)
-        : undefined;
 
     const tokenInfo =
       (await input.fetchTokenInfoFresh(input.chainId, input.tokenAddress)) ??
@@ -402,37 +408,56 @@ export const tryAutoBuyOnce = async (input: {
     let rsp: any;
     let buySubmittedAtMs: number | undefined;
     let tokenInfoForTrade = tokenInfo;
-    try {
-      rsp = await TradeService.buyWithReceiptAndNonceRecovery({
+    const maxSubmitRetries = 2;
+    for (let attempt = 0; attempt <= maxSubmitRetries; attempt += 1) {
+      try {
+        rsp = await TradeService.buyWithReceiptAndNonceRecovery({
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          bnbAmountWei: amountWei.toString(),
+          fromAddress: tradeFromAddress,
+          tokenInfo: tokenInfoForTrade,
+          gasPriceGwei: input.gasPriceGweiOverride,
+          priorityFeeBnb: input.priorityFeeBnbOverride,
+        } as any, {
+          maxRetry: 0,
+          onSubmitted: async (ctx) => {
+            buySubmittedAtMs = Date.now();
+            await input.broadcastToActiveTabs({
+              type: 'bg:tradeSubmitted',
+              source: 'xsniper',
+              side: 'buy',
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              txHash: ctx.txHash,
+              submitElapsedMs: ctx.submitElapsedMs,
+            });
+          },
+        });
+      } catch {
+      }
+      if (rsp) break;
+      if (attempt >= maxSubmitRetries) break;
+      const retryDelayMs = 1000 + Math.floor(Math.random() * 2001);
+      await input.broadcastToActiveTabs({
+        type: 'bg:tradeRetrying',
+        source: 'xsniper',
+        side: 'buy',
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
-        bnbAmountWei: amountWei.toString(),
-        fromAddress: tradeFromAddress,
-        tokenInfo: tokenInfoForTrade,
-        gasPriceGwei: input.gasPriceGweiOverride,
-        priorityFeeBnb: input.priorityFeeBnbOverride,
-      } as any, {
-        maxRetry: 1,
-        onSubmitted: async (ctx) => {
-          buySubmittedAtMs = Date.now();
-          await input.broadcastToActiveTabs({
-            type: 'bg:tradeSubmitted',
-            source: 'xsniper',
-            side: 'buy',
-            chainId: input.chainId,
-            tokenAddress: input.tokenAddress,
-            txHash: ctx.txHash,
-            submitElapsedMs: ctx.submitElapsedMs,
-          });
-        },
+        attempt: attempt + 1,
+        reason: 'submit',
       });
-    } catch {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
     if (!rsp) {
       console.error('XSniperTrade buy submit failed', {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
       });
+      terminalFailedBuyKeys.set(key, Date.now());
+      input.boughtOnceAtMs.set(key, Date.now());
+      void input.persistBoughtOnce();
       emitBuyFailure('buy_submit_failed', {
         buyAmountNative: amountNumber,
         metrics: refreshedMetrics,
@@ -505,6 +530,7 @@ export const tryAutoBuyOnce = async (input: {
       fallbackMcapUsd: refreshedMetrics.marketCapUsd ?? null,
     });
     input.boughtOnceAtMs.set(key, Date.now());
+    terminalFailedBuyKeys.delete(key);
     void input.persistBoughtOnce();
     input.onStateChanged();
     const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
