@@ -37,6 +37,7 @@ export type ParsedTelegramCommand =
   | { type: 'actionSwitchWallet'; target: string }
   | { type: 'actionSettings' }
   | { type: 'actionXSniperSettings' }
+  | { type: 'actionNewCoinSniperSettings' }
   | { type: 'actionQuickTradeSettings' }
   | { type: 'actionSetXSniperDryRun'; enabled: boolean }
   | { type: 'actionSetXSniperAutoSell'; enabled: boolean }
@@ -44,6 +45,12 @@ export type ParsedTelegramCommand =
   | { type: 'actionSetXSniperBuyCaCount'; count: number }
   | { type: 'actionInputXSniperBuyAmount' }
   | { type: 'actionInputXSniperBuyCaCount' }
+  | { type: 'actionSetNewCoinSniperDryRun'; enabled: boolean }
+  | { type: 'actionSetNewCoinSniperAutoSell'; enabled: boolean }
+  | { type: 'actionSetNewCoinSniperBuyAmount'; amountBnb: string }
+  | { type: 'actionSetNewCoinSniperBuyCaCount'; count: number }
+  | { type: 'actionInputNewCoinSniperBuyAmount' }
+  | { type: 'actionInputNewCoinSniperBuyCaCount' }
   | { type: 'actionInputQuickBuyPresets' }
   | { type: 'actionInputQuickSellPresets' }
   | { type: 'actionXSniperOrder'; orderId: string }
@@ -63,6 +70,7 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
     if (action === 'schain' && (arg1 || '').trim()) return { type: 'actionSwitchChain', chain: (arg1 || '').trim() };
     if (action === 'settings') return { type: 'actionSettings' };
     if (action === 'xset') return { type: 'actionXSniperSettings' };
+    if (action === 'ncset') return { type: 'actionNewCoinSniperSettings' };
     if (action === 'qset') return { type: 'actionQuickTradeSettings' };
     if (action === 'xsdry' && (arg1 === '0' || arg1 === '1')) return { type: 'actionSetXSniperDryRun', enabled: arg1 === '1' };
     if (action === 'xsell' && (arg1 === '0' || arg1 === '1')) return { type: 'actionSetXSniperAutoSell', enabled: arg1 === '1' };
@@ -70,6 +78,12 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
     if (action === 'xsca' && Number.isFinite(Number(arg1 || ''))) return { type: 'actionSetXSniperBuyCaCount', count: Math.max(0, Math.floor(Number(arg1 || '0'))) };
     if (action === 'xsamtin') return { type: 'actionInputXSniperBuyAmount' };
     if (action === 'xscain') return { type: 'actionInputXSniperBuyCaCount' };
+    if (action === 'ncdry' && (arg1 === '0' || arg1 === '1')) return { type: 'actionSetNewCoinSniperDryRun', enabled: arg1 === '1' };
+    if (action === 'ncsell' && (arg1 === '0' || arg1 === '1')) return { type: 'actionSetNewCoinSniperAutoSell', enabled: arg1 === '1' };
+    if (action === 'ncamt' && (arg1 || '').trim() && Number.isFinite(Number(arg1 || ''))) return { type: 'actionSetNewCoinSniperBuyAmount', amountBnb: (arg1 || '').trim() };
+    if (action === 'ncca' && Number.isFinite(Number(arg1 || ''))) return { type: 'actionSetNewCoinSniperBuyCaCount', count: Math.max(0, Math.floor(Number(arg1 || '0'))) };
+    if (action === 'ncamtin') return { type: 'actionInputNewCoinSniperBuyAmount' };
+    if (action === 'nccain') return { type: 'actionInputNewCoinSniperBuyCaCount' };
     if (action === 'qbuyin') return { type: 'actionInputQuickBuyPresets' };
     if (action === 'qsellin') return { type: 'actionInputQuickSellPresets' };
     if (action === 'status') return { type: 'actionStatus' };

@@ -30,7 +30,10 @@ export function createTelegramController(deps: {
   fetchGmgnHoldings?: (chain: string, walletAddress: string) => Promise<any[]>;
   fetchGmgnHoldingDetail?: (chain: string, walletAddress: string, tokenAddress: string) => Promise<any | null>;
 }) {
-  const pendingInputByChat = new Map<string, 'buyAmountNative' | 'buyNewCaCount' | 'quickBuyPresets' | 'quickSellPresets'>();
+  const pendingInputByChat = new Map<
+    string,
+    'buyAmountNative' | 'buyNewCaCount' | 'newCoinBuyAmountNative' | 'newCoinBuyNewCaCount' | 'quickBuyPresets' | 'quickSellPresets'
+  >();
   const getTelegramConfigFromSettings = async (): Promise<TelegramApiConfig | null> => {
     const settings = await SettingsService.get();
     const tg = (settings as any).telegram;
@@ -211,6 +214,30 @@ export function createTelegramController(deps: {
     if (Math.abs(n) >= 1000) return formatCountShort(n) ?? String(n);
     return n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') || '0';
   };
+  const resolveWalletName = (input: {
+    address?: string | null;
+    accounts?: Array<{ address: string; name?: string }>;
+    accountAliases?: Record<string, string>;
+  }) => {
+    const addr = String(input.address || '').trim().toLowerCase();
+    if (!addr) return '-';
+    const byAccount = input.accounts?.find((a) => String(a.address || '').trim().toLowerCase() === addr);
+    const byAlias = (input.accountAliases as any)?.[addr];
+    const fromName = String(byAccount?.name || '').trim();
+    const fromAlias = String(byAlias || '').trim();
+    return fromName || fromAlias || '-';
+  };
+  const resolveNativeBalanceText = async (address: string | null | undefined, nativeSymbol: string) => {
+    const addr = String(address || '').trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) return `- ${nativeSymbol}`;
+    try {
+      const balanceWei = await TokenService.getNativeBalance(addr);
+      const amount = formatHoldingAmount(formatUnits(BigInt(balanceWei || '0'), 18));
+      return `${amount} ${nativeSymbol}`;
+    } catch {
+      return `- ${nativeSymbol}`;
+    }
+  };
 
   const buildTokenActionKeyboard = (tokenAddress: `0x${string}`, nativeSymbol: string, buyPresets: string[], sellPresets: string[]) => {
     const buyBase = buyPresets && buyPresets.length ? buyPresets : ['0.1', '0.5', '1', '2'];
@@ -255,6 +282,7 @@ export function createTelegramController(deps: {
   ];
   const buildSettingsMenuKeyboard = () => [
     [{ text: '🎯 推文狙击', callbackData: 'act:xset' }],
+    [{ text: '🆕 新币狙击', callbackData: 'act:ncset' }],
     [{ text: '⚡ 快捷交易', callbackData: 'act:qset' }],
     [{ text: '↩️ 返回菜单', callbackData: 'act:menu' }],
   ];
@@ -266,6 +294,17 @@ export function createTelegramController(deps: {
     [
       { text: '⌨️ 输入买入金额', callbackData: 'act:xsamtin' },
       { text: '⌨️ 输入CA数量', callbackData: 'act:xscain' },
+    ],
+    [{ text: '↩️ 设置菜单', callbackData: 'act:settings' }],
+  ]);
+  const buildNewCoinSniperSettingsKeyboard = (input: { dryRun: boolean; autoSellEnabled: boolean; buyAmountNative: string; buyNewCaCount: number }) => ([
+    [
+      { text: `${input.dryRun ? '✅' : '❌'} DryRun`, callbackData: `act:ncdry:${input.dryRun ? '0' : '1'}` },
+      { text: `${input.autoSellEnabled ? '✅' : '❌'} 自动卖出`, callbackData: `act:ncsell:${input.autoSellEnabled ? '0' : '1'}` },
+    ],
+    [
+      { text: '⌨️ 输入买入金额', callbackData: 'act:ncamtin' },
+      { text: '⌨️ 输入CA数量', callbackData: 'act:nccain' },
     ],
     [{ text: '↩️ 设置菜单', callbackData: 'act:settings' }],
   ]);
@@ -297,16 +336,30 @@ export function createTelegramController(deps: {
     autoTrade.twitterSnipe = twitterSnipe;
     return autoTrade;
   };
+  const applyNewCoinSnipePatch = (settings: any, patch: Record<string, any>) => {
+    const autoTrade = { ...(settings as any).autoTrade };
+    const newCoinSnipe = { ...(autoTrade as any).newCoinSnipe };
+    Object.assign(newCoinSnipe, patch);
+    autoTrade.newCoinSnipe = newCoinSnipe;
+    return autoTrade;
+  };
   const getTwitterSnipeBuyAmountNative = (settings: any): string => {
     const buyAmountRaw = String((settings as any)?.autoTrade?.twitterSnipe?.buyAmountNative ?? '0.1').trim();
+    return Number.isFinite(Number(buyAmountRaw)) && Number(buyAmountRaw) > 0 ? buyAmountRaw : '0.1';
+  };
+  const getNewCoinSnipeBuyAmountNative = (settings: any): string => {
+    const buyAmountRaw = String((settings as any)?.autoTrade?.newCoinSnipe?.buyAmountNative ?? '0.1').trim();
     return Number.isFinite(Number(buyAmountRaw)) && Number(buyAmountRaw) > 0 ? buyAmountRaw : '0.1';
   };
   const buildTwitterSnipeBuyAmountPatch = (amountNative: string) => ({
     buyAmountNative: amountNative,
   });
+  const buildNewCoinSnipeBuyAmountPatch = (amountNative: string) => ({
+    buyAmountNative: amountNative,
+  });
   const sendTelegramSettingsMenu = async () => {
     await sendTelegramReply(
-      ['⚙️ 设置', '', '可配置项：', '1) 推文狙击'].join('\n'),
+      ['⚙️ 设置', '', '可配置项：', '1) 推文狙击', '2) 新币狙击', '3) 快捷交易'].join('\n'),
       { inlineKeyboard: buildSettingsMenuKeyboard() }
     );
   };
@@ -328,6 +381,26 @@ export function createTelegramController(deps: {
         `买入CA数量: ${buyCaCount}`,
       ].join('\n'),
       { inlineKeyboard: buildXSniperSettingsKeyboard({ dryRun, autoSellEnabled, buyAmountNative, buyNewCaCount: buyCaCount }) }
+    );
+  };
+  const sendTelegramNewCoinSniperSettings = async () => {
+    const settings = await SettingsService.get();
+    const nativeSymbol = getNativeSymbol(settings.chainId);
+    const dryRun = (settings as any)?.autoTrade?.newCoinSnipe?.dryRun === true;
+    const autoSellEnabled = (settings as any)?.autoTrade?.newCoinSnipe?.autoSellEnabled === true;
+    const buyAmountNative = getNewCoinSnipeBuyAmountNative(settings);
+    const buyNewCaCount = Number((settings as any)?.autoTrade?.newCoinSnipe?.buyNewCaCount ?? 1);
+    const buyCaCount = Number.isFinite(buyNewCaCount) ? Math.max(0, Math.floor(buyNewCaCount)) : 1;
+    await sendTelegramReply(
+      [
+        '🆕 新币狙击设置',
+        '',
+        `DryRun: ${dryRun ? '开启' : '关闭'}`,
+        `自动卖出: ${autoSellEnabled ? '开启' : '关闭'}`,
+        `策略买入金额(${nativeSymbol}): ${buyAmountNative}`,
+        `买入CA数量: ${buyCaCount}`,
+      ].join('\n'),
+      { inlineKeyboard: buildNewCoinSniperSettingsKeyboard({ dryRun, autoSellEnabled, buyAmountNative, buyNewCaCount: buyCaCount }) }
     );
   };
   const sendTelegramQuickTradeSettings = async () => {
@@ -865,6 +938,7 @@ export function createTelegramController(deps: {
         const isChainAction = command.type === 'chain' || command.type === 'actionChainMenu';
         const isSwitchChainAction = command.type === 'switchChain' || command.type === 'actionSwitchChain';
         const isXSniperSettingsAction = command.type === 'actionXSniperSettings';
+        const isNewCoinSniperSettingsAction = command.type === 'actionNewCoinSniperSettings';
         const isQuickTradeSettingsAction = command.type === 'actionQuickTradeSettings';
         const isSetXSniperDryRunAction = command.type === 'actionSetXSniperDryRun';
         const isSetXSniperAutoSellAction = command.type === 'actionSetXSniperAutoSell';
@@ -872,6 +946,12 @@ export function createTelegramController(deps: {
         const isSetXSniperBuyCaCountAction = command.type === 'actionSetXSniperBuyCaCount';
         const isInputXSniperBuyAmountAction = command.type === 'actionInputXSniperBuyAmount';
         const isInputXSniperBuyCaCountAction = command.type === 'actionInputXSniperBuyCaCount';
+        const isSetNewCoinSniperDryRunAction = command.type === 'actionSetNewCoinSniperDryRun';
+        const isSetNewCoinSniperAutoSellAction = command.type === 'actionSetNewCoinSniperAutoSell';
+        const isSetNewCoinSniperBuyAmountAction = command.type === 'actionSetNewCoinSniperBuyAmount';
+        const isSetNewCoinSniperBuyCaCountAction = command.type === 'actionSetNewCoinSniperBuyCaCount';
+        const isInputNewCoinSniperBuyAmountAction = command.type === 'actionInputNewCoinSniperBuyAmount';
+        const isInputNewCoinSniperBuyCaCountAction = command.type === 'actionInputNewCoinSniperBuyCaCount';
         const isInputQuickBuyPresetsAction = command.type === 'actionInputQuickBuyPresets';
         const isInputQuickSellPresetsAction = command.type === 'actionInputQuickSellPresets';
         const isStatusAction = command.type === 'status' || command.type === 'actionStatus';
@@ -912,6 +992,10 @@ export function createTelegramController(deps: {
           await sendTelegramXSniperSettings();
           return;
         }
+        if (isNewCoinSniperSettingsAction) {
+          await sendTelegramNewCoinSniperSettings();
+          return;
+        }
         if (isQuickTradeSettingsAction) {
           await sendTelegramQuickTradeSettings();
           return;
@@ -923,6 +1007,16 @@ export function createTelegramController(deps: {
         }
         if (isInputXSniperBuyCaCountAction) {
           pendingInputByChat.set(chatId, 'buyNewCaCount');
+          await sendTelegramReply('请输入买入CA数量（整数），例如: 3');
+          return;
+        }
+        if (isInputNewCoinSniperBuyAmountAction) {
+          pendingInputByChat.set(chatId, 'newCoinBuyAmountNative');
+          await sendTelegramReply(`请输入策略买入金额(${getNativeSymbol(settings.chainId)})，例如: 0.1`);
+          return;
+        }
+        if (isInputNewCoinSniperBuyCaCountAction) {
+          pendingInputByChat.set(chatId, 'newCoinBuyNewCaCount');
           await sendTelegramReply('请输入买入CA数量（整数），例如: 3');
           return;
         }
@@ -947,6 +1041,19 @@ export function createTelegramController(deps: {
           await SettingsService.update({ autoTrade } as any);
           pendingInputByChat.delete(chatId);
           await sendTelegramXSniperSettings();
+          return;
+        }
+        if (isSetNewCoinSniperDryRunAction || isSetNewCoinSniperAutoSellAction || isSetNewCoinSniperBuyAmountAction || isSetNewCoinSniperBuyCaCountAction) {
+          const nextSettings = await SettingsService.get();
+          const patch: Record<string, any> = {};
+          if (isSetNewCoinSniperDryRunAction) patch.dryRun = command.enabled;
+          if (isSetNewCoinSniperAutoSellAction) patch.autoSellEnabled = command.enabled;
+          if (isSetNewCoinSniperBuyAmountAction) Object.assign(patch, buildNewCoinSnipeBuyAmountPatch(command.amountBnb));
+          if (isSetNewCoinSniperBuyCaCountAction) patch.buyNewCaCount = command.count;
+          const autoTrade = applyNewCoinSnipePatch(nextSettings, patch);
+          await SettingsService.update({ autoTrade } as any);
+          pendingInputByChat.delete(chatId);
+          await sendTelegramNewCoinSniperSettings();
           return;
         }
         if (command.type === 'unknown') {
@@ -979,6 +1086,34 @@ export function createTelegramController(deps: {
             await sendTelegramXSniperSettings();
             return;
           }
+          if (pending === 'newCoinBuyAmountNative') {
+            const v = String(rawText || '').trim();
+            const n = Number(v);
+            if (!Number.isFinite(n) || n <= 0) {
+              await sendTelegramReply('输入无效，请输入大于0的数字（例如 0.1）');
+              return;
+            }
+            const nextSettings = await SettingsService.get();
+            const autoTrade = applyNewCoinSnipePatch(nextSettings, buildNewCoinSnipeBuyAmountPatch(v));
+            await SettingsService.update({ autoTrade } as any);
+            pendingInputByChat.delete(chatId);
+            await sendTelegramNewCoinSniperSettings();
+            return;
+          }
+          if (pending === 'newCoinBuyNewCaCount') {
+            const n = Number(String(rawText || '').trim());
+            if (!Number.isFinite(n) || n < 0) {
+              await sendTelegramReply('输入无效，请输入整数（例如 3）');
+              return;
+            }
+            const count = Math.max(0, Math.floor(n));
+            const nextSettings = await SettingsService.get();
+            const autoTrade = applyNewCoinSnipePatch(nextSettings, { buyNewCaCount: count });
+            await SettingsService.update({ autoTrade } as any);
+            pendingInputByChat.delete(chatId);
+            await sendTelegramNewCoinSniperSettings();
+            return;
+          }
           if (pending === 'quickBuyPresets' || pending === 'quickSellPresets') {
             const raw = String(rawText || '').trim();
             const parts = raw.split(',').map((x) => x.trim()).filter(Boolean);
@@ -1006,7 +1141,26 @@ export function createTelegramController(deps: {
         }
         if (isStatusAction) {
           const status = await WalletService.getStatus();
-          await sendTelegramReply(['插件状态', `链: ${formatChainLabel(settings.chainId)}`, `钱包: ${status.locked ? '已锁定' : '已解锁'}`, `地址: ${status.address || '-'}`].join('\n'), { inlineKeyboard: buildMainMenuKeyboard() });
+          const nativeSymbol = getNativeSymbol(settings.chainId);
+          const walletName = resolveWalletName({
+            address: status.address,
+            accounts: status.accounts as Array<{ address: string; name?: string }>,
+            accountAliases: (settings as any).accountAliases,
+          });
+          const nativeBalanceText = status.locked
+            ? `- ${nativeSymbol}`
+            : await resolveNativeBalanceText(status.address, nativeSymbol);
+          await sendTelegramReply(
+            [
+              '插件状态',
+              `链: ${formatChainLabel(settings.chainId)}`,
+              `钱包: ${status.locked ? '已锁定' : '已解锁'}`,
+              `名称: ${walletName}`,
+              `地址: ${status.address || '-'}`,
+              `余额: ${nativeBalanceText}`,
+            ].join('\n'),
+            { inlineKeyboard: buildMainMenuKeyboard() }
+          );
           return;
         }
         if (isWhoamiAction) {
@@ -1034,7 +1188,16 @@ export function createTelegramController(deps: {
             await sendTelegramReply('当前没有可用钱包账户', { inlineKeyboard: buildMainMenuKeyboard() });
             return;
           }
-          const lines = accounts.slice(0, 12).map((acc, idx) => `${idx + 1}. ${(acc.name || '未命名')} | ${acc.address}${acc.address.toLowerCase() === String(status.address || '').toLowerCase() ? ' [当前]' : ''}`);
+          const nativeSymbol = getNativeSymbol(settings.chainId);
+          const topAccounts = accounts.slice(0, 12);
+          const lineItems = await Promise.all(
+            topAccounts.map(async (acc, idx) => {
+              const nativeBalanceText = await resolveNativeBalanceText(acc.address, nativeSymbol);
+              const isCurrent = acc.address.toLowerCase() === String(status.address || '').toLowerCase();
+              return `${idx + 1}. ${(acc.name || '未命名')} | ${acc.address} | ${nativeBalanceText}${isCurrent ? ' [当前]' : ''}`;
+            })
+          );
+          const lines = lineItems;
           await sendTelegramReply(['钱包列表', ...lines, '', '可用: /switch <address|name>'].join('\n'), { inlineKeyboard: buildWalletListKeyboard(accounts) });
           return;
         }
