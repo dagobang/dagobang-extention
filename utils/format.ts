@@ -133,6 +133,7 @@ export const formatBroadcastProvider = (via?: string, url?: string, isBundle?: b
     if (host.includes('chainstack.com')) return 'Chainstack';
     if (host.includes('getblock')) return 'GetBlock';
     if (host.includes('blockrazor.xyz')) return 'BlockRazor';
+    if (host.includes('drpc.org')) return 'dRPC';
     return host;
   } catch {
     return 'RPC';
