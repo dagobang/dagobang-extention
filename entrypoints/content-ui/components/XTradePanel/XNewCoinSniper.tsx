@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { browser } from 'wxt/browser';
-import type { AutoTradeNewCoinSnipeConfig, NewCoinXmodeSnipeTask, Settings, XSniperBuyRecord } from '@/types/extention';
+import type { Account, AutoTradeNewCoinSnipeConfig, BgGetStateResponse, NewCoinXmodeSnipeTask, Settings, XSniperBuyRecord } from '@/types/extention';
 import { call } from '@/utils/messaging';
 import { normalizeAddress } from '@/services/xSniper/engine/metrics';
 import { NEW_COIN_SNIPER_HISTORY_STORAGE_KEY, clearNewCoinSniperHistory, type NewCoinSniperOrderRecord } from '@/services/newCoinSniper/newCoinSniperHistory';
@@ -16,6 +16,7 @@ import { XNewCoinSniperTasksSection } from './XNewCoinSniperTasksSection';
 import { XNewCoinSniperTaskModal } from './XNewCoinSniperTaskModal';
 import { XSniperAutoTaskSection } from './XSniperAutoTaskSection';
 import { PLATFORM_OPTIONS, extractLaunchpadPlatform } from '@/constants/launchpad';
+import { WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
 
 type XNewCoinSniperContentProps = {
   siteInfo: SiteInfo | null;
@@ -91,6 +92,7 @@ const normalizeNewCoinStrategy = (input: unknown): AutoTradeNewCoinSnipeConfig =
   } as AutoTradeNewCoinSnipeConfig;
   return {
     ...merged,
+    walletAddress: normalizeAddress((merged as any).walletAddress) ?? undefined,
     signalSources: normalizeSources((merged as any).signalSources),
     platforms: normalizePlatforms((merged as any).platforms),
     autoTaskPlatforms: normalizeAutoTaskPlatforms((merged as any).autoTaskPlatforms),
@@ -158,6 +160,10 @@ export function XNewCoinSniperContent({
   const [taskModalError, setTaskModalError] = useState('');
   const [editingTaskId, setEditingTaskId] = useState<string>('');
   const [history, setHistory] = useState<NewCoinSniperOrderRecord[]>([]);
+  const [strategyJsonInput, setStrategyJsonInput] = useState('');
+  const [walletAccounts, setWalletAccounts] = useState<Account[]>([]);
+  const [activeWalletAddress, setActiveWalletAddress] = useState<`0x${string}` | null>(null);
+  const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
   const [wsStatus, setWsStatus] = useState(() => {
     const initial = (window as any).__DAGOBANG_WS_STATUS__;
     return initial ?? {
@@ -201,6 +207,32 @@ export function XNewCoinSniperContent({
     })();
     return () => {
       cancelled = true;
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    const loadWalletState = async () => {
+      try {
+        const res = await call({ type: 'bg:getState' } as const);
+        if (cancelled) return;
+        const state = (res ?? null) as BgGetStateResponse | null;
+        const accounts = Array.isArray(state?.wallet?.accounts) ? (state!.wallet.accounts as Account[]) : [];
+        setWalletAccounts(accounts);
+        setActiveWalletAddress(normalizeAddress(state?.wallet?.address) ?? null);
+      } catch {
+      }
+    };
+    void loadWalletState();
+    const onMessage = (message: any) => {
+      if (message?.type !== 'bg:stateChanged') return;
+      void loadWalletState();
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    return () => {
+      cancelled = true;
+      browser.runtime.onMessage.removeListener(onMessage);
     };
   }, [active]);
 
@@ -266,7 +298,8 @@ export function XNewCoinSniperContent({
       const chainId = typeof r.chainId === 'number' ? r.chainId : 0;
       const addr = String(r.tokenAddress || '').toLowerCase();
       const dryFlag = r.dryRun === true ? 'dry' : 'live';
-      const tokenKey = `${chainId}:${addr}:${dryFlag}`;
+      const walletKey = String((r as any).walletAddress || '').trim().toLowerCase() || 'current';
+      const tokenKey = `${chainId}:${addr}:${dryFlag}:${walletKey}`;
       if (r.side === 'sell') {
         const parentGroup = latestBuyByTokenKey.get(tokenKey);
         if (parentGroup) {
@@ -410,6 +443,25 @@ export function XNewCoinSniperContent({
       rapid: false,
     }));
     onOpenConfig?.();
+  };
+
+  const exportStrategyAsJson = () => {
+    const payload = normalizeNewCoinStrategy(draft);
+    const text = JSON.stringify(payload, null, 2);
+    setStrategyJsonInput(text);
+    void navigator.clipboard?.writeText(text).catch(() => { });
+  };
+
+  const importStrategyFromJson = () => {
+    const text = strategyJsonInput.trim();
+    if (!text) return;
+    try {
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid_json');
+      updateDraft(normalizeNewCoinStrategy(parsed));
+    } catch {
+      window.alert('配置JSON格式不正确');
+    }
   };
 
   const buildNewTask = async () => {
@@ -593,6 +645,11 @@ export function XNewCoinSniperContent({
     const exists = taskList.some((x) => x.id === selectedTaskId);
     if (!exists) setSelectedTaskId(taskList[0].id);
   }, [taskList, selectedTaskId]);
+  const selectedWalletInfo = useMemo(() => {
+    const selected = normalizeAddress(draft.walletAddress);
+    if (!selected) return null;
+    return walletAccounts.find((acc) => acc.address.toLowerCase() === selected.toLowerCase()) ?? null;
+  }, [draft.walletAddress, walletAccounts]);
 
   if (!active) return null;
 
@@ -632,6 +689,84 @@ export function XNewCoinSniperContent({
               <div className="space-y-2">
                 <div className="text-xs text-zinc-500">{tt('contentUi.autoTradeStrategy.twitterSnipeDesc')}</div>
                 <div className="space-y-2 rounded-md border border-zinc-800/70 bg-zinc-900/30 p-2">
+                  <div className="space-y-1">
+                    <div className="text-[11px] text-zinc-500">导入/导出JSON</div>
+                    <textarea
+                      className="h-16 w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[11px] outline-none"
+                      value={strategyJsonInput}
+                      disabled={!canEdit || saving}
+                      placeholder='{"buyAmountNative":"0.006"}'
+                      onChange={(e) => setStrategyJsonInput(e.target.value)}
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+                        disabled={!canEdit || saving}
+                        onClick={importStrategyFromJson}
+                      >
+                        导入JSON
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+                        disabled={!canEdit || saving}
+                        onClick={exportStrategyAsJson}
+                      >
+                        导出JSON
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-900/40 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[12px] text-zinc-400">交易钱包</div>
+                      <WalletSelectorTrigger
+                        walletSelectorOpen={walletSelectorOpen}
+                        walletSelectedCount={draft.walletAddress ? 1 : 0}
+                        walletTotalCount={walletAccounts.length}
+                        onToggleWalletSelector={() => setWalletSelectorOpen((v) => !v)}
+                        title="选择新币狙击交易钱包"
+                      />
+                    </div>
+                    <div className="text-[11px] text-zinc-500">
+                      {draft.walletAddress
+                        ? `已指定：${selectedWalletInfo?.name || 'Wallet'} (${draft.walletAddress.slice(0, 6)}...${draft.walletAddress.slice(-4)})`
+                        : `未指定，使用当前钱包${activeWalletAddress ? ` (${activeWalletAddress.slice(0, 6)}...${activeWalletAddress.slice(-4)})` : ''}`}
+                    </div>
+                    {walletSelectorOpen ? (
+                      <div className="max-h-40 space-y-1 overflow-auto rounded-md border border-zinc-800 bg-zinc-900/60 p-1">
+                        <button
+                          type="button"
+                          className={`w-full rounded px-2 py-1 text-left text-[12px] ${!draft.walletAddress ? 'bg-emerald-500/20 text-emerald-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+                          onClick={() => {
+                            updateDraft({ walletAddress: undefined });
+                            setWalletSelectorOpen(false);
+                          }}
+                          disabled={!canEdit || saving}
+                        >
+                          使用当前钱包
+                        </button>
+                        {walletAccounts.map((acc) => {
+                          const selected = String(draft.walletAddress || '').toLowerCase() === acc.address.toLowerCase();
+                          const isActive = !!activeWalletAddress && activeWalletAddress.toLowerCase() === acc.address.toLowerCase();
+                          return (
+                            <button
+                              key={acc.address}
+                              type="button"
+                              className={`w-full rounded px-2 py-1 text-left text-[12px] ${selected ? 'bg-emerald-500/20 text-emerald-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+                              onClick={() => {
+                                updateDraft({ walletAddress: acc.address });
+                                setWalletSelectorOpen(false);
+                              }}
+                              disabled={!canEdit || saving}
+                            >
+                              {acc.name || 'Wallet'} {isActive ? '(当前)' : ''} ({acc.address.slice(0, 6)}...{acc.address.slice(-4)})
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <label className="block space-y-1">
                       <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.strategyBuyAmount')}</div>

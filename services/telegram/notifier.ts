@@ -17,6 +17,20 @@ function tokenLabel(input: { tokenName?: string; tokenSymbol?: string; tokenAddr
   return shortAddr(input.tokenAddress) || '-';
 }
 
+function resolveWalletName(input: {
+  address?: string | null;
+  accounts?: Array<{ address: string; name?: string }>;
+  accountAliases?: Record<string, string>;
+}) {
+  const addr = String(input.address || '').trim().toLowerCase();
+  if (!addr) return '-';
+  const byAccount = input.accounts?.find((a) => String(a.address || '').trim().toLowerCase() === addr);
+  const byAlias = (input.accountAliases as any)?.[addr];
+  const fromName = String(byAccount?.name || '').trim();
+  const fromAlias = String(byAlias || '').trim();
+  return fromName || fromAlias || '-';
+}
+
 function timingLine(submitElapsedMs?: number, receiptElapsedMs?: number): string {
   const parts: string[] = [];
   if (Number.isFinite(submitElapsedMs) && Number(submitElapsedMs) > 0) {
@@ -221,6 +235,17 @@ export function createTelegramNotifier(deps: {
   };
 
   const notifyXSniperOrderCard = async (record: XSniperBuyRecord) => {
+    const settings = await deps.getSettings();
+    const walletState = (settings as any)?.wallet ?? {};
+    const walletAddressRaw = String((record as any).walletAddress || walletState.address || '').trim();
+    const walletName = resolveWalletName({
+      address: walletAddressRaw,
+      accounts: Array.isArray(walletState.accounts) ? walletState.accounts : undefined,
+      accountAliases: walletState.accountAliases,
+    });
+    const walletDisplay = /^0x[a-fA-F0-9]{40}$/.test(walletAddressRaw)
+      ? `${walletName !== '-' ? walletName : 'Wallet'} (${shortAddr(walletAddressRaw)})`
+      : '-';
     const entryMcap = typeof record.marketCapUsd === 'number' && Number.isFinite(record.marketCapUsd) && record.marketCapUsd > 0
       ? record.marketCapUsd
       : null;
@@ -243,6 +268,7 @@ export function createTelegramNotifier(deps: {
       `🧾 基本信息`,
       `订单: ${record.id}`,
       `代币: ${symbol} | ${shortAddr(record.tokenAddress) || '-'}`,
+      `钱包: ${walletDisplay}`,
       '',
       `📈 价格与PnL`,
       `⚪ PnL(MCap): - | ${athPnlIcon} ATH PnL: ${formatPnlPct(pnlAthPct)}`,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import { type AutoTradeConfig, type AutoTradeInteractionType, type AutoTradeTwitterSnipePreset, type Settings, type XSniperBuyRecord } from '@/types/extention';
+import { type Account, type AutoTradeConfig, type AutoTradeInteractionType, type AutoTradeTwitterSnipePreset, type BgGetStateResponse, type Settings, type XSniperBuyRecord } from '@/types/extention';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { defaultSettings } from '@/utils/defaults';
 import { call } from '@/utils/messaging';
@@ -69,6 +69,13 @@ const parseList = (value: string) =>
 
 const createPresetId = () => `preset-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
+const normalizeWalletAddress = (input: unknown): `0x${string}` | undefined => {
+  const raw = String(input ?? '').trim().toLowerCase();
+  if (!raw) return undefined;
+  if (!/^0x[a-f0-9]{40}$/.test(raw)) return undefined;
+  return raw as `0x${string}`;
+};
+
 const buildNormalizedPresetStrategy = (raw: any) => {
   const base = { ...(defaultSettings().autoTrade.twitterSnipe as any) };
   delete (base as any).presets;
@@ -78,6 +85,7 @@ const buildNormalizedPresetStrategy = (raw: any) => {
     ...base,
     ...(raw && typeof raw === 'object' ? raw : {}),
   };
+  next.walletAddress = normalizeWalletAddress(next.walletAddress);
   next.targetUsers = Array.isArray(next.targetUsers)
     ? next.targetUsers.map((x: any) => String(x).trim()).filter(Boolean)
     : [];
@@ -95,10 +103,16 @@ const resolveTwitterSnipeByActivePreset = (twitterSnipe: any) => {
   const presets = Array.isArray(source.presets) ? source.presets : [];
   const activePresetId = typeof source.activePresetId === 'string' ? source.activePresetId.trim() : '';
   const active = presets.find((item: any) => item && typeof item.id === 'string' && item.id === activePresetId);
-  if (!active || !active.strategy || typeof active.strategy !== 'object') return source;
+  if (!active || !active.strategy || typeof active.strategy !== 'object') {
+    return {
+      ...source,
+      walletAddress: normalizeWalletAddress(source.walletAddress),
+    };
+  }
   return {
     ...source,
     ...active.strategy,
+    walletAddress: normalizeWalletAddress((active.strategy as any)?.walletAddress ?? source.walletAddress),
     presets,
     activePresetId,
   };
@@ -151,16 +165,21 @@ export function XSniperContent({
   const [buyHistory, setBuyHistory] = useState<XSniperBuyRecord[]>([]);
   const [latestTokenByAddr, setLatestTokenByAddr] = useState<Record<string, any>>({});
   const [athMcapByAddr, setAthMcapByAddr] = useState<Record<string, number>>({});
+  const [walletAccounts, setWalletAccounts] = useState<Account[]>([]);
+  const [activeWalletAddress, setActiveWalletAddress] = useState<`0x${string}` | null>(null);
+  const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
 
   const historyGroups = useMemo(() => {
     const normalizeAddr = (addr: string) => String(addr || '').trim().toLowerCase();
+    const normalizeWallet = (addr: unknown) => String(addr || '').trim().toLowerCase();
     const groups = new Map<string, { key: string; latestTsMs: number; records: XSniperBuyRecord[] }>();
     for (const r of buyHistory) {
       if (!r || typeof r.chainId !== 'number' || !r.tokenAddress) continue;
       const addr = normalizeAddr(r.tokenAddress);
       if (!addr) continue;
       const dryRun = r.dryRun === true;
-      const key = `${dryRun ? 'dry:' : ''}${r.chainId}:${addr}`;
+      const walletKey = normalizeWallet((r as any).walletAddress);
+      const key = `${dryRun ? 'dry:' : ''}${r.chainId}:${addr}:${walletKey || 'current'}`;
       const ts = typeof r.tsMs === 'number' && Number.isFinite(r.tsMs) ? r.tsMs : 0;
       const existing = groups.get(key);
       if (!existing) {
@@ -194,6 +213,32 @@ export function XSniperContent({
 
   useEffect(() => {
     if (!active) setIsDirty(false);
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    const loadWalletState = async () => {
+      try {
+        const res = await call({ type: 'bg:getState' } as const);
+        if (cancelled) return;
+        const state = (res ?? null) as BgGetStateResponse | null;
+        const accounts = Array.isArray(state?.wallet?.accounts) ? (state!.wallet.accounts as Account[]) : [];
+        setWalletAccounts(accounts);
+        setActiveWalletAddress(normalizeWalletAddress(state?.wallet?.address) ?? null);
+      } catch {
+      }
+    };
+    void loadWalletState();
+    const onMessage = (message: any) => {
+      if (message?.type !== 'bg:stateChanged') return;
+      void loadWalletState();
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    return () => {
+      cancelled = true;
+      browser.runtime.onMessage.removeListener(onMessage);
+    };
   }, [active]);
 
   useEffect(() => {
@@ -436,6 +481,9 @@ export function XSniperContent({
 
   const updateTwitterSnipe = (patch: Partial<AutoTradeConfig['twitterSnipe']>) => {
     const normalizedPatch = { ...(patch as any) } as any;
+    if ('walletAddress' in normalizedPatch) {
+      normalizedPatch.walletAddress = normalizeWalletAddress(normalizedPatch.walletAddress);
+    }
     setIsDirty(true);
     setDraft((prev) =>
       prev
@@ -671,6 +719,15 @@ export function XSniperContent({
               onInteractionTypeChange={handleInteractionTypeChange}
               onBuyAmountNativeChange={(value) => updateTwitterSnipe({ buyAmountNative: value })}
               onBuyNewCaCountChange={(value) => updateTwitterSnipe({ buyNewCaCount: value })}
+              walletSelectorOpen={walletSelectorOpen}
+              walletAccounts={walletAccounts}
+              activeWalletAddress={activeWalletAddress}
+              selectedWalletAddress={normalizeWalletAddress(twitterSnipe?.walletAddress)}
+              onToggleWalletSelector={() => setWalletSelectorOpen((v) => !v)}
+              onSelectWalletAddress={(address) => {
+                updateTwitterSnipe({ walletAddress: address });
+                setWalletSelectorOpen(false);
+              }}
             />
             <XSniperFilterSection
               open={configSectionOpen.filter}

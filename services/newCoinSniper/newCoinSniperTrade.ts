@@ -387,6 +387,7 @@ export const createNewCoinSniperTrade = (deps: {
       tweetUrl: record.tweetUrl,
       chainId: record.chainId,
       tokenAddress: record.tokenAddress,
+      walletAddress: record.walletAddress,
       tokenSymbol: record.tokenSymbol,
       tokenName: record.tokenName,
       buyAmountNative: record.buyAmountNative,
@@ -447,6 +448,7 @@ export const createNewCoinSniperTrade = (deps: {
       type: 'bg:newCoinSniper:order',
       record: {
         ...record,
+        walletAddress: record.walletAddress,
         userScreen: record.userScreen ?? signalSourceTag,
         userName: record.userName ?? signalSourceTag,
         source: signal?.source,
@@ -920,6 +922,7 @@ export const createNewCoinSniperTrade = (deps: {
     signalEventId?: string;
     signalTweetId?: string;
     entryPriceUsd?: number | null;
+    walletAddress?: `0x${string}`;
   }) =>
     (() => {
       manuallyClosedPosKeys.delete(input.posKey);

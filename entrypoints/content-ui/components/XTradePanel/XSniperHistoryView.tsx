@@ -121,6 +121,16 @@ const formatEvalPnl = (record: XSniperBuyRecord, key: keyof XSniperBuyRecord) =>
   return `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
 };
 
+const resolveWalletDisplay = (input: { record: XSniperBuyRecord; settings: Settings | null }) => {
+  const walletAddress = String((input.record as any).walletAddress || '').trim().toLowerCase();
+  if (!walletAddress) return '-';
+  const accounts = Array.isArray((input.settings as any)?.wallet?.accounts) ? (input.settings as any).wallet.accounts : [];
+  const account = accounts.find((acc: any) => String(acc?.address || '').trim().toLowerCase() === walletAddress);
+  const alias = String(((input.settings as any)?.wallet?.accountAliases || {})?.[walletAddress] || '').trim();
+  const name = String(account?.name || '').trim() || alias || 'Wallet';
+  return `${name} (${formatShortAddress(walletAddress)})`;
+};
+
 const computeWeightedPnlPct = (input: {
   entryMcap: number | null;
   latestMcap: number | null;
@@ -694,6 +704,7 @@ export function XSniperHistoryView({
                       return sym || name || formatShortAddress(r.tokenAddress);
                     })();
                   const tokenLink = siteInfo ? parsePlatformTokenLink(siteInfo, r.tokenAddress) : '';
+                  const walletDisplay = resolveWalletDisplay({ record: r, settings });
                   const sellDisabledBase = !settings || !isUnlocked || r.dryRun === true;
                   const sellingForRecord = sellingKey != null && sellingKey.startsWith(`${r.id}:`);
                   const tweetAtMs = typeof r.tweetAtMs === 'number' && Number.isFinite(r.tweetAtMs) ? r.tweetAtMs : null;
@@ -799,6 +810,10 @@ export function XSniperHistoryView({
                           <div>
                             <span className="text-zinc-500">{tt('contentUi.autoTradeStrategy.snipeHistoryUser')}:</span>{' '}
                             <span className="text-zinc-300">{r.userScreen ? String(r.userScreen) : '-'}</span>
+                          </div>
+                          <div>
+                            <span className="text-zinc-500">钱包:</span>{' '}
+                            <span className="text-zinc-300">{walletDisplay}</span>
                           </div>
                           <div className="flex items-center gap-1">
                             <span className="text-zinc-500">Launchpad:</span>{' '}

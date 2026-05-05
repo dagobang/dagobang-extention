@@ -11,6 +11,7 @@ export type NewCoinSniperOrderRecord = {
   tweetUrl?: string;
   chainId: number;
   tokenAddress: string;
+  walletAddress?: `0x${string}`;
   tokenSymbol?: string;
   tokenName?: string;
   buyAmountNative?: number;

@@ -104,6 +104,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
   },
   twitterSnipe: {
     enabled: true,
+    walletAddress: undefined,
     dryRun: true,
     dryRunBuyDelayMs: '1000',
     dryRunSellDelayMs: '2000',
@@ -165,6 +166,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
         name: '流水盘',
         strategy: {
           enabled: true,
+          walletAddress: undefined,
           dryRun: true,
           dryRunBuyDelayMs: '1000',
           dryRunSellDelayMs: '2000',
@@ -227,6 +229,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
         name: '趋势盘',
         strategy: {
           enabled: true,
+          walletAddress: undefined,
           dryRun: true,
           dryRunBuyDelayMs: '1000',
           dryRunSellDelayMs: '2000',
@@ -289,6 +292,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
   },
   newCoinSnipe: {
     enabled: false,
+    walletAddress: undefined,
     taskModeEnabled: true,
     dryRun: true,
     playSound: true,

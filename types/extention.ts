@@ -89,6 +89,7 @@ export type AutoTradeStrategyBase = {
 
 export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
   platforms?: string[];
+  walletAddress?: `0x${string}`;
   dryRun?: boolean;
   dryRunBuyDelayMs?: string;
   dryRunSellDelayMs?: string;
@@ -597,6 +598,7 @@ export type XSniperBuyRecord = {
   tweetUrl?: string;
   chainId: number;
   tokenAddress: string;
+  walletAddress?: `0x${string}`;
   tokenSymbol?: string;
   tokenName?: string;
   buyAmountNative?: number;

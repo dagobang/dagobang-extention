@@ -502,6 +502,7 @@ export function validateSettings(input: Settings): Settings | null {
     targetUsers: parseListInput(rawInput?.targetUsers, fallbackInput.targetUsers),
     platforms: normalizePlatformsInput(rawInput?.platforms, fallbackInput?.platforms ?? []),
     interactionTypes: normalizeInteractionTypes(rawInput?.interactionTypes, fallbackInput.interactionTypes),
+    walletAddress: normalizeAddress(rawInput?.walletAddress) || normalizeAddress(fallbackInput?.walletAddress) || undefined,
   });
   const twitterSnipeBase = normalizeTwitterSnipeCore(inputTwitterSnipe, defaultTwitterSnipe);
   const rawPresets = Array.isArray((inputTwitterSnipe as any)?.presets) ? (inputTwitterSnipe as any).presets : [];

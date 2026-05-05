@@ -26,6 +26,13 @@ const calcSellAmountWei = (input: {
   return amountWei;
 };
 
+const parseStrategyWalletAddress = (input: unknown): `0x${string}` | undefined => {
+  const raw = String(input ?? '').trim().toLowerCase();
+  if (!raw) return undefined;
+  if (!/^0x[a-f0-9]{40}$/.test(raw)) return undefined;
+  return raw as `0x${string}`;
+};
+
 export const createSellExecutors = (deps: {
   cleanupPosKey: (posKey: string) => void;
   emitRecord: (record: XSniperBuyRecord) => void;
@@ -80,6 +87,7 @@ export const createSellExecutors = (deps: {
     signal: UnifiedTwitterSignal;
     relatedBuy?: XSniperBuyRecord;
     dryRun: boolean;
+    walletAddress?: `0x${string}`;
   }) => {
     const percent = Math.max(0, Math.min(100, Number(input.percent)));
     if (!Number.isFinite(percent) || percent <= 0) return;
@@ -106,6 +114,7 @@ export const createSellExecutors = (deps: {
         tweetUrl,
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
+        walletAddress: input.walletAddress,
         tokenSymbol: input.relatedBuy?.tokenSymbol,
         tokenName: input.relatedBuy?.tokenName,
         sellPercent: percent,
@@ -137,7 +146,18 @@ export const createSellExecutors = (deps: {
       }
 
       const status = await WalletService.getStatus();
-      if (status.locked || !status.address) {
+      const preferredWalletAddress = parseStrategyWalletAddress(input.walletAddress);
+      const availableWalletSet = new Set(
+        (status.accounts ?? [])
+          .map((acc) => String(acc?.address ?? '').trim().toLowerCase())
+          .filter((addr): addr is `0x${string}` => /^0x[a-f0-9]{40}$/.test(addr)),
+      );
+      if (preferredWalletAddress && !availableWalletSet.has(preferredWalletAddress)) {
+        deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'wallet_not_found' });
+        return;
+      }
+      const sellFromAddress = preferredWalletAddress ?? (status.address ? (String(status.address).toLowerCase() as `0x${string}`) : undefined);
+      if (status.locked || !sellFromAddress) {
         deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'wallet_locked' });
         return;
       }
@@ -156,7 +176,7 @@ export const createSellExecutors = (deps: {
       if (!isTurbo) {
         let balanceWei = 0n;
         try {
-          balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, status.address));
+          balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, sellFromAddress));
         } catch {
           balanceWei = 0n;
         }
@@ -189,6 +209,7 @@ export const createSellExecutors = (deps: {
           tokenAmountWei: amountWei.toString(),
           tokenInfo: tokenInfoForTrade,
           sellPercentBps: bps,
+          fromAddress: sellFromAddress,
         } as any, {
           maxRetry: 1,
           timeoutMs: 20_000,
@@ -263,6 +284,7 @@ export const createSellExecutors = (deps: {
       triggerMarketCapUsd?: number;
       sellPercentOfOriginal?: number;
       sellPercentOfCurrent?: number;
+      walletAddress?: `0x${string}`;
     };
   }) => {
     const percent = Math.max(0, Math.min(100, Number(input.percent)));
@@ -286,6 +308,7 @@ export const createSellExecutors = (deps: {
         tweetUrl: input.meta.tweetUrl,
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
+        walletAddress: input.meta.walletAddress,
         sellPercent: Number.isFinite(Number(input.meta.sellPercentOfCurrent)) ? Number(input.meta.sellPercentOfCurrent) : percent,
         sellPercentOfOriginal: Number.isFinite(Number(input.meta.sellPercentOfOriginal)) ? Number(input.meta.sellPercentOfOriginal) : undefined,
         sellPercentOfCurrent: Number.isFinite(Number(input.meta.sellPercentOfCurrent)) ? Number(input.meta.sellPercentOfCurrent) : percent,
@@ -325,7 +348,18 @@ export const createSellExecutors = (deps: {
       }
 
       const status = await WalletService.getStatus();
-      if (status.locked || !status.address) {
+      const preferredWalletAddress = parseStrategyWalletAddress(input.meta.walletAddress);
+      const availableWalletSet = new Set(
+        (status.accounts ?? [])
+          .map((acc) => String(acc?.address ?? '').trim().toLowerCase())
+          .filter((addr): addr is `0x${string}` => /^0x[a-f0-9]{40}$/.test(addr)),
+      );
+      if (preferredWalletAddress && !availableWalletSet.has(preferredWalletAddress)) {
+        deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'wallet_not_found' });
+        return false;
+      }
+      const sellFromAddress = preferredWalletAddress ?? (status.address ? (String(status.address).toLowerCase() as `0x${string}`) : undefined);
+      if (status.locked || !sellFromAddress) {
         deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'wallet_locked' });
         return false;
       }
@@ -344,7 +378,7 @@ export const createSellExecutors = (deps: {
       if (!isTurbo) {
         let balanceWei = 0n;
         try {
-          balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, status.address));
+          balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, sellFromAddress));
         } catch {
           balanceWei = 0n;
         }
@@ -384,6 +418,7 @@ export const createSellExecutors = (deps: {
           tokenAmountWei: amountWei.toString(),
           tokenInfo: tokenInfoForTrade,
           sellPercentBps: bps,
+          fromAddress: sellFromAddress,
         } as any, {
           maxRetry: 1,
           timeoutMs: 20_000,

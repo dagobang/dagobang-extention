@@ -564,6 +564,7 @@ export function createTelegramController(deps: {
   };
 
   const sendXSniperOrderCard = async (orderId: string) => {
+    const settings = await SettingsService.get();
     const history = await loadXSniperHistory();
     const record = history.find((r) => String(r?.id || '') === orderId) as XSniperBuyRecord | undefined;
     if (!record) {
@@ -573,11 +574,13 @@ export function createTelegramController(deps: {
       return;
     }
     const addrKey = String(record.tokenAddress || '').toLowerCase();
-    const groupKey = `${record.dryRun === true ? 'dry:' : ''}${record.chainId}:${addrKey}`;
+    const walletKey = String((record as any).walletAddress || '').trim().toLowerCase() || 'current';
+    const groupKey = `${record.dryRun === true ? 'dry:' : ''}${record.chainId}:${addrKey}:${walletKey}`;
     const grouped = history
       .filter((r) => {
         if (!r || typeof r.chainId !== 'number') return false;
-        const key = `${r.dryRun === true ? 'dry:' : ''}${r.chainId}:${String(r.tokenAddress || '').toLowerCase()}`;
+        const recWalletKey = String((r as any).walletAddress || '').trim().toLowerCase() || 'current';
+        const key = `${r.dryRun === true ? 'dry:' : ''}${r.chainId}:${String(r.tokenAddress || '').toLowerCase()}:${recWalletKey}`;
         return key === groupKey;
       })
       .sort((a, b) => (Number(b.tsMs) || 0) - (Number(a.tsMs) || 0));
@@ -654,6 +657,16 @@ export function createTelegramController(deps: {
     const user = String(parent.userName || '').trim();
     const account = screen ? `@${screen}` : (user || '-');
     const symbol = String(parent.tokenSymbol || parent.tokenName || 'TOKEN').trim();
+    const walletState = (settings as any)?.wallet ?? {};
+    const walletAddressRaw = String((parent as any).walletAddress || walletState.address || '').trim();
+    const walletName = resolveWalletName({
+      address: walletAddressRaw,
+      accounts: Array.isArray(walletState.accounts) ? walletState.accounts as any : undefined,
+      accountAliases: walletState.accountAliases,
+    });
+    const walletDisplay = /^0x[a-fA-F0-9]{40}$/.test(walletAddressRaw)
+      ? `${walletName !== '-' ? walletName : 'Wallet'} (${shortAddress(walletAddressRaw)})`
+      : '-';
     const priceDeltaPct =
       entryMcap != null && latestMcap != null && Number.isFinite(entryMcap) && entryMcap > 0
         ? ((latestMcap / entryMcap) - 1) * 100
@@ -667,6 +680,7 @@ export function createTelegramController(deps: {
         `🧾 基本信息`,
         `订单: ${parent.id}`,
         `代币: ${symbol} | ${shortAddress(parent.tokenAddress)}`,
+        `钱包: ${walletDisplay}`,
         '',
         `📦 仓位与执行`,
         `仓位: 已卖 ${weighted.soldPct.toFixed(1)}% | 剩余 ${weighted.remainPct.toFixed(1)}%`,

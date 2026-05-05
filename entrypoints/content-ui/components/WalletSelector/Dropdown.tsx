@@ -13,9 +13,11 @@ type WalletSelectorDropdownProps = {
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
   multiWalletBuyMode: 'uniform' | 'child_custom';
-  childWalletBuyPresetAmountsNative: Record<string, string[]>;
+  childWalletBuyAmountsNative?: Record<string, string>;
+  childWalletBuyPresetAmountsNative?: Record<string, string[]>;
   onChangeMultiWalletBuyMode: (mode: 'uniform' | 'child_custom') => void;
-  onUpdateChildWalletBuyPresetAmount: (address: `0x${string}`, presetIndex: number, amountNative: string) => void;
+  onUpdateChildWalletBuyAmount?: (address: `0x${string}`, amountNative: string) => void;
+  onUpdateChildWalletBuyPresetAmount?: (address: `0x${string}`, presetIndex: number, amountNative: string) => void;
   nativeSymbol?: string;
   className?: string;
   onRequestClose: () => void;
@@ -53,9 +55,9 @@ export function WalletSelectorDropdown({
   walletTokenBalancesWei,
   tokenDecimals,
   multiWalletBuyMode,
-  childWalletBuyPresetAmountsNative,
+  childWalletBuyPresetAmountsNative = {},
   onChangeMultiWalletBuyMode,
-  onUpdateChildWalletBuyPresetAmount,
+  onUpdateChildWalletBuyPresetAmount = () => { },
   nativeSymbol = 'NATIVE',
   className,
   onRequestClose,

@@ -498,6 +498,7 @@ export const createXSniperTrade = (deps: {
     signalEventId?: string;
     signalTweetId?: string;
     entryPriceUsd?: number | null;
+    walletAddress?: `0x${string}`;
   }) =>
     (() => {
       manuallyClosedPosKeys.delete(input.posKey);
@@ -560,6 +561,7 @@ export const createXSniperTrade = (deps: {
               signal,
               relatedBuy: r,
               dryRun: r.dryRun === true,
+              walletAddress: (r as any).walletAddress,
             });
           } catch {
           }
@@ -577,6 +579,7 @@ export const createXSniperTrade = (deps: {
               percent,
               signal,
               dryRun: p.dryRun,
+              walletAddress: (p as any).walletAddress,
             });
           } catch {
           }

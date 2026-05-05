@@ -45,6 +45,13 @@ const buildGlobalBuyLockKey = (input: {
   return `${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}`;
 };
 
+const parseStrategyWalletAddress = (input: unknown): `0x${string}` | undefined => {
+  const raw = String(input ?? '').trim().toLowerCase();
+  if (!raw) return undefined;
+  if (!/^0x[a-f0-9]{40}$/.test(raw)) return undefined;
+  return raw as `0x${string}`;
+};
+
 export const tryAutoBuyOnce = async (input: {
   chainId: number;
   tokenAddress: `0x${string}`;
@@ -101,15 +108,30 @@ export const tryAutoBuyOnce = async (input: {
     signalEventId?: string;
     signalTweetId?: string;
     entryPriceUsd?: number | null;
+    walletAddress?: `0x${string}`;
   }) => void;
   dryRunAutoSellByPosKey: Map<string, DryRunAutoSellPos>;
 }) => {
   await input.loadBoughtOnceIfNeeded();
   const dryRun = input.strategy?.dryRun === true;
   const status = dryRun ? null : await WalletService.getStatus();
+  const strategyWalletAddress = dryRun ? undefined : parseStrategyWalletAddress(input.strategy?.walletAddress);
+  const availableWalletSet = new Set(
+    (status?.accounts ?? [])
+      .map((acc) => String(acc?.address ?? '').trim().toLowerCase())
+      .filter((addr): addr is `0x${string}` => /^0x[a-f0-9]{40}$/.test(addr)),
+  );
+  if (strategyWalletAddress && !availableWalletSet.has(strategyWalletAddress)) {
+    console.warn('XSniperTrade configured wallet not found in unlocked accounts', {
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      strategyWalletAddress,
+    });
+    return false;
+  }
   const tradeFromAddress =
-    !dryRun && status?.address
-      ? (String(status.address).toLowerCase() as `0x${string}`)
+    !dryRun && (strategyWalletAddress || status?.address)
+      ? (String(strategyWalletAddress || status?.address).toLowerCase() as `0x${string}`)
       : undefined;
   const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun, walletAddress: tradeFromAddress });
   const globalLockKey = !dryRun
@@ -163,6 +185,7 @@ export const tryAutoBuyOnce = async (input: {
       tweetUrl,
       chainId: input.chainId,
       tokenAddress: input.tokenAddress,
+      walletAddress: tradeFromAddress,
       tokenSymbol: extras?.tokenInfo?.symbol ? String(extras.tokenInfo.symbol) : (m.tokenSymbol ? String(m.tokenSymbol) : undefined),
       tokenName: extras?.tokenInfo?.name ? String(extras.tokenInfo.name) : undefined,
       launchpadPlatform: m.launchpadPlatform,
@@ -246,6 +269,7 @@ export const tryAutoBuyOnce = async (input: {
             tweetUrl,
             chainId: input.chainId,
             tokenAddress: input.tokenAddress,
+            walletAddress: tradeFromAddress,
             tokenSymbol: input.metrics.tokenSymbol,
             launchpadPlatform: input.metrics.launchpadPlatform,
             buyAmountNative: amountNumber,
@@ -394,6 +418,7 @@ export const tryAutoBuyOnce = async (input: {
         tweetUrl,
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
+        walletAddress: tradeFromAddress,
         tokenSymbol: delayedTokenInfo.symbol ? String(delayedTokenInfo.symbol) : undefined,
         tokenName: delayedTokenInfo.name ? String(delayedTokenInfo.name) : undefined,
         launchpadPlatform: dryRunMetrics.launchpadPlatform,
@@ -590,6 +615,7 @@ export const tryAutoBuyOnce = async (input: {
       signalEventId,
       signalTweetId,
       entryPriceUsd,
+      walletAddress: tradeFromAddress,
     });
     const effectiveEntryPriceUsd = entryPriceUsd;
 
@@ -603,6 +629,7 @@ export const tryAutoBuyOnce = async (input: {
       tweetUrl,
       chainId: input.chainId,
       tokenAddress: input.tokenAddress,
+      walletAddress: tradeFromAddress,
       tokenSymbol: tokenInfoForTrade.symbol ? String(tokenInfoForTrade.symbol) : undefined,
       tokenName: tokenInfoForTrade.name ? String(tokenInfoForTrade.name) : undefined,
       launchpadPlatform: refreshedMetrics.launchpadPlatform,

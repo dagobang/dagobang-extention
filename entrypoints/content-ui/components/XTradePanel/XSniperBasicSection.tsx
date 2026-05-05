@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { AutoTradeInteractionType, AutoTradeTwitterSnipePreset } from '@/types/extention';
+import type { Account, AutoTradeInteractionType, AutoTradeTwitterSnipePreset } from '@/types/extention';
+import { WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
 
 const interactionOptions: Array<{ value: AutoTradeInteractionType; labelKey: string }> = [
   { value: 'tweet', labelKey: 'contentUi.autoTradeStrategy.interaction.tweet' },
@@ -31,6 +32,12 @@ type XSniperBasicSectionProps = {
   onInteractionTypeChange: (interactionType: AutoTradeInteractionType, checked: boolean) => void;
   onBuyAmountNativeChange: (value: string) => void;
   onBuyNewCaCountChange: (value: string) => void;
+  walletSelectorOpen: boolean;
+  walletAccounts: Account[];
+  activeWalletAddress: `0x${string}` | null;
+  selectedWalletAddress?: `0x${string}`;
+  onToggleWalletSelector: () => void;
+  onSelectWalletAddress: (address?: `0x${string}`) => void;
 };
 
 export function XSniperBasicSection({
@@ -55,7 +62,14 @@ export function XSniperBasicSection({
   onInteractionTypeChange,
   onBuyAmountNativeChange,
   onBuyNewCaCountChange,
+  walletSelectorOpen,
+  walletAccounts,
+  activeWalletAddress,
+  selectedWalletAddress,
+  onToggleWalletSelector,
+  onSelectWalletAddress,
 }: XSniperBasicSectionProps) {
+  const selectedWallet = walletAccounts.find((acc) => acc.address.toLowerCase() === String(selectedWalletAddress || '').toLowerCase()) ?? null;
   return (
     <div className="space-y-2 pb-3 border-b border-zinc-800/60">
       <button
@@ -145,6 +159,50 @@ export function XSniperBasicSection({
           </div>
         </div>
         <div className="text-[11px] text-zinc-500">仅运行当前选中的方案，其他方案只保存不执行</div>
+      </div>
+      <div className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-900/30 p-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[12px] text-zinc-400">交易钱包</div>
+          <WalletSelectorTrigger
+            walletSelectorOpen={walletSelectorOpen}
+            walletSelectedCount={selectedWalletAddress ? 1 : 0}
+            walletTotalCount={walletAccounts.length}
+            onToggleWalletSelector={onToggleWalletSelector}
+            title="选择狙击交易钱包"
+          />
+        </div>
+        <div className="text-[11px] text-zinc-500">
+          {selectedWallet
+            ? `已指定：${selectedWallet.name || 'Wallet'} (${selectedWallet.address.slice(0, 6)}...${selectedWallet.address.slice(-4)})`
+            : `未指定，使用当前钱包${activeWalletAddress ? ` (${activeWalletAddress.slice(0, 6)}...${activeWalletAddress.slice(-4)})` : ''}`}
+        </div>
+        {walletSelectorOpen ? (
+          <div className="max-h-40 space-y-1 overflow-auto rounded-md border border-zinc-800 bg-zinc-900/60 p-1">
+            <button
+              type="button"
+              className={`w-full rounded px-2 py-1 text-left text-[12px] ${!selectedWalletAddress ? 'bg-emerald-500/20 text-emerald-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+              onClick={() => onSelectWalletAddress(undefined)}
+              disabled={!canEdit}
+            >
+              使用当前钱包
+            </button>
+            {walletAccounts.map((acc) => {
+              const selected = String(selectedWalletAddress || '').toLowerCase() === acc.address.toLowerCase();
+              const isActive = !!activeWalletAddress && activeWalletAddress.toLowerCase() === acc.address.toLowerCase();
+              return (
+                <button
+                  key={acc.address}
+                  type="button"
+                  className={`w-full rounded px-2 py-1 text-left text-[12px] ${selected ? 'bg-emerald-500/20 text-emerald-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+                  onClick={() => onSelectWalletAddress(acc.address)}
+                  disabled={!canEdit}
+                >
+                  {acc.name || 'Wallet'} {isActive ? '(当前)' : ''} ({acc.address.slice(0, 6)}...{acc.address.slice(-4)})
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
       <label className="block space-y-1">
         <div className="text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.targetUsers')}</div>

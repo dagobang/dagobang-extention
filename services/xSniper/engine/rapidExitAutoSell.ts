@@ -4,6 +4,7 @@ import type { WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
 export type RapidExitPosition = {
   chainId: number;
   tokenAddress: `0x${string}`;
+  walletAddress?: `0x${string}`;
   dryRun: boolean;
   openedAtMs: number;
   entryMcapUsd: number;
@@ -98,6 +99,7 @@ export const registerRapidExitPosition = (input: {
   signalEventId?: string;
   signalTweetId?: string;
   entryPriceUsd?: number | null;
+  walletAddress?: `0x${string}`;
 }) => {
   const cfg = readRapidExitConfig(input.strategy);
   if (!cfg.enabled) return;
@@ -107,6 +109,7 @@ export const registerRapidExitPosition = (input: {
   input.rapidExitByPosKey.set(input.posKey, {
     chainId: input.chainId,
     tokenAddress: input.tokenAddress,
+    walletAddress: input.walletAddress,
     dryRun: input.dryRun,
     openedAtMs: input.openedAtMs,
     entryMcapUsd: input.entryMcapUsd,
@@ -162,6 +165,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       triggerMarketCapUsd?: number;
       sellPercentOfOriginal?: number;
       sellPercentOfCurrent?: number;
+      walletAddress?: `0x${string}`;
     };
   }) => Promise<boolean>;
 }) => {
@@ -297,6 +301,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
             triggerMarketCapUsd: curMcap,
             sellPercentOfOriginal: targetPortion,
             sellPercentOfCurrent: percentOfCurrent,
+            walletAddress: pos.walletAddress,
           },
         });
         if (!sold) {
