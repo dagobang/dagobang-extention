@@ -1090,7 +1090,7 @@ export function initGmgnWsMonitor(options: {
       receivedAtMs: input.receivedAtMs,
       ts: Date.now(),
     };
-    console.log('emitMarketSignal>>', token.tokenName, token.launchpadPlatform, token.tokenAddress);
+    // console.log('emitMarketSignal>>', token.tokenName, token.launchpadPlatform, token.tokenAddress);
     enqueueMarketSignalForward(input.channel, signal);
   };
 

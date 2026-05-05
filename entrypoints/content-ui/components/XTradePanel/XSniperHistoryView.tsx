@@ -8,6 +8,7 @@ import { navigateToUrl, type SiteInfo, parsePlatformTokenLink } from '@/utils/si
 import { formatBnbAmount, formatCompactNumber, formatShortAddress } from '@/utils/format';
 import { XSniperWsStatusSection } from './XSniperWsStatusSection';
 import { LaunchpadPlatformBadge } from './LaunchpadPlatformBadge';
+import { XSniperHistorySummaryPanel, type SummaryRunMode } from './XSniperHistorySummaryPanel';
 
 type HistoryGroup = { key: string; parent: XSniperBuyRecord; children: XSniperBuyRecord[] };
 
@@ -189,6 +190,7 @@ export function XSniperHistoryView({
   const [wsExpanded, setWsExpanded] = useState(false);
   const [showWsLogs, setShowWsLogs] = useState(false);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const [summaryRunMode, setSummaryRunMode] = useState<SummaryRunMode>('live');
   const [strategyModeFilter, setStrategyModeFilter] = useState<'all' | 'auto_filter' | 'xmode_task'>('all');
   const normalizedKeyword = keyword.trim().toLowerCase();
   const taskSummaryText = useMemo(() => {
@@ -216,6 +218,128 @@ export function XSniperHistoryView({
 
   const visibleGroups = useMemo(() => filteredGroups.slice(0, visibleCount), [filteredGroups, visibleCount]);
   const canLoadMore = visibleCount < filteredGroups.length;
+  const summaryData = useMemo(() => {
+    const summaryGroups = filteredGroups.filter((g) => {
+      if (!g || !g.parent || g.parent.side === 'sell') return false;
+      if (summaryRunMode === 'live') return g.parent.dryRun !== true;
+      if (summaryRunMode === 'dry') return g.parent.dryRun === true;
+      return true;
+    });
+    const summaryParents = summaryGroups.map((g) => g.parent).filter((x) => x && x.side !== 'sell');
+    const total = summaryParents.length;
+    const dry = summaryParents.filter((x) => x.dryRun === true).length;
+    const live = summaryParents.filter((x) => x.dryRun !== true).length;
+    const confirmFail = summaryParents.filter((x) => x.reason === 'ws_confirm_failed').length;
+    const collect = (key: keyof XSniperBuyRecord) =>
+      summaryParents
+        .map((x) => getEvalPoint(x, key)?.pnlMcapPct)
+        .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+    const winRate = (arr: number[]) => (arr.length ? arr.filter((x) => x > 0).length / arr.length : null);
+    const weightedStats = summaryGroups.map((g) => {
+      const r = g.parent;
+      const entryMcap = typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) ? r.marketCapUsd : null;
+      const latest = latestTokenByAddr[String(r.tokenAddress || '').toLowerCase()] ?? null;
+      const latestMcap = latest && typeof latest.marketCapUsd === 'number' && Number.isFinite(latest.marketCapUsd)
+        ? Number(latest.marketCapUsd)
+        : null;
+      const sellRecords = g.children.filter((x) => x && x.side === 'sell');
+      const weighted = computeWeightedPnlPct({ entryMcap, latestMcap, sellRecords });
+      const reasonStats = sellRecords.reduce(
+        (acc, s) => {
+          const reason = String(s.reason || '').trim();
+          if (reason === 'rapid_take_profit') acc.tp += 1;
+          else if (reason === 'rapid_stop_loss') acc.sl += 1;
+          else if (reason === 'rapid_trailing_stop') acc.floor += 1;
+          else acc.other += 1;
+          return acc;
+        },
+        { tp: 0, sl: 0, floor: 0, other: 0 }
+      );
+      return {
+        pnlPct: weighted.pnlPct,
+        mode: weighted.mode,
+        soldPct: weighted.soldPct,
+        remainPct: weighted.remainPct,
+        sellCount: sellRecords.length,
+        athPnlPct: (() => {
+          const recordAthMcap = typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) ? r.athMarketCapUsd : null;
+          const athMcap = recordAthMcap ?? (athMcapByAddr[String(r.tokenAddress || '').toLowerCase()] ?? null);
+          if (entryMcap == null || !Number.isFinite(entryMcap) || entryMcap <= 0) return null;
+          if (athMcap == null || !Number.isFinite(athMcap) || athMcap <= 0) return null;
+          return ((athMcap / entryMcap) - 1) * 100;
+        })(),
+        ...reasonStats,
+      };
+    });
+    const weightedPnlValues = weightedStats
+      .map((x) => x.pnlPct)
+      .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    const athPnlValues = summaryGroups
+      .map((g) => {
+        const r = g.parent;
+        const entryMcap = typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) ? r.marketCapUsd : null;
+        const recordAthMcap = typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) ? r.athMarketCapUsd : null;
+        const athMcap = recordAthMcap ?? (athMcapByAddr[String(r.tokenAddress || '').toLowerCase()] ?? null);
+        if (entryMcap == null || !Number.isFinite(entryMcap) || entryMcap <= 0) return null;
+        if (athMcap == null || !Number.isFinite(athMcap) || athMcap <= 0) return null;
+        return ((athMcap / entryMcap) - 1) * 100;
+      })
+      .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    const takeProfitTriggeredGroups = weightedStats.filter((x) => x.tp > 0).length;
+    const stopLossOnlyGroups = weightedStats.filter((x) => x.sl > 0 && x.tp === 0).length;
+    const stopLossGroups = weightedStats.filter((x) => x.sl > 0);
+    const reboundAfterStopLossCount = stopLossGroups.filter((x) => (x.athPnlPct ?? 0) > 0).length;
+    const givebackRate = (() => {
+      const base = avg(athPnlValues);
+      const realized = avg(weightedPnlValues);
+      if (base == null || !Number.isFinite(base) || base <= 0) return null;
+      if (realized == null || !Number.isFinite(realized)) return null;
+      return Math.max(0, Math.min(1, (base - realized) / base));
+    })();
+
+    return {
+      total,
+      dry,
+      live,
+      confirmFail,
+      weightedPnlAvg: avg(weightedPnlValues),
+      weightedWinRate: winRate(weightedPnlValues),
+      weightedSamples: weightedPnlValues.length,
+      athPnlAvg: avg(athPnlValues),
+      athWinRate: winRate(athPnlValues),
+      athSamples: athPnlValues.length,
+      winCount: weightedPnlValues.filter((x) => x > 0).length,
+      lossCount: weightedPnlValues.filter((x) => x < 0).length,
+      flatCount: weightedPnlValues.filter((x) => x === 0).length,
+      realizedCount: weightedStats.filter((x) => x.mode === 'realized').length,
+      mixedCount: weightedStats.filter((x) => x.mode === 'mixed').length,
+      unrealizedCount: weightedStats.filter((x) => x.mode === 'unrealized').length,
+      avgSoldPct: avg(weightedStats.map((x) => x.soldPct)),
+      avgRemainPct: avg(weightedStats.map((x) => x.remainPct)),
+      sellParticipationRate: total > 0 ? weightedStats.filter((x) => x.sellCount > 0).length / total : null,
+      avgSellCount: avg(weightedStats.map((x) => x.sellCount)),
+      tpCount: weightedStats.reduce((acc, x) => acc + x.tp, 0),
+      slCount: weightedStats.reduce((acc, x) => acc + x.sl, 0),
+      floorCount: weightedStats.reduce((acc, x) => acc + x.floor, 0),
+      otherReasonCount: weightedStats.reduce((acc, x) => acc + x.other, 0),
+      takeProfitTriggeredRate: total > 0 ? takeProfitTriggeredGroups / total : null,
+      stopLossOnlyRate: total > 0 ? stopLossOnlyGroups / total : null,
+      stopLossGroupCount: stopLossGroups.length,
+      reboundAfterStopLossCount,
+      reboundAfterStopLossRate: stopLossGroups.length > 0 ? reboundAfterStopLossCount / stopLossGroups.length : null,
+      givebackRate,
+      evalMetrics: XSNIPER_EVAL_WINDOWS.map((window) => {
+        const values = collect(window.key);
+        return {
+          label: window.label,
+          avg: avg(values),
+          winRate: winRate(values),
+          samples: values.length,
+        };
+      }),
+    };
+  }, [filteredGroups, latestTokenByAddr, athMcapByAddr, summaryRunMode]);
 
   const sellByPercent = async (record: XSniperBuyRecord, pct: number) => {
     if (!settings) return;
@@ -504,38 +628,13 @@ export function XSniperHistoryView({
           </button>
         </div>
       </div>
-      {buyHistory.length && summaryExpanded ? (
-        <div className="rounded-md border border-zinc-800 bg-zinc-900/30 px-3 py-2 text-[11px] text-zinc-400">
-          {(() => {
-            const list = buyHistory.filter((x) => x && x.side !== 'sell');
-            const total = list.length;
-            const dry = list.filter((x) => x.dryRun === true).length;
-            const confirmFail = list.filter((x) => x.reason === 'ws_confirm_failed').length;
-            const collect = (key: keyof XSniperBuyRecord) =>
-              list
-                .map((x) => getEvalPoint(x, key)?.pnlMcapPct)
-                .filter((v) => typeof v === 'number' && Number.isFinite(v)) as number[];
-            const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
-            const winRate = (arr: number[]) => (arr.length ? arr.filter((x) => x > 0).length / arr.length : null);
-            const fmtPct = (v: number | null) => (v == null ? '-' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`);
-            const fmtRate = (v: number | null) => (v == null ? '-' : `${(v * 100).toFixed(1)}%`);
-            return (
-              <div className="flex flex-wrap gap-x-3 gap-y-1">
-                <span>{tt('contentUi.autoTradeStrategy.snipeHistorySummaryRecords')} {total}</span>
-                <span>{tt('contentUi.autoTradeStrategy.snipeHistorySummaryDry')} {dry}</span>
-                <span>{tt('contentUi.autoTradeStrategy.snipeHistorySummaryWsRejected')} {confirmFail}</span>
-                {XSNIPER_EVAL_WINDOWS.map((window) => {
-                  const values = collect(window.key);
-                  return (
-                    <span key={window.key}>
-                      {window.label} {tt('contentUi.autoTradeStrategy.snipeHistorySummaryAvg')} {fmtPct(avg(values))} {tt('contentUi.autoTradeStrategy.snipeHistorySummaryWinRate')} {fmtRate(winRate(values))}
-                    </span>
-                  );
-                })}
-              </div>
-            );
-          })()}
-        </div>
+      {summaryExpanded && buyHistory.length > 0 ? (
+        <XSniperHistorySummaryPanel
+          tt={tt}
+          data={summaryData}
+          runMode={summaryRunMode}
+          onRunModeChange={setSummaryRunMode}
+        />
       ) : null}
       {filteredGroups.length === 0 ? (
         <div className="text-[12px] text-zinc-500">{tt('contentUi.autoTradeStrategy.snipeHistoryEmpty')}</div>
