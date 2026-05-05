@@ -124,6 +124,17 @@ export const loadNewCoinSniperHistory = async (): Promise<NewCoinSniperOrderReco
   }
 };
 
+export const clearNewCoinSniperHistory = async () => {
+  try {
+    await enqueueHistoryMutation((list) => {
+      if (!list.length) return false;
+      list.length = 0;
+      return true;
+    });
+  } catch {
+  }
+};
+
 export const maybeUpdateNewCoinSniperHistoryEvaluations = async (input: {
   tokenAddress: `0x${string}`;
   nowMs: number;

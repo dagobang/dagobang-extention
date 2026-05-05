@@ -4,7 +4,7 @@ import { browser } from 'wxt/browser';
 import type { AutoTradeNewCoinSnipeConfig, NewCoinXmodeSnipeTask, Settings, XSniperBuyRecord } from '@/types/extention';
 import { call } from '@/utils/messaging';
 import { normalizeAddress } from '@/services/xSniper/engine/metrics';
-import { NEW_COIN_SNIPER_HISTORY_STORAGE_KEY, type NewCoinSniperOrderRecord } from '@/services/newCoinSniper/newCoinSniperHistory';
+import { NEW_COIN_SNIPER_HISTORY_STORAGE_KEY, clearNewCoinSniperHistory, type NewCoinSniperOrderRecord } from '@/services/newCoinSniper/newCoinSniperHistory';
 import { type SiteInfo } from '@/utils/sites';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { defaultSettings } from '@/utils/defaults';
@@ -546,7 +546,8 @@ export function XNewCoinSniperContent({
 
   const clearHistory = async () => {
     try {
-      await browser.storage.local.set({ [NEW_COIN_SNIPER_HISTORY_STORAGE_KEY]: [] } as any);
+      await clearNewCoinSniperHistory();
+      await call({ type: 'newCoinSniper:clearRuntimeState' } as const);
       setHistory([]);
     } catch {
     }

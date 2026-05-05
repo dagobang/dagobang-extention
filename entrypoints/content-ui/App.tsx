@@ -107,6 +107,7 @@ export default function App() {
   const fastPollingRef = useRef<any>(null);
   const tokenRefreshSeqRef = useRef(0);
   const deleteSoundPlayedAtRef = useRef<Record<string, number>>({});
+  const autoTradeOrderSoundPlayedAtRef = useRef<Record<string, number>>({});
 
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
@@ -794,6 +795,37 @@ export default function App() {
   // Listen for background state changes (immediate update)
   useEffect(() => {
     if (!siteInfo) return;
+    const shouldPlayOrderSound = (input: { source: 'xsniper' | 'newCoin'; record: any; ttlMs: number }) => {
+      const now = Date.now();
+      const token = String(input.record?.tokenAddress || '').trim().toLowerCase();
+      const side = String(input.record?.side || '').trim().toLowerCase();
+      const reason = String(input.record?.reason || '').trim().toLowerCase();
+      const txHash = String(input.record?.txHash || '').trim().toLowerCase();
+      const signalKey = String(
+        input.record?.signalEventId
+        || input.record?.signalTweetId
+        || input.record?.signalId
+        || input.record?.id
+        || '',
+      ).trim().toLowerCase();
+      const key = `${input.source}:${side}:${token}:${reason}:${txHash || signalKey}`;
+      if (!token || !side || !key) return true;
+      const map = autoTradeOrderSoundPlayedAtRef.current;
+      const prev = map[key];
+      if (typeof prev === 'number' && Number.isFinite(prev) && now - prev < input.ttlMs) return false;
+      map[key] = now;
+      const entries = Object.entries(map);
+      if (entries.length > 1200) {
+        const next: Record<string, number> = {};
+        for (const [k, ts] of entries) {
+          if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
+          if (now - ts > 10 * 60_000) continue;
+          next[k] = ts;
+        }
+        autoTradeOrderSoundPlayedAtRef.current = next;
+      }
+      return true;
+    };
     const listener = (message: any) => {
       if (message.type === 'bg:gmgn:getTokenHoldings') {
         return (async () => {
@@ -864,6 +896,7 @@ export default function App() {
         const record = message?.record as any;
         const isDeleteTweetSell = record?.side === 'sell' && record?.tweetType === 'delete_post';
         if (isDeleteTweetSell) return;
+        if (!shouldPlayOrderSound({ source: 'xsniper', record, ttlMs: 30_000 })) return;
         ensureAutoTradeAudioReady();
         playAutoTradePreset(autoTradeSoundPreset);
         return;
@@ -882,6 +915,7 @@ export default function App() {
         if (newCoinSnipe?.playSound === false) return;
         // Only play once when a real buy order record is created.
         if (record?.side !== 'buy' || record?.reason) return;
+        if (!shouldPlayOrderSound({ source: 'newCoin', record, ttlMs: 120_000 })) return;
         const preset = (newCoinSnipe?.soundPreset ?? autoTradeSoundPreset) as TradeSuccessSoundPreset;
         ensureAutoTradeAudioReady();
         playAutoTradePreset(preset);

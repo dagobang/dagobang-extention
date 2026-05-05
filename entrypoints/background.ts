@@ -1013,6 +1013,11 @@ export default defineBackground(() => {
             if (updated) broadcastStateChange();
             return { ok: true, updated };
           }
+          case 'xsniper:clearRuntimeState': {
+            (AutoTrade as any).clearRuntimeState?.();
+            broadcastStateChange();
+            return { ok: true };
+          }
 
           case 'newCoinSniper:manualPositionClosed': {
             const updated = (NewCoinSniperTrade as any).markPositionClosedManually?.(msg.input) === true;
@@ -1023,6 +1028,11 @@ export default defineBackground(() => {
             const updated = (NewCoinSniperTrade as any).markPositionSoldManually?.(msg.input) === true;
             if (updated) broadcastStateChange();
             return { ok: true, updated };
+          }
+          case 'newCoinSniper:clearRuntimeState': {
+            (NewCoinSniperTrade as any).clearRuntimeState?.();
+            broadcastStateChange();
+            return { ok: true };
           }
 
           case 'tx:waitForReceipt': {

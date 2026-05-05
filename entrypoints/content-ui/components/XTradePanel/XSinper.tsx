@@ -734,6 +734,7 @@ export function XSniperContent({
               void (async () => {
                 try {
                   await clearXSniperHistory();
+                  await call({ type: 'xsniper:clearRuntimeState' } as const);
                   await browser.storage.local.remove(BOUGHT_ONCE_STORAGE_KEY);
                 } finally {
                   setBuyHistory([]);

@@ -309,7 +309,8 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
           cleanup();
           return false;
         }
-        pos.failCount = 0;
+        // Do not reset failCount on submit success. Rapid executor returns after submit,
+        // while receipt can still fail later via onReceiptFailed callback.
         pos.nextRetryAtMs = 0;
         pos.remainingPercent = Math.max(0, nowRemaining - targetPortion);
         return true;

@@ -1115,5 +1115,17 @@ export const createNewCoinSniperTrade = (deps: {
       sellPercent: 100,
     });
 
-  return { handleMarketSignal, markPositionSoldManually, markPositionClosedManually };
+  const clearRuntimeState = () => {
+    dryRunAutoSellByPosKey.clear();
+    rapidExitByPosKey.clear();
+    manuallyClosedPosKeys.clear();
+    rapidWatchdogRpcAtMs.clear();
+    wsSnapshotsByAddr.clear();
+    buyFailureRecordDedupe.clear();
+    wsConfirmFailDedupe.clear();
+    buyInFlight.clear();
+    latestModeMetaByToken.clear();
+  };
+
+  return { handleMarketSignal, markPositionSoldManually, markPositionClosedManually, clearRuntimeState };
 };

@@ -321,6 +321,17 @@ export const createXSniperTrade = (deps: {
       sellPercent: 100,
     });
 
+  const clearRuntimeState = () => {
+    dryRunAutoSellByPosKey.clear();
+    rapidExitByPosKey.clear();
+    manuallyClosedPosKeys.clear();
+    rapidWatchdogRpcAtMs.clear();
+    wsSnapshotsByAddr.clear();
+    buyFailureRecordDedupe.clear();
+    wsConfirmFailDedupe.clear();
+    buyInFlight.clear();
+  };
+
   const pushWsSnapshot = (tokenAddress: `0x${string}`, metrics: TokenMetrics) => {
     pushWsSnapshotFromWs({
       tokenAddress,
@@ -611,5 +622,5 @@ export const createXSniperTrade = (deps: {
     }
   };
 
-  return { handleTwitterSignal, markPositionSoldManually, markPositionClosedManually };
+  return { handleTwitterSignal, markPositionSoldManually, markPositionClosedManually, clearRuntimeState };
 };
