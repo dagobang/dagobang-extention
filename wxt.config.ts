@@ -27,6 +27,7 @@ export default defineConfig({
       'https://debot.ai/*',
       'https://api.blxrbdn.com/*',
       'https://*.supabase.co/*',
+      'https://www.google.com/*',
     ],
     web_accessible_resources: [
       {

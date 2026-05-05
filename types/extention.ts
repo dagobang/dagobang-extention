@@ -422,6 +422,11 @@ export type TxSellInput = {
   tokenInfo?: TokenInfo;
 };
 
+export type CookingAutoBuyWalletInput = {
+  address: `0x${string}`;
+  amountBnb: string;
+};
+
 export type LimitOrderSide = 'buy' | 'sell';
 
 export type LimitOrderType = 'take_profit_sell' | 'stop_loss_sell' | 'trailing_stop_sell' | 'low_buy' | 'high_buy';
@@ -683,8 +688,30 @@ export type BgRequest =
   | { type: 'token:getTokenInfo:fourmeme'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:flap'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:fourmemeHttp'; platform: string; chain: string; address: `0x${string}` }
-  | { type: 'token:createFourmeme'; input: { name: string; shortName: string; desc: string; imgUrl: string; webUrl?: string; twitterUrl?: string; telegramUrl?: string; preSale: string; onlyMPC: boolean } }
+  | {
+    type: 'token:createFourmeme';
+    input: {
+      name: string;
+      shortName: string;
+      desc: string;
+      imgUrl: string;
+      webUrl?: string;
+      twitterUrl?: string;
+      telegramUrl?: string;
+      preSale: string;
+      onlyMPC: boolean;
+      fromAddress?: `0x${string}`;
+      autoBuy?: {
+        bundleEnabled?: boolean;
+        sniperEnabled?: boolean;
+        wallets?: CookingAutoBuyWalletInput[];
+        sniperMaxAttempts?: number;
+        sniperRetryMs?: number;
+      };
+    };
+  }
   | { type: 'ai:generateLogo'; prompt: string; size?: string; apiKey: string }
+  | { type: 'google:imageSearch'; query: string; page?: number }
   | { type: 'rpc:prewarm'; input?: { urls?: string[]; force?: boolean; timeoutMs?: number } }
   | { type: 'trade:prewarmTurbo'; input: { chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo } }
   | { type: 'trade:refreshNonce'; input: { chainId: number; fromAddress?: `0x${string}` } }
@@ -803,9 +830,23 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'token:getTokenInfo:fourmemeHttp' }
   ? { ok: true; tokenInfo: TokenInfo | null }
   : T extends { type: 'token:createFourmeme' }
-  ? { ok: true; data?: any }
+  ? {
+    ok: true;
+    data?: any;
+    autoBuy?: {
+      bundleSuccess: number;
+      bundleFailed: number;
+      sniperSuccess: number;
+      sniperFailed: number;
+    };
+  }
   : T extends { type: 'ai:generateLogo' }
   ? { ok: true; imageUrl: string }
+  : T extends { type: 'google:imageSearch' }
+  ? {
+    ok: true;
+    images: Array<{ url: string; thumbnail?: string; title?: string; source?: string }>;
+  }
   : T extends { type: 'rpc:prewarm' }
   ? { ok: true }
   : T extends { type: 'trade:prewarmTurbo' }

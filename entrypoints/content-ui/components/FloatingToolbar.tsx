@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AlarmClockCheck, Crosshair, GripHorizontal, LineChart, NotebookPen, SatelliteDish } from 'lucide-react';
+import { AlarmClockCheck, Crosshair, Flame, GripHorizontal, NotebookPen, SatelliteDish } from 'lucide-react';
 import type { Settings } from '@/types/extention';
 import type { SiteInfo } from '@/utils/sites';
 import { Logo } from '@/components/Logo';
@@ -7,6 +7,8 @@ import { Logo } from '@/components/Logo';
 export type FloatingToolbarProps = {
   siteInfo: SiteInfo;
   settings: Settings | null;
+  onToggleCooking: () => void;
+  cookingActive: boolean;
   onToggleXTrade: () => void;
   xTradeActive: boolean;
   onToggleLimitTrade: () => void;
@@ -30,6 +32,8 @@ function clampToolbarPos(pos: { x: number; y: number }, toolbarWidth: number) {
 export function FloatingToolbar({
   siteInfo,
   settings,
+  onToggleCooking,
+  cookingActive,
   onToggleXTrade,
   xTradeActive,
   onToggleLimitTrade,
@@ -137,6 +141,10 @@ export function FloatingToolbar({
 
       <div className="flex-1" />
 
+      <ToolBtn active={cookingActive} title="Cooking" onClick={onToggleCooking}>
+        <Flame size={14} />
+      </ToolBtn>
+
       <ToolBtn active={autotradeActive} title="Limit Order" onClick={onToggleLimitTrade}>
         <AlarmClockCheck size={14} />
       </ToolBtn>
@@ -150,7 +158,7 @@ export function FloatingToolbar({
       </ToolBtn>
 
       <ToolBtn active={dailyAnalysisActive} title="Daily Analysis" onClick={onToggleDailyAnalysis}>
-        <LineChart size={14} />
+        <GripHorizontal size={14} />
       </ToolBtn>
 
       <ToolBtn active={reviewActive} title="Review" onClick={onToggleReview}>

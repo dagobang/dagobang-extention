@@ -456,7 +456,10 @@ export default defineBackground(() => {
 
           case 'token:createFourmeme': {
             const settings = await SettingsService.get();
-            const account = await WalletService.getSigner();
+            const fromAddress = (msg.input.fromAddress && isAddress(msg.input.fromAddress))
+              ? (msg.input.fromAddress as `0x${string}`)
+              : undefined;
+            const account = await WalletService.getSigner(fromAddress);
             const address = account.address;
             const networkCode = 'BSC';
 
@@ -491,6 +494,73 @@ export default defineBackground(() => {
               createData.sign
             );
 
+            const autoBuySummary = {
+              bundleSuccess: 0,
+              bundleFailed: 0,
+              sniperSuccess: 0,
+              sniperFailed: 0,
+            };
+            const autoBuyWallets = Array.isArray(msg.input.autoBuy?.wallets)
+              ? msg.input.autoBuy!.wallets
+                .map((item) => ({
+                  address: isAddress(item?.address) ? item.address as `0x${string}` : null,
+                  amountBnb: String(item?.amountBnb || '').trim(),
+                }))
+                .filter((item) => !!item.address && !!item.amountBnb) as Array<{ address: `0x${string}`; amountBnb: string }>
+              : [];
+
+            if (onChainResult.tokenAddress && autoBuyWallets.length > 0) {
+              const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+              const buyOnce = async (wallet: { address: `0x${string}`; amountBnb: string }) => {
+                const amountWei = parseEther(wallet.amountBnb).toString();
+                const rsp = await TradeService.buyWithReceiptAndNonceRecovery(
+                  {
+                    chainId: settings.chainId,
+                    tokenAddress: onChainResult.tokenAddress!,
+                    bnbAmountWei: amountWei,
+                    fromAddress: wallet.address,
+                  },
+                  {
+                    maxRetry: 1,
+                    timeoutMs: 8_000,
+                  },
+                );
+                return !!rsp?.txHash;
+              };
+
+              if (msg.input.autoBuy?.bundleEnabled) {
+                const bundleResults = await Promise.allSettled(autoBuyWallets.map((wallet) => buyOnce(wallet)));
+                for (const item of bundleResults) {
+                  if (item.status === 'fulfilled' && item.value) autoBuySummary.bundleSuccess += 1;
+                  else autoBuySummary.bundleFailed += 1;
+                }
+              }
+
+              if (msg.input.autoBuy?.sniperEnabled) {
+                const maxAttemptsRaw = Number(msg.input.autoBuy?.sniperMaxAttempts ?? 20);
+                const retryMsRaw = Number(msg.input.autoBuy?.sniperRetryMs ?? 1200);
+                const maxAttempts = Math.max(1, Math.min(80, Number.isFinite(maxAttemptsRaw) ? Math.floor(maxAttemptsRaw) : 20));
+                const retryMs = Math.max(300, Math.min(5000, Number.isFinite(retryMsRaw) ? Math.floor(retryMsRaw) : 1200));
+                const sniperResults = await Promise.allSettled(
+                  autoBuyWallets.map(async (wallet) => {
+                    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                      try {
+                        const ok = await buyOnce(wallet);
+                        if (ok) return true;
+                      } catch {
+                      }
+                      if (attempt < maxAttempts) await sleep(retryMs);
+                    }
+                    return false;
+                  }),
+                );
+                for (const item of sniperResults) {
+                  if (item.status === 'fulfilled' && item.value) autoBuySummary.sniperSuccess += 1;
+                  else autoBuySummary.sniperFailed += 1;
+                }
+              }
+            }
+
             return {
               ok: true,
               data: {
@@ -498,6 +568,7 @@ export default defineBackground(() => {
                 txHash: onChainResult.txHash,
                 tokenAddress: onChainResult.tokenAddress,
               },
+              autoBuy: autoBuySummary,
             };
           }
 
@@ -533,6 +604,59 @@ export default defineBackground(() => {
               throw new Error('Seedream4.5 response missing image url');
             }
             return { ok: true, imageUrl };
+          }
+
+          case 'google:imageSearch': {
+            const query = String(msg.query || '').trim();
+            if (!query) return { ok: true, images: [] };
+            const page = Math.max(0, Number(msg.page || 0) || 0);
+            const start = page * 20;
+            const endpoint = `https://www.google.com/search?tbm=isch&hl=zh-CN&safe=off&q=${encodeURIComponent(query)}&start=${start}`;
+            const res = await fetch(endpoint, {
+              method: 'GET',
+              headers: {
+                'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36',
+              },
+            });
+            if (!res.ok) {
+              throw new Error(`Google image search failed: ${res.status}`);
+            }
+            const html = await res.text();
+            const decodeEscaped = (value: string) => value
+              .replace(/\\u003d/g, '=')
+              .replace(/\\u0026/g, '&')
+              .replace(/\\u002F/g, '/')
+              .replace(/\\\//g, '/')
+              .replace(/\\u([\dA-Fa-f]{4})/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
+            const images: Array<{ url: string; thumbnail?: string; title?: string; source?: string }> = [];
+            const seen = new Set<string>();
+
+            const richRegex = /"ou":"([^"]+)".*?"tu":"([^"]*)".*?"pt":"([^"]*)"/g;
+            let richMatch: RegExpExecArray | null;
+            while ((richMatch = richRegex.exec(html)) !== null) {
+              const url = decodeEscaped(richMatch[1] || '').trim();
+              const thumbnail = decodeEscaped(richMatch[2] || '').trim();
+              const title = decodeEscaped(richMatch[3] || '').trim();
+              if (!url || seen.has(url)) continue;
+              seen.add(url);
+              images.push({ url, thumbnail: thumbnail || undefined, title: title || undefined, source: 'google' });
+              if (images.length >= 36) break;
+            }
+
+            if (images.length < 10) {
+              const fallbackRegex = /https?:\/\/[^"'\s<>]+?\.(?:png|jpg|jpeg|webp|gif)/gi;
+              let fallbackMatch: RegExpExecArray | null;
+              while ((fallbackMatch = fallbackRegex.exec(html)) !== null) {
+                const url = decodeEscaped(fallbackMatch[0] || '').trim();
+                if (!url || seen.has(url)) continue;
+                seen.add(url);
+                images.push({ url, source: 'google' });
+                if (images.length >= 36) break;
+              }
+            }
+
+            return { ok: true, images };
           }
 
           case 'limitOrder:list': {

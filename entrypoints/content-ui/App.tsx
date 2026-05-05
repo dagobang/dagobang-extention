@@ -27,6 +27,7 @@ import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
 import { ReviewPanel } from './components/ReviewPanel';
 import { QuickTradePanel } from './components/QuickTradePanel';
 import { FloatingToolbar } from './components/FloatingToolbar';
+import { CookingPanel } from './components/CookingPanel';
 
 const PRIORITY_FEE_PRESETS = ['none', 'slow', 'standard', 'fast'] as const;
 type PriorityFeePreset = (typeof PRIORITY_FEE_PRESETS)[number];
@@ -116,6 +117,7 @@ export default function App() {
     return { x: defaultX, y: defaultY };
   });
   const posRef = useRef(pos);
+  const [showCookingPanel, setShowCookingPanel] = useState(false);
   const [showLimitTradePanel, setShowLimitTradePanel] = useState(false);
   const [showXTradePanel, setShowXTradePanel] = useState(false);
   const [showRpcPanel, setShowRpcPanel] = useState(false);
@@ -288,6 +290,12 @@ export default function App() {
     } catch {
     }
 
+    try {
+      const stored = window.localStorage.getItem('dagobang_cooking_panel_visible');
+      if (stored) setShowCookingPanel(stored === '1');
+    } catch {
+    }
+
   }, []);
 
   useEffect(() => {
@@ -306,7 +314,11 @@ export default function App() {
       window.localStorage.setItem('dagobang_review_panel_visible', showReviewPanel ? '1' : '0');
     } catch {
     }
-  }, [showLimitTradePanel, showXTradePanel, showReviewPanel]);
+    try {
+      window.localStorage.setItem('dagobang_cooking_panel_visible', showCookingPanel ? '1' : '0');
+    } catch {
+    }
+  }, [showLimitTradePanel, showXTradePanel, showReviewPanel, showCookingPanel]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -1898,6 +1910,10 @@ export default function App() {
     setShowReviewPanel((v) => !v);
   };
 
+  const handleToggleCookingPanel = () => {
+    setShowCookingPanel((v) => !v);
+  };
+
   const handleToggleXTradePanel = () => {
     if (!showXTradePanel) {
       setShowXTradePanel(true);
@@ -1926,6 +1942,8 @@ export default function App() {
             <FloatingToolbar
               siteInfo={siteInfo}
               settings={settings}
+              onToggleCooking={handleToggleCookingPanel}
+              cookingActive={showCookingPanel}
               onToggleXTrade={handleToggleXTradePanel}
               xTradeActive={showXTradePanel}
               onToggleLimitTrade={handleToggleLimitTradePanel}
@@ -2067,6 +2085,17 @@ export default function App() {
             address={siteInfo?.walletAddress ?? address}
             tokenAddress={tokenAddressNormalized}
             tokenSymbol={tokenSymbol}
+          />
+
+          <CookingPanel
+            visible={showCookingPanel}
+            onVisibleChange={setShowCookingPanel}
+            address={siteInfo?.walletAddress ?? address}
+            seedreamApiKey={settings?.seedreamApiKey ?? ''}
+            walletAccounts={walletAccounts}
+            activeWalletAddress={address as `0x${string}` | null}
+            defaultSelectedWallets={selectedTradeWallets}
+            walletNativeBalancesWei={walletNativeBalancesWei}
           />
 
           <XTradePanel
