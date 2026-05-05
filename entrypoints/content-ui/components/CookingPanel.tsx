@@ -199,6 +199,19 @@ export function CookingPanel({
     setWalletSniperAmounts((prev) => ({ ...prev, [wallet.toLowerCase()]: amount }));
   };
 
+  const clearImageAndTokenInputs = () => {
+    setLogoPrompt('');
+    setLogoUrl('');
+    setGoogleQuery('');
+    setGoogleImages([]);
+    setGooglePage(0);
+    setTokenSymbolInput('');
+    setTokenNameInput('');
+    setTwitterInput('');
+    setWebsiteInput('');
+    setTelegramInput('');
+  };
+
   const updateAutoSellRule = (index: number, patch: Partial<AutoSellRule>) => {
     setAutoSellRules((list) => list.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   };
@@ -400,6 +413,7 @@ export function CookingPanel({
       if (data) {
         console.log('Fourmeme create token response', data);
       }
+      clearImageAndTokenInputs();
     } catch (e: any) {
       const msg = e?.message ? String(e.message) : '创建 Meme Token 失败';
       toast.error(msg, { icon: '❌' });
@@ -415,7 +429,7 @@ export function CookingPanel({
       className="fixed z-[2147483647]"
       style={{ left: pos.x, top: pos.y }}
     >
-      <div className="w-[360px] h-[700px] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-amber-500/40 text-[12px]">
+      <div className="w-[360px] h-[700px] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-amber-500/40 text-[12px] flex flex-col">
         <div
           className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 cursor-grab"
           onPointerDown={(e) => {
@@ -437,300 +451,311 @@ export function CookingPanel({
             关闭
           </button>
         </div>
-        <div className="h-[648px] p-3 space-y-3 overflow-y-auto dagobang-scrollbar">
+        <div className="flex-1 p-3 space-y-3 overflow-y-auto dagobang-scrollbar">
           <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-300">
             平台：Fourmeme（当前仅支持）
           </div>
 
-          <div className="space-y-1">
-            <div className="text-[11px] text-zinc-400">提示词（生成 Logo）</div>
-            <textarea
-              className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none resize-none h-16"
-              value={logoPrompt}
-              onChange={(e) => setLogoPrompt(e.target.value)}
-            />
-            <div className="mt-2 flex items-center gap-2">
-              <button
-                className="px-3 py-1 rounded-md bg-amber-500 text-[11px] font-semibold text-black hover:bg-amber-400 disabled:opacity-50"
-                onClick={handleGenerateLogo}
-                disabled={logoLoading}
-              >
-                {logoLoading ? '生成中…' : '生成 Logo'}
-              </button>
-              <div className="text-[10px] text-zinc-500">
-                Seedream API Key 请在设置页配置
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="text-[11px] text-zinc-400">Google 搜图</div>
-            <div className="flex items-center gap-2">
-              <input
-                className="flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
-                value={googleQuery}
-                onChange={(e) => setGoogleQuery(e.target.value)}
-                placeholder="输入关键词搜索图片"
+          <div className="space-y-2 rounded-lg border border-sky-500/25 bg-sky-500/5 p-2.5">
+            <div className="text-[12px] font-semibold text-sky-200">图片</div>
+            <div className="space-y-1">
+              <div className="text-[11px] text-zinc-400">提示词（生成 Logo）</div>
+              <textarea
+                className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none resize-none h-16"
+                value={logoPrompt}
+                onChange={(e) => setLogoPrompt(e.target.value)}
               />
-              <button
-                type="button"
-                className="px-2 py-1 rounded-md border border-zinc-700 text-[11px] text-zinc-200 hover:border-zinc-500"
-                onClick={() => handleSearchGoogleImages(0)}
-                disabled={googleSearching}
-              >
-                搜索
-              </button>
-              <button
-                type="button"
-                className="px-2 py-1 rounded-md border border-zinc-700 text-[11px] text-zinc-200 hover:border-zinc-500 disabled:opacity-40"
-                onClick={() => handleSearchGoogleImages(googlePage + 1)}
-                disabled={googleSearching || !googleImages.length}
-              >
-                更多
-              </button>
-            </div>
-            {googleImages.length > 0 && (
-              <div className="grid grid-cols-4 gap-2 max-h-40 overflow-auto pr-1">
-                {googleImages.map((item, idx) => (
-                  <button
-                    key={`${item.url}-${idx}`}
-                    type="button"
-                    className="h-16 rounded-md overflow-hidden border border-zinc-800 hover:border-emerald-500"
-                    onClick={() => setLogoUrl(item.url)}
-                    title={item.title || item.url}
-                  >
-                    <img src={item.thumbnail || item.url} alt={item.title || 'img'} className="h-full w-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-1">
-            <div className="text-[11px] text-zinc-400">Logo 链接</div>
-            <input
-              className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
-              value={logoUrl}
-              onChange={(e) => setLogoUrl(e.target.value)}
-              placeholder="可手动粘贴图片地址"
-            />
-            {logoUrl && (
               <div className="mt-2 flex items-center gap-2">
-                <div className="w-10 h-10 rounded-full border border-zinc-800 bg-zinc-950 overflow-hidden flex items-center justify-center">
-                  <img src={logoUrl} alt="Logo" className="max-w-full max-h-full" />
+                <button
+                  className="px-3 py-1 rounded-md bg-amber-500 text-[11px] font-semibold text-black hover:bg-amber-400 disabled:opacity-50"
+                  onClick={handleGenerateLogo}
+                  disabled={logoLoading}
+                >
+                  {logoLoading ? '生成中…' : '生成 Logo'}
+                </button>
+                <div className="text-[10px] text-zinc-500">
+                  Seedream API Key 请在设置页配置
                 </div>
-                <div className="text-[11px] text-zinc-500 break-all">
-                  预览
-                </div>
               </div>
-            )}
-          </div>
+            </div>
 
-          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <div className="text-[11px] text-zinc-400">代币符号</div>
-              <input
-                className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
-                value={tokenSymbolInput}
-                onChange={(e) => setTokenSymbolInput(e.target.value.toUpperCase())}
-                placeholder="如 DGB"
-              />
-            </div>
-            <div className="space-y-1">
-              <div className="text-[11px] text-zinc-400">代币名称</div>
-              <input
-                className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
-                value={tokenNameInput}
-                onChange={(e) => setTokenNameInput(e.target.value)}
-                placeholder="如 Dagobang"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <div className="text-[11px] text-zinc-400">推特</div>
-              <input
-                className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
-                value={twitterInput}
-                onChange={(e) => setTwitterInput(e.target.value)}
-                placeholder="https://twitter.com/..."
-              />
-            </div>
-            <div className="space-y-1">
-              <div className="text-[11px] text-zinc-400">官网</div>
-              <input
-                className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
-                value={websiteInput}
-                onChange={(e) => setWebsiteInput(e.target.value)}
-                placeholder="https://..."
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="text-[11px] text-zinc-400">电报</div>
-            <input
-              className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
-              value={telegramInput}
-              onChange={(e) => setTelegramInput(e.target.value)}
-              placeholder="https://t.me/..."
-            />
-          </div>
-
-          <div className="space-y-1 rounded-md border border-zinc-800/70 bg-zinc-900/30 p-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[12px] text-zinc-400">发币钱包（单选）</div>
-              <WalletSelectorTrigger
-                walletSelectorOpen={deployWalletSelectorOpen}
-                walletSelectedCount={deployWallet ? 1 : 0}
-                walletTotalCount={walletAccounts.length}
-                onToggleWalletSelector={() => setDeployWalletSelectorOpen((v) => !v)}
-                title="选择发币钱包"
-              />
-            </div>
-            <div className="text-[11px] text-zinc-500">
-              {selectedDeployWallet
-                ? `已指定：${selectedDeployWallet.name || 'Wallet'} (${selectedDeployWallet.address.slice(0, 6)}...${selectedDeployWallet.address.slice(-4)})`
-                : `未指定，使用当前钱包${activeWalletAddress ? ` (${activeWalletAddress.slice(0, 6)}...${activeWalletAddress.slice(-4)})` : ''}`}
-            </div>
-            {deployWalletSelectorOpen ? (
-              <div className="max-h-40 space-y-1 overflow-auto rounded-md border border-zinc-800 bg-zinc-900/60 p-1 dagobang-scrollbar">
-                {walletAccounts.map((acc) => {
-                  const selected = String(deployWallet || '').toLowerCase() === acc.address.toLowerCase();
-                  const isActive = !!activeWalletAddress && activeWalletAddress.toLowerCase() === acc.address.toLowerCase();
-                  return (
-                    <button
-                      key={acc.address}
-                      type="button"
-                      className={`w-full rounded px-2 py-1 text-left text-[12px] ${selected ? 'bg-emerald-500/20 text-emerald-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
-                      onClick={() => {
-                        setDeployWallet(acc.address);
-                        setDeployWalletSelectorOpen(false);
-                      }}
-                    >
-                      {acc.name || 'Wallet'} {isActive ? '(当前)' : ''} ({acc.address.slice(0, 6)}...{acc.address.slice(-4)})
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="space-y-1">
-            <div className="text-[11px] text-zinc-400">默认买入（发币钱包，BNB）</div>
-            <input
-              className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
-              value={defaultBuyBnb}
-              onChange={(e) => setDefaultBuyBnb(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2 rounded-md border border-zinc-800 p-2">
-            <div className="flex items-center justify-between">
-              <div className="text-[11px] text-zinc-400">自动买入钱包（最多 5 个）</div>
-              <WalletSelectorTrigger
-                walletSelectorOpen={autoBuyWalletSelectorOpen}
-                walletSelectedCount={autoBuyWallets.length}
-                walletTotalCount={walletTotalCount}
-                onToggleWalletSelector={() => setAutoBuyWalletSelectorOpen((v) => !v)}
-                title="选择自动买入钱包"
-              />
-            </div>
-            <WalletSelectorDropdown
-              open={autoBuyWalletSelectorOpen}
-              selectedTradeWallets={autoBuyWallets}
-              walletAccounts={walletAccounts}
-              activeWalletAddress={activeWalletAddress}
-              onToggleTradeWallet={toggleAutoBuyWallet}
-              walletNativeBalancesWei={walletNativeBalancesWei}
-              walletTokenBalancesWei={{}}
-              tokenDecimals={18}
-              multiWalletBuyMode="uniform"
-              onChangeMultiWalletBuyMode={() => { }}
-              childWalletBuyPresetAmountsNative={{}}
-              onUpdateChildWalletBuyPresetAmount={() => { }}
-              className="rounded-md border border-zinc-700 bg-[#141416] p-2 shadow-xl"
-              onRequestClose={() => setAutoBuyWalletSelectorOpen(false)}
-            />
-            {autoBuyWallets.length > 0 ? (
-              <div className="space-y-1">
-                {autoBuyWallets.map((wallet) => (
-                  <div key={wallet} className="grid grid-cols-[1fr_92px] gap-2 items-center">
-                    <div className="rounded border border-zinc-700 px-2 py-1 text-[11px] font-mono text-zinc-300">
-                      {wallet.slice(0, 6)}...{wallet.slice(-4)}
-                    </div>
-                    <input
-                      className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 outline-none"
-                      value={walletSniperAmounts[wallet.toLowerCase()] ?? defaultBuyBnb}
-                      onChange={(e) => updateWalletSniperAmount(wallet, e.target.value)}
-                      placeholder="狙击BNB"
-                    />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-[11px] text-zinc-500">未选择自动买入钱包</div>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3 text-[11px] text-zinc-300 rounded-md border border-zinc-800 p-2">
-            <label className="inline-flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" checked={autoSellEnabled} onChange={(e) => setAutoSellEnabled(e.target.checked)} />
-              <span>自动卖出（按市值目标创建挂单）</span>
-            </label>
-          </div>
-
-          {autoSellEnabled && (
-            <div className="space-y-2 rounded-md border border-zinc-800 p-2">
-              <div className="flex items-center justify-between">
-                <div className="text-[11px] text-zinc-400">市值目标配置（最多 5 条）</div>
+              <div className="text-[11px] text-zinc-400">Google 搜图</div>
+              <div className="flex items-center gap-2">
+                <input
+                  className="flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
+                  value={googleQuery}
+                  onChange={(e) => setGoogleQuery(e.target.value)}
+                  placeholder="输入关键词搜索图片"
+                />
                 <button
                   type="button"
-                  className="text-[11px] text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
-                  onClick={addAutoSellRule}
-                  disabled={autoSellRules.length >= MAX_AUTO_SELL_RULES}
+                  className="px-2 py-1 rounded-md border border-zinc-700 text-[11px] text-zinc-200 hover:border-zinc-500"
+                  onClick={() => handleSearchGoogleImages(0)}
+                  disabled={googleSearching}
                 >
-                  + 添加
+                  搜索
+                </button>
+                <button
+                  type="button"
+                  className="px-2 py-1 rounded-md border border-zinc-700 text-[11px] text-zinc-200 hover:border-zinc-500 disabled:opacity-40"
+                  onClick={() => handleSearchGoogleImages(googlePage + 1)}
+                  disabled={googleSearching || !googleImages.length}
+                >
+                  更多
                 </button>
               </div>
-              <div className="space-y-1">
-                {autoSellRules.map((rule, idx) => (
-                  <div key={idx} className="grid grid-cols-[52px_1fr_84px_26px] gap-2 items-center">
-                    <div className="text-[11px] text-zinc-500">TP{idx + 1}</div>
-                    <input
-                      className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 outline-none"
-                      value={rule.marketCapUsd}
-                      onChange={(e) => updateAutoSellRule(idx, { marketCapUsd: e.target.value })}
-                      placeholder="触发市值 USD"
-                    />
-                    <input
-                      className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 outline-none"
-                      value={rule.sellPercent}
-                      onChange={(e) => updateAutoSellRule(idx, { sellPercent: e.target.value })}
-                      placeholder="卖出%"
-                    />
+              {googleImages.length > 0 && (
+                <div className="grid grid-cols-4 gap-2 max-h-40 overflow-auto pr-1">
+                  {googleImages.map((item, idx) => (
                     <button
+                      key={`${item.url}-${idx}`}
                       type="button"
-                      className="text-zinc-500 hover:text-zinc-300 disabled:opacity-40"
-                      onClick={() => removeAutoSellRule(idx)}
-                      disabled={autoSellRules.length <= 1}
-                      title="删除"
+                      className="h-16 rounded-md overflow-hidden border border-zinc-800 hover:border-emerald-500"
+                      onClick={() => setLogoUrl(item.url)}
+                      title={item.title || item.url}
                     >
-                      ×
+                      <img src={item.thumbnail || item.url} alt={item.title || 'img'} className="h-full w-full object-cover" />
                     </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-[11px] text-zinc-400">Logo 链接</div>
+              <input
+                className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
+                value={logoUrl}
+                onChange={(e) => setLogoUrl(e.target.value)}
+                placeholder="可手动粘贴图片地址"
+              />
+              {logoUrl && (
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="w-10 h-10 rounded-full border border-zinc-800 bg-zinc-950 overflow-hidden flex items-center justify-center">
+                    <img src={logoUrl} alt="Logo" className="max-w-full max-h-full" />
                   </div>
-                ))}
+                  <div className="text-[11px] text-zinc-500 break-all">
+                    预览
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-lg border border-violet-500/25 bg-violet-500/5 p-2.5">
+            <div className="text-[12px] font-semibold text-violet-200">代币信息</div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <div className="text-[11px] text-zinc-400">代币符号</div>
+                <input
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
+                  value={tokenSymbolInput}
+                  onChange={(e) => setTokenSymbolInput(e.target.value.toUpperCase())}
+                  placeholder="如 DGB"
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] text-zinc-400">代币名称</div>
+                <input
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
+                  value={tokenNameInput}
+                  onChange={(e) => setTokenNameInput(e.target.value)}
+                  placeholder="如 Dagobang"
+                />
               </div>
             </div>
-          )}
 
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <div className="text-[11px] text-zinc-400">推特</div>
+                <input
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
+                  value={twitterInput}
+                  onChange={(e) => setTwitterInput(e.target.value)}
+                  placeholder="https://twitter.com/..."
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] text-zinc-400">官网</div>
+                <input
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
+                  value={websiteInput}
+                  onChange={(e) => setWebsiteInput(e.target.value)}
+                  placeholder="https://..."
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-[11px] text-zinc-400">电报</div>
+              <input
+                className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
+                value={telegramInput}
+                onChange={(e) => setTelegramInput(e.target.value)}
+                placeholder="https://t.me/..."
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-2.5">
+            <div className="text-[12px] font-semibold text-emerald-200">钱包 + 卖出设置</div>
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[12px] text-zinc-400">发币钱包（单选）</div>
+                <WalletSelectorTrigger
+                  walletSelectorOpen={deployWalletSelectorOpen}
+                  walletSelectedCount={deployWallet ? 1 : 0}
+                  walletTotalCount={walletAccounts.length}
+                  onToggleWalletSelector={() => setDeployWalletSelectorOpen((v) => !v)}
+                  title="选择发币钱包"
+                />
+              </div>
+              <div className="text-[11px] text-zinc-500">
+                {selectedDeployWallet
+                  ? `已指定：${selectedDeployWallet.name || 'Wallet'} (${selectedDeployWallet.address.slice(0, 6)}...${selectedDeployWallet.address.slice(-4)})`
+                  : `未指定，使用当前钱包${activeWalletAddress ? ` (${activeWalletAddress.slice(0, 6)}...${activeWalletAddress.slice(-4)})` : ''}`}
+              </div>
+              {deployWalletSelectorOpen ? (
+                <div className="max-h-40 space-y-1 overflow-auto rounded-md border border-zinc-800 bg-zinc-900/60 p-1 dagobang-scrollbar">
+                  {walletAccounts.map((acc) => {
+                    const selected = String(deployWallet || '').toLowerCase() === acc.address.toLowerCase();
+                    const isActive = !!activeWalletAddress && activeWalletAddress.toLowerCase() === acc.address.toLowerCase();
+                    return (
+                      <button
+                        key={acc.address}
+                        type="button"
+                        className={`w-full rounded px-2 py-1 text-left text-[12px] ${selected ? 'bg-emerald-500/20 text-emerald-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+                        onClick={() => {
+                          setDeployWallet(acc.address);
+                          setDeployWalletSelectorOpen(false);
+                        }}
+                      >
+                        {acc.name || 'Wallet'} {isActive ? '(当前)' : ''} ({acc.address.slice(0, 6)}...{acc.address.slice(-4)})
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-[11px] text-zinc-400">默认买入（发币钱包，BNB）</div>
+              <input
+                className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
+                value={defaultBuyBnb}
+                onChange={(e) => setDefaultBuyBnb(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] text-zinc-400">自动买入钱包（最多 5 个）</div>
+                <WalletSelectorTrigger
+                  walletSelectorOpen={autoBuyWalletSelectorOpen}
+                  walletSelectedCount={autoBuyWallets.length}
+                  walletTotalCount={walletTotalCount}
+                  onToggleWalletSelector={() => setAutoBuyWalletSelectorOpen((v) => !v)}
+                  title="选择自动买入钱包"
+                />
+              </div>
+              <WalletSelectorDropdown
+                open={autoBuyWalletSelectorOpen}
+                selectedTradeWallets={autoBuyWallets}
+                walletAccounts={walletAccounts}
+                activeWalletAddress={activeWalletAddress}
+                onToggleTradeWallet={toggleAutoBuyWallet}
+                walletNativeBalancesWei={walletNativeBalancesWei}
+                walletTokenBalancesWei={{}}
+                tokenDecimals={18}
+                multiWalletBuyMode="uniform"
+                onChangeMultiWalletBuyMode={() => { }}
+                childWalletBuyPresetAmountsNative={{}}
+                onUpdateChildWalletBuyPresetAmount={() => { }}
+                className="rounded-md border border-zinc-700 bg-[#141416] p-2 shadow-xl"
+                onRequestClose={() => setAutoBuyWalletSelectorOpen(false)}
+              />
+              {autoBuyWallets.length > 0 ? (
+                <div className="space-y-1">
+                  {autoBuyWallets.map((wallet) => (
+                    <div key={wallet} className="grid grid-cols-[1fr_92px] gap-2 items-center">
+                      <div className="rounded border border-zinc-700 px-2 py-1 text-[11px] font-mono text-zinc-300">
+                        {wallet.slice(0, 6)}...{wallet.slice(-4)}
+                      </div>
+                      <input
+                        className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 outline-none"
+                        value={walletSniperAmounts[wallet.toLowerCase()] ?? defaultBuyBnb}
+                        onChange={(e) => updateWalletSniperAmount(wallet, e.target.value)}
+                        placeholder="狙击BNB"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[11px] text-zinc-500">未选择自动买入钱包</div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 text-[11px] text-zinc-300">
+              <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" checked={autoSellEnabled} onChange={(e) => setAutoSellEnabled(e.target.checked)} />
+                <span>自动卖出（按市值目标创建挂单）</span>
+              </label>
+            </div>
+
+            {autoSellEnabled && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] text-zinc-400">市值目标配置（最多 5 条）</div>
+                  <button
+                    type="button"
+                    className="text-[11px] text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                    onClick={addAutoSellRule}
+                    disabled={autoSellRules.length >= MAX_AUTO_SELL_RULES}
+                  >
+                    + 添加
+                  </button>
+                </div>
+                <div className="space-y-1">
+                  {autoSellRules.map((rule, idx) => (
+                    <div key={idx} className="grid grid-cols-[44px_minmax(0,1fr)_minmax(0,88px)_24px] gap-2 items-center">
+                      <div className="text-[11px] text-zinc-500">TP{idx + 1}</div>
+                      <input
+                        className="w-full min-w-0 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 outline-none"
+                        value={rule.marketCapUsd}
+                        onChange={(e) => updateAutoSellRule(idx, { marketCapUsd: e.target.value })}
+                        placeholder="触发市值 USD"
+                      />
+                      <input
+                        className="w-full min-w-0 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 outline-none"
+                        value={rule.sellPercent}
+                        onChange={(e) => updateAutoSellRule(idx, { sellPercent: e.target.value })}
+                        placeholder="卖出%"
+                      />
+                      <button
+                        type="button"
+                        className="text-zinc-500 hover:text-zinc-300 disabled:opacity-40"
+                        onClick={() => removeAutoSellRule(idx)}
+                        disabled={autoSellRules.length <= 1}
+                        title="删除"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="border-t border-zinc-800 p-3">
           <button
-            className="w-full mt-2 rounded-md bg-emerald-500 text-[12px] font-semibold text-black py-2 hover:bg-emerald-400 disabled:opacity-60"
+            className="w-full rounded-md bg-emerald-500 text-[13px] font-semibold text-black py-2.5 hover:bg-emerald-400 disabled:opacity-60"
             type="button"
             onClick={handleSubmitMemeForm}
           >
-            一键生成 Meme 配置
+            发布
           </button>
         </div>
       </div>

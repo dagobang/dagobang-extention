@@ -322,11 +322,18 @@ export default function App() {
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
-      const el = target as HTMLElement | null;
-      if (!el) return false;
-      const tag = (el.tagName || '').toUpperCase();
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-      if ((el as any).isContentEditable) return true;
+      const toEditable = (node: Element | null) => {
+        if (!node) return false;
+        const tag = (node.tagName || '').toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+        if ((node as HTMLElement).isContentEditable) return true;
+        if (node.closest('input,textarea,select,[contenteditable="true"]')) return true;
+        return false;
+      };
+      const targetEl = target instanceof Element ? target : null;
+      const activeEl = document.activeElement;
+      if (toEditable(targetEl)) return true;
+      if (activeEl instanceof Element && toEditable(activeEl)) return true;
       return false;
     };
 
