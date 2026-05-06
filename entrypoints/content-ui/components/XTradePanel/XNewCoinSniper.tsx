@@ -293,12 +293,29 @@ export function XNewCoinSniperContent({
       });
     const groupsById = new Map<string, NewCoinHistoryGroup>();
     const latestBuyByTokenKey = new Map<string, NewCoinHistoryGroup>();
+    const preferredWalletByTokenKey = new Map<string, string>();
+    for (const r of sortedAsc) {
+      if (!r) continue;
+      const chainId = typeof r.chainId === 'number' ? r.chainId : 0;
+      const addr = String(r.tokenAddress || '').toLowerCase();
+      if (!addr) continue;
+      const dryFlag = r.dryRun === true ? 'dry' : 'live';
+      const tokenBaseKey = `${chainId}:${addr}:${dryFlag}`;
+      const wallet = String((r as any).walletAddress || '').trim().toLowerCase();
+      if (!wallet) continue;
+      const prev = preferredWalletByTokenKey.get(tokenBaseKey);
+      if (!prev) preferredWalletByTokenKey.set(tokenBaseKey, wallet);
+      else if (prev !== wallet) preferredWalletByTokenKey.set(tokenBaseKey, '*');
+    }
     const standaloneSellGroups: NewCoinHistoryGroup[] = [];
     for (const r of sortedAsc) {
       const chainId = typeof r.chainId === 'number' ? r.chainId : 0;
       const addr = String(r.tokenAddress || '').toLowerCase();
       const dryFlag = r.dryRun === true ? 'dry' : 'live';
-      const walletKey = String((r as any).walletAddress || '').trim().toLowerCase() || 'current';
+      const tokenBaseKey = `${chainId}:${addr}:${dryFlag}`;
+      const walletRaw = String((r as any).walletAddress || '').trim().toLowerCase();
+      const preferred = preferredWalletByTokenKey.get(tokenBaseKey);
+      const walletKey = walletRaw || (preferred && preferred !== '*' ? preferred : '') || 'current';
       const tokenKey = `${chainId}:${addr}:${dryFlag}:${walletKey}`;
       if (r.side === 'sell') {
         const parentGroup = latestBuyByTokenKey.get(tokenKey);
@@ -882,6 +899,7 @@ export function XNewCoinSniperContent({
         <XSniperHistoryView
           siteInfo={siteInfo}
           settings={resolvedSettings}
+          walletAccounts={walletAccounts}
           isUnlocked={isUnlocked}
           canEdit={canEdit}
           tt={tt}

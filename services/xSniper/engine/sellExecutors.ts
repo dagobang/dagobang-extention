@@ -33,6 +33,16 @@ const parseStrategyWalletAddress = (input: unknown): `0x${string}` | undefined =
   return raw as `0x${string}`;
 };
 
+const buildPositionKey = (input: {
+  chainId: number;
+  tokenAddress: `0x${string}`;
+  walletAddress?: `0x${string}`;
+  dryRun: boolean;
+}) => {
+  const walletKey = input.walletAddress ? String(input.walletAddress).toLowerCase() : 'all-wallets';
+  return `${input.dryRun ? 'dry:' : ''}${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}`;
+};
+
 export const createSellExecutors = (deps: {
   cleanupPosKey: (posKey: string) => void;
   emitRecord: (record: XSniperBuyRecord) => void;
@@ -93,7 +103,12 @@ export const createSellExecutors = (deps: {
     if (!Number.isFinite(percent) || percent <= 0) return;
     const bps = Math.floor(percent * 100);
     if (!(bps > 0)) return;
-    const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+    const posKey = buildPositionKey({
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      walletAddress: input.walletAddress,
+      dryRun: input.dryRun,
+    });
     const signalTweetId = String(input.signal.tweetId ?? '').trim();
     const sourceTweetId = String((input.signal as any)?.sourceTweetId ?? '').trim();
     const signalEventId = String(input.signal.eventId ?? '').trim();

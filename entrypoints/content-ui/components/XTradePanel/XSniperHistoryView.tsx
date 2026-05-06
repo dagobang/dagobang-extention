@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Settings, XSniperBuyRecord, XSniperEvalPoint } from '@/types/extention';
+import type { Account, Settings, XSniperBuyRecord, XSniperEvalPoint } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { chainNames } from '@/constants/chains/chainName';
 import { extractLaunchpadPlatform } from '@/constants/launchpad';
@@ -15,6 +15,7 @@ type HistoryGroup = { key: string; parent: XSniperBuyRecord; children: XSniperBu
 type XSniperHistoryViewProps = {
   siteInfo: SiteInfo | null;
   settings: Settings | null;
+  walletAccounts?: Account[];
   isUnlocked: boolean;
   canEdit: boolean;
   tt: (key: string, subs?: Array<string | number>) => string;
@@ -90,6 +91,16 @@ const formatSellPercentText = (record: XSniperBuyRecord) => {
   return '-';
 };
 
+const formatSellPercentCompact = (record: XSniperBuyRecord) => {
+  const orig = getSellPercentOfOriginal(record);
+  const curr = Number((record as any).sellPercentOfCurrent);
+  if (Number.isFinite(curr)) {
+    const currPct = clampPercent(curr);
+    if (Math.abs(currPct - orig) >= 0.01) return `${orig.toFixed(1)}%/${currPct.toFixed(1)}%`;
+  }
+  return `${orig.toFixed(1)}%`;
+};
+
 const resolveReasonLabel = (tt: (key: string, subs?: Array<string | number>) => string, reason: unknown) => {
   if (reason == null) return '-';
   const raw = String(reason).trim();
@@ -121,10 +132,12 @@ const formatEvalPnl = (record: XSniperBuyRecord, key: keyof XSniperBuyRecord) =>
   return `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
 };
 
-const resolveWalletDisplay = (input: { record: XSniperBuyRecord; settings: Settings | null }) => {
+const resolveWalletDisplay = (input: { record: XSniperBuyRecord; settings: Settings | null; walletAccounts?: Account[] }) => {
   const walletAddress = String((input.record as any).walletAddress || '').trim().toLowerCase();
   if (!walletAddress) return '未记录(默认当前钱包)';
-  const accounts = Array.isArray((input.settings as any)?.wallet?.accounts) ? (input.settings as any).wallet.accounts : [];
+  const accounts = Array.isArray(input.walletAccounts) && input.walletAccounts.length
+    ? input.walletAccounts
+    : (Array.isArray((input.settings as any)?.wallet?.accounts) ? (input.settings as any).wallet.accounts : []);
   const account = accounts.find((acc: any) => String(acc?.address || '').trim().toLowerCase() === walletAddress);
   const alias = String(((input.settings as any)?.wallet?.accountAliases || {})?.[walletAddress] || '').trim();
   const name = String(account?.name || '').trim() || alias || 'Wallet';
@@ -173,6 +186,7 @@ const computeWeightedPnlPct = (input: {
 export function XSniperHistoryView({
   siteInfo,
   settings,
+  walletAccounts,
   isUnlocked,
   canEdit,
   tt,
@@ -704,7 +718,7 @@ export function XSniperHistoryView({
                       return sym || name || formatShortAddress(r.tokenAddress);
                     })();
                   const tokenLink = siteInfo ? parsePlatformTokenLink(siteInfo, r.tokenAddress) : '';
-                  const walletDisplay = resolveWalletDisplay({ record: r, settings });
+                  const walletDisplay = resolveWalletDisplay({ record: r, settings, walletAccounts });
                   const sellDisabledBase = !settings || !isUnlocked || r.dryRun === true;
                   const sellingForRecord = sellingKey != null && sellingKey.startsWith(`${r.id}:`);
                   const tweetAtMs = typeof r.tweetAtMs === 'number' && Number.isFinite(r.tweetAtMs) ? r.tweetAtMs : null;
@@ -808,20 +822,23 @@ export function XSniperHistoryView({
                             <span className="text-zinc-200">{athMcap == null ? '-' : (formatCompactNumber(athMcap) ?? '-')}</span>
                           </div>
                           <div>
-                            <span className="text-zinc-500">{tt('contentUi.autoTradeStrategy.snipeHistoryUser')}:</span>{' '}
-                            <span className="text-zinc-300">{r.userScreen ? String(r.userScreen) : '-'}</span>
-                          </div>
-                          <div>
                             <span className="text-zinc-500">钱包:</span>{' '}
                             <span className="text-zinc-300">{walletDisplay}</span>
+                          </div>
+                          <div>
+                            <span className="text-zinc-500">{tt('contentUi.autoTradeStrategy.snipeHistoryUser')}:</span>{' '}
+                            <span className="text-zinc-300">{r.userScreen ? String(r.userScreen) : '-'}</span>
                           </div>
                           <div className="flex items-center gap-1">
                             <span className="text-zinc-500">Launchpad:</span>{' '}
                             <LaunchpadPlatformBadge platform={launchpadPlatform} />
                           </div>
                           <div>
-                            <span className="text-violet-300/80">{tt('contentUi.autoTradeStrategy.snipeHistorySmartMoney')}:</span>{' '}
-                            <span className="text-zinc-200">{typeof (r as any).smartMoney === 'number' ? (r as any).smartMoney : '-'}</span>
+                            <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryKol')}:</span>{' '}
+                            <span className="text-zinc-200">{formatCompactNumber(r.kol) ?? '-'}</span>
+                            {latest && typeof latest.kol === 'number' ? (
+                              <span className="text-zinc-500"> → {formatCompactNumber(latest.kol) ?? '-'}</span>
+                            ) : null}
                           </div>
                           <div>
                             <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryHolders')}:</span>{' '}
@@ -831,11 +848,8 @@ export function XSniperHistoryView({
                             ) : null}
                           </div>
                           <div>
-                            <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryDevHold')}:</span>{' '}
-                            <span className="text-zinc-200">{r.devHoldPercent == null ? '-' : `${r.devHoldPercent.toFixed(2)}%`}</span>
-                            {latest && typeof latest.devHoldPercent === 'number' ? (
-                              <span className="text-zinc-500"> → {latest.devHoldPercent.toFixed(2)}%</span>
-                            ) : null}
+                            <span className="text-violet-300/80">{tt('contentUi.autoTradeStrategy.snipeHistorySmartMoney')}:</span>{' '}
+                            <span className="text-zinc-200">{typeof (r as any).smartMoney === 'number' ? (r as any).smartMoney : '-'}</span>
                           </div>
                           <div>
                             <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryDevMaxBuy')}:</span>{' '}
@@ -849,10 +863,10 @@ export function XSniperHistoryView({
                             ) : null}
                           </div>
                           <div>
-                            <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryViewerCount')}:</span>{' '}
-                            <span className="text-zinc-200">{formatCompactNumber((r as any).viewerCount) ?? '-'}</span>
-                            {latest && typeof (latest as any).viewerCount === 'number' ? (
-                              <span className="text-zinc-500"> → {formatCompactNumber((latest as any).viewerCount) ?? '-'}</span>
+                            <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryDevHold')}:</span>{' '}
+                            <span className="text-zinc-200">{r.devHoldPercent == null ? '-' : `${r.devHoldPercent.toFixed(2)}%`}</span>
+                            {latest && typeof latest.devHoldPercent === 'number' ? (
+                              <span className="text-zinc-500"> → {latest.devHoldPercent.toFixed(2)}%</span>
                             ) : null}
                           </div>
                           <div>
@@ -869,11 +883,19 @@ export function XSniperHistoryView({
                             </span>
                           </div>
                           <div>
-                            <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryKol')}:</span>{' '}
-                            <span className="text-zinc-200">{formatCompactNumber(r.kol) ?? '-'}</span>
-                            {latest && typeof latest.kol === 'number' ? (
-                              <span className="text-zinc-500"> → {formatCompactNumber(latest.kol) ?? '-'}</span>
+                            <span className="text-cyan-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryViewerCount')}:</span>{' '}
+                            <span className="text-zinc-200">{formatCompactNumber((r as any).viewerCount) ?? '-'}</span>
+                            {latest && typeof (latest as any).viewerCount === 'number' ? (
+                              <span className="text-zinc-500"> → {formatCompactNumber((latest as any).viewerCount) ?? '-'}</span>
                             ) : null}
+                          </div>
+                          <div>
+                            <span className="text-orange-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryBuySellRatioShort')}:</span>{' '}
+                            <span className="text-zinc-200">
+                              {typeof (r as any).buyTx24h === 'number' && typeof (r as any).sellTx24h === 'number' && (r as any).sellTx24h > 0
+                                ? ((r as any).buyTx24h / (r as any).sellTx24h).toFixed(2)
+                                : '-'}
+                            </span>
                           </div>
                           <div>
                             <span className="text-orange-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryVolume24h')}:</span>{' '}
@@ -883,12 +905,9 @@ export function XSniperHistoryView({
                             <span className="text-orange-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryNetBuy24h')}:</span>{' '}
                             <span className="text-zinc-200">{formatCompactNumber((r as any).netBuy24hUsd) ?? '-'}</span>
                           </div>
-                          <div className="col-span-3">
+                          <div>
                             <span className="text-orange-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryBuySell24h')}:</span>{' '}
                             <span className="text-zinc-200">{typeof (r as any).buyTx24h === 'number' ? (r as any).buyTx24h : '-'} / {typeof (r as any).sellTx24h === 'number' ? (r as any).sellTx24h : '-'}</span>
-                            {typeof (r as any).buyTx24h === 'number' && typeof (r as any).sellTx24h === 'number' && (r as any).sellTx24h > 0 ? (
-                              <span className="text-zinc-500"> ({tt('contentUi.autoTradeStrategy.snipeHistoryBuySellRatioShort')} {((r as any).buyTx24h / (r as any).sellTx24h).toFixed(2)})</span>
-                            ) : null}
                           </div>
                           <div className="col-span-3 border-t border-zinc-800 pt-1 text-zinc-400">
                             <span className="text-indigo-300/80">{tt('contentUi.autoTradeStrategy.snipeHistoryWsConfirm')}:</span>{' '}
@@ -989,11 +1008,10 @@ export function XSniperHistoryView({
                       })();
                       const isSell = c.side === 'sell';
                       const primary = isSell
-                        ? `${tt('contentUi.autoTradeStrategy.snipeHistorySellPercent')}: ${formatSellPercentText(c)}`
+                        ? `卖出: ${formatSellPercentCompact(c)}`
                         : `${tt('contentUi.autoTradeStrategy.snipeHistoryBuyAmount')}: ${formatBnbAmount(c.buyAmountNative)}`;
                       const showTriggerMcap =
                         isSell
-                        && (c.reason === 'rapid_take_profit' || c.reason === 'rapid_stop_loss' || c.reason === 'rapid_trailing_stop')
                         && typeof c.marketCapUsd === 'number'
                         && Number.isFinite(c.marketCapUsd);
                       return (
@@ -1006,7 +1024,6 @@ export function XSniperHistoryView({
                                 {tt('contentUi.autoTradeStrategy.snipeHistoryMarketCap')}: {formatCompactNumber(c.marketCapUsd) ?? '-'}
                               </span>
                             ) : null}
-                            {c.reason ? <span className="ml-2 text-amber-200/80">({resolveReasonLabel(tt, c.reason)})</span> : null}
                           </div>
                           <div className="shrink-0 text-[10px] text-zinc-500">{formatTs(c.tsMs)}</div>
                         </div>

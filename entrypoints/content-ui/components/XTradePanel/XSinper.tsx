@@ -172,13 +172,29 @@ export function XSniperContent({
   const historyGroups = useMemo(() => {
     const normalizeAddr = (addr: string) => String(addr || '').trim().toLowerCase();
     const normalizeWallet = (addr: unknown) => String(addr || '').trim().toLowerCase();
+    const preferredWalletByTokenDry = new Map<string, string>();
+    for (const r of buyHistory) {
+      if (!r || typeof r.chainId !== 'number' || !r.tokenAddress) continue;
+      const addr = normalizeAddr(r.tokenAddress);
+      if (!addr) continue;
+      const dryRun = r.dryRun === true;
+      const tokenDryKey = `${dryRun ? 'dry:' : ''}${r.chainId}:${addr}`;
+      const wallet = normalizeWallet((r as any).walletAddress);
+      if (!wallet) continue;
+      const prev = preferredWalletByTokenDry.get(tokenDryKey);
+      if (!prev) preferredWalletByTokenDry.set(tokenDryKey, wallet);
+      else if (prev !== wallet) preferredWalletByTokenDry.set(tokenDryKey, '*');
+    }
     const groups = new Map<string, { key: string; latestTsMs: number; records: XSniperBuyRecord[] }>();
     for (const r of buyHistory) {
       if (!r || typeof r.chainId !== 'number' || !r.tokenAddress) continue;
       const addr = normalizeAddr(r.tokenAddress);
       if (!addr) continue;
       const dryRun = r.dryRun === true;
-      const walletKey = normalizeWallet((r as any).walletAddress);
+      const tokenDryKey = `${dryRun ? 'dry:' : ''}${r.chainId}:${addr}`;
+      const walletRaw = normalizeWallet((r as any).walletAddress);
+      const preferred = preferredWalletByTokenDry.get(tokenDryKey);
+      const walletKey = walletRaw || (preferred && preferred !== '*' ? preferred : '');
       const key = `${dryRun ? 'dry:' : ''}${r.chainId}:${addr}:${walletKey || 'current'}`;
       const ts = typeof r.tsMs === 'number' && Number.isFinite(r.tsMs) ? r.tsMs : 0;
       const existing = groups.get(key);
@@ -769,6 +785,7 @@ export function XSniperContent({
           <XSniperHistoryView
             siteInfo={siteInfo}
             settings={settings}
+            walletAccounts={walletAccounts}
             isUnlocked={isUnlocked}
             canEdit={canEdit}
             tt={tt}

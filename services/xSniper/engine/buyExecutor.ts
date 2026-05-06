@@ -45,6 +45,16 @@ const buildGlobalBuyLockKey = (input: {
   return `${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}`;
 };
 
+const buildPositionKey = (input: {
+  chainId: number;
+  tokenAddress: `0x${string}`;
+  walletAddress?: `0x${string}`;
+  dryRun: boolean;
+}) => {
+  const walletKey = input.walletAddress ? String(input.walletAddress).toLowerCase() : 'all-wallets';
+  return `${input.dryRun ? 'dry:' : ''}${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}`;
+};
+
 const parseStrategyWalletAddress = (input: unknown): `0x${string}` | undefined => {
   const raw = String(input ?? '').trim().toLowerCase();
   if (!raw) return undefined;
@@ -381,7 +391,12 @@ export const tryAutoBuyOnce = async (input: {
       void input.persistBoughtOnce();
       input.onStateChanged();
 
-      const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+      const posKey = buildPositionKey({
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        walletAddress: tradeFromAddress,
+        dryRun: true,
+      });
       const openedAtMs = Date.now();
       const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
       const tweetUrl = buildTweetUrl(input.signal);
@@ -407,6 +422,7 @@ export const tryAutoBuyOnce = async (input: {
         signalEventId,
         signalTweetId,
         entryPriceUsd,
+        walletAddress: tradeFromAddress,
       });
 
       const now = Date.now();
@@ -588,7 +604,12 @@ export const tryAutoBuyOnce = async (input: {
     terminalFailedBuyKeys.delete(key);
     void input.persistBoughtOnce();
     input.onStateChanged();
-    const posKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+    const posKey = buildPositionKey({
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      walletAddress: tradeFromAddress,
+      dryRun: false,
+    });
     const openedAtMs = Date.now();
     const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
     const tweetUrl = buildTweetUrl(input.signal);

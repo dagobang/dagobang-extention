@@ -433,7 +433,7 @@ export const createXSniperTrade = (deps: {
 
   const getKey = (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean; walletAddress?: `0x${string}` }) => {
     const dry = opts?.dry === true;
-    const walletKey = !dry && opts?.walletAddress ? String(opts.walletAddress).toLowerCase() : 'all-wallets';
+    const walletKey = opts?.walletAddress ? String(opts.walletAddress).toLowerCase() : 'all-wallets';
     return `${dry ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}:${walletKey}:full`;
   };
 
@@ -551,7 +551,8 @@ export const createXSniperTrade = (deps: {
         for (const r of matchedBuys) {
           const addr = normalizeAddress(r.tokenAddress);
           if (!addr) continue;
-          const dedupe = `${r.chainId ?? settings.chainId}:${addr.toLowerCase()}`;
+          const walletKey = normalizeAddress((r as any).walletAddress) || 'all-wallets';
+          const dedupe = `${r.chainId ?? settings.chainId}:${addr.toLowerCase()}:${walletKey}`;
           if (sold.has(dedupe)) continue;
           try {
             await tryDeleteTweetSellOnce({
@@ -570,7 +571,8 @@ export const createXSniperTrade = (deps: {
         for (const p of rapidMatched) {
           const addr = normalizeAddress(p.tokenAddress);
           if (!addr) continue;
-          const dedupe = `${p.chainId}:${addr.toLowerCase()}`;
+          const walletKey = normalizeAddress((p as any).walletAddress) || 'all-wallets';
+          const dedupe = `${p.chainId}:${addr.toLowerCase()}:${walletKey}`;
           if (sold.has(dedupe)) continue;
           try {
             await tryDeleteTweetSellOnce({

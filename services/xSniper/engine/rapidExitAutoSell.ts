@@ -48,6 +48,13 @@ const parseUnknownNumber = (value: unknown) => {
   return null;
 };
 
+const parseTokenAddressFromPosKey = (posKey: string): `0x${string}` | null => {
+  const parts = String(posKey || '').split(':');
+  const match = parts.find((p) => /^0x[a-f0-9]{40}$/i.test(String(p)));
+  if (!match) return null;
+  return String(match).toLowerCase() as `0x${string}`;
+};
+
 export const readRapidExitConfig = (strategy: any): RapidExitConfig => {
   const enabled = strategy?.rapidExitEnabled !== false;
   const evalStepSec = clamp(Math.floor(parseUnknownNumber(strategy?.rapidEvalStepSec) ?? 5), 1, 20);
@@ -175,9 +182,8 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
   if (!(curMcap != null && curMcap > 0)) return;
 
   const keys = Array.from(input.rapidExitByPosKey.keys()).filter((k) => {
-    const parts = k.split(':');
-    const addr = parts.length >= 2 ? parts[parts.length - 1] : '';
-    return addr.toLowerCase() === input.tokenAddress.toLowerCase();
+    const addr = parseTokenAddressFromPosKey(k);
+    return !!addr && addr.toLowerCase() === input.tokenAddress.toLowerCase();
   });
   for (const posKey of keys) {
     const pos = input.rapidExitByPosKey.get(posKey);
