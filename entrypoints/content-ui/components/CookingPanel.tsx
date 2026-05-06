@@ -16,6 +16,8 @@ type CookingPanelProps = {
   defaultSelectedWallets: `0x${string}`[];
   walletNativeBalancesWei: Record<string, string>;
   siteInfo: SiteInfo | null;
+  currentTokenName?: string | null;
+  currentTokenSymbol?: string | null;
 };
 
 function clampCookingPanelPos(pos: { x: number; y: number }) {
@@ -36,6 +38,8 @@ export function CookingPanel({
   defaultSelectedWallets,
   walletNativeBalancesWei,
   siteInfo,
+  currentTokenName,
+  currentTokenSymbol,
 }: CookingPanelProps) {
   const cookingConfigStorageKey = 'dagobang_cooking_config_v1';
   const DEFAULT_TOKEN_SUPPLY = 1_000_000_000;
@@ -112,6 +116,17 @@ export function CookingPanel({
   const [googleSearching, setGoogleSearching] = useState(false);
   const [googleImages, setGoogleImages] = useState<Array<{ url: string; thumbnail?: string; title?: string; source?: string }>>([]);
   const [googlePage, setGooglePage] = useState(0);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (!siteInfo?.tokenAddress) return;
+    if (!tokenNameInput.trim() && currentTokenName?.trim()) {
+      setTokenNameInput(currentTokenName.trim());
+    }
+    if (!tokenSymbolInput.trim() && currentTokenSymbol?.trim()) {
+      setTokenSymbolInput(currentTokenSymbol.trim());
+    }
+  }, [visible, siteInfo?.tokenAddress, currentTokenName, currentTokenSymbol, tokenNameInput, tokenSymbolInput]);
 
   useEffect(() => {
     if (!deployWallet && activeWalletAddress) {
@@ -284,6 +299,10 @@ export function CookingPanel({
     const img = logoUrl.trim();
     if (!symbol || !name) {
       toast.error('请填写代币符号和名称');
+      return;
+    }
+    if (!/^\S{1,20}$/u.test(symbol)) {
+      toast.error('代币符号支持中文/英文/数字，长度 1-20，且不能包含空格');
       return;
     }
     if (!img) {
@@ -527,7 +546,9 @@ export function CookingPanel({
                       key={`${item.url}-${idx}`}
                       type="button"
                       className="h-16 rounded-md overflow-hidden border border-zinc-800 hover:border-emerald-500"
-                      onClick={() => setLogoUrl(item.url)}
+                      onClick={() => {
+                        setLogoUrl(item.url);
+                      }}
                       title={item.title || item.url}
                     >
                       <img src={item.thumbnail || item.url} alt={item.title || 'img'} className="h-full w-full object-cover" />
@@ -566,7 +587,7 @@ export function CookingPanel({
                 <input
                   className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
                   value={tokenSymbolInput}
-                  onChange={(e) => setTokenSymbolInput(e.target.value.toUpperCase())}
+                  onChange={(e) => setTokenSymbolInput(e.target.value)}
                   placeholder="如 DGB"
                 />
               </div>

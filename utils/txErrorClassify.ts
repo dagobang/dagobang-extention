@@ -105,3 +105,12 @@ export function isAllowanceLikeText(msg: string): boolean {
     m.includes('fs2')
   );
 }
+
+export function isInFlightLimitLikeText(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes('in-flight transaction limit reached') ||
+    (m.includes('in-flight') && m.includes('transaction limit')) ||
+    (m.includes('transaction limit reached') && m.includes('delegated accounts'))
+  );
+}

@@ -1,7 +1,7 @@
 import { decodeAbiParameters } from 'viem';
 import { RpcService } from '../rpc';
 import type { ChainSettings, GasPreset } from '../../types/extention';
-import { classifyBroadcastError, collectErrorText, extractNextNonceHintFromText, getNonceErrorKindFromText } from '../../utils/txErrorClassify';
+import { classifyBroadcastError, collectErrorText, extractNextNonceHintFromText, getNonceErrorKindFromText, isInFlightLimitLikeText } from '../../utils/txErrorClassify';
 import { parseGweiToWei } from '../../utils/dexUtils';
 import { getChainRuntime } from '@/constants/chains';
 
@@ -295,6 +295,12 @@ function extractNextNonceHint(e: any): number | null {
   return extractNextNonceHintFromText(msg);
 }
 
+function isInFlightLimitError(e: any): boolean {
+  const msg = collectErrorText(e, true);
+  if (!msg) return false;
+  return isInFlightLimitLikeText(msg);
+}
+
 export async function sendTransaction(
   client: any,
   account: any,
@@ -436,7 +442,20 @@ export async function sendTransaction(
   try {
     return await signAndBroadcast(nonce, '');
   } catch (e: any) {
-    if (useAutoNonce && (isNonceRelatedError(e) || isBroadcastParamError(e))) {
+    let err = e;
+    if (isInFlightLimitError(err)) {
+      const backoffMs = [300, 800];
+      for (let i = 0; i < backoffMs.length; i++) {
+        await new Promise((resolve) => setTimeout(resolve, backoffMs[i]));
+        try {
+          return await signAndBroadcast(nonce, `inflight:${i + 1}:`);
+        } catch (ex: any) {
+          err = ex;
+          if (!isInFlightLimitError(err)) break;
+        }
+      }
+    }
+    if (useAutoNonce && (isNonceRelatedError(err) || isBroadcastParamError(err))) {
       clearNonceState(chainId, account.address);
       const retryTrace: string[] = [];
       const toErrMsg = (err: any) => String(err?.shortMessage || err?.message || err || 'unknown error');
@@ -458,10 +477,10 @@ export async function sendTransaction(
         return await signAndBroadcast(observedNonce, 'observe:');
       };
 
-      let lastErr: any = e;
-      const firstKind = getNonceErrorKind(e);
-      retryTrace.push(`firstErrorKind=${firstKind},msg=${toErrMsg(e)}`);
-      const hintedFromFirst = extractNextNonceHint(e);
+      let lastErr: any = err;
+      const firstKind = getNonceErrorKind(err);
+      retryTrace.push(`firstErrorKind=${firstKind},msg=${toErrMsg(err)}`);
+      const hintedFromFirst = extractNextNonceHint(err);
       if (hintedFromFirst != null) {
         try {
           retryTrace.push(`hint:firstNonce=${hintedFromFirst}`);
@@ -520,7 +539,7 @@ export async function sendTransaction(
     }
 
     clearNonceState(chainId, account.address);
-    throw e;
+    throw err;
   }
   } finally {
     releaseFlow();

@@ -695,6 +695,7 @@ export type BgRequest =
       shortName: string;
       desc: string;
       imgUrl: string;
+      imgFallbackUrls?: string[];
       launchTime?: number;
       label?: 'Meme' | 'AI' | 'Defi' | 'Games' | 'Infra' | 'De-Sci' | 'Social' | 'Depin' | 'Charity' | 'Others';
       lpTradingFee?: number;

@@ -30,6 +30,7 @@ export default defineConfig({
       'https://*.blxrbdn.com/*',
       'https://*.supabase.co/*',
       'https://www.google.com/*',
+      'https://*/*',
     ],
     web_accessible_resources: [
       {

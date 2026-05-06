@@ -1,4 +1,4 @@
-import { parseAbi, encodeFunctionData, decodeEventLog } from 'viem';
+import { parseAbi, encodeFunctionData, decodeEventLog, getAddress, isAddress } from 'viem';
 import { FourmemeTokenInfo } from '@/types/token';
 import { ChainId } from '@/constants/chains';
 import { DeployAddress } from '@/constants/contracts/address';
@@ -58,6 +58,30 @@ const fourMemeTokenManagerAbi = parseAbi([
 ]);
 
 const tokenManagerCacheByChain = new Map<number, `0x${string}`>();
+const FOUR_MEME_CREATE_TOPIC0 = '0x396d5e902b675b032348d3d2e9517ee8f0c4a926603fbc075d3d282ff00cad20';
+
+function extractAddressCandidatesFromHexData(hexData: string): `0x${string}`[] {
+    const data = String(hexData || '');
+    if (!data.startsWith('0x')) return [];
+    const raw = data.slice(2);
+    const out: `0x${string}`[] = [];
+    for (let i = 0; i + 64 <= raw.length; i += 64) {
+        const word = raw.slice(i, i + 64);
+        const candidate = `0x${word.slice(24)}` as `0x${string}`;
+        if (!isAddress(candidate)) continue;
+        const normalized = getAddress(candidate);
+        if (normalized === '0x0000000000000000000000000000000000000000') continue;
+        out.push(normalized as `0x${string}`);
+    }
+    return out;
+}
+
+function parseTokenAddressFromFourMemeCreateData(hexData: string): `0x${string}` | null {
+    const arr = extractAddressCandidatesFromHexData(hexData);
+    if (arr.length >= 2) return arr[1];
+    if (arr.length >= 1) return arr[0];
+    return null;
+}
 
 export class TokenFourmemeService {
     private static getTokenManagerHelper3Address(chainId: number): string {
@@ -141,7 +165,9 @@ export class TokenFourmemeService {
     static async createTokenOnChain(
         chainId: number,
         createArg: string,
-        sign: string
+        sign: string,
+        fromAddress?: `0x${string}`,
+        txValueWei?: bigint
     ): Promise<{ txHash: `0x${string}`; tokenAddress: `0x${string}` | null }> {
         const contracts = DeployAddress[chainId as ChainId] || {};
         const managerAddress = contracts[ContractNames.FourMemeTokenManagerV2]?.address;
@@ -149,7 +175,7 @@ export class TokenFourmemeService {
             throw new Error('FourMemeTokenManagerV2 address not found for chain ' + chainId);
         }
 
-        const account = await WalletService.getSigner();
+        const account = await WalletService.getSigner(fromAddress);
         const client = await RpcService.getClient();
         const settings = await SettingsService.get();
         const chainSettings = settings.chains[chainId as ChainId] as ChainSettings;
@@ -168,16 +194,24 @@ export class TokenFourmemeService {
             account,
             managerAddress,
             data,
-            0n,
+            txValueWei ?? 0n,
             gasPriceWei,
-            chainId
+            chainId,
+            { skipEstimateGas: true, gasLimit: 2000000n }
         );
 
         let tokenAddress: `0x${string}` | null = null;
         try {
             const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+            const managerLower = managerAddress.toLowerCase();
+
             for (const log of receipt.logs) {
-                if (log.address.toLowerCase() !== managerAddress.toLowerCase()) continue;
+                if (log.address.toLowerCase() !== managerLower) continue;
+                const topic0 = String(log.topics?.[0] || '').toLowerCase();
+                if (topic0 === FOUR_MEME_CREATE_TOPIC0.toLowerCase()) {
+                    tokenAddress = parseTokenAddressFromFourMemeCreateData(String(log.data || '0x'));
+                    if (tokenAddress) break;
+                }
                 try {
                     const decoded = decodeEventLog({
                         abi: fourMemeTokenManagerAbi,

@@ -16,7 +16,7 @@ import { getSellSpenders, hasInsufficientSellAllowance, type SellAllowanceCheckR
 import { encodeFourMemeBuyTokenData, encodeFourMemeUint256, tryFourMemeBuyEstimatedAmount, tryFourMemeSellEstimatedFunds } from './tradeFourMeme';
 import { formatBroadcastProvider } from '@/utils/format';
 import { getDexPoolPrefer, parseGweiToWei } from '@/utils/dexUtils';
-import { classifyBroadcastError, collectErrorText, isAllowanceLikeText } from '@/utils/txErrorClassify';
+import { classifyBroadcastError, collectErrorText, isAllowanceLikeText, isInFlightLimitLikeText } from '@/utils/txErrorClassify';
 import { tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { token } from 'viem/tempo/actions';
 import { getNativeSymbol } from '@/constants/chains';
@@ -162,6 +162,11 @@ export class TradeService {
   private static isAllowanceLikeError(e: any): boolean {
     const msg = collectErrorText(e, true);
     return isAllowanceLikeText(msg);
+  }
+
+  private static isInFlightLimitError(e: any): boolean {
+    const msg = collectErrorText(e, true);
+    return isInFlightLimitLikeText(msg);
   }
 
   private static async ensureTxSuccess(
@@ -530,13 +535,24 @@ export class TradeService {
       onSubmitted?: (ctx: { side: 'buy'; txHash: `0x${string}`; submitElapsedMs: number }) => void | Promise<void>;
     }
   ) {
+    const flowId = `buy-auto:${input.chainId}:${input.tokenAddress.toLowerCase()}:${Date.now().toString(36)}`;
+    const flowStart = Date.now();
+    console.log('[trade.buy.auto][start]', {
+      flowId,
+      chainId: input.chainId,
+      token: input.tokenAddress,
+      maxRetry: opts?.maxRetry ?? 1,
+      timeoutMs: opts?.timeoutMs ?? 20_000,
+    });
     const timeoutMs = opts?.timeoutMs ?? 20_000;
     const maxRetry = opts?.maxRetry ?? 1;
     let lastErr: any;
 
     for (let attempt = 0; attempt <= maxRetry; attempt++) {
+      const attemptNo = attempt + 1;
+      const attemptStart = Date.now();
+      console.log('[trade.buy.auto][attempt.start]', { flowId, attempt: attemptNo });
       try {
-        const attemptStart = Date.now();
         const submitStart = Date.now();
         const rsp = await this.buy(input);
         const submitElapsedMs = Date.now() - submitStart;
@@ -545,14 +561,43 @@ export class TradeService {
         await this.ensureTxSuccess(rsp.txHash, input.chainId, 'buy', timeoutMs);
         const receiptElapsedMs = Date.now() - receiptStart;
         const totalElapsedMs = Date.now() - attemptStart;
+        console.log('[trade.buy.auto][attempt.success]', {
+          flowId,
+          attempt: attemptNo,
+          txHash: rsp.txHash,
+          elapsedMs: totalElapsedMs,
+          totalElapsedMs: Date.now() - flowStart,
+          submitElapsedMs,
+          receiptElapsedMs,
+        });
         return { ...rsp, submitElapsedMs, receiptElapsedMs, totalElapsedMs };
       } catch (e: any) {
         lastErr = e;
-        if (attempt >= maxRetry || !this.isNonceLikeError(e)) break;
+        const nonceLike = this.isNonceLikeError(e);
+        const inFlightLimit = this.isInFlightLimitError(e);
+        console.warn('[trade.buy.auto][attempt.failed]', {
+          flowId,
+          attempt: attemptNo,
+          elapsedMs: Date.now() - attemptStart,
+          nonceLike,
+          inFlightLimit,
+          error: String(e?.shortMessage || e?.message || e || ''),
+        });
+        if (attempt >= maxRetry || !nonceLike) break;
+        console.log('[trade.buy.auto][retry.signal]', {
+          flowId,
+          attempt: attemptNo,
+          reason: 'nonce',
+        });
         await opts?.onRetry?.({ side: 'buy', attempt: attempt + 1, reason: 'nonce' });
         await this.refreshNonce({ chainId: input.chainId, fromAddress: input.fromAddress });
       }
     }
+    console.warn('[trade.buy.auto][final.failed]', {
+      flowId,
+      totalElapsedMs: Date.now() - flowStart,
+      error: String(lastErr?.shortMessage || lastErr?.message || lastErr || ''),
+    });
     throw lastErr;
   }
 

@@ -24,19 +24,23 @@ export class TokenAPI {
         const api = PLATFORM_API[platform];
         let address = tokenAddress;
         if (api) {
-            const tokenInfo = await api.getTokenInfo(chain, address);
-            if (tokenInfo) {
-                if (tokenInfo.launchpad_platform.includes('four') && tokenInfo.quote_token != "BNB") {
-                    const fourmemeTokenInfo = await this.getTokenInfoByFourmeme(platform, chain, address);
-                    if (fourmemeTokenInfo) {
-                        return fourmemeTokenInfo
+            try {
+                const tokenInfo = await api.getTokenInfo(chain, address);
+                if (tokenInfo) {
+                    if (tokenInfo.launchpad_platform.includes('four') && tokenInfo.quote_token != "BNB") {
+                        const fourmemeTokenInfo = await this.getTokenInfoByFourmeme(platform, chain, address);
+                        if (fourmemeTokenInfo) {
+                            return fourmemeTokenInfo
+                        }
                     }
+                    if (MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
+                        tokenInfo.launchpad_platform.includes('four')) {
+                        return tokenInfo;
+                    }
+                    return null;
                 }
-                if (MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
-                    tokenInfo.launchpad_platform.includes('four')) {
-                    return tokenInfo;
-                }
-                return null;
+            } catch {
+                // Fallback to Fourmeme/Flap resolvers when third-party platform API is unavailable.
             }
         }
 
@@ -57,27 +61,43 @@ export class TokenAPI {
         if (inflight) return inflight;
 
         const p = (async (): Promise<string | null> => {
-            if (platform === 'gmgn') {
-                const balance = await GmgnAPI.getBalance(chain, address, tokenAddress) ?? null;
-                if (balance) {
-                    const v = parseEther(balance).toString();
-                    this.balanceCache.set(key, { ts: Date.now(), value: v });
-                    return v;
+            const readOnchainWei = async (): Promise<string | null> => {
+                if (tokenAddress === '0x0000000000000000000000000000000000000000') {
+                    const bal = await call({ type: 'chain:getBalance', address: address as `0x${string}` });
+                    return bal?.balanceWei ?? null;
                 }
+                const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
+                const bal = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address: address as `0x${string}` });
+                return bal?.balanceWei ?? null;
+            };
+
+            if (platform !== 'gmgn') {
+                const onchainWei = await readOnchainWei();
+                this.balanceCache.set(key, { ts: Date.now(), value: onchainWei });
+                return onchainWei;
             }
 
-            if (tokenAddress === '0x0000000000000000000000000000000000000000') {
-                const bal = await call({ type: 'chain:getBalance', address: address as `0x${string}` });
-                const v = bal?.balanceWei ?? null;
-                this.balanceCache.set(key, { ts: Date.now(), value: v });
-                return v;
-            }
+            const [gmgnWei, onchainWei] = await Promise.all([
+                (async (): Promise<string | null> => {
+                    try {
+                        const balance = await GmgnAPI.getBalance(chain, address, tokenAddress);
+                        if (balance == null || String(balance).trim() === '') return null;
+                        return parseEther(String(balance)).toString();
+                    } catch {
+                        return null;
+                    }
+                })(),
+                readOnchainWei().catch(() => null),
+            ]);
 
-            const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
-            const bal = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address: address as `0x${string}` });
-            const v = bal?.balanceWei ?? null;
-            this.balanceCache.set(key, { ts: Date.now(), value: v });
-            return v;
+            const gmgnBig = gmgnWei != null ? BigInt(gmgnWei) : null;
+            const onchainBig = onchainWei != null ? BigInt(onchainWei) : null;
+            const picked =
+                gmgnBig != null && onchainBig != null
+                    ? (gmgnBig > onchainBig ? gmgnBig : onchainBig).toString()
+                    : (gmgnBig != null ? gmgnBig.toString() : (onchainBig != null ? onchainBig.toString() : null));
+            this.balanceCache.set(key, { ts: Date.now(), value: picked });
+            return picked;
         })().finally(() => {
             this.balanceInFlight.delete(key);
         });

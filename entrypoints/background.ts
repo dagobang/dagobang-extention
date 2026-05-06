@@ -474,7 +474,13 @@ export default defineBackground(() => {
               walletName: 'Dagobang',
             });
 
-            const uploadedImgUrl = await FourmemeAPI.uploadImageFromUrl(msg.input.imgUrl, accessToken);
+            const imageCandidates = [
+              msg.input.imgUrl,
+              ...(Array.isArray(msg.input.imgFallbackUrls) ? msg.input.imgFallbackUrls : []),
+            ]
+              .map((x) => String(x || '').trim())
+              .filter(Boolean);
+            const uploadedImgUrl = await FourmemeAPI.uploadImageFromUrl(imageCandidates, accessToken);
 
             const createData = await FourmemeAPI.createToken(
               {
@@ -490,10 +496,21 @@ export default defineBackground(() => {
               return { ok: true, data: { api: createData } };
             }
 
+            const fixedCreateFeeWei = parseEther('0.01');
+            let preSaleWei = 0n;
+            try {
+              preSaleWei = parseEther(String(msg.input.preSale || '0').trim() || '0');
+            } catch {
+              throw new Error('Invalid preSale amount');
+            }
+            const createValueWei = fixedCreateFeeWei + preSaleWei;
+
             const onChainResult = await TokenFourmemeService.createTokenOnChain(
               settings.chainId,
               createArg,
-              sign
+              sign,
+              fromAddress,
+              createValueWei
             );
 
             const autoBuySummary = {

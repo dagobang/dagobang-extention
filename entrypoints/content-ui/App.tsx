@@ -2106,6 +2106,8 @@ export default function App() {
             defaultSelectedWallets={selectedTradeWallets}
             walletNativeBalancesWei={walletNativeBalancesWei}
             siteInfo={siteInfo}
+            currentTokenName={tokenInfo?.name ?? null}
+            currentTokenSymbol={tokenSymbol ?? tokenInfo?.symbol ?? null}
           />
 
           <XTradePanel

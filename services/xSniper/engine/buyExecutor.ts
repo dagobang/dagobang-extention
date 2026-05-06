@@ -514,7 +514,16 @@ export const tryAutoBuyOnce = async (input: {
           });
         },
       });
-    } catch {
+    } catch (e: any) {
+      console.warn('[xsniper.buy.submit.failed]', {
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        walletAddress: tradeFromAddress,
+        signalId: input.signal?.id ? String(input.signal.id) : undefined,
+        signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+        signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+        error: String(e?.shortMessage || e?.message || e || ''),
+      });
     }
     if (!rsp) {
       console.error('XSniperTrade buy submit failed', {

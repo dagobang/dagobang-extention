@@ -77,6 +77,36 @@ export interface FourmemeTokenInfoResponse {
 export class FourmemeAPI {
   private static readonly BASE_URL = "https://four.meme/meme-api/v1";
 
+  private static dataUrlToBlob(dataUrl: string): Blob {
+    const raw = String(dataUrl || '').trim();
+    const commaIndex = raw.indexOf(',');
+    if (!raw.startsWith('data:') || commaIndex <= 5) {
+      throw new Error('Invalid data url');
+    }
+    const meta = raw.slice(5, commaIndex);
+    const payload = raw.slice(commaIndex + 1);
+    const isBase64 = /;base64/i.test(meta);
+    const mime = (meta.split(';')[0] || 'application/octet-stream').trim() || 'application/octet-stream';
+    if (isBase64) {
+      const binary = atob(payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      return new Blob([bytes], { type: mime });
+    }
+    return new Blob([decodeURIComponent(payload)], { type: mime });
+  }
+
+  private static extFromMime(mime: string): string {
+    const m = String(mime || '').toLowerCase();
+    if (m.includes('png')) return 'png';
+    if (m.includes('webp')) return 'webp';
+    if (m.includes('gif')) return 'gif';
+    if (m.includes('bmp')) return 'bmp';
+    if (m.includes('svg')) return 'svg';
+    if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
+    return 'png';
+  }
+
   private static async makeRequest(url: string, options: RequestInit): Promise<Response> {
     const headers = { ...options.headers } as Record<string, string>;
 
@@ -164,7 +194,7 @@ export class FourmemeAPI {
         signature: input.signature,
         verifyType: "LOGIN",
       },
-      walletName: input.walletName || "Dagobang",
+      walletName: input.walletName || "MetaMask",
     };
     const headers = this.getHeaders();
     const response = await this.makeRequest(url, {
@@ -182,14 +212,37 @@ export class FourmemeAPI {
     return String(result.data ?? "");
   }
 
-  public static async uploadImageFromUrl(imgUrl: string, accessToken: string): Promise<string> {
-    const downloadResp = await fetch(imgUrl);
-    if (!downloadResp.ok) {
-      throw new Error(`Failed to download image: ${downloadResp.status}`);
+  public static async uploadImageFromUrl(imgUrl: string | string[], accessToken: string): Promise<string> {
+    const candidates = (Array.isArray(imgUrl) ? imgUrl : [imgUrl])
+      .map((x) => String(x || '').trim())
+      .filter(Boolean);
+    if (candidates.length <= 0) throw new Error('Image url is empty');
+
+    let lastError: unknown = null;
+    let blob: Blob | null = null;
+    for (const inputUrl of candidates) {
+      try {
+        blob = inputUrl.startsWith('data:')
+          ? this.dataUrlToBlob(inputUrl)
+          : await (async () => {
+            const downloadResp = await fetch(inputUrl);
+            if (!downloadResp.ok) {
+              throw new Error(`Failed to download image: ${downloadResp.status}`);
+            }
+            return await downloadResp.blob();
+          })();
+        if (blob) break;
+      } catch (e) {
+        lastError = e;
+      }
     }
-    const blob = await downloadResp.blob();
+    if (!blob) {
+      const msg = (lastError as any)?.message ? String((lastError as any).message) : 'Failed to download image from all candidates';
+      throw new Error(msg);
+    }
     const formData = new FormData();
-    formData.append("file", blob, "logo.png");
+    const ext = this.extFromMime(blob.type);
+    formData.append("file", blob, `logo.${ext}`);
 
     const endpoint = "/private/token/upload";
     const url = `${this.BASE_URL}${endpoint}`;
@@ -294,12 +347,59 @@ export class FourmemeAPI {
       recipientAddress: string;
       recipientRate: number;
     };
+    raisedAmount?: number | string;
+    totalSupply?: number | string;
+    saleRate?: number | string;
+    reserveRate?: number | string;
+    funGroup?: boolean;
+    clickFun?: boolean;
+    raisedToken?: {
+      symbol?: string;
+      nativeSymbol?: string;
+      symbolAddress?: string;
+      deployCost?: string;
+      buyFee?: string;
+      sellFee?: string;
+      minTradeFee?: string;
+      b0Amount?: string;
+      totalBAmount?: string;
+      totalAmount?: string;
+      logoUrl?: string;
+      tradeLevel?: string[];
+      status?: string;
+      buyTokenLink?: string;
+      reservedNumber?: number;
+      saleRate?: string;
+      networkCode?: string;
+      platform?: string;
+    };
   }, accessToken: string): Promise<any> {
     const endpoint = "/private/token/create";
     const url = `${this.BASE_URL}${endpoint}`;
+    const defaultRaisedToken = {
+      symbol: "BNB",
+      nativeSymbol: "BNB",
+      symbolAddress: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+      deployCost: "0",
+      buyFee: "0.01",
+      sellFee: "0.01",
+      minTradeFee: "0",
+      b0Amount: "8",
+      totalBAmount: "24",
+      totalAmount: "1000000000",
+      logoUrl: "https://static.four.meme/market/68b871b6-96f7-408c-b8d0-388d804b34275092658264263839640.png",
+      tradeLevel: ["0.1", "0.5", "1"],
+      status: "PUBLISH",
+      buyTokenLink: "https://pancakeswap.finance/swap",
+      reservedNumber: 10,
+      saleRate: "0.8",
+      networkCode: "BSC",
+      platform: "MEME",
+    };
     const body = {
       name: input.name,
       shortName: input.shortName,
+      symbol: (input.raisedToken?.symbol || "BNB").toUpperCase(),
       desc: input.desc,
       imgUrl: input.imgUrl,
       launchTime: input.launchTime,
@@ -312,6 +412,16 @@ export class FourmemeAPI {
       onlyMPC: input.onlyMPC,
       feePlan: input.feePlan,
       tokenTaxInfo: input.tokenTaxInfo,
+      raisedAmount: input.raisedAmount ?? 24,
+      totalSupply: input.totalSupply ?? 1000000000,
+      saleRate: input.saleRate ?? 0.8,
+      reserveRate: input.reserveRate ?? 0,
+      funGroup: input.funGroup ?? false,
+      clickFun: input.clickFun ?? false,
+      raisedToken: {
+        ...defaultRaisedToken,
+        ...(input.raisedToken || {}),
+      },
     };
     const headers = {
       ...this.getHeaders(),
