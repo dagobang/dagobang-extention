@@ -118,6 +118,26 @@ export function CookingPanel({
   const [googlePage, setGooglePage] = useState(0);
   const autoFillTokenKeyRef = useRef<string | null>(null);
   const localImageInputRef = useRef<HTMLInputElement | null>(null);
+  const autoSellEnabledRef = useRef(autoSellEnabled);
+  const autoSellRulesRef = useRef(autoSellRules);
+
+  const persistCookingConfig = (patch?: {
+    deployWallet?: `0x${string}` | null;
+    defaultBuyBnb?: string;
+    autoSellEnabled?: boolean;
+    autoSellRules?: AutoSellRule[];
+  }) => {
+    try {
+      const payload = {
+        deployWallet: (patch?.deployWallet ?? deployWallet) || undefined,
+        defaultBuyBnb: patch?.defaultBuyBnb ?? defaultBuyBnb,
+        autoSellEnabled: patch?.autoSellEnabled ?? autoSellEnabledRef.current,
+        autoSellRules: patch?.autoSellRules ?? autoSellRulesRef.current,
+      };
+      window.localStorage.setItem(cookingConfigStorageKey, JSON.stringify(payload));
+    } catch {
+    }
+  };
 
   useEffect(() => {
     if (!visible) {
@@ -173,16 +193,15 @@ export function CookingPanel({
   }, []);
 
   useEffect(() => {
-    try {
-      const payload = {
-        deployWallet: deployWallet || undefined,
-        defaultBuyBnb,
-        autoSellEnabled,
-        autoSellRules,
-      };
-      window.localStorage.setItem(cookingConfigStorageKey, JSON.stringify(payload));
-    } catch {
-    }
+    autoSellEnabledRef.current = autoSellEnabled;
+  }, [autoSellEnabled]);
+
+  useEffect(() => {
+    autoSellRulesRef.current = autoSellRules;
+  }, [autoSellRules]);
+
+  useEffect(() => {
+    persistCookingConfig();
   }, [deployWallet, defaultBuyBnb, autoSellEnabled, autoSellRules]);
 
   const selectedDeployWallet = useMemo(
@@ -240,20 +259,28 @@ export function CookingPanel({
   };
 
   const updateAutoSellRule = (index: number, patch: Partial<AutoSellRule>) => {
-    setAutoSellRules((list) => list.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+    setAutoSellRules((list) => {
+      const next = list.map((item, i) => (i === index ? { ...item, ...patch } : item));
+      autoSellRulesRef.current = next;
+      return next;
+    });
   };
 
   const addAutoSellRule = () => {
     setAutoSellRules((list) => {
       if (list.length >= MAX_AUTO_SELL_RULES) return list;
-      return [...list, { marketCapUsd: '', sellPercent: '' }];
+      const next = [...list, { marketCapUsd: '', sellPercent: '' }];
+      autoSellRulesRef.current = next;
+      return next;
     });
   };
 
   const removeAutoSellRule = (index: number) => {
     setAutoSellRules((list) => {
       if (list.length <= 1) return list;
-      return list.filter((_, i) => i !== index);
+      const next = list.filter((_, i) => i !== index);
+      autoSellRulesRef.current = next;
+      return next;
     });
   };
 
@@ -380,12 +407,18 @@ export function CookingPanel({
     }
     try {
       const toastId = toast.loading('正在创建 Meme Token...', { icon: '🔄' });
+      const latestAutoSellEnabled = autoSellEnabledRef.current;
+      const latestAutoSellRules = autoSellRulesRef.current;
+      persistCookingConfig({
+        autoSellEnabled: latestAutoSellEnabled,
+        autoSellRules: latestAutoSellRules,
+      });
       const descParts: string[] = [];
       if (twitterInput.trim()) descParts.push(`Twitter: ${twitterInput.trim()}`);
       if (websiteInput.trim()) descParts.push(`Website: ${websiteInput.trim()}`);
       if (telegramInput.trim()) descParts.push(`Telegram: ${telegramInput.trim()}`);
       if (defaultBuyBnb.trim()) descParts.push(`DefaultBuyBNB: ${defaultBuyBnb.trim()}`);
-      if (autoSellEnabled) descParts.push('AutoSellMode: marketCapTargets');
+      if (latestAutoSellEnabled) descParts.push('AutoSellMode: marketCapTargets');
       const desc = descParts.join(' | ');
       const preSale = defaultBuyBnb.trim() || '0';
 
@@ -429,9 +462,9 @@ export function CookingPanel({
       } else {
         toast.success('创建 Meme Token 参数已生成', { id: toastId, icon: '✅' });
       }
-      if (autoSellEnabled && data?.tokenAddress) {
+      if (latestAutoSellEnabled && data?.tokenAddress) {
         const tokenAddress = String(data.tokenAddress) as `0x${string}`;
-        const normalizedRules = autoSellRules
+        const normalizedRules = latestAutoSellRules
           .map((rule) => ({
             marketCapUsd: Number(String(rule.marketCapUsd || '').trim()),
             sellPercent: Number(String(rule.sellPercent || '').trim()),
@@ -778,7 +811,14 @@ export function CookingPanel({
 
             <div className="flex items-center gap-3 text-[11px] text-zinc-300">
               <label className="inline-flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" checked={autoSellEnabled} onChange={(e) => setAutoSellEnabled(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={autoSellEnabled}
+                  onChange={(e) => {
+                    autoSellEnabledRef.current = e.target.checked;
+                    setAutoSellEnabled(e.target.checked);
+                  }}
+                />
                 <span>自动卖出（按市值目标创建挂单）</span>
               </label>
             </div>
