@@ -34,6 +34,6 @@ declare module '#imports' {
   export { t, normalizeLocale, Locale } from '../utils/i18n';
   export { call } from '../utils/messaging';
   export { parsePlatformTokenLink, navigateToUrl, parseCurrentUrl, parseCurrentUrlFull, SiteInfo } from '../utils/sites';
-  export { collectErrorText, classifyBroadcastError, getNonceErrorKindFromText, extractNextNonceHintFromText, isAllowanceLikeText, BroadcastErrorClass } from '../utils/txErrorClassify';
+  export { collectErrorText, classifyBroadcastError, getNonceErrorKindFromText, extractNextNonceHintFromText, isAllowanceLikeText, isInFlightLimitLikeText, BroadcastErrorClass } from '../utils/txErrorClassify';
   export { validateSettings } from '../utils/validate';
 }

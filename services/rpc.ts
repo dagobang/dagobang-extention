@@ -3,6 +3,7 @@ import { SettingsService } from './settings';
 import BloxRouterAPI from '@/services/api/bloxRouter';
 import { classifyBroadcastError } from '@/utils/txErrorClassify';
 import { isAllowanceLikeText } from '@/utils/txErrorClassify';
+import { isInFlightLimitLikeText } from '@/utils/txErrorClassify';
 import { getChainRuntime } from '@/constants/chains';
 
 export type BroadcastTxVia = 'bloxroute' | 'rpc';
@@ -399,6 +400,7 @@ export class RpcService {
         const rpcBundlePromises: Array<Promise<BroadcastTxResult>> = [];
         let rpcBundleNonceError: string | null = null;
         let rpcBundleDeterministicError: string | null = null;
+        let rpcBundleInFlightError: string | null = null;
         const runBloxBundle = async () => {
           const tipTx = await bundleSignerContext.account.signTransaction({
             to: this.bloxrouteDynamicFeeReceiver,
@@ -438,6 +440,9 @@ export class RpcService {
                 if (!rpcBundleNonceError && classifyBroadcastError(detail) === 'nonce') {
                   rpcBundleNonceError = `${url}: ${detail}`;
                 }
+                if (!rpcBundleInFlightError && isInFlightLimitLikeText(detail)) {
+                  rpcBundleInFlightError = `${url}: ${detail}`;
+                }
                 if (!rpcBundleDeterministicError && isDeterministicSellAllowanceFailure(detail)) {
                   rpcBundleDeterministicError = `${url}: ${detail}`;
                 }
@@ -454,6 +459,20 @@ export class RpcService {
           try {
             return await Promise.any(rpcBundlePromises);
           } catch {
+          }
+        }
+        if (rpcBundleInFlightError && willUseBloxroute) {
+          try {
+            console.warn('[rpc.bundle.inflight][fallback.bloxroute]', {
+              chainId: targetChainId,
+              txSide,
+              detail: rpcBundleInFlightError,
+            });
+            return await runBloxBundle();
+          } catch (e: any) {
+            const detail = extractErrText(e);
+            bundleFailures.push(`bloxroute(inflight-fallback): ${detail}`);
+            console.error('Error broadcasting tx via BloxRoute bundle (inflight fallback):', e);
           }
         }
         if (rpcBundleDeterministicError) {
@@ -476,6 +495,7 @@ export class RpcService {
       }
 
       let rawDeterministicError: string | null = null;
+      let rawInFlightError: string | null = null;
       const runBloxRaw = async (): Promise<BroadcastTxResult> => {
         const txHash = await BloxRouterAPI.sendPrivateTx(targetChainId, signedTx);
         if (!txHash) throw new Error('BloxRoute did not return tx hash');
@@ -493,6 +513,9 @@ export class RpcService {
             } catch (e: any) {
               const detail = extractErrText(e);
               rawFailures.push(`${url}: ${detail}`);
+              if (!rawInFlightError && isInFlightLimitLikeText(detail)) {
+                rawInFlightError = `${url}: ${detail}`;
+              }
               if (!rawDeterministicError && isDeterministicSellAllowanceFailure(detail)) {
                 rawDeterministicError = `${url}: ${detail}`;
               }
@@ -510,6 +533,20 @@ export class RpcService {
         try {
           return await Promise.any(rpcRawPromises);
         } catch {
+          if (rawInFlightError && willUseBloxroute) {
+            try {
+              console.warn('[rpc.raw.inflight][fallback.bloxroute]', {
+                chainId: targetChainId,
+                txSide,
+                detail: rawInFlightError,
+              });
+              return await runBloxRaw();
+            } catch (e: any) {
+              const detail = extractErrText(e);
+              rawFailures.push(`bloxroute(inflight-fallback): ${detail}`);
+              console.error('Error broadcasting tx via BloxRoute (inflight fallback):', e);
+            }
+          }
           if (rawDeterministicError) {
             throw new Error(`Raw deterministic sell failure detected. ${rawDeterministicError}`);
           }
@@ -544,6 +581,20 @@ export class RpcService {
       try {
         return await Promise.any(rawPromises);
       } catch {
+        if (rawInFlightError && willUseBloxroute) {
+          try {
+            console.warn('[rpc.raw.inflight][fallback.bloxroute]', {
+              chainId: targetChainId,
+              txSide,
+              detail: rawInFlightError,
+            });
+            return await runBloxRaw();
+          } catch (e: any) {
+            const detail = extractErrText(e);
+            rawFailures.push(`bloxroute(inflight-fallback): ${detail}`);
+            console.error('Error broadcasting tx via BloxRoute (inflight fallback):', e);
+          }
+        }
         const detail = rawFailures.length ? ` Details: ${rawFailures.join(' | ')}` : '';
         throw new Error(`Failed to broadcast transaction to any raw route.${detail}`);
       }

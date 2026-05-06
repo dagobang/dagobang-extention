@@ -56,6 +56,7 @@ declare global {
   const injectScript: typeof import('wxt/utils/inject-script').injectScript
   const isAllowanceLikeText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').isAllowanceLikeText
   const isHexPrivateKey: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').isHexPrivateKey
+  const isInFlightLimitLikeText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').isInFlightLimitLikeText
   const isObject: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').isObject
   const loadContractAbi: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi').loadContractAbi
   const navigateToUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').navigateToUrl
