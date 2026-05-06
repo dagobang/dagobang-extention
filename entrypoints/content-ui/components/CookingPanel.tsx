@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { call } from '@/utils/messaging';
 import type { Account } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
+import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { WalletSelectorDropdown, WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
 
 type CookingPanelProps = {
@@ -14,6 +15,7 @@ type CookingPanelProps = {
   activeWalletAddress: `0x${string}` | null;
   defaultSelectedWallets: `0x${string}`[];
   walletNativeBalancesWei: Record<string, string>;
+  siteInfo: SiteInfo | null;
 };
 
 function clampCookingPanelPos(pos: { x: number; y: number }) {
@@ -33,6 +35,7 @@ export function CookingPanel({
   activeWalletAddress,
   defaultSelectedWallets,
   walletNativeBalancesWei,
+  siteInfo,
 }: CookingPanelProps) {
   const cookingConfigStorageKey = 'dagobang_cooking_config_v1';
   const DEFAULT_TOKEN_SUPPLY = 1_000_000_000;
@@ -315,18 +318,20 @@ export function CookingPanel({
           shortName: symbol,
           desc,
           imgUrl: img,
+          launchTime: Date.now(),
+          label: 'Meme',
+          lpTradingFee: 0.0025,
           webUrl: websiteInput.trim() || undefined,
           twitterUrl: twitterInput.trim() || undefined,
           telegramUrl: telegramInput.trim() || undefined,
           preSale,
           onlyMPC: false,
+          feePlan: false,
           fromAddress: deployWallet,
           autoBuy: {
             bundleEnabled: true,
-            sniperEnabled: true,
+            sniperEnabled: false,
             wallets: autoBuyWalletInputs,
-            sniperMaxAttempts: 25,
-            sniperRetryMs: 1200,
           },
         },
       } as const);
@@ -338,13 +343,23 @@ export function CookingPanel({
           addr ? `Meme Token 发币交易已发送，地址：${short}` : 'Meme Token 发币交易已发送',
           { id: toastId, icon: '✅' }
         );
+        if (addr) {
+          const link = siteInfo
+            ? parsePlatformTokenLink(siteInfo, addr)
+            : `https://four.meme/zh-TW/token/${addr}`;
+          if (link) {
+            setTimeout(() => {
+              navigateToUrl(link);
+            }, 10);
+          }
+        }
       } else {
         toast.success('创建 Meme Token 参数已生成', { id: toastId, icon: '✅' });
       }
       const autoBuy = (res as any)?.autoBuy;
       if (autoBuy) {
         toast(
-          `自动买入结果：捆绑成功 ${autoBuy.bundleSuccess}/${autoBuy.bundleSuccess + autoBuy.bundleFailed}，狙击成功 ${autoBuy.sniperSuccess}/${autoBuy.sniperSuccess + autoBuy.sniperFailed}`,
+          `并发买入结果：成功 ${autoBuy.bundleSuccess}/${autoBuy.bundleSuccess + autoBuy.bundleFailed}`,
           { icon: '🎯', duration: 4500 }
         );
       }
@@ -687,7 +702,7 @@ export function CookingPanel({
                         className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 outline-none"
                         value={walletSniperAmounts[wallet.toLowerCase()] ?? defaultBuyBnb}
                         onChange={(e) => updateWalletSniperAmount(wallet, e.target.value)}
-                        placeholder="狙击BNB"
+                        placeholder="买入BNB"
                       />
                     </div>
                   ))}

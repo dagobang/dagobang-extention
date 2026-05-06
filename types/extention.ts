@@ -695,11 +695,24 @@ export type BgRequest =
       shortName: string;
       desc: string;
       imgUrl: string;
+      launchTime?: number;
+      label?: 'Meme' | 'AI' | 'Defi' | 'Games' | 'Infra' | 'De-Sci' | 'Social' | 'Depin' | 'Charity' | 'Others';
+      lpTradingFee?: number;
       webUrl?: string;
       twitterUrl?: string;
       telegramUrl?: string;
       preSale: string;
       onlyMPC: boolean;
+      feePlan?: boolean;
+      tokenTaxInfo?: {
+        burnRate: number;
+        divideRate: number;
+        feeRate: 1 | 3 | 5 | 10;
+        liquidityRate: number;
+        minSharing: number;
+        recipientAddress: string;
+        recipientRate: number;
+      };
       fromAddress?: `0x${string}`;
       autoBuy?: {
         bundleEnabled?: boolean;

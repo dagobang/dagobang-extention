@@ -276,11 +276,24 @@ export class FourmemeAPI {
     shortName: string;
     desc: string;
     imgUrl: string;
+    launchTime?: number;
+    label?: "Meme" | "AI" | "Defi" | "Games" | "Infra" | "De-Sci" | "Social" | "Depin" | "Charity" | "Others";
+    lpTradingFee?: number;
     webUrl?: string;
     twitterUrl?: string;
     telegramUrl?: string;
     preSale: string;
     onlyMPC: boolean;
+    feePlan?: boolean;
+    tokenTaxInfo?: {
+      burnRate: number;
+      divideRate: number;
+      feeRate: 1 | 3 | 5 | 10;
+      liquidityRate: number;
+      minSharing: number;
+      recipientAddress: string;
+      recipientRate: number;
+    };
   }, accessToken: string): Promise<any> {
     const endpoint = "/private/token/create";
     const url = `${this.BASE_URL}${endpoint}`;
@@ -289,11 +302,16 @@ export class FourmemeAPI {
       shortName: input.shortName,
       desc: input.desc,
       imgUrl: input.imgUrl,
+      launchTime: input.launchTime,
+      label: input.label,
+      lpTradingFee: input.lpTradingFee,
       webUrl: input.webUrl,
       twitterUrl: input.twitterUrl,
       telegramUrl: input.telegramUrl,
       preSale: input.preSale,
       onlyMPC: input.onlyMPC,
+      feePlan: input.feePlan,
+      tokenTaxInfo: input.tokenTaxInfo,
     };
     const headers = {
       ...this.getHeaders(),
@@ -316,4 +334,3 @@ export class FourmemeAPI {
 }
 
 export default FourmemeAPI;
-

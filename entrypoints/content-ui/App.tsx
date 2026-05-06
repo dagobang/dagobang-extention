@@ -2103,6 +2103,7 @@ export default function App() {
             activeWalletAddress={address as `0x${string}` | null}
             defaultSelectedWallets={selectedTradeWallets}
             walletNativeBalancesWei={walletNativeBalancesWei}
+            siteInfo={siteInfo}
           />
 
           <XTradePanel

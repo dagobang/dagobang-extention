@@ -471,7 +471,7 @@ export default defineBackground(() => {
               address,
               signature,
               networkCode,
-              walletName: 'undefined',
+              walletName: 'Dagobang',
             });
 
             const uploadedImgUrl = await FourmemeAPI.uploadImageFromUrl(msg.input.imgUrl, accessToken);
@@ -484,14 +484,16 @@ export default defineBackground(() => {
               accessToken
             );
 
-            if (!createData || !createData.createArg || !createData.sign) {
+            const createArg = createData?.createArg;
+            const sign = createData?.signature || createData?.sign;
+            if (!createData || !createArg || !sign) {
               return { ok: true, data: { api: createData } };
             }
 
             const onChainResult = await TokenFourmemeService.createTokenOnChain(
               settings.chainId,
-              createData.createArg,
-              createData.sign
+              createArg,
+              sign
             );
 
             const autoBuySummary = {
