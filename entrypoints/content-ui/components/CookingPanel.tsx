@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import toast from 'react-hot-toast';
 import { call } from '@/utils/messaging';
 import type { Account } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
-import { WalletSelectorDropdown, WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
+import { WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
+import GmgnAPI from '@/hooks/GmgnAPI';
 
 type CookingPanelProps = {
   visible: boolean;
@@ -13,8 +14,6 @@ type CookingPanelProps = {
   seedreamApiKey: string;
   walletAccounts: Account[];
   activeWalletAddress: `0x${string}` | null;
-  defaultSelectedWallets: `0x${string}`[];
-  walletNativeBalancesWei: Record<string, string>;
   siteInfo: SiteInfo | null;
   currentTokenName?: string | null;
   currentTokenSymbol?: string | null;
@@ -35,12 +34,12 @@ export function CookingPanel({
   seedreamApiKey,
   walletAccounts,
   activeWalletAddress,
-  defaultSelectedWallets,
-  walletNativeBalancesWei,
   siteInfo,
   currentTokenName,
   currentTokenSymbol,
 }: CookingPanelProps) {
+  type LogoSearchImage = { url: string; thumbnail?: string; title?: string; source?: string };
+  type LogoSearchTab = 'token' | 'google';
   const cookingConfigStorageKey = 'dagobang_cooking_config_v1';
   const DEFAULT_TOKEN_SUPPLY = 1_000_000_000;
   const MAX_AUTO_SELL_RULES = 5;
@@ -108,25 +107,34 @@ export function CookingPanel({
   const [defaultBuyBnb, setDefaultBuyBnb] = useState('0.1');
   const [autoSellEnabled, setAutoSellEnabled] = useState(true);
   const [autoSellRules, setAutoSellRules] = useState<AutoSellRule[]>([{ marketCapUsd: '3700', sellPercent: '100' }]);
-  const [autoBuyWallets, setAutoBuyWallets] = useState<`0x${string}`[]>([]);
-  const [walletSniperAmounts, setWalletSniperAmounts] = useState<Record<string, string>>({});
   const [deployWalletSelectorOpen, setDeployWalletSelectorOpen] = useState(false);
-  const [autoBuyWalletSelectorOpen, setAutoBuyWalletSelectorOpen] = useState(false);
   const [googleQuery, setGoogleQuery] = useState('');
+  const [logoSearchTab, setLogoSearchTab] = useState<LogoSearchTab>('token');
+  const [logoSearchActive, setLogoSearchActive] = useState(false);
+  const [tokenSearching, setTokenSearching] = useState(false);
+  const [tokenImages, setTokenImages] = useState<LogoSearchImage[]>([]);
   const [googleSearching, setGoogleSearching] = useState(false);
-  const [googleImages, setGoogleImages] = useState<Array<{ url: string; thumbnail?: string; title?: string; source?: string }>>([]);
+  const [googleImages, setGoogleImages] = useState<LogoSearchImage[]>([]);
   const [googlePage, setGooglePage] = useState(0);
+  const autoFillTokenKeyRef = useRef<string | null>(null);
+  const localImageInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      autoFillTokenKeyRef.current = null;
+      return;
+    }
     if (!siteInfo?.tokenAddress) return;
+    const tokenKey = siteInfo.tokenAddress.toLowerCase();
+    if (autoFillTokenKeyRef.current === tokenKey) return;
     if (!tokenNameInput.trim() && currentTokenName?.trim()) {
       setTokenNameInput(currentTokenName.trim());
     }
     if (!tokenSymbolInput.trim() && currentTokenSymbol?.trim()) {
       setTokenSymbolInput(currentTokenSymbol.trim());
     }
-  }, [visible, siteInfo?.tokenAddress, currentTokenName, currentTokenSymbol, tokenNameInput, tokenSymbolInput]);
+    autoFillTokenKeyRef.current = tokenKey;
+  }, [visible, siteInfo?.tokenAddress, currentTokenName, currentTokenSymbol]);
 
   useEffect(() => {
     if (!deployWallet && activeWalletAddress) {
@@ -144,20 +152,11 @@ export function CookingPanel({
       if (!stored) return;
       const parsed = JSON.parse(stored) as {
         deployWallet?: string;
-        autoBuyWallets?: string[];
-        walletSniperAmounts?: Record<string, string>;
         defaultBuyBnb?: string;
         autoSellEnabled?: boolean;
         autoSellRules?: AutoSellRule[];
       };
       if (parsed.deployWallet) setDeployWallet(parsed.deployWallet as `0x${string}`);
-      if (Array.isArray(parsed.autoBuyWallets)) {
-        const next = parsed.autoBuyWallets.filter((x) => typeof x === 'string') as `0x${string}`[];
-        setAutoBuyWallets(next);
-      }
-      if (parsed.walletSniperAmounts && typeof parsed.walletSniperAmounts === 'object') {
-        setWalletSniperAmounts(parsed.walletSniperAmounts);
-      }
       if (typeof parsed.defaultBuyBnb === 'string') setDefaultBuyBnb(parsed.defaultBuyBnb);
       if (typeof parsed.autoSellEnabled === 'boolean') setAutoSellEnabled(parsed.autoSellEnabled);
       if (Array.isArray(parsed.autoSellRules) && parsed.autoSellRules.length > 0) {
@@ -177,8 +176,6 @@ export function CookingPanel({
     try {
       const payload = {
         deployWallet: deployWallet || undefined,
-        autoBuyWallets,
-        walletSniperAmounts,
         defaultBuyBnb,
         autoSellEnabled,
         autoSellRules,
@@ -186,36 +183,12 @@ export function CookingPanel({
       window.localStorage.setItem(cookingConfigStorageKey, JSON.stringify(payload));
     } catch {
     }
-  }, [deployWallet, autoBuyWallets, walletSniperAmounts, defaultBuyBnb, autoSellEnabled, autoSellRules]);
+  }, [deployWallet, defaultBuyBnb, autoSellEnabled, autoSellRules]);
 
-  useEffect(() => {
-    if (autoBuyWallets.length > 0) return;
-    if (defaultSelectedWallets.length > 0) {
-      setAutoBuyWallets(defaultSelectedWallets.slice(0, 5));
-    }
-  }, [autoBuyWallets.length, defaultSelectedWallets]);
-
-  const walletTotalCount = walletAccounts.length;
   const selectedDeployWallet = useMemo(
     () => walletAccounts.find((acc) => acc.address.toLowerCase() === String(deployWallet || '').toLowerCase()) ?? null,
     [walletAccounts, deployWallet]
   );
-
-  const toggleAutoBuyWallet = (wallet: `0x${string}`) => {
-    setAutoBuyWallets((list) => {
-      const exists = list.some((x) => x.toLowerCase() === wallet.toLowerCase());
-      if (exists) return list.filter((x) => x.toLowerCase() !== wallet.toLowerCase());
-      if (list.length >= 5) {
-        toast.error('最多选择 5 个自动买入钱包');
-        return list;
-      }
-      return [...list, wallet];
-    });
-  };
-
-  const updateWalletSniperAmount = (wallet: `0x${string}`, amount: string) => {
-    setWalletSniperAmounts((prev) => ({ ...prev, [wallet.toLowerCase()]: amount }));
-  };
 
   const clearImageAndTokenInputs = () => {
     setLogoPrompt('');
@@ -228,6 +201,42 @@ export function CookingPanel({
     setTwitterInput('');
     setWebsiteInput('');
     setTelegramInput('');
+    if (localImageInputRef.current) {
+      localImageInputRef.current.value = '';
+    }
+  };
+
+  const handlePickLocalLogo = () => {
+    localImageInputRef.current?.click();
+  };
+
+  const handleLocalLogoChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('请选择图片文件');
+      e.currentTarget.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('图片不能超过 5MB');
+      e.currentTarget.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!dataUrl.startsWith('data:image/')) {
+        toast.error('读取本地图片失败');
+        return;
+      }
+      setLogoUrl(dataUrl);
+      toast.success('本地图片已加载', { icon: '🖼️' });
+    };
+    reader.onerror = () => {
+      toast.error('读取本地图片失败');
+    };
+    reader.readAsDataURL(file);
   };
 
   const updateAutoSellRule = (index: number, patch: Partial<AutoSellRule>) => {
@@ -293,6 +302,62 @@ export function CookingPanel({
     }
   };
 
+  const handleSearchTokenImages = async () => {
+    const query = googleQuery.trim();
+    if (!query) {
+      toast.error('请输入搜索关键词');
+      return;
+    }
+    try {
+      setTokenSearching(true);
+      const list = await GmgnAPI.searchTokens(query);
+      const nextImages: LogoSearchImage[] = list
+        .map((item) => {
+          const tokenObj = (item as any)?.token || {};
+          const logo = String(
+            item?.logo ||
+            tokenObj?.logo ||
+            (item as any)?.image ||
+            (item as any)?.icon ||
+            (item as any)?.token_logo ||
+            ''
+          ).trim();
+          if (!logo) return null;
+          const symbol = String(item?.symbol || tokenObj?.symbol || '').trim();
+          const name = String(item?.name || tokenObj?.name || '').trim();
+          const address = String(item?.address || tokenObj?.address || tokenObj?.token_address || '').trim();
+          const title = [symbol, name, address].filter(Boolean).join(' · ');
+          return {
+            url: logo,
+            thumbnail: logo,
+            title: title || logo,
+            source: 'gmgn-token',
+          } as LogoSearchImage;
+        })
+        .filter(Boolean) as LogoSearchImage[];
+      setTokenImages(nextImages);
+      if (!nextImages.length && list.length > 0) {
+        toast('查到代币，但这些结果没有可用 logo', { icon: 'ℹ️' });
+      } else if (!nextImages.length) {
+        toast('未找到代币图片，可换关键词重试', { icon: 'ℹ️' });
+      }
+    } catch (e: any) {
+      toast.error(e?.message ? String(e.message) : '代币图片搜索失败');
+    } finally {
+      setTokenSearching(false);
+    }
+  };
+
+  const currentSearchImages = logoSearchTab === 'token' ? tokenImages : googleImages;
+  const currentSearchLoading = logoSearchTab === 'token' ? tokenSearching : googleSearching;
+  const handleSearchByActiveTab = () => {
+    if (logoSearchTab === 'token') {
+      void handleSearchTokenImages();
+      return;
+    }
+    void handleSearchGoogleImages(0);
+  };
+
   const handleSubmitMemeForm = async () => {
     const symbol = tokenSymbolInput.trim();
     const name = tokenNameInput.trim();
@@ -323,12 +388,6 @@ export function CookingPanel({
       if (autoSellEnabled) descParts.push('AutoSellMode: marketCapTargets');
       const desc = descParts.join(' | ');
       const preSale = defaultBuyBnb.trim() || '0';
-      const autoBuyWalletInputs = autoBuyWallets
-        .map((wallet) => ({
-          address: wallet,
-          amountBnb: (walletSniperAmounts[wallet.toLowerCase()] || defaultBuyBnb).trim(),
-        }))
-        .filter((item) => item.amountBnb);
 
       const res = await call({
         type: 'token:createFourmeme',
@@ -347,11 +406,6 @@ export function CookingPanel({
           onlyMPC: false,
           feePlan: false,
           fromAddress: deployWallet,
-          autoBuy: {
-            bundleEnabled: true,
-            sniperEnabled: false,
-            wallets: autoBuyWalletInputs,
-          },
         },
       } as const);
       const data = (res as any)?.data;
@@ -374,13 +428,6 @@ export function CookingPanel({
         }
       } else {
         toast.success('创建 Meme Token 参数已生成', { id: toastId, icon: '✅' });
-      }
-      const autoBuy = (res as any)?.autoBuy;
-      if (autoBuy) {
-        toast(
-          `并发买入结果：成功 ${autoBuy.bundleSuccess}/${autoBuy.bundleSuccess + autoBuy.bundleFailed}`,
-          { icon: '🎯', duration: 4500 }
-        );
       }
       if (autoSellEnabled && data?.tokenAddress) {
         const tokenAddress = String(data.tokenAddress) as `0x${string}`;
@@ -417,12 +464,7 @@ export function CookingPanel({
               timestamp: Date.now(),
             },
           };
-          const sellWallets = Array.from(
-            new Set([deployWallet, ...autoBuyWalletInputs.map((x) => x.address)].map((x) => x.toLowerCase()))
-          ).map((lower) => {
-            const found = [deployWallet, ...autoBuyWalletInputs.map((x) => x.address)].find((x) => x.toLowerCase() === lower);
-            return found!;
-          });
+          const sellWallets = [deployWallet];
           const orderInputs = sellWallets.flatMap((wallet) =>
             normalizedRules.map((rule) => ({
               chainId: 56,
@@ -514,34 +556,66 @@ export function CookingPanel({
             </div>
 
             <div className="space-y-1">
-              <div className="text-[11px] text-zinc-400">Google 搜图</div>
+              <div className="text-[11px] text-zinc-400">搜索图片</div>
               <div className="flex items-center gap-2">
                 <input
                   className="flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
                   value={googleQuery}
                   onChange={(e) => setGoogleQuery(e.target.value)}
+                  onFocus={() => setLogoSearchActive(true)}
+                  onKeyDown={(e) => {
+                    if ((e.key !== 'Enter' && e.code !== 'Enter') || (e.nativeEvent as any)?.isComposing) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onKeyUp={(e) => {
+                    if ((e.key !== 'Enter' && e.code !== 'Enter') || (e.nativeEvent as any)?.isComposing) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleSearchByActiveTab();
+                  }}
                   placeholder="输入关键词搜索图片"
                 />
                 <button
                   type="button"
                   className="px-2 py-1 rounded-md border border-zinc-700 text-[11px] text-zinc-200 hover:border-zinc-500"
-                  onClick={() => handleSearchGoogleImages(0)}
-                  disabled={googleSearching}
+                  onClick={handleSearchByActiveTab}
+                  disabled={currentSearchLoading}
                 >
                   搜索
                 </button>
-                <button
-                  type="button"
-                  className="px-2 py-1 rounded-md border border-zinc-700 text-[11px] text-zinc-200 hover:border-zinc-500 disabled:opacity-40"
-                  onClick={() => handleSearchGoogleImages(googlePage + 1)}
-                  disabled={googleSearching || !googleImages.length}
-                >
-                  更多
-                </button>
+                {logoSearchTab === 'google' && (
+                  <button
+                    type="button"
+                    className="px-2 py-1 rounded-md border border-zinc-700 text-[11px] text-zinc-200 hover:border-zinc-500 disabled:opacity-40"
+                    onClick={() => handleSearchGoogleImages(googlePage + 1)}
+                    disabled={googleSearching || !googleImages.length}
+                  >
+                    更多
+                  </button>
+                )}
               </div>
-              {googleImages.length > 0 && (
+              {logoSearchActive && (
+                <div className="flex items-center gap-2 text-[11px] text-zinc-300">
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-0.5 ${logoSearchTab === 'token' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    onClick={() => setLogoSearchTab('token')}
+                  >
+                    代币
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-0.5 ${logoSearchTab === 'google' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    onClick={() => setLogoSearchTab('google')}
+                  >
+                    Google
+                  </button>
+                </div>
+              )}
+              {currentSearchImages.length > 0 && (
                 <div className="grid grid-cols-4 gap-2 max-h-40 overflow-auto pr-1">
-                  {googleImages.map((item, idx) => (
+                  {currentSearchImages.map((item, idx) => (
                     <button
                       key={`${item.url}-${idx}`}
                       type="button"
@@ -560,6 +634,23 @@ export function CookingPanel({
 
             <div className="space-y-1">
               <div className="text-[11px] text-zinc-400">Logo 链接</div>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-200 hover:border-zinc-500"
+                  onClick={handlePickLocalLogo}
+                >
+                  上传本地图片
+                </button>
+                <input
+                  ref={localImageInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                  className="hidden"
+                  onChange={handleLocalLogoChange}
+                />
+                <span className="text-[10px] text-zinc-500">支持 PNG/JPG/WEBP/GIF，≤5MB</span>
+              </div>
               <input
                 className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
                 value={logoUrl}
@@ -683,54 +774,6 @@ export function CookingPanel({
                 value={defaultBuyBnb}
                 onChange={(e) => setDefaultBuyBnb(e.target.value)}
               />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-[11px] text-zinc-400">自动买入钱包（最多 5 个）</div>
-                <WalletSelectorTrigger
-                  walletSelectorOpen={autoBuyWalletSelectorOpen}
-                  walletSelectedCount={autoBuyWallets.length}
-                  walletTotalCount={walletTotalCount}
-                  onToggleWalletSelector={() => setAutoBuyWalletSelectorOpen((v) => !v)}
-                  title="选择自动买入钱包"
-                />
-              </div>
-              <WalletSelectorDropdown
-                open={autoBuyWalletSelectorOpen}
-                selectedTradeWallets={autoBuyWallets}
-                walletAccounts={walletAccounts}
-                activeWalletAddress={activeWalletAddress}
-                onToggleTradeWallet={toggleAutoBuyWallet}
-                walletNativeBalancesWei={walletNativeBalancesWei}
-                walletTokenBalancesWei={{}}
-                tokenDecimals={18}
-                multiWalletBuyMode="uniform"
-                onChangeMultiWalletBuyMode={() => { }}
-                childWalletBuyPresetAmountsNative={{}}
-                onUpdateChildWalletBuyPresetAmount={() => { }}
-                className="rounded-md border border-zinc-700 bg-[#141416] p-2 shadow-xl"
-                onRequestClose={() => setAutoBuyWalletSelectorOpen(false)}
-              />
-              {autoBuyWallets.length > 0 ? (
-                <div className="space-y-1">
-                  {autoBuyWallets.map((wallet) => (
-                    <div key={wallet} className="grid grid-cols-[1fr_92px] gap-2 items-center">
-                      <div className="rounded border border-zinc-700 px-2 py-1 text-[11px] font-mono text-zinc-300">
-                        {wallet.slice(0, 6)}...{wallet.slice(-4)}
-                      </div>
-                      <input
-                        className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 outline-none"
-                        value={walletSniperAmounts[wallet.toLowerCase()] ?? defaultBuyBnb}
-                        onChange={(e) => updateWalletSniperAmount(wallet, e.target.value)}
-                        placeholder="买入BNB"
-                      />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-[11px] text-zinc-500">未选择自动买入钱包</div>
-              )}
             </div>
 
             <div className="flex items-center gap-3 text-[11px] text-zinc-300">

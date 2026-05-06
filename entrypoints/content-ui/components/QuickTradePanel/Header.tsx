@@ -171,6 +171,25 @@ export function Header({
           <SatelliteDish size={14} />
         </button>
 
+        <button
+          type="button"
+          className={
+            cookingActive
+              ? 'flex items-center justify-center rounded-full bg-amber-500/20 text-amber-300 p-1'
+              : 'flex items-center justify-center rounded-full border border-zinc-700 text-amber-300 p-1 hover:border-amber-400'
+          }
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCooking();
+          }}
+          title="Cooking"
+        >
+          <Flame size={14} />
+        </button>
+
         {!siteInfo.showBar && (
           isEditing ? (
             <Check
@@ -198,7 +217,7 @@ export function Header({
           <button
             type="button"
             className={
-              moreOpen || cookingActive || dailyAnalysisActive || reviewActive
+              moreOpen || dailyAnalysisActive || reviewActive
                 ? 'flex items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300 p-1'
                 : 'flex items-center justify-center rounded-full border border-zinc-700 text-zinc-300 p-1 hover:border-zinc-500'
             }
@@ -218,17 +237,6 @@ export function Header({
               className="absolute right-0 top-8 z-50 w-36 rounded-lg border border-zinc-700 bg-[#141416] p-1.5 shadow-xl"
               onPointerDown={(e) => e.stopPropagation()}
             >
-              <button
-                type="button"
-                className={`mb-1 flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${cookingActive ? 'bg-emerald-500/15 text-emerald-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
-                onClick={() => {
-                  onToggleCooking();
-                  setMoreOpen(false);
-                }}
-              >
-                <Flame size={13} />
-                Cooking
-              </button>
               <button
                 type="button"
                 className={`mb-1 flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${dailyAnalysisActive ? 'bg-purple-500/15 text-purple-300' : 'text-zinc-200 hover:bg-zinc-800'}`}

@@ -194,7 +194,7 @@ export class FourmemeAPI {
         signature: input.signature,
         verifyType: "LOGIN",
       },
-      walletName: input.walletName || "MetaMask",
+      walletName: input.walletName || "gmgn",
     };
     const headers = this.getHeaders();
     const response = await this.makeRequest(url, {

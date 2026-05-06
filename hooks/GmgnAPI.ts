@@ -13,26 +13,56 @@ export interface MultiTokenInfoResponse {
   reason: string;
   message: string;
   data: Array<{
-    chain: string;
+    chain?: string;
     address: string;
     symbol: string;
     name: string;
     logo: string;
     decimals: number;
-    launchpad: string;
-    launchpad_progress: number;
-    launchpad_status: number;
-    launchpad_platform: string;
-    migration_market_cap_quote: string;
-    tpool: {
+    launchpad?: string;
+    launchpad_progress?: number;
+    launchpad_status?: number;
+    launchpad_platform?: string;
+    migration_market_cap_quote?: string;
+    biggest_pool_address?: string;
+    pool?: {
+      pool_address?: string;
+      quote_address?: string;
+      quote_symbol?: string;
+      exchange?: string;
+    };
+    tpool?: {
       base_address: string; // tokenAddress
       exchange: string; // dex (pancake factory v2/v3), Curve
       launch_type: string; //  migrated, launching
       pool_address: string;
       quote_address: string;
-    }
+    };
     [key: string]: any;
   }>;
+}
+
+export interface GmgnSearchTokenItem {
+  chain?: string;
+  address?: string;
+  symbol?: string;
+  name?: string;
+  logo?: string;
+  token_link?: {
+    gmgn?: string;
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
+interface GmgnSearchResponse {
+  code: number;
+  reason?: string;
+  message?: string;
+  data?: GmgnSearchTokenItem[] | {
+    list?: GmgnSearchTokenItem[];
+    [key: string]: any;
+  };
 }
 
 export interface GmgnTokenHolding {
@@ -322,6 +352,7 @@ export class GmgnAPI {
   private static readonly TOKEN_INFO_BASE_URL = 'https://gmgn.ai/mrwapi/v1';
   private static readonly HOLDINGS_BASE_URL = 'https://gmgn.ai/td/api/v1';
   private static readonly PROFIT_BASE_URL = 'https://gmgn.ai/pf/api/v1';
+  private static readonly SEARCH_BASE_URL = 'https://gmgn.ai/vas/api/v1';
 
   /**
    * Make HTTP request using fetch API with proper headers
@@ -733,63 +764,131 @@ export class GmgnAPI {
     }
   }
 
+  public static async searchTokens(query: string): Promise<GmgnSearchTokenItem[]> {
+    const q = String(query || '').trim();
+    if (!q) return [];
+    const endpoint = '/search_v3';
+    const queryParams = {
+      worker: '0',
+      q,
+    };
+    const url = await this.buildApiUrl(endpoint, queryParams, this.SEARCH_BASE_URL);
+    const headers = await this.getHeaders();
+    try {
+      const response = await this.makeRequest(url, {
+        method: 'GET',
+        headers,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const result = await response.json() as GmgnSearchResponse;
+      if (result.code !== 0 || !result.data) return [];
+      if (Array.isArray(result.data)) return result.data;
+      if (Array.isArray(result.data.list)) return result.data.list;
+      // Some search responses return grouped object payloads (e.g. { token: [], pair: [] }).
+      if (typeof result.data === 'object') {
+        const merged = Object.values(result.data)
+          .filter((v) => Array.isArray(v))
+          .flat() as GmgnSearchTokenItem[];
+        return merged;
+      }
+      return [];
+    } catch (error) {
+      console.error('Failed to search tokens from GMGN:', error);
+      throw error;
+    }
+  }
+
   /**
    * Get token information
    * @param chain Blockchain chain
    * @param address Token address
    */
   public static async getTokenInfo(chain: string, address: string): Promise<TokenInfo | null> {
-    const endpoint = '/multi_token_info';
-    const url = await this.buildApiUrl(endpoint, {}, this.TOKEN_INFO_BASE_URL);
-    const headers = await this.getHeaders();
+    // try {
+    //   const latest = await this.fetchTokenInfoByEndpoint(
+    //     '/mutil_window_token_info',
+    //     this.CANDLES_BASE_URL,
+    //     chain,
+    //     address
+    //   );
+    //   if (latest) return latest;
+    // } catch (error) {
+    //   console.warn('mutil_window_token_info failed, fallback to multi_token_info:', error);
+    // }
 
+    try {
+      return await this.fetchTokenInfoByEndpoint(
+        '/multi_token_info',
+        this.TOKEN_INFO_BASE_URL,
+        chain,
+        address
+      );
+    } catch (error) {
+      console.error('Failed to fetch token info from fallback endpoint:', error);
+      throw error;
+    }
+  }
+
+  private static async fetchTokenInfoByEndpoint(
+    endpoint: string,
+    baseUrl: string,
+    chain: string,
+    address: string
+  ): Promise<TokenInfo | null> {
+    const extraParams = endpoint === '/mutil_window_token_info' ? { worker: '0' } : {};
+    const url = await this.buildApiUrl(endpoint, extraParams, baseUrl);
+    const headers = await this.getHeaders();
     const payload = {
       chain,
       addresses: [address]
     };
 
-    try {
-      const response = await this.makeRequest(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload)
-      });
+    const response = await this.makeRequest(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json() as MultiTokenInfoResponse;
-      if (result.code === 0 && result.data && result.data.length > 0) {
-        const tokenData = result.data[0];
-        const info = {
-          chain: tokenData.chain,
-          address: tokenData.address,
-          name: tokenData.name,
-          symbol: tokenData.symbol,
-          decimals: tokenData.decimals,
-          logo: tokenData.logo,
-          launchpad: tokenData.launchpad,
-          launchpad_progress: tokenData.launchpad_progress,
-          launchpad_platform: tokenData.launchpad_platform,
-          launchpad_status: tokenData.launchpad_status,
-          quote_token: tokenData.migration_market_cap_quote,
-          quote_token_address: tokenData.tpool?.quote_address,
-          pool_pair: tokenData.biggest_pool_address,
-          dex_type: tokenData.tpool?.launch_type === 'migrated' ?
-            this.getDexType(tokenData.tpool?.exchange) : undefined,
-        };
-
-        return info;
-      }
-      return null;
-    } catch (error) {
-      console.error('Failed to fetch token info:', error);
-      throw error;
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
+
+    const result = await response.json() as MultiTokenInfoResponse;
+    if (result.code === 0 && result.data && result.data.length > 0) {
+      return this.normalizeTokenInfo(result.data[0], chain);
+    }
+    return null;
   }
 
-  public static getDexType(exchange: string): string | undefined {
+  private static normalizeTokenInfo(tokenData: MultiTokenInfoResponse['data'][number], chain: string): TokenInfo {
+    const quoteTokenAddress = tokenData.tpool?.quote_address || tokenData.pool?.quote_address;
+    const quoteToken = tokenData.migration_market_cap_quote || tokenData.pool?.quote_symbol || '';
+    const exchange = tokenData.tpool?.exchange;
+    const isMigrated = tokenData.tpool?.launch_type === 'migrated';
+    const dexType = isMigrated ? this.getDexType(exchange) : undefined;
+
+    return {
+      chain: tokenData.chain || chain,
+      address: tokenData.address,
+      name: tokenData.name,
+      symbol: tokenData.symbol,
+      decimals: Number(tokenData.decimals || 0),
+      logo: tokenData.logo || '',
+      launchpad: tokenData.launchpad || '',
+      launchpad_progress: Number(tokenData.launchpad_progress || 0),
+      launchpad_platform: tokenData.launchpad_platform || '',
+      launchpad_status: Number(tokenData.launchpad_status || 0),
+      quote_token: quoteToken,
+      quote_token_address: quoteTokenAddress,
+      pool_pair: tokenData.biggest_pool_address || tokenData.tpool?.pool_address || tokenData.pool?.pool_address,
+      dex_type: dexType,
+    };
+  }
+
+  public static getDexType(exchange?: string): string | undefined {
+    if (!exchange) return undefined;
     if (exchange.toLowerCase() === PancakeFactoryV3.toLowerCase()) {
       return 'PANCAKE_SWAP_V3';
     }

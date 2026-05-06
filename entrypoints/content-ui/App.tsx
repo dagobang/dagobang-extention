@@ -631,11 +631,14 @@ export default function App() {
   }, [nativeBalanceWei]);
 
   const formattedTokenBalance = useMemo(() => {
-    if (!tokenBalanceWei || !tokenDecimals) return '0';
+    if (!tokenBalanceWei) return '0';
     const val = BigInt(tokenBalanceWei);
+    const decimals = Number.isFinite(tokenDecimals as number) && (tokenDecimals as number) >= 0
+      ? Number(tokenDecimals)
+      : 18;
     // Simple formatting for display
     if (val === 0n) return '0';
-    return val > 1000n ? (val / (10n ** BigInt(tokenDecimals))).toString() : '>0';
+    return val > 1000n ? (val / (10n ** BigInt(decimals))).toString() : '>0';
   }, [tokenBalanceWei, tokenDecimals]);
 
   const quoteSymbol = useMemo(() => {
@@ -750,9 +753,15 @@ export default function App() {
       const meta = await TokenAPI.getTokenInfo(siteInfo.platform, siteInfo.chain, tokenAddressNormalized);
       if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
       if (meta) {
+        const normalizedDecimals =
+          Number.isFinite(meta.decimals)
+            && Number(meta.decimals) > 0
+            && Number(meta.decimals) <= 36
+            ? Number(meta.decimals)
+            : 18;
         setTokenInfo(meta);
         setTokenSymbol(meta.symbol);
-        setTokenDecimals(meta.decimals);
+        setTokenDecimals(normalizedDecimals);
 
         if ((meta as any).tokenPrice) {
           const p = (meta as any).tokenPrice as { marketCap?: string; liquidity?: string };
@@ -1487,7 +1496,6 @@ export default function App() {
       const wallets = selectedTradeWallets;
       if (wallets.length <= 0) throw new Error('No wallet selected');
 
-      if (!tokenDecimals) return;
       const chainId = settings.chainId;
       const isTurbo = settings.chains[chainId]?.executionMode === 'turbo';
       const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
@@ -2103,8 +2111,6 @@ export default function App() {
             seedreamApiKey={settings?.seedreamApiKey ?? ''}
             walletAccounts={walletAccounts}
             activeWalletAddress={address as `0x${string}` | null}
-            defaultSelectedWallets={selectedTradeWallets}
-            walletNativeBalancesWei={walletNativeBalancesWei}
             siteInfo={siteInfo}
             currentTokenName={tokenInfo?.name ?? null}
             currentTokenSymbol={tokenSymbol ?? tokenInfo?.symbol ?? null}
