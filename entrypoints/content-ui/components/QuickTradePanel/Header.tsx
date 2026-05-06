@@ -8,15 +8,17 @@ import {
   Keyboard,
   Crosshair,
   NotebookPen,
+  Flame,
+  MoreHorizontal,
 } from 'lucide-react';
-import type { PointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Logo } from '@/components/Logo';
 import type { SiteInfo } from '@/utils/sites';
 import { WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
 
 type HeaderProps = {
   siteInfo: SiteInfo;
-  onDragStart: (e: PointerEvent) => void;
+  onDragStart: (e: ReactPointerEvent) => void;
   onMinimize: () => void;
   isEditing: boolean;
   onEditToggle: () => void;
@@ -30,6 +32,8 @@ type HeaderProps = {
   dailyAnalysisActive: boolean;
   onToggleReview: () => void;
   reviewActive: boolean;
+  onToggleCooking: () => void;
+  cookingActive: boolean;
   keyboardShortcutsEnabled: boolean;
   onToggleKeyboardShortcuts: () => void;
   walletSelectorVisible: boolean;
@@ -55,6 +59,8 @@ export function Header({
   dailyAnalysisActive,
   onToggleReview,
   reviewActive,
+  onToggleCooking,
+  cookingActive,
   keyboardShortcutsEnabled,
   onToggleKeyboardShortcuts,
   walletSelectorVisible,
@@ -63,6 +69,21 @@ export function Header({
   walletTotalCount,
   onToggleWalletSelector,
 }: HeaderProps) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onPointerDown = (ev: PointerEvent) => {
+      const target = ev.target as Node | null;
+      if (target && moreRef.current && !moreRef.current.contains(target)) {
+        setMoreOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [moreOpen]);
+
   return (
     <div
       className="flex-shrink-0 flex cursor-grab items-center justify-between px-3 py-2 border-b border-zinc-800/50"
@@ -150,44 +171,6 @@ export function Header({
           <SatelliteDish size={14} />
         </button>
 
-        <button
-          type="button"
-          className={
-            dailyAnalysisActive
-              ? 'flex items-center justify-center rounded-full bg-purple-500/20 text-purple-300 p-1'
-              : 'flex items-center justify-center rounded-full border border-zinc-700 text-purple-300 p-1 hover:border-purple-400'
-          }
-          onPointerDown={(e) => {
-            e.stopPropagation();
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleDailyAnalysis();
-          }}
-          title='Daily Analysis'
-        >
-          <LineChart size={14} />
-        </button>
-
-        <button
-          type="button"
-          className={
-            reviewActive
-              ? 'flex items-center justify-center rounded-full bg-cyan-500/20 text-cyan-300 p-1'
-              : 'flex items-center justify-center rounded-full border border-zinc-700 text-cyan-300 p-1 hover:border-cyan-400'
-          }
-          onPointerDown={(e) => {
-            e.stopPropagation();
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleReview();
-          }}
-          title='Review'
-        >
-          <NotebookPen size={14} />
-        </button>
-
         {!siteInfo.showBar && (
           isEditing ? (
             <Check
@@ -211,6 +194,66 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-2">
+        <div ref={moreRef} className="relative">
+          <button
+            type="button"
+            className={
+              moreOpen || cookingActive || dailyAnalysisActive || reviewActive
+                ? 'flex items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300 p-1'
+                : 'flex items-center justify-center rounded-full border border-zinc-700 text-zinc-300 p-1 hover:border-zinc-500'
+            }
+            onPointerDown={(e) => {
+              e.stopPropagation();
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setMoreOpen((v) => !v);
+            }}
+            title="More"
+          >
+            <MoreHorizontal size={14} />
+          </button>
+          {moreOpen && (
+            <div
+              className="absolute right-0 top-8 z-50 w-36 rounded-lg border border-zinc-700 bg-[#141416] p-1.5 shadow-xl"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                className={`mb-1 flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${cookingActive ? 'bg-emerald-500/15 text-emerald-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+                onClick={() => {
+                  onToggleCooking();
+                  setMoreOpen(false);
+                }}
+              >
+                <Flame size={13} />
+                Cooking
+              </button>
+              <button
+                type="button"
+                className={`mb-1 flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${dailyAnalysisActive ? 'bg-purple-500/15 text-purple-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+                onClick={() => {
+                  onToggleDailyAnalysis();
+                  setMoreOpen(false);
+                }}
+              >
+                <LineChart size={13} />
+                Daily
+              </button>
+              <button
+                type="button"
+                className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${reviewActive ? 'bg-cyan-500/15 text-cyan-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+                onClick={() => {
+                  onToggleReview();
+                  setMoreOpen(false);
+                }}
+              >
+                <NotebookPen size={13} />
+                Review
+              </button>
+            </div>
+          )}
+        </div>
         {walletSelectorVisible && (
           <WalletSelectorTrigger
             walletSelectorOpen={walletSelectorOpen}

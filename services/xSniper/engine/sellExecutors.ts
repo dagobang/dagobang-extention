@@ -79,6 +79,70 @@ export const createSellExecutors = (deps: {
     }
     return phase === 'submit' ? 'sell_submit_failed_unknown' : 'sell_receipt_failed_unknown';
   };
+  const analyzeReceiptFailureBeforeRetry = async (input: {
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    tokenInfo: TokenInfo;
+    fromAddress: `0x${string}`;
+    reason: string;
+  }) => {
+    let balanceWei = 0n;
+    try {
+      balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, input.fromAddress));
+    } catch {
+      balanceWei = 0n;
+    }
+    if (balanceWei <= 0n) {
+      return {
+        reason: 'sell_receipt_failed_zero_balance',
+        terminal: true,
+        soldOut: true,
+        allowanceRepaired: false,
+      } as const;
+    }
+
+    let allowanceInsufficient = false;
+    try {
+      const check = await TradeService.checkSellAllowanceInsufficient(
+        input.chainId,
+        input.tokenAddress,
+        input.tokenInfo,
+        { fromAddress: input.fromAddress },
+      );
+      allowanceInsufficient = check.insufficient === true;
+    } catch {
+      allowanceInsufficient = false;
+    }
+
+    if (!allowanceInsufficient) {
+      return {
+        reason: input.reason,
+        terminal: false,
+        soldOut: false,
+        allowanceRepaired: false,
+      } as const;
+    }
+
+    let repaired = false;
+    try {
+      await TradeService.approveMaxForSellIfNeeded(
+        input.chainId,
+        input.tokenAddress,
+        input.tokenInfo,
+        { fromAddress: input.fromAddress },
+      );
+      repaired = true;
+    } catch {
+      repaired = false;
+    }
+
+    return {
+      reason: repaired ? 'sell_receipt_failed_allowance_repaired' : 'sell_receipt_failed_allowance',
+      terminal: !repaired,
+      soldOut: false,
+      allowanceRepaired: repaired,
+    } as const;
+  };
   const readDryRunSellDelayMs = async () => {
     try {
       const settings = await SettingsService.get();
@@ -113,7 +177,8 @@ export const createSellExecutors = (deps: {
     const sourceTweetId = String((input.signal as any)?.sourceTweetId ?? '').trim();
     const signalEventId = String(input.signal.eventId ?? '').trim();
     const signalStableId = signalTweetId || sourceTweetId || signalEventId;
-    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${signalStableId}:${bps}`;
+    const walletKey = input.walletAddress ? String(input.walletAddress).toLowerCase() : 'all-wallets';
+    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}:${signalStableId}:${bps}`;
     if (deleteSellInFlight.has(dedupeKey)) return;
     deleteSellInFlight.add(dedupeKey);
     try {
@@ -216,6 +281,8 @@ export const createSellExecutors = (deps: {
         await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
       } catch {}
       let rsp: any;
+      let submittedTxHash: `0x${string}` | null = null;
+      let sellErr: unknown = null;
       let tokenInfoForTrade = tokenInfo;
       try {
         rsp = await TradeService.sellWithReceiptAndAutoRecovery({
@@ -229,6 +296,7 @@ export const createSellExecutors = (deps: {
           maxRetry: 1,
           timeoutMs: 20_000,
           onSubmitted: async (ctx) => {
+            submittedTxHash = ctx.txHash;
             await deps.broadcastToActiveTabs({
               type: 'bg:tradeSubmitted',
               source: 'xsniper',
@@ -240,14 +308,105 @@ export const createSellExecutors = (deps: {
             });
           },
         });
-      } catch {
+      } catch (err) {
+        sellErr = err;
+      }
+      if (!rsp) {
+        const emitFailRecord = (reason: string) => {
+          deps.emitRecord({
+            ...baseRecord,
+            dryRun: false,
+            sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
+            txHash: submittedTxHash as any,
+            reason,
+          });
+        };
+        if (submittedTxHash && sellFromAddress) {
+          const firstReason = classifySellFailureReason(sellErr, 'receipt');
+          const firstAnalysis = await analyzeReceiptFailureBeforeRetry({
+            chainId: input.chainId,
+            tokenAddress: input.tokenAddress,
+            tokenInfo: tokenInfoForTrade,
+            fromAddress: sellFromAddress,
+            reason: firstReason,
+          });
+          if (!firstAnalysis.allowanceRepaired) {
+            emitFailRecord(firstAnalysis.reason);
+            if (firstAnalysis.soldOut || firstAnalysis.terminal) deps.cleanupPosKey(posKey);
+            return;
+          }
+
+          // Allowance repaired: submit exactly one follow-up sell attempt.
+          let retryRsp: any;
+          let retrySubmittedTxHash: `0x${string}` | null = null;
+          let retryErr: unknown = null;
+          try {
+            retryRsp = await TradeService.sellWithReceiptAndAutoRecovery({
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              tokenAmountWei: amountWei.toString(),
+              tokenInfo: tokenInfoForTrade,
+              sellPercentBps: bps,
+              fromAddress: sellFromAddress,
+            } as any, {
+              maxRetry: 0,
+              timeoutMs: 20_000,
+              onSubmitted: async (ctx) => {
+                retrySubmittedTxHash = ctx.txHash;
+                await deps.broadcastToActiveTabs({
+                  type: 'bg:tradeSubmitted',
+                  source: 'xsniper',
+                  side: 'sell',
+                  chainId: input.chainId,
+                  tokenAddress: input.tokenAddress,
+                  txHash: ctx.txHash,
+                  submitElapsedMs: ctx.submitElapsedMs,
+                });
+              },
+            });
+          } catch (err) {
+            retryErr = err;
+          }
+          if (!retryRsp) {
+            const retryTxHash = retrySubmittedTxHash ?? submittedTxHash;
+            if (retrySubmittedTxHash) {
+              const retryReason = classifySellFailureReason(retryErr, 'receipt');
+              const retryAnalysis = await analyzeReceiptFailureBeforeRetry({
+                chainId: input.chainId,
+                tokenAddress: input.tokenAddress,
+                tokenInfo: tokenInfoForTrade,
+                fromAddress: sellFromAddress,
+                reason: retryReason,
+              });
+              deps.emitRecord({
+                ...baseRecord,
+                dryRun: false,
+                sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
+                txHash: retryTxHash as any,
+                reason: retryAnalysis.reason,
+              });
+              if (retryAnalysis.soldOut || retryAnalysis.terminal) deps.cleanupPosKey(posKey);
+            } else {
+              deps.emitRecord({
+                ...baseRecord,
+                dryRun: false,
+                sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
+                txHash: retryTxHash as any,
+                reason: classifySellFailureReason(retryErr, 'submit'),
+              });
+            }
+            return;
+          }
+          rsp = retryRsp;
+        }
       }
       if (!rsp) {
         deps.emitRecord({
           ...baseRecord,
           dryRun: false,
-          sellTokenAmountWei: amountWei.toString(),
-          reason: 'sell_submit_failed',
+          sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
+          txHash: submittedTxHash as any,
+          reason: classifySellFailureReason(sellErr, submittedTxHash ? 'receipt' : 'submit'),
         });
         return;
       }
@@ -287,7 +446,12 @@ export const createSellExecutors = (deps: {
     percent: number;
     dryRun: boolean;
     reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
-    onReceiptFailed?: (meta?: { reason?: string }) => void | Promise<void>;
+    onReceiptFailed?: (meta?: {
+      reason?: string;
+      terminal?: boolean;
+      soldOut?: boolean;
+      allowanceRepaired?: boolean;
+    }) => void | Promise<void>;
     meta: {
       tweetAtMs?: number;
       tweetUrl?: string;
@@ -306,7 +470,8 @@ export const createSellExecutors = (deps: {
     if (!Number.isFinite(percent) || percent <= 0) return false;
     const bps = Math.floor(percent * 100);
     if (!(bps > 0)) return false;
-    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${input.reason}:${bps}`;
+    const walletKey = input.meta.walletAddress ? String(input.meta.walletAddress).toLowerCase() : 'all-wallets';
+    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}:${input.reason}:${bps}`;
     if (rapidSellInFlight.has(dedupeKey)) return false;
     rapidSellInFlight.add(dedupeKey);
     try {
@@ -479,17 +644,29 @@ export const createSellExecutors = (deps: {
               rejectSubmitted?.(new Error(submitFailedReason));
               return;
             }
+            const receiptFailedReason = classifySellFailureReason(err, 'receipt');
+            const receiptAnalysis = await analyzeReceiptFailureBeforeRetry({
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              tokenInfo: tokenInfoForTrade,
+              fromAddress: sellFromAddress,
+              reason: receiptFailedReason,
+            });
             const txHash = submittedTxHash as any;
             deps.emitRecord({
               ...baseRecord,
               dryRun: false,
               sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
               txHash,
-              reason: classifySellFailureReason(err, 'receipt'),
+              reason: receiptAnalysis.reason,
             } as any);
-            const reason = classifySellFailureReason(err, 'receipt');
             try {
-              await input.onReceiptFailed?.({ reason });
+              await input.onReceiptFailed?.({
+                reason: receiptAnalysis.reason,
+                terminal: receiptAnalysis.terminal,
+                soldOut: receiptAnalysis.soldOut,
+                allowanceRepaired: receiptAnalysis.allowanceRepaired,
+              });
             } catch {
             }
           });

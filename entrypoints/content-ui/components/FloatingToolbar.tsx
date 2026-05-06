@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AlarmClockCheck, Crosshair, Flame, GripHorizontal, NotebookPen, SatelliteDish } from 'lucide-react';
+import { AlarmClockCheck, Crosshair, Flame, GripHorizontal, MoreHorizontal, NotebookPen, SatelliteDish } from 'lucide-react';
 import type { Settings } from '@/types/extention';
 import type { SiteInfo } from '@/utils/sites';
 import { Logo } from '@/components/Logo';
@@ -46,7 +46,7 @@ export function FloatingToolbar({
   reviewActive,
 }: FloatingToolbarProps) {
   const showToolbar = settings?.ui?.showToolbar ?? true;
-  const toolbarWidth = 326;
+  const toolbarWidth = 286;
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
     const defaultX = Math.max(0, width - toolbarWidth);
@@ -55,6 +55,8 @@ export function FloatingToolbar({
   });
   const posRef = useRef(pos);
   const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     posRef.current = pos;
@@ -71,6 +73,18 @@ export function FloatingToolbar({
     } catch {
     }
   }, []);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onPointerDown = (ev: PointerEvent) => {
+      const target = ev.target as Node | null;
+      if (target && moreRef.current && !moreRef.current.contains(target)) {
+        setMoreOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [moreOpen]);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -157,13 +171,40 @@ export function FloatingToolbar({
         <SatelliteDish size={14} />
       </ToolBtn>
 
-      <ToolBtn active={dailyAnalysisActive} title="Daily Analysis" onClick={onToggleDailyAnalysis}>
-        <GripHorizontal size={14} />
-      </ToolBtn>
-
-      <ToolBtn active={reviewActive} title="Review" onClick={onToggleReview}>
-        <NotebookPen size={14} />
-      </ToolBtn>
+      <div ref={moreRef} className="relative">
+        <ToolBtn active={moreOpen || dailyAnalysisActive || reviewActive} title="More" onClick={() => setMoreOpen((v) => !v)}>
+          <MoreHorizontal size={14} />
+        </ToolBtn>
+        {moreOpen && (
+          <div
+            className="absolute right-0 top-8 z-50 w-36 rounded-lg border border-zinc-700 bg-[#141416] p-1.5 shadow-xl"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className={`mb-1 flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${dailyAnalysisActive ? 'bg-purple-500/15 text-purple-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+              onClick={() => {
+                onToggleDailyAnalysis();
+                setMoreOpen(false);
+              }}
+            >
+              <GripHorizontal size={13} />
+              Daily
+            </button>
+            <button
+              type="button"
+              className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${reviewActive ? 'bg-cyan-500/15 text-cyan-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+              onClick={() => {
+                onToggleReview();
+                setMoreOpen(false);
+              }}
+            >
+              <NotebookPen size={13} />
+              Review
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

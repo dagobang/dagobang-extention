@@ -478,56 +478,49 @@ export const tryAutoBuyOnce = async (input: {
     let rsp: any;
     let buySubmittedAtMs: number | undefined;
     let tokenInfoForTrade = tokenInfo;
-    const maxSubmitRetries = 2;
-    for (let attempt = 0; attempt <= maxSubmitRetries; attempt += 1) {
-      try {
-        rsp = await TradeService.buyWithReceiptAndNonceRecovery({
-          chainId: input.chainId,
-          tokenAddress: input.tokenAddress,
-          bnbAmountWei: amountWei.toString(),
-          fromAddress: tradeFromAddress,
-          tokenInfo: tokenInfoForTrade,
-          gasPriceGwei: input.gasPriceGweiOverride,
-          priorityFeeBnb: input.priorityFeeBnbOverride,
-        } as any, {
-          maxRetry: 0,
-          onSubmitted: async (ctx) => {
-            buySubmittedAtMs = Date.now();
-            await input.broadcastToActiveTabs({
-              type: 'bg:tradeSubmitted',
-              source: 'xsniper',
-              side: 'buy',
-              chainId: input.chainId,
-              tokenAddress: input.tokenAddress,
-              txHash: ctx.txHash,
-              submitElapsedMs: ctx.submitElapsedMs,
-            });
-          },
-        });
-      } catch {
-      }
-      if (rsp) break;
-      if (attempt >= maxSubmitRetries) break;
-      const retryDelayMs = 1000 + Math.floor(Math.random() * 2001);
-      await input.broadcastToActiveTabs({
-        type: 'bg:tradeRetrying',
-        source: 'xsniper',
-        side: 'buy',
+    try {
+      rsp = await TradeService.buyWithReceiptAndNonceRecovery({
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
-        attempt: attempt + 1,
-        reason: 'submit',
+        bnbAmountWei: amountWei.toString(),
+        fromAddress: tradeFromAddress,
+        tokenInfo: tokenInfoForTrade,
+        gasPriceGwei: input.gasPriceGweiOverride,
+        priorityFeeBnb: input.priorityFeeBnbOverride,
+      } as any, {
+        // Hard cap: at most one nonce-triggered resend.
+        maxRetry: 1,
+        onRetry: async (ctx) => {
+          await input.broadcastToActiveTabs({
+            type: 'bg:tradeRetrying',
+            source: 'xsniper',
+            side: 'buy',
+            chainId: input.chainId,
+            tokenAddress: input.tokenAddress,
+            attempt: ctx.attempt,
+            reason: ctx.reason,
+          });
+        },
+        onSubmitted: async (ctx) => {
+          buySubmittedAtMs = Date.now();
+          await input.broadcastToActiveTabs({
+            type: 'bg:tradeSubmitted',
+            source: 'xsniper',
+            side: 'buy',
+            chainId: input.chainId,
+            tokenAddress: input.tokenAddress,
+            txHash: ctx.txHash,
+            submitElapsedMs: ctx.submitElapsedMs,
+          });
+        },
       });
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    } catch {
     }
     if (!rsp) {
       console.error('XSniperTrade buy submit failed', {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
       });
-      terminalFailedBuyKeys.set(key, Date.now());
-      input.boughtOnceAtMs.set(key, Date.now());
-      void input.persistBoughtOnce();
       emitBuyFailure('buy_submit_failed', {
         buyAmountNative: amountNumber,
         metrics: refreshedMetrics,

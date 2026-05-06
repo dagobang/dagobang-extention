@@ -2000,6 +2000,8 @@ export default function App() {
               dailyAnalysisActive={showDailyAnalysisPanel}
               onToggleReview={handleToggleReviewPanel}
               reviewActive={showReviewPanel}
+              onToggleCooking={handleToggleCookingPanel}
+              cookingActive={showCookingPanel}
               keyboardShortcutsEnabled={keyboardShortcutsEnabled}
               onToggleKeyboardShortcuts={handleToggleKeyboardShortcuts}
               walletAccounts={walletAccounts}

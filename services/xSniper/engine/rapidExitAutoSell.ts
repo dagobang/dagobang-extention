@@ -160,7 +160,12 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
     percent: number;
     dryRun: boolean;
     reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
-    onReceiptFailed?: (meta?: { reason?: string }) => void | Promise<void>;
+    onReceiptFailed?: (meta?: {
+      reason?: string;
+      terminal?: boolean;
+      soldOut?: boolean;
+      allowanceRepaired?: boolean;
+    }) => void | Promise<void>;
     meta: {
       tweetAtMs?: number;
       tweetUrl?: string;
@@ -289,6 +294,15 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
             } catch {
             }
             const cur = input.rapidExitByPosKey.get(posKey) ?? pos;
+            if (meta?.soldOut) {
+              cur.remainingPercent = 0;
+              cleanup();
+              return;
+            }
+            if (meta?.terminal) {
+              cleanup();
+              return;
+            }
             const nowRemaining2 = Number.isFinite(cur.remainingPercent) ? Math.max(0, Math.min(100, Number(cur.remainingPercent))) : 100;
             cur.remainingPercent = Math.max(0, Math.min(100, nowRemaining2 + targetPortion));
             // If the position was cleaned up right after submit-success, restore it into a retryable state.

@@ -28,6 +28,8 @@ type QuickTradePanelProps = {
   dailyAnalysisActive: boolean;
   onToggleReview: () => void;
   reviewActive: boolean;
+  onToggleCooking: () => void;
+  cookingActive: boolean;
   keyboardShortcutsEnabled: boolean;
   onToggleKeyboardShortcuts: () => void;
   formattedNativeBalance: string;
@@ -95,6 +97,8 @@ export function QuickTradePanel({
   dailyAnalysisActive,
   onToggleReview,
   reviewActive,
+  onToggleCooking,
+  cookingActive,
   keyboardShortcutsEnabled,
   onToggleKeyboardShortcuts,
   formattedNativeBalance,
@@ -180,6 +184,8 @@ export function QuickTradePanel({
         dailyAnalysisActive={dailyAnalysisActive}
         onToggleReview={onToggleReview}
         reviewActive={reviewActive}
+        onToggleCooking={onToggleCooking}
+        cookingActive={cookingActive}
         keyboardShortcutsEnabled={keyboardShortcutsEnabled}
         onToggleKeyboardShortcuts={onToggleKeyboardShortcuts}
         walletSelectorVisible={walletSelectorVisible}

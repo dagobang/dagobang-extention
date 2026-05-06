@@ -26,6 +26,8 @@ export default defineConfig({
       'https://*.debot.ai/*',
       'https://debot.ai/*',
       'https://api.blxrbdn.com/*',
+      'https://bsc.rpc.blxrbdn.com/*',
+      'https://*.blxrbdn.com/*',
       'https://*.supabase.co/*',
       'https://www.google.com/*',
     ],
