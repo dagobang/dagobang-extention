@@ -123,7 +123,7 @@ const formatEvalPnl = (record: XSniperBuyRecord, key: keyof XSniperBuyRecord) =>
 
 const resolveWalletDisplay = (input: { record: XSniperBuyRecord; settings: Settings | null }) => {
   const walletAddress = String((input.record as any).walletAddress || '').trim().toLowerCase();
-  if (!walletAddress) return '-';
+  if (!walletAddress) return '未记录(默认当前钱包)';
   const accounts = Array.isArray((input.settings as any)?.wallet?.accounts) ? (input.settings as any).wallet.accounts : [];
   const account = accounts.find((acc: any) => String(acc?.address || '').trim().toLowerCase() === walletAddress);
   const alias = String(((input.settings as any)?.wallet?.accountAliases || {})?.[walletAddress] || '').trim();

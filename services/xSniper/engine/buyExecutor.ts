@@ -115,13 +115,13 @@ export const tryAutoBuyOnce = async (input: {
   await input.loadBoughtOnceIfNeeded();
   const dryRun = input.strategy?.dryRun === true;
   const status = dryRun ? null : await WalletService.getStatus();
-  const strategyWalletAddress = dryRun ? undefined : parseStrategyWalletAddress(input.strategy?.walletAddress);
+  const strategyWalletAddress = parseStrategyWalletAddress(input.strategy?.walletAddress);
   const availableWalletSet = new Set(
     (status?.accounts ?? [])
       .map((acc) => String(acc?.address ?? '').trim().toLowerCase())
       .filter((addr): addr is `0x${string}` => /^0x[a-f0-9]{40}$/.test(addr)),
   );
-  if (strategyWalletAddress && !availableWalletSet.has(strategyWalletAddress)) {
+  if (!dryRun && strategyWalletAddress && !availableWalletSet.has(strategyWalletAddress)) {
     console.warn('XSniperTrade configured wallet not found in unlocked accounts', {
       chainId: input.chainId,
       tokenAddress: input.tokenAddress,
@@ -130,7 +130,7 @@ export const tryAutoBuyOnce = async (input: {
     return false;
   }
   const tradeFromAddress =
-    !dryRun && (strategyWalletAddress || status?.address)
+    strategyWalletAddress || (!dryRun && status?.address)
       ? (String(strategyWalletAddress || status?.address).toLowerCase() as `0x${string}`)
       : undefined;
   const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun, walletAddress: tradeFromAddress });
