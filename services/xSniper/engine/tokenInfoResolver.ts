@@ -1,6 +1,7 @@
 import { chainNames } from '@/constants/chains/chainName';
 import { FourmemeAPI } from '@/services/api/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
+import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenService } from '@/services/token';
 import type { TokenInfo } from '@/types/token';
 import { isAddress } from 'viem';
@@ -33,6 +34,8 @@ const isRateLimitError = (error: unknown): boolean => {
   ).toLowerCase();
   return message.includes('429') || message.includes('too many requests') || message.includes('rate limit');
 };
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 export const createTokenInfoResolvers = () => {
   const fetchTokenInfoFreshWithReason = async (
@@ -84,11 +87,21 @@ export const createTokenInfoResolvers = () => {
     try {
       const info = await FourmemeAPI.getTokenInfo(chain, typedAddress);
       if (!info) return { tokenInfo: null, failureReason: 'fourmeme_empty' };
-      // try {
-      //   const onchain = await TokenFourmemeService.getTokenInfo(chainId, typedAddress);
-      //   if (onchain?.quote) info.quote_token_address = String(onchain.quote);
-      //   if (onchain?.aiCreator !== undefined) (info as any).aiCreator = onchain.aiCreator;
-      // } catch {}
+      // Fourmeme HTTP may lag during inner->outer migration. Always merge onchain state.
+      try {
+        const onchain = await TokenFourmemeService.getTokenInfo(chainId, typedAddress);
+        if (onchain?.quote && String(onchain.quote).toLowerCase() !== ZERO_ADDRESS) {
+          info.quote_token_address = String(onchain.quote);
+        }
+        if (onchain?.aiCreator !== undefined) (info as any).aiCreator = onchain.aiCreator;
+        if (onchain?.liquidityAdded === true) {
+          info.launchpad_status = 1;
+          info.launchpad_progress = Math.max(100, Number(info.launchpad_progress || 0));
+        } else if (onchain?.liquidityAdded === false && Number(info.launchpad_status) !== 1) {
+          info.launchpad_status = 0;
+        }
+      } catch {
+      }
       return { tokenInfo: info };
     } catch (error) {
       return { tokenInfo: null, failureReason: isRateLimitError(error) ? 'fourmeme_rate_limited' : 'fourmeme_error' };

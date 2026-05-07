@@ -262,14 +262,14 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
           const reason = String(failReason || '').toLowerCase();
           const isNonceOrAllowance = reason.includes('nonce') || reason.includes('allowance');
           const isTimeout = reason.includes('timeout');
-          const isRoute = reason.includes('route') || reason.includes('pool') || reason.includes('liquidity') || reason.includes('pair');
+          const isRoute = reason.includes('route') || reason.includes('pool') || reason.includes('liquidity') || reason.includes('pair') || reason.includes('token_info');
           const backoffPlanMs = isNonceOrAllowance
-            ? [1000, 1500, 2000]
+            ? [0, 1000, 1500]
             : isTimeout
-              ? [1000, 2000, 3000]
+              ? [500, 1500, 2500]
               : isRoute
-                ? [1500, 2500, 3000]
-                : [1000, 2000, 3000];
+                ? [0, 1200, 2200]
+                : [300, 1500, 2500];
           const backoffMs = backoffPlanMs[Math.min(backoffPlanMs.length - 1, failCount - 1)];
           nextPos.nextRetryAtMs = nowMs + backoffMs;
           input.rapidExitByPosKey.set(posKey, nextPos);

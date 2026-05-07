@@ -62,6 +62,57 @@ const parseStrategyWalletAddress = (input: unknown): `0x${string}` | undefined =
   return raw as `0x${string}`;
 };
 
+const classifyBuySubmitFailureReason = (error: unknown): string => {
+  const e = error as any;
+  const text = String(
+    e?.shortMessage ??
+    e?.message ??
+    e?.cause?.shortMessage ??
+    e?.cause?.message ??
+    e ??
+    '',
+  ).toLowerCase();
+  if (!text) return 'buy_submit_failed_unknown';
+  if (text.includes('nonce')) return 'buy_submit_failed_nonce';
+  if (text.includes('allowance') || text.includes('insufficient allowance')) return 'buy_submit_failed_allowance';
+  if (text.includes('pool') || text.includes('liquidity') || text.includes('route') || text.includes('pair')) {
+    return 'buy_submit_failed_route';
+  }
+  if (text.includes('token info') || text.includes('token_info')) return 'buy_submit_failed_token_info';
+  if (text.includes('timeout') || text.includes('timed out')) return 'buy_submit_failed_timeout';
+  if (text.includes('insufficient funds') || text.includes('insufficient balance')) {
+    return 'buy_submit_failed_insufficient_funds';
+  }
+  if (text.includes('in flight') || text.includes('in_flight')) return 'buy_submit_failed_in_flight';
+  return 'buy_submit_failed_unknown';
+};
+
+const summarizeTokenInfoForLog = (tokenInfo: TokenInfo | null | undefined) => {
+  if (!tokenInfo) return null;
+  return {
+    chain: tokenInfo.chain,
+    address: tokenInfo.address,
+    symbol: tokenInfo.symbol,
+    launchpad: (tokenInfo as any)?.launchpad,
+    launchpad_platform: tokenInfo.launchpad_platform,
+    launchpad_status: (tokenInfo as any)?.launchpad_status,
+    pool_pair: (tokenInfo as any)?.pool_pair,
+    quote_token: tokenInfo.quote_token,
+    ai_creator: (tokenInfo as any)?.ai_creator,
+  };
+};
+
+const summarizeErrorForLog = (error: unknown) => {
+  const e = error as any;
+  return {
+    shortMessage: e?.shortMessage ? String(e.shortMessage) : undefined,
+    message: e?.message ? String(e.message) : undefined,
+    causeShortMessage: e?.cause?.shortMessage ? String(e.cause.shortMessage) : undefined,
+    causeMessage: e?.cause?.message ? String(e.cause.message) : undefined,
+    name: e?.name ? String(e.name) : undefined,
+  };
+};
+
 export const tryAutoBuyOnce = async (input: {
   chainId: number;
   tokenAddress: `0x${string}`;
@@ -515,6 +566,20 @@ export const tryAutoBuyOnce = async (input: {
         },
       });
     } catch (e: any) {
+      const buySubmitFailReason = classifyBuySubmitFailureReason(e);
+      console.error('[xsniper.buy.submit.failed]', {
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        fromAddress: tradeFromAddress,
+        buyAmountNative: amountNumber,
+        buyAmountWei: amountWei.toString(),
+        signalId: input.signal?.id ? String(input.signal.id) : undefined,
+        signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
+        signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+        reason: buySubmitFailReason,
+        tokenInfo: summarizeTokenInfoForLog(tokenInfoForTrade),
+        error: summarizeErrorForLog(e),
+      });
       console.warn('[xsniper.buy.submit.failed]', {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
@@ -522,19 +587,24 @@ export const tryAutoBuyOnce = async (input: {
         signalId: input.signal?.id ? String(input.signal.id) : undefined,
         signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
         signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
+        reason: buySubmitFailReason,
         error: String(e?.shortMessage || e?.message || e || ''),
+      });
+      emitBuyFailure(buySubmitFailReason, {
+        buyAmountNative: amountNumber,
+        metrics: refreshedMetrics,
+        tokenInfo: tokenInfoForTrade,
+        confirm,
       });
     }
     if (!rsp) {
       console.error('XSniperTrade buy submit failed', {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
-      });
-      emitBuyFailure('buy_submit_failed', {
+        fromAddress: tradeFromAddress,
         buyAmountNative: amountNumber,
-        metrics: refreshedMetrics,
-        tokenInfo: tokenInfoForTrade,
-        confirm,
+        buyAmountWei: amountWei.toString(),
+        tokenInfo: summarizeTokenInfoForLog(tokenInfoForTrade),
       });
       return false;
     }

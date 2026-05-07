@@ -43,6 +43,32 @@ const buildPositionKey = (input: {
   return `${input.dryRun ? 'dry:' : ''}${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}`;
 };
 
+const summarizeTokenInfoForLog = (tokenInfo: TokenInfo | null | undefined) => {
+  if (!tokenInfo) return null;
+  return {
+    chain: tokenInfo.chain,
+    address: tokenInfo.address,
+    symbol: tokenInfo.symbol,
+    launchpad: (tokenInfo as any)?.launchpad,
+    launchpad_platform: tokenInfo.launchpad_platform,
+    launchpad_status: (tokenInfo as any)?.launchpad_status,
+    pool_pair: (tokenInfo as any)?.pool_pair,
+    quote_token: tokenInfo.quote_token,
+    ai_creator: (tokenInfo as any)?.ai_creator,
+  };
+};
+
+const summarizeErrorForLog = (error: unknown) => {
+  const e = error as any;
+  return {
+    shortMessage: e?.shortMessage ? String(e.shortMessage) : undefined,
+    message: e?.message ? String(e.message) : undefined,
+    causeShortMessage: e?.cause?.shortMessage ? String(e.cause.shortMessage) : undefined,
+    causeMessage: e?.cause?.message ? String(e.cause.message) : undefined,
+    name: e?.name ? String(e.name) : undefined,
+  };
+};
+
 export const createSellExecutors = (deps: {
   cleanupPosKey: (posKey: string) => void;
   emitRecord: (record: XSniperBuyRecord) => void;
@@ -330,6 +356,20 @@ export const createSellExecutors = (deps: {
             fromAddress: sellFromAddress,
             reason: firstReason,
           });
+          console.error('[xsniper.sell.receipt.failed]', {
+            chainId: input.chainId,
+            tokenAddress: input.tokenAddress,
+            fromAddress: sellFromAddress,
+            sellPercentBps: bps,
+            isTurbo,
+            sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
+            txHash: submittedTxHash,
+            reason: firstAnalysis.reason,
+            terminal: firstAnalysis.terminal,
+            soldOut: firstAnalysis.soldOut,
+            tokenInfo: summarizeTokenInfoForLog(tokenInfoForTrade),
+            error: summarizeErrorForLog(sellErr),
+          });
           if (!firstAnalysis.allowanceRepaired) {
             emitFailRecord(firstAnalysis.reason);
             if (firstAnalysis.soldOut || firstAnalysis.terminal) deps.cleanupPosKey(posKey);
@@ -377,6 +417,20 @@ export const createSellExecutors = (deps: {
                 tokenInfo: tokenInfoForTrade,
                 fromAddress: sellFromAddress,
                 reason: retryReason,
+              });
+              console.error('[xsniper.sell.receipt.failed.retry]', {
+                chainId: input.chainId,
+                tokenAddress: input.tokenAddress,
+                fromAddress: sellFromAddress,
+                sellPercentBps: bps,
+                isTurbo,
+                sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
+                txHash: retryTxHash,
+                reason: retryAnalysis.reason,
+                terminal: retryAnalysis.terminal,
+                soldOut: retryAnalysis.soldOut,
+                tokenInfo: summarizeTokenInfoForLog(tokenInfoForTrade),
+                error: summarizeErrorForLog(retryErr),
               });
               deps.emitRecord({
                 ...baseRecord,
@@ -653,6 +707,20 @@ export const createSellExecutors = (deps: {
               reason: receiptFailedReason,
             });
             const txHash = submittedTxHash as any;
+            console.error('[xsniper.rapid.sell.receipt.failed]', {
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              fromAddress: sellFromAddress,
+              sellPercentBps: bps,
+              isTurbo,
+              sellTokenAmountWei: isTurbo ? undefined : amountWei.toString(),
+              txHash,
+              reason: receiptAnalysis.reason,
+              terminal: receiptAnalysis.terminal,
+              soldOut: receiptAnalysis.soldOut,
+              tokenInfo: summarizeTokenInfoForLog(tokenInfoForTrade),
+              error: summarizeErrorForLog(err),
+            });
             deps.emitRecord({
               ...baseRecord,
               dryRun: false,

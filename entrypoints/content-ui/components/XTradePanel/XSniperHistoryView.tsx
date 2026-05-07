@@ -112,6 +112,20 @@ const resolveReasonLabel = (tt: (key: string, subs?: Array<string | number>) => 
     rapid_take_profit: '里程碑分批止盈',
     rapid_stop_loss: '硬止损',
     rapid_trailing_stop: '地板清仓',
+    sell_receipt_failed_timeout: '卖出回执失败(超时)',
+    sell_receipt_failed_nonce: '卖出回执失败(Nonce)',
+    sell_receipt_failed_allowance: '卖出回执失败(授权)',
+    sell_receipt_failed_route: '卖出回执失败(路由/池子)',
+    sell_receipt_failed_token_info: '卖出回执失败(TokenInfo)',
+    sell_receipt_failed_unknown: '卖出回执失败(未知)',
+    buy_submit_failed_timeout: '买入提交失败(超时)',
+    buy_submit_failed_nonce: '买入提交失败(Nonce)',
+    buy_submit_failed_allowance: '买入提交失败(授权)',
+    buy_submit_failed_route: '买入提交失败(路由/池子)',
+    buy_submit_failed_token_info: '买入提交失败(TokenInfo)',
+    buy_submit_failed_insufficient_funds: '买入提交失败(余额不足)',
+    buy_submit_failed_in_flight: '买入提交失败(交易进行中)',
+    buy_submit_failed_unknown: '买入提交失败(未知)',
     position_reduced_manually: '手动减仓',
     position_closed_manually: '手动全平（仓位归零）',
   };
@@ -974,6 +988,15 @@ export function XSniperHistoryView({
                   <div className="mt-2 space-y-1 border-l border-zinc-800/80 pl-3">
                     {g.children.slice(0, 12).map((c) => {
                       const badge = (() => {
+                        const reasonRaw = String(c.reason || '').trim();
+                        const isSellReceiptFailed = c.side === 'sell' && /^sell_receipt_failed(?:_|$)/.test(reasonRaw);
+                        const isBuySubmitFailed = c.side === 'buy' && /^buy_submit_failed(?:_|$)/.test(reasonRaw);
+                        if (isSellReceiptFailed || isBuySubmitFailed) {
+                          return {
+                            text: resolveReasonLabel(tt, reasonRaw),
+                            cls: 'bg-rose-600/25 text-rose-100 border-rose-500/50',
+                          };
+                        }
                         if (c.side === 'sell') {
                           if (c.reason === 'rapid_take_profit') {
                             return {

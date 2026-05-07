@@ -333,7 +333,7 @@ export function XNewCoinSniperContent({
     const merged = [...groupsById.values(), ...standaloneSellGroups];
     merged.sort((a, b) => (Number(b.parent.tsMs) || 0) - (Number(a.parent.tsMs) || 0));
     for (const g of merged) {
-      g.children.sort((a, b) => (Number(a.tsMs) || 0) - (Number(b.tsMs) || 0));
+      g.children.sort((a, b) => (Number(b.tsMs) || 0) - (Number(a.tsMs) || 0));
     }
     return merged;
   }, [normalizedHistory]);
