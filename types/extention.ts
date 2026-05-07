@@ -680,6 +680,8 @@ export type BgRequest =
   | { type: 'wallet:exportPrivateKey'; password: string }
   | { type: 'wallet:exportAccountPrivateKey'; address: `0x${string}`; password: string }
   | { type: 'wallet:exportMnemonic'; password: string }
+  | { type: 'wallet:getEip7702Status'; address: `0x${string}` }
+  | { type: 'wallet:revokeEip7702'; address: `0x${string}` }
   | { type: 'chain:getBalance'; address: `0x${string}` }
   | { type: 'token:getMeta'; tokenAddress: `0x${string}` }
   | { type: 'token:getBalance'; tokenAddress: `0x${string}`; address: `0x${string}` }
@@ -827,6 +829,10 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; privateKey: `0x${string}` }
   : T extends { type: 'wallet:exportMnemonic' }
   ? { ok: true; mnemonic: string }
+  : T extends { type: 'wallet:getEip7702Status' }
+  ? { ok: true; delegated: boolean; delegateAddress?: `0x${string}`; code: `0x${string}` }
+  : T extends { type: 'wallet:revokeEip7702' }
+  ? { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
   : T extends { type: 'chain:getBalance' }
   ? { ok: true; balanceWei: string }
   : T extends { type: 'token:getMeta' }

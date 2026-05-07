@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { call } from '@/utils/messaging';
 import { Header } from './Header';
 import type { BgGetStateResponse } from '@/types/extention';
@@ -38,8 +38,16 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
   const [transferBalanceWei, setTransferBalanceWei] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
+  const [eip7702ByAddress, setEip7702ByAddress] = useState<Record<string, {
+    loading: boolean;
+    delegated: boolean;
+    delegateAddress?: `0x${string}`;
+    code?: `0x${string}`;
+    revoking?: boolean;
+  }>>({});
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
   const nativeSymbol = getNativeSymbol(state.settings.chainId);
+  const accountAddressListKey = (state.wallet.accounts ?? []).map((acc) => acc.address.toLowerCase()).join('|');
 
   async function withBusy(fn: () => Promise<void>) {
     if (busy) return;
@@ -74,6 +82,72 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
   };
 
   const getAliasKey = (addr: `0x${string}`) => addr.toLowerCase();
+  const get7702Key = (addr: `0x${string}`) => addr.toLowerCase();
+
+  useEffect(() => {
+    let disposed = false;
+    const accounts = state.wallet.accounts ?? [];
+    if (!state.wallet.isUnlocked || accounts.length === 0) {
+      setEip7702ByAddress({});
+      return () => {
+        disposed = true;
+      };
+    }
+    setEip7702ByAddress((prev) => {
+      const next: Record<string, {
+        loading: boolean;
+        delegated: boolean;
+        delegateAddress?: `0x${string}`;
+        code?: `0x${string}`;
+        revoking?: boolean;
+      }> = {};
+      for (const acc of accounts) {
+        const key = get7702Key(acc.address);
+        next[key] = { loading: true, delegated: false, revoking: prev[key]?.revoking === true };
+      }
+      return next;
+    });
+    void (async () => {
+      const results = await Promise.all(
+        accounts.map(async (acc) => {
+          try {
+            const res = await call({ type: 'wallet:getEip7702Status', address: acc.address });
+            return {
+              key: get7702Key(acc.address),
+              delegated: !!res.delegated,
+              delegateAddress: res.delegateAddress,
+              code: res.code,
+            };
+          } catch {
+            return {
+              key: get7702Key(acc.address),
+              delegated: false,
+              delegateAddress: undefined,
+              code: undefined,
+            };
+          }
+        }),
+      );
+      if (disposed) return;
+      setEip7702ByAddress((prev) => {
+        const next = { ...prev };
+        for (const item of results) {
+          const old = next[item.key];
+          next[item.key] = {
+            loading: false,
+            delegated: item.delegated,
+            delegateAddress: item.delegateAddress,
+            code: item.code,
+            revoking: old?.revoking === true,
+          };
+        }
+        return next;
+      });
+    })();
+    return () => {
+      disposed = true;
+    };
+  }, [state.wallet.isUnlocked, state.settings.chainId, accountAddressListKey]);
 
   const openManage = (addr: `0x${string}`, fallbackName: string) => {
     const currentAlias = state.settings.accountAliases?.[getAliasKey(addr)] ?? '';
@@ -255,6 +329,17 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
                     {acc.type === 'imported' && (
                         <span className="text-[9px] bg-amber-900/30 text-amber-500 px-1.5 py-0.5 rounded border border-amber-900/50">{tt('popup.home.imported')}</span>
                     )}
+                    {eip7702ByAddress[get7702Key(acc.address)]?.delegated && (
+                        <span
+                          className="text-[9px] bg-fuchsia-900/30 text-fuchsia-400 px-1.5 py-0.5 rounded border border-fuchsia-900/50"
+                          title={`该地址启用了 EIP-7702 智能账户委托（Delegated Account）。
+部分节点会对这类账户施加更严格的 in-flight/pending 限制，可能导致交易发送失败或 nonce 步进异常。
+如果你使用高频买卖/狙击，建议点击“取消7702”恢复普通 EOA 模式，以提升交易稳定性。
+当前委托目标：${eip7702ByAddress[get7702Key(acc.address)]?.delegateAddress || 'unknown'}`}
+                        >
+                          7702
+                        </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                       <div className="text-[12px] text-zinc-500 font-mono truncate">
@@ -271,6 +356,11 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
                           {copiedAddr === acc.address ? <Check size={10} className="text-emerald-500"/> : <Copy size={10} />}
                       </button>
                   </div>
+                  {eip7702ByAddress[get7702Key(acc.address)]?.delegated && (
+                    <div className="text-[10px] text-fuchsia-400/80 mt-0.5">
+                      7702 to {String(eip7702ByAddress[get7702Key(acc.address)]?.delegateAddress || '').slice(0, 6)}...{String(eip7702ByAddress[get7702Key(acc.address)]?.delegateAddress || '').slice(-4)}
+                    </div>
+                  )}
                   <div className="text-[14px] text-zinc-400 font-mono mt-0.5">
                     {formatBalance(acc.address)} {nativeSymbol}
                   </div>
@@ -278,6 +368,47 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
               </div>
 
               <div className="flex-shrink-0 flex items-center gap-2">
+                {eip7702ByAddress[get7702Key(acc.address)]?.delegated && (
+                  <button
+                    className="px-2 py-1 rounded bg-fuchsia-900/30 text-[10px] text-fuchsia-300 border border-fuchsia-900/50 hover:bg-fuchsia-900/40 transition-colors disabled:opacity-60"
+                    disabled={busy || eip7702ByAddress[get7702Key(acc.address)]?.revoking}
+                    onClick={() =>
+                      withBusy(async () => {
+                        const ok = window.confirm('检测到该地址启用了 EIP-7702 委托。确认发送撤销交易？');
+                        if (!ok) return;
+                        const key = get7702Key(acc.address);
+                        setEip7702ByAddress((prev) => ({
+                          ...prev,
+                          [key]: { ...(prev[key] ?? { loading: false, delegated: true }), revoking: true },
+                        }));
+                        try {
+                          await call({ type: 'wallet:revokeEip7702', address: acc.address });
+                          const status = await call({ type: 'wallet:getEip7702Status', address: acc.address });
+                          setEip7702ByAddress((prev) => ({
+                            ...prev,
+                            [key]: {
+                              loading: false,
+                              delegated: !!status.delegated,
+                              delegateAddress: status.delegateAddress,
+                              code: status.code,
+                              revoking: false,
+                            },
+                          }));
+                          await onRefresh();
+                        } catch (e: any) {
+                          setEip7702ByAddress((prev) => ({
+                            ...prev,
+                            [key]: { ...(prev[key] ?? { loading: false, delegated: true }), revoking: false },
+                          }));
+                          throw e;
+                        }
+                      })
+                    }
+                    title="取消 EIP-7702 智能账户委托，恢复普通 EOA 交易模式（通常更稳定）"
+                  >
+                    {eip7702ByAddress[get7702Key(acc.address)]?.revoking ? '撤销中' : '取消7702'}
+                  </button>
+                )}
                 <button
                   className="w-7 h-7 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors flex items-center justify-center"
                   disabled={busy}

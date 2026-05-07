@@ -28,9 +28,21 @@ import { classifyBroadcastError, collectErrorText } from '@/utils/txErrorClassif
 import type { TxBuyInput } from '@/types/extention';
 import { createTelegramNotifier } from '@/services/telegram/notifier';
 import { createTelegramController } from '@/services/telegram/controller';
+import { getChainRuntime } from '@/constants/chains';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
+  const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
+  const EIP7702_DELEGATION_PREFIX = '0xef0100';
+  const parseEip7702Delegation = (code: string | null | undefined): { delegated: boolean; delegateAddress?: `0x${string}`; code: `0x${string}` } => {
+    const normalized = (typeof code === 'string' && code.startsWith('0x') ? code.toLowerCase() : '0x') as `0x${string}`;
+    if (!normalized.startsWith(EIP7702_DELEGATION_PREFIX) || normalized.length < 2 + 6 + 40) {
+      return { delegated: false, code: normalized };
+    }
+    const delegateAddress = (`0x${normalized.slice(-40)}`) as `0x${string}`;
+    if (!isAddress(delegateAddress)) return { delegated: false, code: normalized };
+    return { delegated: true, delegateAddress, code: normalized };
+  };
 
   browser.action.onClicked.addListener(async (tab) => {
     try {
@@ -418,6 +430,69 @@ export default defineBackground(() => {
 
           case 'wallet:exportMnemonic':
             return { ok: true, mnemonic: await WalletService.exportMnemonic(msg.password) };
+
+          case 'wallet:getEip7702Status': {
+            const client = await RpcService.getClient();
+            const code = await client.getCode({ address: msg.address });
+            return { ok: true, ...parseEip7702Delegation(code) };
+          }
+
+          case 'wallet:revokeEip7702': {
+            const settings = await SettingsService.get();
+            const chainId = settings.chainId;
+            const client = await RpcService.getClient();
+            const code = await client.getCode({ address: msg.address });
+            const status = parseEip7702Delegation(code);
+            if (!status.delegated) throw new Error('Address is not in EIP-7702 delegated state');
+
+            const account = await WalletService.getSigner(msg.address);
+            const txNonce = await client.getTransactionCount({ address: account.address, blockTag: 'pending' });
+            const authNonce = txNonce + 1;
+            const signedAuthorization = await account.signAuthorization({
+              chainId,
+              nonce: authNonce,
+              address: ZERO_ADDRESS,
+            });
+            const estimated = await client.estimateFeesPerGas().catch(() => null);
+            const maxPriorityFeePerGas =
+              typeof estimated?.maxPriorityFeePerGas === 'bigint' && estimated.maxPriorityFeePerGas > 0n
+                ? estimated.maxPriorityFeePerGas
+                : parseEther('0.000000001');
+            const maxFeePerGas =
+              typeof estimated?.maxFeePerGas === 'bigint' && estimated.maxFeePerGas > 0n
+                ? estimated.maxFeePerGas
+                : (maxPriorityFeePerGas * 2n);
+            const gas = 100_000n;
+            const signedTx = await account.signTransaction({
+              chain: getChainRuntime(chainId).viemChain,
+              chainId,
+              type: 'eip7702',
+              to: account.address,
+              value: 0n,
+              data: '0x',
+              nonce: txNonce,
+              gas,
+              maxFeePerGas,
+              maxPriorityFeePerGas,
+              authorizationList: [signedAuthorization],
+            } as any);
+            const sent = await RpcService.broadcastTxDetailed(signedTx, {
+              signerContext: {
+                account,
+                chainId,
+                nonce: txNonce,
+                gas,
+                gasPrice: maxFeePerGas,
+              },
+            });
+            return {
+              ok: true,
+              txHash: sent.txHash,
+              broadcastVia: sent.via,
+              broadcastUrl: sent.rpcUrl,
+              isBundle: sent.isBundle,
+            };
+          }
 
           case 'chain:getBalance':
             return { ok: true, balanceWei: await TokenService.getNativeBalance(msg.address) };
