@@ -13,12 +13,25 @@ type HomeViewProps = {
   onRefresh: () => Promise<void>;
   onError: (msg: string) => void;
   onSettingsClick: () => void;
+  onOpenNetworkSettings: () => void;
   onChainChange: (chainId: number) => void;
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
+  bloxrouteUnlockWarning?: string | null;
 };
 
-export function HomeView({ state, balances, onRefresh, onError, onSettingsClick, onChainChange, locale, onLocaleChange }: HomeViewProps) {
+export function HomeView({
+  state,
+  balances,
+  onRefresh,
+  onError,
+  onSettingsClick,
+  onOpenNetworkSettings,
+  onChainChange,
+  locale,
+  onLocaleChange,
+  bloxrouteUnlockWarning,
+}: HomeViewProps) {
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [isImport, setIsImport] = useState(false);
   const [newAccountName, setNewAccountName] = useState('');
@@ -450,6 +463,30 @@ export function HomeView({ state, balances, onRefresh, onError, onSettingsClick,
           ))}
         </div>
       </div>
+
+      {bloxrouteUnlockWarning && (
+        <div className="px-4 pb-2">
+          <div className="rounded-md border border-amber-900/60 bg-amber-950/60 px-3 py-2">
+            <div className="text-[11px] text-amber-200">{bloxrouteUnlockWarning}</div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                className="rounded-md bg-amber-900/40 px-2 py-1 text-[11px] font-semibold text-amber-100 hover:bg-amber-900/55 transition-colors"
+                onClick={onOpenNetworkSettings}
+              >
+                {tt('popup.home.bloxrouteWarningOpenSettings')}
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-zinc-800 px-2 py-1 text-[11px] font-semibold text-zinc-100 hover:bg-zinc-700 transition-colors"
+                onClick={() => call({ type: 'bloxroute:openCertPage' } as const).catch(() => { })}
+              >
+                {tt('popup.home.bloxrouteWarningOpenCert')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="p-4 border-t border-zinc-800">

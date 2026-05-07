@@ -56,6 +56,8 @@
       "copyAddress": "复制地址",
       "switch": "切换",
       "lockWallet": "锁定钱包",
+      "bloxrouteWarningOpenSettings": "去网络设置",
+      "bloxrouteWarningOpenCert": "打开证书选择页",
       "manage": {
         "button": "管理",
         "title": "管理账户",

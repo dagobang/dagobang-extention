@@ -10,6 +10,7 @@ import { WelcomeView } from './components/WelcomeView';
 import { UnlockView } from './components/UnlockView';
 import { SettingsView } from './components/SettingsView';
 import { HomeView } from './components/HomeView';
+import type { SettingsSectionId } from './components/Settings/types';
 
 type View = 'loading' | 'welcome' | 'unlock' | 'home' | 'settings';
 
@@ -19,6 +20,9 @@ function App() {
   const [view, setView] = useState<View>('loading');
   const viewRef = useRef(view);
   const [locale, setLocale] = useState<Locale>('zh_CN');
+  const [bloxrouteUnlockWarning, setBloxrouteUnlockWarning] = useState<string | null>(null);
+  const prevUnlockedRef = useRef<boolean | null>(null);
+  const [settingsSectionOnOpen, setSettingsSectionOnOpen] = useState<SettingsSectionId>('root');
 
   // Keep ref in sync
   useEffect(() => {
@@ -54,6 +58,7 @@ function App() {
       const res = await call({ type: 'bg:getState' });
       setState(res);
       setLocale(normalizeLocale(res.settings.locale));
+      const nextLocale = normalizeLocale(res.settings.locale);
 
       const currentView = viewRef.current;
 
@@ -89,6 +94,44 @@ function App() {
           })
         );
         setBalances(newBalances);
+      }
+
+      const wasUnlocked = prevUnlockedRef.current;
+      const nowUnlocked = !!res.wallet.isUnlocked;
+      prevUnlockedRef.current = nowUnlocked;
+
+      if (!nowUnlocked) {
+        setBloxrouteUnlockWarning(null);
+      }
+
+      if (wasUnlocked !== true && nowUnlocked) {
+        const chainId = res.settings.chainId;
+        const chainSettings = res.settings.chains?.[chainId];
+        const hasAuthHeader = !!String(res.settings.bloxrouteAuthHeader ?? '').replace(/[\r\n]+/g, '').trim();
+        const bloxrouteEnabled = (chainSettings?.bloxrouteBuyEnabled ?? true) || (chainSettings?.bloxrouteSellEnabled ?? true);
+        if (!hasAuthHeader || !bloxrouteEnabled) {
+          setBloxrouteUnlockWarning(null);
+          return;
+        }
+        try {
+          const probe = await call({
+            type: 'bloxroute:probe',
+            authHeader: String(res.settings.bloxrouteAuthHeader ?? ''),
+          });
+          if (probe.status === 'failed') {
+            const base = t('popup.settings.bloxrouteProbeFailed', nextLocale);
+            const hint = t('popup.settings.bloxrouteProbeFailedHint', nextLocale);
+            const details = String(probe.message || '').trim();
+            setBloxrouteUnlockWarning(details ? `${base}: ${details} · ${hint}` : `${base} · ${hint}`);
+          } else {
+            setBloxrouteUnlockWarning(null);
+          }
+        } catch (e: any) {
+          const base = t('popup.settings.bloxrouteProbeFailed', nextLocale);
+          const hint = t('popup.settings.bloxrouteProbeFailedHint', nextLocale);
+          const details = String(e?.message || e || '').trim();
+          setBloxrouteUnlockWarning(details ? `${base}: ${details} · ${hint}` : `${base} · ${hint}`);
+        }
       }
     } catch (e: any) {
       console.error('Refresh failed:', e);
@@ -152,6 +195,7 @@ function App() {
         onBackup={setBackupMnemonic}
         locale={locale}
         onLocaleChange={handleLocaleChange}
+        initialSection={settingsSectionOnOpen}
       />
     );
   } else if (state && view === 'home') {
@@ -161,7 +205,14 @@ function App() {
         balances={balances}
         onRefresh={refresh}
         onError={handleChildError}
-        onSettingsClick={() => setView('settings')}
+        onSettingsClick={() => {
+          setSettingsSectionOnOpen('root');
+          setView('settings');
+        }}
+        onOpenNetworkSettings={() => {
+          setSettingsSectionOnOpen('network');
+          setView('settings');
+        }}
         onChainChange={(chainId: number) =>
           void call({
             type: 'settings:set',
@@ -173,6 +224,7 @@ function App() {
         }
         locale={locale}
         onLocaleChange={handleLocaleChange}
+        bloxrouteUnlockWarning={bloxrouteUnlockWarning}
       />
     );
   } else {

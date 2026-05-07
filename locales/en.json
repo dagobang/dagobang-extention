@@ -56,6 +56,8 @@
       "copyAddress": "Copy Address",
       "switch": "Switch",
       "lockWallet": "Lock Wallet",
+      "bloxrouteWarningOpenSettings": "Open Network Settings",
+      "bloxrouteWarningOpenCert": "Open Certificate Page",
       "manage": {
         "button": "Manage",
         "title": "Manage Account",
