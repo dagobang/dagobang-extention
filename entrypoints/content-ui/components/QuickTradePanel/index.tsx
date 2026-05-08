@@ -77,6 +77,7 @@ type QuickTradePanelProps = {
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
   nativeSymbol: string;
+  onOpenWalletSelector?: () => void;
 };
 
 export function QuickTradePanel({
@@ -147,10 +148,18 @@ export function QuickTradePanel({
   walletTokenBalancesWei,
   tokenDecimals,
   nativeSymbol,
+  onOpenWalletSelector,
 }: QuickTradePanelProps) {
   const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
 
   const walletSelectorVisible = isUnlocked && walletAccounts.length > 0;
+  const handleToggleWalletSelector = () => {
+    setWalletSelectorOpen((prev) => {
+      const next = !prev;
+      if (next) onOpenWalletSelector?.();
+      return next;
+    });
+  };
 
   if (minimized) {
     return (
@@ -194,7 +203,7 @@ export function QuickTradePanel({
         walletSelectorOpen={walletSelectorOpen}
         walletSelectedCount={selectedTradeWallets.length}
         walletTotalCount={walletAccounts.length}
-        onToggleWalletSelector={() => setWalletSelectorOpen((v) => !v)}
+        onToggleWalletSelector={handleToggleWalletSelector}
       />
       {!siteInfo.showBar && (
         <div className="relative flex flex-col">

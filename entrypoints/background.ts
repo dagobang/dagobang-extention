@@ -1002,6 +1002,8 @@ export default defineBackground(() => {
           case 'tx:buyWithReceiptAuto': {
             RpcReadBalancer.noteTradeActivity();
             const startedAt = Date.now();
+            let submittedTxHash: `0x${string}` | null = null;
+            let submittedElapsedMs: number | undefined;
             console.log('[bg.buy.auto.request]', {
               chainId: msg.input.chainId,
               token: msg.input.tokenAddress,
@@ -1043,6 +1045,8 @@ export default defineBackground(() => {
                 maxRetry: 1,
                 timeoutMs: 5_000,
                 onSubmitted: async (ctx) => {
+                  submittedTxHash = ctx.txHash;
+                  submittedElapsedMs = ctx.submitElapsedMs;
                   await broadcastTradeSuccess(
                     {
                       type: 'bg:tradeSubmitted',
@@ -1092,6 +1096,20 @@ export default defineBackground(() => {
               if (!reason || reason.toLowerCase().includes('zero_input')) {
                 debugLogTxError('tx:buyWithReceiptAuto failed', e, { input: msg.input as any });
               }
+              await broadcastTradeSuccess(
+                {
+                  type: 'bg:tradeFailed',
+                  source: 'tx:buy',
+                  side: 'buy',
+                  chainId: msg.input.chainId,
+                  tokenAddress: msg.input.tokenAddress,
+                  txHash: submittedTxHash ?? undefined,
+                  submitElapsedMs: submittedElapsedMs,
+                  stage: submittedTxHash ? 'receipt' : 'submit',
+                  errorMessage: String(reason || e?.shortMessage || e?.message || 'Transaction failed'),
+                },
+                sender?.tab?.id ?? null,
+              );
               return { ok: false, revertReason: reason ?? undefined, error: serializeTxError(e) };
             }
           }
@@ -1156,6 +1174,12 @@ export default defineBackground(() => {
                       chainId: msg.input.chainId,
                       tokenAddress: msg.input.tokenAddress,
                       txHash: (rsp as any)?.txHash,
+                      submitElapsedMs: (rsp as any)?.submitElapsedMs,
+                      receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
+                      totalElapsedMs: (rsp as any)?.totalElapsedMs,
+                      broadcastVia: (rsp as any)?.broadcastVia,
+                      broadcastUrl: (rsp as any)?.broadcastUrl,
+                      isBundle: (rsp as any)?.isBundle,
                     },
                     sender?.tab?.id ?? null,
                   );
@@ -1182,12 +1206,16 @@ export default defineBackground(() => {
             RpcReadBalancer.noteTradeActivity();
             const flowId = `bg-sell-auto:${msg.input.chainId}:${msg.input.tokenAddress.toLowerCase()}:${Date.now().toString(36)}`;
             const start = Date.now();
+            let submittedTxHash: `0x${string}` | null = null;
+            let submittedElapsedMs: number | undefined;
             console.log('[bg.sell.auto][start]', { flowId, chainId: msg.input.chainId, token: msg.input.tokenAddress });
             try {
               const rsp = await TradeService.sellWithReceiptAndAutoRecovery(msg.input, {
                 maxRetry: 1,
                 timeoutMs: 8_000,
                 onSubmitted: async (ctx) => {
+                  submittedTxHash = ctx.txHash;
+                  submittedElapsedMs = ctx.submitElapsedMs;
                   await broadcastTradeSuccess(
                     {
                       type: 'bg:tradeSubmitted',
@@ -1234,6 +1262,12 @@ export default defineBackground(() => {
                   chainId: msg.input.chainId,
                   tokenAddress: msg.input.tokenAddress,
                   txHash: (rsp as any)?.txHash,
+                  submitElapsedMs: (rsp as any)?.submitElapsedMs,
+                  receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
+                  totalElapsedMs: (rsp as any)?.totalElapsedMs,
+                  broadcastVia: (rsp as any)?.broadcastVia,
+                  broadcastUrl: (rsp as any)?.broadcastUrl,
+                  isBundle: (rsp as any)?.isBundle,
                 },
                 sender?.tab?.id ?? null,
               );
@@ -1255,6 +1289,20 @@ export default defineBackground(() => {
               if (!reason || reason.toLowerCase().includes('zero_input')) {
                 debugLogTxError('tx:sellWithReceiptAuto failed', e, { input: msg.input as any });
               }
+              await broadcastTradeSuccess(
+                {
+                  type: 'bg:tradeFailed',
+                  source: 'tx:sell',
+                  side: 'sell',
+                  chainId: msg.input.chainId,
+                  tokenAddress: msg.input.tokenAddress,
+                  txHash: submittedTxHash ?? undefined,
+                  submitElapsedMs: submittedElapsedMs,
+                  stage: submittedTxHash ? 'receipt' : 'submit',
+                  errorMessage: String(reason || e?.shortMessage || e?.message || 'Transaction failed'),
+                },
+                sender?.tab?.id ?? null,
+              );
               return { ok: false, revertReason: reason ?? undefined, error: serializeTxError(e) };
             }
           }

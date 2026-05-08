@@ -715,7 +715,7 @@ export default function App() {
     setGmgnSellEnabled((v) => !v);
   };
 
-  async function refreshAll() {
+  async function refreshAll(queryAllWallets = false) {
     if (document.hidden) return;
     if (!siteInfo) return;
     const res = await call({ type: 'bg:getState' });
@@ -728,14 +728,15 @@ export default function App() {
         .filter(Boolean) as `0x${string}`[];
       const selectedWallets = resolveSelectedTradeWallets(res.wallet, res.settings);
       const targetWallets = selectedWallets.length > 0 ? selectedWallets : allWallets.slice(0, 1);
+      const queryWallets = queryAllWallets ? allWallets : targetWallets;
       const allBalances = await Promise.all(
-        targetWallets.map((addr) => TokenAPI.getBalance(siteInfo.platform, siteInfo.chain, addr, zeroAddress, { cacheTtlMs: 2000 }))
+        queryWallets.map((addr) => TokenAPI.getBalance(siteInfo.platform, siteInfo.chain, addr, zeroAddress, { cacheTtlMs: 2000 }))
       );
       const byWallet: Record<string, string> = {};
       allWallets.forEach((addr) => {
         byWallet[addr.toLowerCase()] = '0';
       });
-      targetWallets.forEach((addr, i) => {
+      queryWallets.forEach((addr, i) => {
         byWallet[addr.toLowerCase()] = typeof allBalances[i] === 'string' ? (allBalances[i] as string) : '0';
       });
       setWalletNativeBalancesWei(byWallet);
@@ -743,7 +744,7 @@ export default function App() {
       let byTradeBaseWallet: Record<string, string> = byWallet;
       if (tradeBaseAddress.toLowerCase() !== zeroAddress.toLowerCase()) {
         const tradeBaseBalances = await Promise.all(
-          targetWallets.map((addr) =>
+          queryWallets.map((addr) =>
             TokenAPI.getBalance(siteInfo.platform, siteInfo.chain, addr, tradeBaseAddress, { cacheTtlMs: 2000 })
           )
         );
@@ -751,7 +752,7 @@ export default function App() {
         allWallets.forEach((addr) => {
           mapped[addr.toLowerCase()] = '0';
         });
-        targetWallets.forEach((addr, i) => {
+        queryWallets.forEach((addr, i) => {
           mapped[addr.toLowerCase()] = typeof tradeBaseBalances[i] === 'string' ? (tradeBaseBalances[i] as string) : '0';
         });
         byTradeBaseWallet = mapped;
@@ -769,7 +770,7 @@ export default function App() {
   }
 
   const lastTokenRefresh = useRef(0);
-  async function refreshToken(force = false) {
+  async function refreshToken(force = false, queryAllWallets = false) {
     const seq = tokenRefreshSeqRef.current;
     if (document.hidden && !force) return;
     if (!tokenAddressNormalized || !siteInfo) {
@@ -820,9 +821,10 @@ export default function App() {
         .map((acc) => normalizeAddr(String(acc.address || '')))
         .filter(Boolean) as `0x${string}`[];
       const targetWalletsForToken = selectedWalletsForToken.length > 0 ? selectedWalletsForToken : allWalletsForToken.slice(0, 1);
-      if (isUnlocked && targetWalletsForToken.length > 0) {
+      const queryWalletsForToken = queryAllWallets ? allWalletsForToken : targetWalletsForToken;
+      if (isUnlocked && queryWalletsForToken.length > 0) {
         const holdings = await Promise.all(
-          targetWalletsForToken.map((walletAddr) =>
+          queryWalletsForToken.map((walletAddr) =>
             TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, walletAddr, tokenAddressNormalized, {
               cacheTtlMs: tokenBalanceRefreshThrottleMs,
             })
@@ -833,7 +835,7 @@ export default function App() {
         allWalletsForToken.forEach((addr) => {
           byWallet[addr.toLowerCase()] = '0';
         });
-        targetWalletsForToken.forEach((addr, i) => {
+        queryWalletsForToken.forEach((addr, i) => {
           byWallet[addr.toLowerCase()] = holdings[i] ?? '0';
         });
         setWalletTokenBalancesWei(byWallet);
@@ -1019,6 +1021,33 @@ export default function App() {
           icon: '✅',
           duration: 3000,
         });
+        return;
+      }
+      if (message.type === 'bg:tradeFailed') {
+        const side = message?.side === 'sell' ? 'sell' : 'buy';
+        const rawAddr = typeof message?.tokenAddress === 'string' ? message.tokenAddress : '';
+        const symbol = tokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
+        const errorMessage = String(message?.errorMessage || '');
+        const stage = message?.stage === 'receipt'
+          ? (locale === 'en' ? 'On-chain failed' : '上链失败')
+          : (locale === 'en' ? 'Submit failed' : '提交失败');
+        const title = locale === 'en'
+          ? `[${symbol}] ${side === 'buy' ? 'Buy' : 'Sell'} failed (${stage})`
+          : `[${symbol}] ${side === 'buy' ? '买入失败' : '卖出失败'}（${stage}）`;
+        const eventToastId = getTradeEventToastId(side, rawAddr, String(message?.txHash || ''));
+        toast.error(
+          <div className="space-y-1">
+            <div className="font-medium">{title}</div>
+            {errorMessage ? <div className="text-[12px] opacity-90">{errorMessage}</div> : null}
+          </div>,
+          {
+            id: eventToastId,
+            icon: '❌',
+            duration: 5000,
+          }
+        );
+        // Also dismiss the early "交易执行中..." fallback toast if it still exists.
+        toast.dismiss(getTradeToastId(side, rawAddr));
         return;
       }
       if (message.type === 'bg:tradeSubmitted') {
@@ -1746,7 +1775,7 @@ export default function App() {
           },
         },
       },
-    }).then(refreshAll);
+    }).then(() => refreshAll());
   };
 
   const handleToggleSellGas = () => {
@@ -1768,7 +1797,7 @@ export default function App() {
           },
         },
       },
-    }).then(refreshAll);
+    }).then(() => refreshAll());
   };
 
   const handleToggleSlippage = () => {
@@ -1791,7 +1820,7 @@ export default function App() {
           },
         },
       },
-    }).then(refreshAll);
+    }).then(() => refreshAll());
   };
 
   const handleToggleBuyPriorityFeePreset = () => {
@@ -1814,7 +1843,7 @@ export default function App() {
           },
         },
       },
-    }).then(refreshAll);
+    }).then(() => refreshAll());
   };
 
   const handleToggleSellPriorityFeePreset = () => {
@@ -1837,7 +1866,7 @@ export default function App() {
           },
         },
       },
-    }).then(refreshAll);
+    }).then(() => refreshAll());
   };
 
   const handleToggleMode = () => {
@@ -1857,7 +1886,7 @@ export default function App() {
           },
         },
       },
-    }).then(refreshAll);
+    }).then(() => refreshAll());
   };
 
   const handleEditToggle = () => {
@@ -1887,7 +1916,7 @@ export default function App() {
               },
             },
           },
-        }).then(refreshAll);
+        }).then(() => refreshAll());
       }
       setIsEditing(false);
     }
@@ -2010,7 +2039,12 @@ export default function App() {
       spaceHeldRef.current = false;
       setSpaceHeld(false);
     }
-    call({ type: 'settings:set', settings: { ...settings, keyboardShortcutsEnabled: next } } as const).then(refreshAll);
+    call({ type: 'settings:set', settings: { ...settings, keyboardShortcutsEnabled: next } } as const).then(() => refreshAll());
+  };
+
+  const handleWalletSelectorOpen = () => {
+    void refreshAll(true);
+    void refreshToken(true, true);
   };
 
   return (
@@ -2092,6 +2126,7 @@ export default function App() {
               walletTokenBalancesWei={walletTokenBalancesWei}
               tokenDecimals={tokenDecimals}
               nativeSymbol={nativeSymbol}
+              onOpenWalletSelector={handleWalletSelectorOpen}
               formattedNativeBalance={formattedNativeBalance}
               tradeBaseSymbol={tradeBaseTokenSymbol}
               busy={busy}
