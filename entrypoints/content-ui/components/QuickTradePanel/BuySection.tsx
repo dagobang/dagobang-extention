@@ -6,6 +6,7 @@ import { AutoSell } from './AutoSell';
 
 type BuySectionProps = {
   formattedNativeBalance: string;
+  baseSymbol: string;
   busy: boolean;
   isUnlocked: boolean;
   onBuy: (amountStr: string, presetIndex: number) => void;
@@ -31,6 +32,7 @@ type BuySectionProps = {
 
 export function BuySection({
   formattedNativeBalance,
+  baseSymbol,
   busy,
   isUnlocked,
   onBuy,
@@ -119,7 +121,7 @@ export function BuySection({
         </div>
         <div className="flex items-center gap-1 text-[14px] text-emerald-400">
           <ChainCoinIcon chainId={settings?.chainId} size={{ width: '12px', height: '12px' }} />
-          <span>{formattedNativeBalance}</span>
+          <span>{formattedNativeBalance} {baseSymbol}</span>
         </div>
       </div>
 

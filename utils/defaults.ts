@@ -410,6 +410,7 @@ export function defaultSettings(): Settings {
     bloxrouteAuthHeader: '',
     quickBuy1Bnb: '0',
     quickBuy2Bnb: '0',
+    tradeBaseToken: 'BNB',
     keyboardShortcutsEnabled: false,
     tradeSuccessSoundEnabled: false,
     tradeSuccessSoundPresetBuy: 'Bell',

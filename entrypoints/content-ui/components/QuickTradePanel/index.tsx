@@ -33,6 +33,7 @@ type QuickTradePanelProps = {
   keyboardShortcutsEnabled: boolean;
   onToggleKeyboardShortcuts: () => void;
   formattedNativeBalance: string;
+  tradeBaseSymbol: string;
   busy: boolean;
   isUnlocked: boolean;
   onBuy: (amountStr: string, presetIndex: number) => void;
@@ -102,6 +103,7 @@ export function QuickTradePanel({
   keyboardShortcutsEnabled,
   onToggleKeyboardShortcuts,
   formattedNativeBalance,
+  tradeBaseSymbol,
   busy,
   isUnlocked,
   onBuy,
@@ -216,6 +218,7 @@ export function QuickTradePanel({
           )}
           <BuySection
             formattedNativeBalance={formattedNativeBalance}
+            baseSymbol={tradeBaseSymbol}
             busy={busy}
             isUnlocked={isUnlocked}
             onBuy={onBuy}

@@ -29,6 +29,7 @@ import type { TxBuyInput } from '@/types/extention';
 import { createTelegramNotifier } from '@/services/telegram/notifier';
 import { createTelegramController } from '@/services/telegram/controller';
 import { getChainRuntime } from '@/constants/chains';
+import { RpcReadBalancer } from '@/services/rpcReadBalancer';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
@@ -364,6 +365,11 @@ export default defineBackground(() => {
           case 'settings:set':
             await SettingsService.update(msg.settings);
             limitOrderScanner?.setIntervalMsFromValue((msg.settings as any).limitOrderScanIntervalMs);
+            try {
+              const chainId = Number((msg.settings as any)?.chainId);
+              if (Number.isFinite(chainId) && chainId > 0) RpcReadBalancer.requestCapacityProbe(chainId);
+            } catch {
+            }
             broadcastStateChange();
             return { ok: true };
 
@@ -394,6 +400,11 @@ export default defineBackground(() => {
 
           case 'wallet:unlock':
             const resUnlock = await WalletService.unlock(msg.input.password);
+            try {
+              const settings = await SettingsService.get();
+              RpcReadBalancer.requestCapacityProbe(settings.chainId);
+            } catch {
+            }
             broadcastStateChange();
             return { ok: true, ...resUnlock };
 
@@ -502,6 +513,12 @@ export default defineBackground(() => {
 
           case 'token:getBalance':
             return { ok: true, balanceWei: await TokenService.getBalance(msg.tokenAddress, msg.address) };
+
+          case 'token:getAllowance':
+            return {
+              ok: true,
+              allowanceWei: await TokenService.getAllowance(msg.tokenAddress, msg.owner, msg.spender),
+            };
 
           case 'token:getPoolPair': {
             const { token0, token1 } = await TokenService.getPoolPair(msg.pair);
@@ -827,6 +844,32 @@ export default defineBackground(() => {
             return { ok: true };
           }
 
+          case 'rpc:readProfiles': {
+            const res = await RpcService.getReadBalancerProfiles({
+              chainId: msg.chainId,
+              urls: msg.urls,
+              scope: 'both',
+            });
+            return { ok: true, ...res };
+          }
+
+          case 'rpc:capacityProbe': {
+            const rsp = await RpcService.requestReadCapacityProbe({
+              chainId: msg.chainId,
+              mode: msg.mode ?? 'request',
+              scope: 'both',
+            });
+            return { ok: true, ...rsp };
+          }
+
+          case 'rpc:resetProfiles': {
+            await RpcService.resetReadBalancerProfiles({
+              chainId: msg.chainId,
+              urls: msg.urls,
+            });
+            return { ok: true };
+          }
+
           case 'tx:transferNative': {
             const settings = await SettingsService.get();
             const chainId = settings.chainId;
@@ -880,6 +923,7 @@ export default defineBackground(() => {
           }
 
           case 'tx:buy': {
+            RpcReadBalancer.noteTradeActivity();
             const isNonceLikeError = (err: any) => {
               const msg = collectErrorText(err, true);
               return classifyBroadcastError(msg) === 'nonce' || msg.includes('nonce');
@@ -897,6 +941,12 @@ export default defineBackground(() => {
                   chainId: msg.input.chainId,
                   tokenAddress: msg.input.tokenAddress,
                   txHash: (rsp as any)?.txHash,
+                  submitElapsedMs: (rsp as any)?.submitElapsedMs,
+                  receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
+                  totalElapsedMs: (rsp as any)?.totalElapsedMs,
+                  broadcastVia: (rsp as any)?.broadcastVia,
+                  broadcastUrl: (rsp as any)?.broadcastUrl,
+                  isBundle: (rsp as any)?.isBundle,
                 },
                 sender?.tab?.id ?? null,
               );
@@ -950,7 +1000,15 @@ export default defineBackground(() => {
           }
 
           case 'tx:buyWithReceiptAuto': {
+            RpcReadBalancer.noteTradeActivity();
             const startedAt = Date.now();
+            console.log('[bg.buy.auto.request]', {
+              chainId: msg.input.chainId,
+              token: msg.input.tokenAddress,
+              fromAddress: msg.input.fromAddress,
+              amountInWei: msg.input.nativeAmountWei || msg.input.bnbAmountWei,
+              baseTokenAddress: msg.input.baseTokenAddress ?? ZERO_ADDRESS,
+            });
             const returnBuySuccess = async (rsp: any) => {
               const txHash = (rsp as any)?.txHash as `0x${string}` | undefined;
               if (txHash) {
@@ -964,6 +1022,12 @@ export default defineBackground(() => {
                   chainId: msg.input.chainId,
                   tokenAddress: msg.input.tokenAddress,
                   txHash: (rsp as any)?.txHash,
+                  submitElapsedMs: (rsp as any)?.submitElapsedMs,
+                  receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
+                  totalElapsedMs: (rsp as any)?.totalElapsedMs,
+                  broadcastVia: (rsp as any)?.broadcastVia,
+                  broadcastUrl: (rsp as any)?.broadcastUrl,
+                  isBundle: (rsp as any)?.isBundle,
                 },
                 sender?.tab?.id ?? null,
               );
@@ -1007,6 +1071,18 @@ export default defineBackground(() => {
               });
               return await returnBuySuccess(rsp);
             } catch (e: any) {
+              console.error('[bg.buy.auto.failed.detail]', {
+                chainId: msg.input.chainId,
+                token: msg.input.tokenAddress,
+                fromAddress: msg.input.fromAddress,
+                amountInWei: msg.input.nativeAmountWei || msg.input.bnbAmountWei,
+                baseTokenAddress: msg.input.baseTokenAddress ?? ZERO_ADDRESS,
+                elapsedMs: Date.now() - startedAt,
+                shortMessage: e?.shortMessage,
+                message: e?.message,
+                details: e?.details,
+                metaMessages: Array.isArray(e?.metaMessages) ? e.metaMessages : undefined,
+              });
               console.warn('[trade.buy.auto.failed]', {
                 chainId: msg.input.chainId,
                 token: msg.input.tokenAddress,
@@ -1021,6 +1097,7 @@ export default defineBackground(() => {
           }
 
           case 'tx:sell': {
+            RpcReadBalancer.noteTradeActivity();
             const isNonceLikeError = (err: any) => {
               const msg = collectErrorText(err, true);
               return classifyBroadcastError(msg) === 'nonce' || msg.includes('nonce');
@@ -1035,6 +1112,12 @@ export default defineBackground(() => {
                   chainId: msg.input.chainId,
                   tokenAddress: msg.input.tokenAddress,
                   txHash: (rsp as any)?.txHash,
+                  submitElapsedMs: (rsp as any)?.submitElapsedMs,
+                  receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
+                  totalElapsedMs: (rsp as any)?.totalElapsedMs,
+                  broadcastVia: (rsp as any)?.broadcastVia,
+                  broadcastUrl: (rsp as any)?.broadcastUrl,
+                  isBundle: (rsp as any)?.isBundle,
                 },
                 sender?.tab?.id ?? null,
               );
@@ -1096,6 +1179,7 @@ export default defineBackground(() => {
           }
 
           case 'tx:sellWithReceiptAuto': {
+            RpcReadBalancer.noteTradeActivity();
             const flowId = `bg-sell-auto:${msg.input.chainId}:${msg.input.tokenAddress.toLowerCase()}:${Date.now().toString(36)}`;
             const start = Date.now();
             console.log('[bg.sell.auto][start]', { flowId, chainId: msg.input.chainId, token: msg.input.tokenAddress });
@@ -1179,6 +1263,18 @@ export default defineBackground(() => {
             const txHash = await TradeService.approve(msg.chainId, msg.tokenAddress, msg.spender, msg.amountWei, msg.fromAddress);
             broadcastStateChange();
             return { ok: true, txHash };
+          }
+
+          case 'tx:wrapNative': {
+            const sent = await TradeService.wrapNative(msg.chainId, msg.amountWei, msg.fromAddress);
+            broadcastStateChange();
+            return { ok: true, ...sent };
+          }
+
+          case 'tx:unwrapWrapped': {
+            const sent = await TradeService.unwrapWrapped(msg.chainId, msg.amountWei, msg.fromAddress);
+            broadcastStateChange();
+            return { ok: true, ...sent };
           }
 
           case 'tx:approveMaxForSellIfNeeded': {

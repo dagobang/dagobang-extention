@@ -169,6 +169,12 @@ export function validateSettings(input: Settings): Settings | null {
   const quickBuy2Bnb = typeof (input as any).quickBuy2Bnb === 'string'
     ? (input as any).quickBuy2Bnb.trim() || defaults.quickBuy2Bnb || '0.1'
     : defaults.quickBuy2Bnb || '0.1';
+  const inputTradeBaseToken = typeof (input as any).tradeBaseToken === 'string'
+    ? String((input as any).tradeBaseToken).trim().toUpperCase()
+    : '';
+  const tradeBaseToken = (['BNB', 'WBNB', 'USDT', 'USDC'] as const).includes(inputTradeBaseToken as any)
+    ? (inputTradeBaseToken as 'BNB' | 'WBNB' | 'USDT' | 'USDC')
+    : ((defaults as any).tradeBaseToken ?? 'BNB');
   const keyboardShortcutsEnabled = typeof (input as any).keyboardShortcutsEnabled === 'boolean'
     ? (input as any).keyboardShortcutsEnabled
     : ((defaults as any).keyboardShortcutsEnabled ?? false);
@@ -759,6 +765,7 @@ export function validateSettings(input: Settings): Settings | null {
     bloxrouteAuthHeader,
     quickBuy1Bnb,
     quickBuy2Bnb,
+    tradeBaseToken,
     keyboardShortcutsEnabled,
     ui: {
       showToolbar,

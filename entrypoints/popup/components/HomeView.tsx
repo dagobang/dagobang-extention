@@ -4,8 +4,11 @@ import { Header } from './Header';
 import type { BgGetStateResponse } from '@/types/extention';
 import { Lock, Copy, Check, Settings, KeyRound, Send } from 'lucide-react';
 import { t, type Locale } from '@/utils/i18n';
-import { formatEther, isAddress } from 'viem';
+import { formatEther, isAddress, parseEther, zeroAddress } from 'viem';
 import { getNativeSymbol } from '@/constants/chains';
+import { getChainRuntime } from '@/constants/chains/runtime';
+import { DeployAddress } from '@/constants/contracts/address';
+import { ContractNames } from '@/constants/contracts/names';
 
 type HomeViewProps = {
   state: BgGetStateResponse;
@@ -50,6 +53,14 @@ export function HomeView({
   const [transferPassword, setTransferPassword] = useState('');
   const [transferBalanceWei, setTransferBalanceWei] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tradeBaseBalances, setTradeBaseBalances] = useState<Record<string, string>>({});
+  const [convertAddress, setConvertAddress] = useState<`0x${string}` | null>(null);
+  const [convertAmount, setConvertAmount] = useState('');
+  const [convertMode, setConvertMode] = useState<'wrap' | 'unwrap'>('wrap');
+  const [allowances, setAllowances] = useState<Record<string, string>>({});
+  const [approveDialogAddress, setApproveDialogAddress] = useState<`0x${string}` | null>(null);
+  const [approvingAddress, setApprovingAddress] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
   const [eip7702ByAddress, setEip7702ByAddress] = useState<Record<string, {
     loading: boolean;
@@ -59,7 +70,15 @@ export function HomeView({
     revoking?: boolean;
   }>>({});
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
-  const nativeSymbol = getNativeSymbol(state.settings.chainId);
+  const chainId = state.settings.chainId;
+  const nativeSymbol = getNativeSymbol(chainId);
+  const tradeBaseToken = String(state.settings.tradeBaseToken ?? 'BNB').toUpperCase();
+  const wrappedNativeAddress = getChainRuntime(chainId).wrappedNativeAddress;
+  const tradeBaseTokenAddress = tradeBaseToken === 'WBNB' ? wrappedNativeAddress : zeroAddress;
+  const tradeBaseSymbol = tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase() ? `W${nativeSymbol}` : nativeSymbol;
+  const routerAddress = DeployAddress[chainId as keyof typeof DeployAddress]?.[ContractNames.DagobangRouter]?.address;
+  const MAX_UINT256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
+  const APPROVAL_READY_THRESHOLD = '1000000000000000000000'; // 1000 tokens
   const accountAddressListKey = (state.wallet.accounts ?? []).map((acc) => acc.address.toLowerCase()).join('|');
 
   async function withBusy(fn: () => Promise<void>) {
@@ -88,10 +107,43 @@ export function HomeView({
     }
   };
 
+  const formatTradeBaseBalance = (addr: string) => {
+    try {
+      const bal = tradeBaseBalances[addr.toLowerCase()];
+      if (!bal) return '...';
+      return parseFloat(formatEther(BigInt(bal))).toFixed(4);
+    } catch {
+      return '0.0000';
+    }
+  };
+  const formatAllowance = (wei: string | undefined) => {
+    if (!wei) return '0';
+    try {
+      const v = BigInt(wei);
+      if (v >= BigInt(MAX_UINT256) / 2n) return 'MAX';
+      return parseFloat(formatEther(v)).toFixed(4);
+    } catch {
+      return '0';
+    }
+  };
+  const getAllowanceStatus = (addr: string): 'unknown' | 'ready' | 'not_ready' => {
+    const raw = allowances[addr.toLowerCase()];
+    if (typeof raw !== 'string') return 'unknown';
+    try {
+      return BigInt(raw) >= BigInt(APPROVAL_READY_THRESHOLD) ? 'ready' : 'not_ready';
+    } catch {
+      return 'unknown';
+    }
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedAddr(text);
     setTimeout(() => setCopiedAddr(null), 1000);
+  };
+  const showActionNotice = (type: 'success' | 'error', text: string) => {
+    setActionNotice({ type, text });
+    setTimeout(() => setActionNotice(null), 2200);
   };
 
   const getAliasKey = (addr: `0x${string}`) => addr.toLowerCase();
@@ -162,6 +214,71 @@ export function HomeView({
     };
   }, [state.wallet.isUnlocked, state.settings.chainId, accountAddressListKey]);
 
+  useEffect(() => {
+    let disposed = false;
+    const accounts = state.wallet.accounts ?? [];
+    if (!state.wallet.isUnlocked || tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase() || accounts.length === 0) {
+      setTradeBaseBalances({});
+      return () => {
+        disposed = true;
+      };
+    }
+    void (async () => {
+      const entries = await Promise.all(
+        accounts.map(async (acc) => {
+          try {
+            const res = await call({ type: 'token:getBalance', tokenAddress: tradeBaseTokenAddress, address: acc.address });
+            return [acc.address.toLowerCase(), res.balanceWei] as const;
+          } catch {
+            return [acc.address.toLowerCase(), '0'] as const;
+          }
+        })
+      );
+      if (disposed) return;
+      const next: Record<string, string> = {};
+      for (const [k, v] of entries) next[k] = v;
+      setTradeBaseBalances(next);
+    })();
+    return () => {
+      disposed = true;
+    };
+  }, [state.wallet.isUnlocked, accountAddressListKey, tradeBaseTokenAddress]);
+
+  useEffect(() => {
+    let disposed = false;
+    const accounts = state.wallet.accounts ?? [];
+    if (!state.wallet.isUnlocked || tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase() || !routerAddress || accounts.length === 0) {
+      setAllowances({});
+      return () => {
+        disposed = true;
+      };
+    }
+    void (async () => {
+      const entries = await Promise.all(
+        accounts.map(async (acc) => {
+          try {
+            const res = await call({
+              type: 'token:getAllowance',
+              tokenAddress: tradeBaseTokenAddress,
+              owner: acc.address,
+              spender: routerAddress as `0x${string}`,
+            });
+            return [acc.address.toLowerCase(), res.allowanceWei] as const;
+          } catch {
+            return [acc.address.toLowerCase(), '0'] as const;
+          }
+        })
+      );
+      if (disposed) return;
+      const next: Record<string, string> = {};
+      for (const [k, v] of entries) next[k] = v;
+      setAllowances(next);
+    })();
+    return () => {
+      disposed = true;
+    };
+  }, [state.wallet.isUnlocked, accountAddressListKey, tradeBaseTokenAddress, routerAddress]);
+
   const openManage = (addr: `0x${string}`, fallbackName: string) => {
     const currentAlias = state.settings.accountAliases?.[getAliasKey(addr)] ?? '';
     setManageAddress(addr);
@@ -202,6 +319,20 @@ export function HomeView({
     setTransferPassword('');
     setTransferBalanceWei(null);
   };
+
+  const openConvert = (addr: `0x${string}`) => {
+    setConvertAddress(addr);
+    setConvertAmount('');
+    setConvertMode('wrap');
+  };
+
+  const closeConvert = () => {
+    setConvertAddress(null);
+    setConvertAmount('');
+    setConvertMode('wrap');
+  };
+  const openApproveDialog = (addr: `0x${string}`) => setApproveDialogAddress(addr);
+  const closeApproveDialog = () => setApproveDialogAddress(null);
 
   const getTransferBalanceBnb = () => {
     const addr = transferFromAddress;
@@ -322,19 +453,19 @@ export function HomeView({
           {state.wallet.accounts?.map((acc) => (
             <div
               key={acc.address}
-              className={`flex items-center justify-between p-3 rounded-md transition-colors ${
+              className={`p-3 rounded-md transition-colors ${
                 acc.address === getCurrentAddress()
                   ? 'bg-zinc-900 border border-emerald-500/30'
                   : 'bg-zinc-900/30 border border-transparent hover:bg-zinc-900'
               }`}
             >
-              <div className="flex items-center gap-3 overflow-hidden">
+              <div className="flex items-start gap-3 overflow-hidden">
                 <div
                   className={`flex-shrink-0 w-2 h-2 rounded-full ${
                     acc.address === getCurrentAddress() ? 'bg-emerald-500' : 'bg-zinc-700'
                   }`}
                 ></div>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <div className="text-xs font-medium text-zinc-200 truncate">
                       {state.settings.accountAliases?.[getAliasKey(acc.address)] ?? acc.name}
@@ -377,92 +508,146 @@ export function HomeView({
                   <div className="text-[14px] text-zinc-400 font-mono mt-0.5">
                     {formatBalance(acc.address)} {nativeSymbol}
                   </div>
-                </div>
-              </div>
-
-              <div className="flex-shrink-0 flex items-center gap-2">
-                {eip7702ByAddress[get7702Key(acc.address)]?.delegated && (
-                  <button
-                    className="px-2 py-1 rounded bg-fuchsia-900/30 text-[10px] text-fuchsia-300 border border-fuchsia-900/50 hover:bg-fuchsia-900/40 transition-colors disabled:opacity-60"
-                    disabled={busy || eip7702ByAddress[get7702Key(acc.address)]?.revoking}
-                    onClick={() =>
-                      withBusy(async () => {
-                        const ok = window.confirm('检测到该地址启用了 EIP-7702 委托。确认发送撤销交易？');
-                        if (!ok) return;
-                        const key = get7702Key(acc.address);
-                        setEip7702ByAddress((prev) => ({
-                          ...prev,
-                          [key]: { ...(prev[key] ?? { loading: false, delegated: true }), revoking: true },
-                        }));
-                        try {
-                          await call({ type: 'wallet:revokeEip7702', address: acc.address });
-                          const status = await call({ type: 'wallet:getEip7702Status', address: acc.address });
-                          setEip7702ByAddress((prev) => ({
-                            ...prev,
-                            [key]: {
-                              loading: false,
-                              delegated: !!status.delegated,
-                              delegateAddress: status.delegateAddress,
-                              code: status.code,
-                              revoking: false,
-                            },
-                          }));
-                          await onRefresh();
-                        } catch (e: any) {
-                          setEip7702ByAddress((prev) => ({
-                            ...prev,
-                            [key]: { ...(prev[key] ?? { loading: false, delegated: true }), revoking: false },
-                          }));
-                          throw e;
+                  {tradeBaseTokenAddress.toLowerCase() !== zeroAddress.toLowerCase() && (
+                    <div className="text-[13px] text-zinc-500 font-mono mt-0.5">
+                      {formatTradeBaseBalance(acc.address)} {tradeBaseSymbol}
+                    </div>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {eip7702ByAddress[get7702Key(acc.address)]?.delegated && (
+                      <button
+                        className="px-2 py-1 rounded bg-fuchsia-900/30 text-[10px] text-fuchsia-300 border border-fuchsia-900/50 hover:bg-fuchsia-900/40 transition-colors disabled:opacity-60"
+                        disabled={busy || eip7702ByAddress[get7702Key(acc.address)]?.revoking}
+                        onClick={() =>
+                          withBusy(async () => {
+                            const ok = window.confirm('检测到该地址启用了 EIP-7702 委托。确认发送撤销交易？');
+                            if (!ok) return;
+                            const key = get7702Key(acc.address);
+                            setEip7702ByAddress((prev) => ({
+                              ...prev,
+                              [key]: { ...(prev[key] ?? { loading: false, delegated: true }), revoking: true },
+                            }));
+                            try {
+                              await call({ type: 'wallet:revokeEip7702', address: acc.address });
+                              const status = await call({ type: 'wallet:getEip7702Status', address: acc.address });
+                              setEip7702ByAddress((prev) => ({
+                                ...prev,
+                                [key]: {
+                                  loading: false,
+                                  delegated: !!status.delegated,
+                                  delegateAddress: status.delegateAddress,
+                                  code: status.code,
+                                  revoking: false,
+                                },
+                              }));
+                              showActionNotice('success', '7702 撤销交易已提交');
+                              await onRefresh();
+                            } catch (e: any) {
+                              setEip7702ByAddress((prev) => ({
+                                ...prev,
+                                [key]: { ...(prev[key] ?? { loading: false, delegated: true }), revoking: false },
+                              }));
+                              throw e;
+                            }
+                          })
                         }
-                      })
-                    }
-                    title="取消 EIP-7702 智能账户委托，恢复普通 EOA 交易模式（通常更稳定）"
-                  >
-                    {eip7702ByAddress[get7702Key(acc.address)]?.revoking ? '撤销中' : '取消7702'}
-                  </button>
-                )}
-                <button
-                  className="w-7 h-7 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors flex items-center justify-center"
-                  disabled={busy}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openManage(acc.address, acc.name);
-                  }}
-                  title={tt('popup.home.manage.button')}
-                >
-                  <Settings size={14} />
-                </button>
-                <button
-                  className="w-7 h-7 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors flex items-center justify-center"
-                  disabled={busy}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openTransfer(acc.address);
-                  }}
-                  title={tt('popup.home.transfer.button')}
-                >
-                  <Send size={14} />
-                </button>
-                {acc.address !== getCurrentAddress() && (
-                  <button
-                    className="px-2 py-1 rounded bg-zinc-800 text-[12px] hover:bg-zinc-700 transition-colors"
-                    disabled={busy}
-                    onClick={() =>
-                      withBusy(async () => {
-                        await call({ type: 'wallet:switchAccount', address: acc.address });
-                        await onRefresh();
-                      })
-                    }
-                  >
-                    {tt('popup.home.switch')}
-                  </button>
-                )}
+                        title="取消 EIP-7702 智能账户委托，恢复普通 EOA 交易模式（通常更稳定）"
+                      >
+                        {eip7702ByAddress[get7702Key(acc.address)]?.revoking ? '撤销中' : '取消7702'}
+                      </button>
+                    )}
+                    <button
+                      className="w-7 h-7 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors flex items-center justify-center"
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openManage(acc.address, acc.name);
+                      }}
+                      title={tt('popup.home.manage.button')}
+                    >
+                      <Settings size={14} />
+                    </button>
+                    <button
+                      className="w-7 h-7 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors flex items-center justify-center"
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openTransfer(acc.address);
+                      }}
+                      title={tt('popup.home.transfer.button')}
+                    >
+                      <Send size={14} />
+                    </button>
+                    {tradeBaseTokenAddress.toLowerCase() !== zeroAddress.toLowerCase() && routerAddress && (
+                      (() => {
+                        const status = getAllowanceStatus(acc.address);
+                        const statusLabel = status === 'ready' ? '已授权' : (status === 'unknown' ? '检测中' : '授权');
+                        return (
+                      <button
+                        className={`px-2 py-1 rounded text-[11px] transition-colors disabled:opacity-60 ${
+                          status === 'ready'
+                            ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50 hover:bg-emerald-900/55'
+                            : 'bg-zinc-800 hover:bg-zinc-700'
+                        }`}
+                        disabled={busy || approvingAddress === acc.address.toLowerCase() || status === 'unknown'}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openApproveDialog(acc.address);
+                        }}
+                        title={`授权 ${tradeBaseSymbol} 给路由合约`}
+                      >
+                        {approvingAddress === acc.address.toLowerCase() ? '授权中' : statusLabel}
+                      </button>
+                        );
+                      })()
+                    )}
+                    {tradeBaseTokenAddress.toLowerCase() !== zeroAddress.toLowerCase() && (
+                      <button
+                        className="px-2 py-1 rounded bg-zinc-800 text-[11px] hover:bg-zinc-700 transition-colors"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openConvert(acc.address);
+                        }}
+                        title={`${nativeSymbol} / ${tradeBaseSymbol} 兑换`}
+                      >
+                        兑换
+                      </button>
+                    )}
+                    {acc.address !== getCurrentAddress() && (
+                      <button
+                        className="px-2 py-1 rounded bg-zinc-800 text-[12px] hover:bg-zinc-700 transition-colors"
+                        disabled={busy}
+                        onClick={() =>
+                          withBusy(async () => {
+                            await call({ type: 'wallet:switchAccount', address: acc.address });
+                            showActionNotice('success', '已切换钱包');
+                            await onRefresh();
+                          })
+                        }
+                      >
+                        {tt('popup.home.switch')}
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {actionNotice && (
+        <div className="px-4 pb-2">
+          <div className={`rounded-md px-3 py-2 text-[11px] border ${
+            actionNotice.type === 'success'
+              ? 'bg-emerald-950/60 border-emerald-900/60 text-emerald-200'
+              : 'bg-red-950/60 border-red-900/60 text-red-200'
+          }`}>
+            {actionNotice.text}
+          </div>
+        </div>
+      )}
 
       {bloxrouteUnlockWarning && (
         <div className="px-4 pb-2">
@@ -692,6 +877,128 @@ export function HomeView({
               }
             >
               {tt('popup.home.transfer.confirm')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {convertAddress && (
+        <div className="absolute inset-0 bg-black/60 flex items-center justify-center p-4">
+          <div className="w-full rounded-md bg-zinc-950 border border-zinc-800 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold">兑换 / 包装</div>
+              <button
+                className="text-[12px] text-zinc-400 hover:text-zinc-200"
+                onClick={closeConvert}
+              >
+                关闭
+              </button>
+            </div>
+            <div className="text-[12px] text-zinc-500">
+              钱包 {convertAddress.slice(0, 6)}...{convertAddress.slice(-4)}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className={`rounded-md px-2 py-2 text-xs border ${convertMode === 'wrap' ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300' : 'border-zinc-700 bg-zinc-900 text-zinc-300'}`}
+                onClick={() => setConvertMode('wrap')}
+                disabled={busy}
+              >
+                {nativeSymbol} {'->'} {tradeBaseSymbol}
+              </button>
+              <button
+                type="button"
+                className={`rounded-md px-2 py-2 text-xs border ${convertMode === 'unwrap' ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300' : 'border-zinc-700 bg-zinc-900 text-zinc-300'}`}
+                onClick={() => setConvertMode('unwrap')}
+                disabled={busy}
+              >
+                {tradeBaseSymbol} {'->'} {nativeSymbol}
+              </button>
+            </div>
+            <div className="space-y-1">
+              <div className="text-[14px] text-zinc-400">数量</div>
+              <input
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs outline-none font-mono"
+                placeholder="0.0"
+                value={convertAmount}
+                onChange={(e) => setConvertAmount(e.target.value)}
+                disabled={busy}
+                inputMode="decimal"
+              />
+            </div>
+            <button
+              className="w-full rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold disabled:opacity-60 hover:bg-emerald-500 transition-colors"
+              disabled={busy || !convertAmount.trim()}
+              onClick={() =>
+                withBusy(async () => {
+                  const amountWei = parseEther(convertAmount.trim()).toString();
+                  if (convertMode === 'wrap') {
+                    await call({ type: 'tx:wrapNative', chainId, fromAddress: convertAddress, amountWei });
+                  } else {
+                    await call({ type: 'tx:unwrapWrapped', chainId, fromAddress: convertAddress, amountWei });
+                  }
+                  closeConvert();
+                  await onRefresh();
+                })
+              }
+            >
+              确认兑换
+            </button>
+          </div>
+        </div>
+      )}
+
+      {approveDialogAddress && tradeBaseTokenAddress.toLowerCase() !== zeroAddress.toLowerCase() && routerAddress && (
+        <div className="absolute inset-0 bg-black/60 flex items-center justify-center p-4">
+          <div className="w-full rounded-md bg-zinc-950 border border-zinc-800 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold">授权 {tradeBaseSymbol}</div>
+              <button
+                className="text-[12px] text-zinc-400 hover:text-zinc-200"
+                onClick={closeApproveDialog}
+              >
+                关闭
+              </button>
+            </div>
+            <div className="text-[12px] text-zinc-500">
+              钱包 {approveDialogAddress.slice(0, 6)}...{approveDialogAddress.slice(-4)}
+            </div>
+            <div className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 space-y-1">
+              <div className="text-[12px] text-zinc-400">当前授权额度</div>
+              <div className="text-[13px] font-mono text-zinc-200">
+                {formatAllowance(allowances[approveDialogAddress.toLowerCase()])} {tradeBaseSymbol}
+              </div>
+              <div className="text-[11px] text-zinc-500 break-all">
+                Spender: {routerAddress}
+              </div>
+            </div>
+            <button
+              className="w-full rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold disabled:opacity-60 hover:bg-emerald-500 transition-colors"
+              disabled={busy || approvingAddress === approveDialogAddress.toLowerCase()}
+              onClick={() => {
+                const key = approveDialogAddress.toLowerCase();
+                withBusy(async () => {
+                  setApprovingAddress(key);
+                  try {
+                    const rsp = await call({
+                      type: 'tx:approve',
+                      chainId,
+                      tokenAddress: tradeBaseTokenAddress,
+                      spender: routerAddress as `0x${string}`,
+                      amountWei: MAX_UINT256,
+                      fromAddress: approveDialogAddress,
+                    });
+                    setAllowances((prev) => ({ ...prev, [key]: MAX_UINT256 }));
+                    showActionNotice('success', `授权已提交: ${String(rsp.txHash).slice(0, 10)}...`);
+                    closeApproveDialog();
+                    await onRefresh();
+                  } finally {
+                    setApprovingAddress((prev) => (prev === key ? null : prev));
+                  }
+                });
+              }}
+            >
+              {approvingAddress === approveDialogAddress.toLowerCase() ? '提交中...' : '授权最大额度'}
             </button>
           </div>
         </div>

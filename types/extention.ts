@@ -2,6 +2,7 @@ import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "./token";
 
 export type GasPreset = 'slow' | 'standard' | 'fast' | 'turbo';
 export type PriorityFeePreset = 'none' | 'slow' | 'standard' | 'fast';
+export type TradeBaseToken = 'BNB' | 'WBNB' | 'USDT' | 'USDC';
 
 export type ExecutionMode = 'default' | 'turbo';
 export type GasPriceMode = 'fixed' | 'dynamic';
@@ -333,6 +334,7 @@ export type Settings = {
   bloxrouteAuthHeader?: string;
   quickBuy1Bnb?: string;
   quickBuy2Bnb?: string;
+  tradeBaseToken?: TradeBaseToken;
   keyboardShortcutsEnabled?: boolean;
   tradeSuccessSoundEnabled?: boolean;
   tradeSuccessSoundPresetBuy?: TradeSuccessSoundPreset;
@@ -395,6 +397,7 @@ export type TxBuyInput = {
   tokenAddress: `0x${string}`;
   nativeAmountWei?: string;
   bnbAmountWei: string;
+  baseTokenAddress?: `0x${string}`;
   fromAddress?: `0x${string}`;
   poolFee?: number;
   slippageBps?: number;
@@ -410,6 +413,7 @@ export type TxSellInput = {
   chainId: number;
   tokenAddress: `0x${string}`;
   tokenAmountWei: string;
+  baseTokenAddress?: `0x${string}`;
   fromAddress?: `0x${string}`;
   sellPercentBps?: number;
   expectedTokenInWei?: string;
@@ -685,6 +689,7 @@ export type BgRequest =
   | { type: 'chain:getBalance'; address: `0x${string}` }
   | { type: 'token:getMeta'; tokenAddress: `0x${string}` }
   | { type: 'token:getBalance'; tokenAddress: `0x${string}`; address: `0x${string}` }
+  | { type: 'token:getAllowance'; tokenAddress: `0x${string}`; owner: `0x${string}`; spender: `0x${string}` }
   | { type: 'token:getPoolPair'; pair: `0x${string}` }
   | { type: 'token:getPriceUsd'; chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo | null }
   | { type: 'token:getTokenInfo:fourmeme'; chainId: number; tokenAddress: `0x${string}` }
@@ -729,6 +734,9 @@ export type BgRequest =
   | { type: 'ai:generateLogo'; prompt: string; size?: string; apiKey: string }
   | { type: 'google:imageSearch'; query: string; page?: number }
   | { type: 'rpc:prewarm'; input?: { urls?: string[]; force?: boolean; timeoutMs?: number } }
+  | { type: 'rpc:readProfiles'; chainId: number; urls?: string[] }
+  | { type: 'rpc:capacityProbe'; chainId: number; mode?: 'request' | 'force' }
+  | { type: 'rpc:resetProfiles'; chainId: number; urls?: string[] }
   | { type: 'trade:prewarmTurbo'; input: { chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo } }
   | { type: 'trade:refreshNonce'; input: { chainId: number; fromAddress?: `0x${string}` } }
   | { type: 'tx:buy'; input: TxBuyInput }
@@ -736,6 +744,8 @@ export type BgRequest =
   | { type: 'tx:sell'; input: TxSellInput }
   | { type: 'tx:sellWithReceiptAuto'; input: TxSellInput }
   | { type: 'tx:approve'; chainId: number; tokenAddress: `0x${string}`; spender: `0x${string}`; amountWei: string; fromAddress?: `0x${string}` }
+  | { type: 'tx:wrapNative'; chainId: number; amountWei: string; fromAddress?: `0x${string}` }
+  | { type: 'tx:unwrapWrapped'; chainId: number; amountWei: string; fromAddress?: `0x${string}` }
   | {
     type: 'tx:transferNative';
     fromAddress: `0x${string}`;
@@ -839,6 +849,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; symbol: string; decimals: number }
   : T extends { type: 'token:getBalance' }
   ? { ok: true; balanceWei: string }
+  : T extends { type: 'token:getAllowance' }
+  ? { ok: true; allowanceWei: string }
   : T extends { type: 'token:getPoolPair' }
   ? { ok: true; token0: `0x${string}`; token1: `0x${string}` }
   : T extends { type: 'token:getPriceUsd' }
@@ -869,12 +881,43 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   }
   : T extends { type: 'rpc:prewarm' }
   ? { ok: true }
+  : T extends { type: 'rpc:readProfiles' }
+  ? {
+    ok: true;
+    profiles: Array<{
+      url: string;
+      ewmaLatencyMs: number;
+      learnedNodeConcurrency: number;
+      inFlight: number;
+      cooldownUntil: number;
+      cooldownRemainingMs: number;
+      consecutive429: number;
+      businessSuccessCount: number;
+      businessFailCount: number;
+      probeSuccessCount: number;
+      probeFailCount: number;
+      lastProbeAt: number;
+      lastCapacityProbeAt: number;
+    }>;
+    probeRunning: boolean;
+    capacityProbeRequested: boolean;
+    dynamicGlobalLimit: number;
+    globalInFlight: number;
+  }
+  : T extends { type: 'rpc:capacityProbe' }
+  ? { ok: true; queued: boolean; mode: 'request' | 'force' }
+  : T extends { type: 'rpc:resetProfiles' }
+  ? { ok: true }
   : T extends { type: 'trade:prewarmTurbo' }
   ? { ok: true }
   : T extends { type: 'trade:refreshNonce' }
   ? { ok: true }
   : T extends { type: 'tx:approve' }
   ? { ok: true; txHash: `0x${string}` }
+  : T extends { type: 'tx:wrapNative' }
+  ? { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+  : T extends { type: 'tx:unwrapWrapped' }
+  ? { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
   : T extends { type: 'tx:buy' }
   ? (
     | { ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }

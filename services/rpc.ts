@@ -5,6 +5,7 @@ import { classifyBroadcastError } from '@/utils/txErrorClassify';
 import { isAllowanceLikeText } from '@/utils/txErrorClassify';
 import { isInFlightLimitLikeText } from '@/utils/txErrorClassify';
 import { getChainRuntime } from '@/constants/chains';
+import { RpcReadBalancer } from './rpcReadBalancer';
 
 export type BroadcastTxVia = 'bloxroute' | 'rpc';
 export type BroadcastTxResult = {
@@ -271,9 +272,92 @@ export class RpcService {
     return client;
   }
 
-  static async measureLatency(url: string): Promise<number> {
+  static async withBalancedReadClient<T>(input: {
+    chainId?: number;
+    scope?: 'public' | 'both';
+    txSide?: BroadcastTxSide;
+    run: (client: PublicClient, meta: { url: string }) => Promise<T>;
+  }): Promise<T> {
     const settings = await SettingsService.get();
-    const chain = getChainRuntime(settings.chainId).viemChain;
+    const chainId = input.chainId ?? settings.chainId;
+    const urls = this.resolveReadUrls(settings, chainId, input.scope ?? 'public', input.txSide);
+    if (!urls.length) {
+      const client = await this.getClient();
+      return await input.run(client, { url: '' });
+    }
+    return await RpcReadBalancer.execute({
+      chainId,
+      urls,
+      probe: async (url) => await this.measureLatency(url, chainId),
+      operation: async (url) => {
+        const client = this.getClientForUrl(url, chainId);
+        return await input.run(client, { url });
+      },
+    });
+  }
+
+  private static resolveReadUrls(
+    settings: any,
+    chainId: number,
+    scope: 'public' | 'both',
+    txSide?: BroadcastTxSide,
+  ): string[] {
+    const chainConfig = settings.chains[chainId];
+    if (!chainConfig) throw new Error(`Missing chain config for chainId=${chainId}`);
+    return this.getUrlsByScope(chainConfig, txSide, scope, {
+      includeAllProtectedWhenNoSide: true,
+    });
+  }
+
+  static async getReadBalancerProfiles(input?: {
+    chainId?: number;
+    scope?: 'public' | 'both';
+    txSide?: BroadcastTxSide;
+    urls?: string[];
+  }) {
+    const settings = await SettingsService.get();
+    const chainId = input?.chainId ?? settings.chainId;
+    const urls = input?.urls?.length
+      ? this.normalizeUrls(input.urls)
+      : this.resolveReadUrls(settings, chainId, input?.scope ?? 'public', input?.txSide);
+    return await RpcReadBalancer.getProfiles({ chainId, urls });
+  }
+
+  static async requestReadCapacityProbe(input?: {
+    chainId?: number;
+    scope?: 'public' | 'both';
+    txSide?: BroadcastTxSide;
+    urls?: string[];
+    mode?: 'request' | 'force';
+  }) {
+    const settings = await SettingsService.get();
+    const chainId = input?.chainId ?? settings.chainId;
+    const urls = input?.urls?.length
+      ? this.normalizeUrls(input.urls)
+      : this.resolveReadUrls(settings, chainId, input?.scope ?? 'public', input?.txSide);
+    return await RpcReadBalancer.triggerCapacityProbe({
+      chainId,
+      urls,
+      probe: async (url) => await this.measureLatency(url, chainId),
+      mode: input?.mode ?? 'request',
+    });
+  }
+
+  static async resetReadBalancerProfiles(input?: {
+    chainId?: number;
+    urls?: string[];
+  }) {
+    const settings = await SettingsService.get();
+    const chainId = input?.chainId ?? settings.chainId;
+    const urls = input?.urls?.length ? this.normalizeUrls(input.urls) : undefined;
+    await RpcReadBalancer.resetProfiles({ chainId, urls });
+    return { ok: true as const };
+  }
+
+  static async measureLatency(url: string, chainId?: number): Promise<number> {
+    const settings = await SettingsService.get();
+    const resolvedChainId = chainId ?? settings.chainId;
+    const chain = getChainRuntime(resolvedChainId).viemChain;
     const client = createPublicClient({
       chain,
       transport: http(url),

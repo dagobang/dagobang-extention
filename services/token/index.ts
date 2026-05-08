@@ -21,12 +21,15 @@ export class TokenService {
   private static tokenBalanceInFlight = new Map<string, Promise<string>>();
 
   static async getMeta(tokenAddress: string) {
-    const client = await RpcService.getClient();
-    const [symbol, decimals] = await Promise.all([
-      client.readContract({ address: tokenAddress as `0x${string}`, abi: erc20Abi, functionName: 'symbol' }),
-      client.readContract({ address: tokenAddress as `0x${string}`, abi: erc20Abi, functionName: 'decimals' }),
-    ]);
-    return { symbol, decimals };
+    return await RpcService.withBalancedReadClient({
+      run: async (client) => {
+        const [symbol, decimals] = await Promise.all([
+          client.readContract({ address: tokenAddress as `0x${string}`, abi: erc20Abi, functionName: 'symbol' }),
+          client.readContract({ address: tokenAddress as `0x${string}`, abi: erc20Abi, functionName: 'decimals' }),
+        ]);
+        return { symbol, decimals };
+      },
+    });
   }
 
   static async getBalance(tokenAddress: string, owner: string) {
@@ -36,14 +39,16 @@ export class TokenService {
     if (cached && now - cached.ts < this.balanceCacheTtlMs) return cached.value;
     const inFlight = this.tokenBalanceInFlight.get(key);
     if (inFlight) return inFlight;
-    console.log('getBalance', tokenAddress, owner);
-    const client = await RpcService.getClient();
     const p = (async () => {
-      const balance = await client.readContract({
-        address: tokenAddress as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [owner as `0x${string}`],
+      const balance = await RpcService.withBalancedReadClient({
+        run: async (client) => {
+          return await client.readContract({
+            address: tokenAddress as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [owner as `0x${string}`],
+          });
+        },
       });
       const v = balance.toString();
       this.tokenBalanceCache.set(key, { ts: Date.now(), value: v });
@@ -55,6 +60,20 @@ export class TokenService {
     return p;
   }
 
+  static async getAllowance(tokenAddress: string, owner: string, spender: string) {
+    const allowance = await RpcService.withBalancedReadClient({
+      run: async (client) => {
+        return await client.readContract({
+          address: tokenAddress as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [owner as `0x${string}`, spender as `0x${string}`],
+        });
+      },
+    });
+    return allowance.toString();
+  }
+
   static async getNativeBalance(owner: string) {
     const now = Date.now();
     const key = owner.toLowerCase();
@@ -63,9 +82,12 @@ export class TokenService {
     const inFlight = this.nativeBalanceInFlight.get(key);
     if (inFlight) return inFlight;
 
-    const client = await RpcService.getClient();
     const p = (async () => {
-      const balance = await client.getBalance({ address: owner as `0x${string}` });
+      const balance = await RpcService.withBalancedReadClient({
+        run: async (client) => {
+          return await client.getBalance({ address: owner as `0x${string}` });
+        },
+      });
       const v = balance.toString();
       this.nativeBalanceCache.set(key, { ts: Date.now(), value: v });
       return v;
@@ -83,19 +105,22 @@ export class TokenService {
       return cached;
     }
 
-    const client = await RpcService.getClient();
-    const [token0, token1] = await Promise.all([
-      client.readContract({
-        address: pair as `0x${string}`,
-        abi: pairV2Abi,
-        functionName: 'token0',
-      }) as Promise<`0x${string}`>,
-      client.readContract({
-        address: pair as `0x${string}`,
-        abi: pairV2Abi,
-        functionName: 'token1',
-      }) as Promise<`0x${string}`>
-    ]);
+    const [token0, token1] = await RpcService.withBalancedReadClient({
+      run: async (client) => {
+        return await Promise.all([
+          client.readContract({
+            address: pair as `0x${string}`,
+            abi: pairV2Abi,
+            functionName: 'token0',
+          }) as Promise<`0x${string}`>,
+          client.readContract({
+            address: pair as `0x${string}`,
+            abi: pairV2Abi,
+            functionName: 'token1',
+          }) as Promise<`0x${string}`>,
+        ]);
+      },
+    });
     const result = { token0, token1 };
     this.poolPairCache.set(key, result);
     return result;

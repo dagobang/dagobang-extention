@@ -20,6 +20,7 @@ import { classifyBroadcastError, collectErrorText, isAllowanceLikeText, isInFlig
 import { tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { token } from 'viem/tempo/actions';
 import { getNativeSymbol } from '@/constants/chains';
+import { getChainRuntime } from '@/constants/chains/runtime';
 
 export class TradeService {
   private static sellInFlightByToken = new Set<string>();
@@ -175,11 +176,23 @@ export class TradeService {
     txSide: 'buy' | 'sell',
     timeoutMs: number
   ) {
-    const receipt = await RpcService.waitForTransactionReceiptAny(txHash, {
-      chainId,
-      txSide,
-      timeoutMs,
-    });
+    let receipt: any;
+    try {
+      receipt = await RpcService.waitForTransactionReceiptAny(txHash, {
+        chainId,
+        txSide,
+        timeoutMs,
+      });
+    } catch (e: any) {
+      console.error('[trade.receipt.wait.failed]', {
+        side: txSide,
+        chainId,
+        txHash,
+        timeoutMs,
+        error: String(e?.shortMessage || e?.message || e || ''),
+      });
+      throw e;
+    }
     if (receipt.status === 'success') return;
     let revertReason: string | null = null;
     try {
@@ -304,6 +317,19 @@ export class TradeService {
     return t || undefined;
   }
 
+  private static resolveBaseTokenAddress(chainId: number, input: { baseTokenAddress?: `0x${string}` }): Address {
+    const raw = typeof input.baseTokenAddress === 'string' ? input.baseTokenAddress.trim() : '';
+    if (!raw || raw.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return ZERO_ADDRESS;
+    return raw as Address;
+  }
+
+  private static resolveBaseTokenSymbol(chainId: number, baseTokenAddress: Address): string {
+    if (baseTokenAddress.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return getNativeSymbol(chainId);
+    const wrapped = getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
+    if (baseTokenAddress.toLowerCase() === wrapped) return `W${getNativeSymbol(chainId)}`;
+    return 'TOKEN';
+  }
+
   static async buy(input: TxBuyInput) {
     const settings = await SettingsService.get();
     const routerAddress = DeployAddress[input.chainId as ChainId]?.DagobangRouter?.address;
@@ -315,7 +341,13 @@ export class TradeService {
     const client = await RpcService.getClient();
 
     const amountIn = BigInt(this.resolveNativeAmountWei(input));
-    const nativeSymbol = getNativeSymbol(input.chainId);
+    const configuredBaseTokenAddress = String(settings.tradeBaseToken ?? 'BNB').toUpperCase() === 'WBNB'
+      ? getChainRuntime(input.chainId).wrappedNativeAddress
+      : ZERO_ADDRESS;
+    const baseTokenAddress = (typeof input.baseTokenAddress === 'string' && input.baseTokenAddress.trim())
+      ? this.resolveBaseTokenAddress(input.chainId, input)
+      : configuredBaseTokenAddress;
+    const baseTokenSymbol = this.resolveBaseTokenSymbol(input.chainId, baseTokenAddress);
     const baseFee = input.poolFee ?? 2500;
     const executionMode = settings.chains[input.chainId]?.executionMode ?? 'default';
     const isTurbo = executionMode === 'turbo';
@@ -351,17 +383,17 @@ export class TradeService {
     console.log('input.tokenInfo', tokenInfo, isInner, launchpadConfig)
     console.log('bridgeToken', bridgeToken);
     const descs: SwapDescLike[] = [];
-    let currentRouterToken: Address = ZERO_ADDRESS;
+    let currentRouterToken: Address = baseTokenAddress;
     let currentAmount = amountIn;
 
-    if (bridgeToken) {
-      // Hop 1: [Native] -> [Quote]
+    if (bridgeToken && currentRouterToken.toLowerCase() !== bridgeToken.toLowerCase()) {
+      // Hop 1: [BaseToken] -> [Quote]
       const bridgePrefer = getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken);
       const needAmountOut = !isTurbo;
       const q1 = await timeStep('quote:bridge', () =>
         resolveBridgeHopExactIn(
           input.chainId,
-          ZERO_ADDRESS,
+          currentRouterToken,
           bridgeToken,
           currentAmount,
           bridgePrefer,
@@ -371,21 +403,21 @@ export class TradeService {
       );
       if (isTurbo) {
         if (!q1.poolAddress || q1.poolAddress === ZERO_ADDRESS) {
-          throw new Error(`找不到 ${nativeSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
+          throw new Error(`找不到 ${baseTokenSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
         }
       } else {
         try {
           assertDexQuoteOk(q1);
         } catch {
-          throw new Error(`找不到 ${nativeSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
+          throw new Error(`找不到 ${baseTokenSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
         }
         if (q1.amountOut <= 0n) {
-          throw new Error(`找不到 ${nativeSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
+          throw new Error(`找不到 ${baseTokenSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
         }
       }
       descs.push(getRouterSwapDesc({
         swapType: q1.swapType,
-        tokenIn: ZERO_ADDRESS,
+        tokenIn: currentRouterToken,
         tokenOut: bridgeToken,
         poolAddress: q1.poolAddress,
         fee: getV3FeeForDesc(q1, 500),
@@ -394,7 +426,7 @@ export class TradeService {
       currentAmount = isTurbo ? 1n : q1.amountOut;
     }
 
-    // Hop 2: [Native/Quote] -> Meme
+    // Hop 2: [BaseToken/Quote] -> Meme
     const tokenOut = input.tokenAddress;
     let minOut = 0n;
 
@@ -421,7 +453,7 @@ export class TradeService {
 
         minOut = minAmount;
 
-        const wantEncodedBuy = tokenInfo.aiCreator === true && currentRouterToken === ZERO_ADDRESS;
+      const wantEncodedBuy = tokenInfo.aiCreator === true && currentRouterToken === ZERO_ADDRESS;
         if (wantEncodedBuy) {
           dataForDesc = encodeFourMemeBuyTokenData({
             token: tokenOut as Address,
@@ -497,7 +529,7 @@ export class TradeService {
       args: [
         descs,
         ZERO_ADDRESS, // feeToken
-        amountIn,     // amountIn (native)
+          amountIn,
         minOut,       // minReturn
         deadline
       ]
@@ -512,9 +544,36 @@ export class TradeService {
       feeMode: gasPriceMode,
       gasPreset,
     };
+    const txValue = baseTokenAddress.toLowerCase() === ZERO_ADDRESS.toLowerCase() ? amountIn : 0n;
+    console.log('[trade.buy.submit]', {
+      chainId: input.chainId,
+      from: account.address,
+      tokenAddress: input.tokenAddress,
+      baseTokenAddress,
+      amountIn: amountIn.toString(),
+      txValue: txValue.toString(),
+      routeCount: descs.length,
+      route: descs.map((d) => ({
+        swapType: d.swapType,
+        tokenIn: d.tokenIn,
+        tokenOut: d.tokenOut,
+        poolAddress: d.poolAddress,
+        fee: d.fee,
+      })),
+      gasPreset,
+      gasPriceWei: gasPriceWei.toString(),
+      mode: executionMode,
+    });
     const { txHash, broadcastVia, broadcastUrl, isBundle } = await timeStep('sendTransaction', () =>
-      this.sendTransaction(client, account, routerAddress, data, amountIn, gasPriceWei, input.chainId, txOpts)
+      this.sendTransaction(client, account, routerAddress, data, txValue, gasPriceWei, input.chainId, txOpts)
     );
+    console.log('[trade.buy.broadcasted]', {
+      chainId: input.chainId,
+      txHash,
+      broadcastVia,
+      broadcastUrl,
+      isBundle: !!isBundle,
+    });
     if (perfEnabled) {
       const totalMs = Date.now() - perfStart;
       console.log('[trade.buy.turbo] timing ms', {
@@ -575,13 +634,22 @@ export class TradeService {
         lastErr = e;
         const nonceLike = this.isNonceLikeError(e);
         const inFlightLimit = this.isInFlightLimitError(e);
+        const allowanceLike = this.isAllowanceLikeError(e);
+        const errText = collectErrorText(e, true);
         console.warn('[trade.buy.auto][attempt.failed]', {
           flowId,
           attempt: attemptNo,
           elapsedMs: Date.now() - attemptStart,
           nonceLike,
           inFlightLimit,
+          allowanceLike,
+          chainId: input.chainId,
+          token: input.tokenAddress,
+          fromAddress: input.fromAddress,
+          baseTokenAddress: input.baseTokenAddress ?? '0x0000000000000000000000000000000000000000',
+          amountInWei: this.resolveNativeAmountWei(input),
           error: String(e?.shortMessage || e?.message || e || ''),
+          classifyText: errText,
         });
         if (attempt >= maxRetry || !nonceLike) break;
         console.log('[trade.buy.auto][retry.signal]', {
@@ -826,7 +894,13 @@ export class TradeService {
       const client = await RpcService.getClient();
 
       let amountIn = BigInt(input.tokenAmountWei);
-      const nativeSymbol = getNativeSymbol(input.chainId);
+      const configuredBaseTokenAddress = String(settings.tradeBaseToken ?? 'BNB').toUpperCase() === 'WBNB'
+        ? getChainRuntime(input.chainId).wrappedNativeAddress
+        : ZERO_ADDRESS;
+      const baseTokenAddress = (typeof input.baseTokenAddress === 'string' && input.baseTokenAddress.trim())
+        ? this.resolveBaseTokenAddress(input.chainId, input)
+        : configuredBaseTokenAddress;
+      const baseTokenSymbol = this.resolveBaseTokenSymbol(input.chainId, baseTokenAddress);
       const baseFee = input.poolFee ?? 2500;
       const executionMode = settings.chains[input.chainId]?.executionMode ?? 'default';
       const isTurbo = executionMode === 'turbo';
@@ -905,7 +979,7 @@ export class TradeService {
           }
         }
 
-        const innerTokenOut = bridgeToken ?? ZERO_ADDRESS;
+        const innerTokenOut = bridgeToken ?? baseTokenAddress;
         descs.push(getRouterSwapDesc({
           swapType: launchpadConfig.sellType,
           tokenIn: sellToken,
@@ -921,7 +995,7 @@ export class TradeService {
             resolveBridgeHopExactIn(
               input.chainId,
               bridgeToken,
-              ZERO_ADDRESS,
+              baseTokenAddress,
               hop2AmountIn,
               bridgePrefer,
               isTurbo,
@@ -929,12 +1003,12 @@ export class TradeService {
             )
           );
           if (!hop2.poolAddress || hop2.poolAddress === ZERO_ADDRESS) {
-            throw new Error(`找不到 Quote/${nativeSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
+            throw new Error(`找不到 Quote/${baseTokenSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
           }
           descs.push(getRouterSwapDesc({
             swapType: hop2.swapType,
             tokenIn: bridgeToken,
-            tokenOut: ZERO_ADDRESS,
+            tokenOut: baseTokenAddress,
             poolAddress: hop2.poolAddress,
             fee: getV3FeeForDesc(hop2, 500),
           }));
@@ -953,7 +1027,7 @@ export class TradeService {
 
       if (!isInner) {
         // hop1
-        const hop1RouterOut = bridgeToken ? bridgeToken : ZERO_ADDRESS;
+        const hop1RouterOut = bridgeToken ? bridgeToken : baseTokenAddress;
         const hop1NeedAmountOut = !!bridgeToken && !isTurbo;
         const poolVersion = getDexPoolPrefer(tokenInfo.dex_type);
         const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
@@ -999,14 +1073,14 @@ export class TradeService {
           estimatedOut = isTurbo ? 0n : hop1.amountOut;
         } else {
           if (!isTurbo && hop1.amountOut <= 0n) {
-            throw new Error('找不到 Quote/BNB 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+            throw new Error(`找不到 Quote/${baseTokenSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
           }
           const hop2AmountIn = isTurbo ? 1n : hop1.amountOut;
           const hop2 = await timeStep('quote:bridge:hop2', () =>
             resolveBridgeHopExactIn(
               input.chainId,
               bridgeToken,
-              ZERO_ADDRESS,
+              baseTokenAddress,
               hop2AmountIn,
               bridgePrefer,
               isTurbo,
@@ -1015,22 +1089,22 @@ export class TradeService {
           );
           if (isTurbo) {
             if (!hop2.poolAddress || hop2.poolAddress === ZERO_ADDRESS) {
-              throw new Error(`找不到 Quote/${nativeSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
+              throw new Error(`找不到 Quote/${baseTokenSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
             }
           } else {
             try {
               assertDexQuoteOk(hop2);
             } catch {
-              throw new Error(`找不到 Quote/${nativeSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
+              throw new Error(`找不到 Quote/${baseTokenSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
             }
           }
           if (!isTurbo && hop2.amountOut <= 0n) {
-            throw new Error(`找不到 Quote/${nativeSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
+            throw new Error(`找不到 Quote/${baseTokenSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
           }
           descs.push(getRouterSwapDesc({
             swapType: hop2.swapType,
             tokenIn: bridgeToken,
-            tokenOut: ZERO_ADDRESS,
+            tokenOut: baseTokenAddress,
             poolAddress: hop2.poolAddress,
             fee: getV3FeeForDesc(hop2, 500),
           }));
@@ -1218,6 +1292,64 @@ export class TradeService {
       { skipEstimateGas: true, gasLimit: 900000n, feeMode: gasPriceMode, gasPreset }
     );
     return txHash;
+  }
+
+  static async wrapNative(chainId: number, amountWei: string, fromAddress?: `0x${string}`) {
+    const settings = await SettingsService.get();
+    const account = await WalletService.getSigner(fromAddress);
+    const client = await RpcService.getClient();
+    const chainSettings = settings.chains[chainId];
+    const gasPriceMode = chainSettings.gasPriceMode ?? 'fixed';
+    const gasPreset = chainSettings.buyGasPreset ?? chainSettings.gasPreset;
+    const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'buy');
+    const wrapped = getChainRuntime(chainId).wrappedNativeAddress;
+    const value = BigInt(String(amountWei || '0').trim());
+    if (value <= 0n) throw new Error('Invalid amount');
+    const data = encodeFunctionData({
+      abi: [{ type: 'function', name: 'deposit', stateMutability: 'payable', inputs: [], outputs: [] }],
+      functionName: 'deposit',
+      args: [],
+    });
+    const { txHash, broadcastVia, broadcastUrl, isBundle } = await this.sendTransaction(
+      client,
+      account,
+      wrapped,
+      data,
+      value,
+      gasPriceWei,
+      chainId,
+      { skipEstimateGas: true, gasLimit: 300000n, feeMode: gasPriceMode, gasPreset }
+    );
+    return { txHash, broadcastVia, broadcastUrl, isBundle };
+  }
+
+  static async unwrapWrapped(chainId: number, amountWei: string, fromAddress?: `0x${string}`) {
+    const settings = await SettingsService.get();
+    const account = await WalletService.getSigner(fromAddress);
+    const client = await RpcService.getClient();
+    const chainSettings = settings.chains[chainId];
+    const gasPriceMode = chainSettings.gasPriceMode ?? 'fixed';
+    const gasPreset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;
+    const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
+    const wrapped = getChainRuntime(chainId).wrappedNativeAddress;
+    const amount = BigInt(String(amountWei || '0').trim());
+    if (amount <= 0n) throw new Error('Invalid amount');
+    const data = encodeFunctionData({
+      abi: [{ type: 'function', name: 'withdraw', stateMutability: 'nonpayable', inputs: [{ name: 'wad', type: 'uint256' }], outputs: [] }],
+      functionName: 'withdraw',
+      args: [amount],
+    });
+    const { txHash, broadcastVia, broadcastUrl, isBundle } = await this.sendTransaction(
+      client,
+      account,
+      wrapped,
+      data,
+      0n,
+      gasPriceWei,
+      chainId,
+      { skipEstimateGas: true, gasLimit: 300000n, feeMode: gasPriceMode, gasPreset }
+    );
+    return { txHash, broadcastVia, broadcastUrl, isBundle };
   }
 
   static async sendTransaction(
