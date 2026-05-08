@@ -13,6 +13,7 @@ import { Notification } from './Settings/Notification';
 import { TelegramSettings } from './Settings/TelegramSettings';
 import { SecuritySettings } from './Settings/SecuritySettings';
 import { UiSettings } from './Settings/UiSettings';
+import { VisionSettings } from './Settings/VisionSettings';
 import type { SettingsSectionId } from './Settings/types';
 
 type SettingsViewProps = {
@@ -75,6 +76,7 @@ export function SettingsView({
     telegram: tt('popup.settings.telegram'),
     security: tt('popup.settings.security'),
     ui: tt('popup.settings.ui'),
+    vision: tt('popup.settings.visionReport'),
   };
 
   return (
@@ -101,6 +103,7 @@ export function SettingsView({
         {section === 'gas' && <GasSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'notification' && <Notification settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'telegram' && <TelegramSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
+        {section === 'vision' && <VisionSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'ui' && <UiSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'security' && <SecuritySettings tt={tt} busy={busy} withBusy={withBusy} onBackup={onBackup} onRefresh={onRefresh} />}
 
