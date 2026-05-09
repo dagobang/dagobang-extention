@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { parseEther, formatEther, formatUnits } from 'viem';
-import { Wallet } from 'lucide-react';
+import { Wallet, PanelRightOpen, PanelRightClose, ChevronUpSquare, ChevronDownSquare, X } from 'lucide-react';
 import type { Account, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { TokenAPI } from '@/hooks/TokenAPI';
@@ -47,7 +47,7 @@ export function LimitTradePanel({
   onVisibleChange,
   settings,
   isUnlocked,
-  address,
+  address: _address,
   walletAccounts,
   activeWalletAddress,
   selectedTradeWallets,
@@ -191,7 +191,6 @@ export function LimitTradePanel({
     return tt('contentUi.autotrade.statusUnlocked');
   })();
 
-  const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : tt('contentUi.autotrade.walletNotConnected');
   const walletSelectorVisible = isUnlocked && walletAccounts.length > 0;
   const selectedWalletCount = selectedTradeWallets.length;
   const getWalletName = (addr?: string | null) => {
@@ -790,7 +789,7 @@ export function LimitTradePanel({
         >
           <div className="flex flex-col">
             <div className="text-xs font-semibold text-emerald-300">{tt('contentUi.autotrade.title')}</div>
-            <div className="text-[10px] text-zinc-500">{statusText} · {shortAddress}</div>
+            <div className="text-[10px] text-zinc-500">{statusText}</div>
           </div>
           <div className="flex items-center gap-2">
             {walletSelectorVisible ? (
@@ -801,34 +800,38 @@ export function LimitTradePanel({
                 onToggleWalletSelector={() => setWalletSelectorOpen((v) => !v)}
               />
             ) : null}
-            <div className="inline-flex rounded border border-zinc-700 overflow-hidden text-[11px]">
+            <div className="inline-flex rounded border border-zinc-700 overflow-hidden">
               <button
                 type="button"
-                className={`px-2 py-1 ${panelLayout === 'wide' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
+                className={`h-7 w-7 flex items-center justify-center ${panelLayout === 'wide' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
                 onClick={() => setPanelLayout('wide')}
+                title={tt('contentUi.limitTradePanel.layout.wide')}
               >
-                {tt('contentUi.limitTradePanel.layout.wide')}
+                <PanelRightOpen size={13} />
               </button>
               <button
                 type="button"
-                className={`px-2 py-1 border-l border-zinc-700 ${panelLayout === 'compact' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
+                className={`h-7 w-7 flex items-center justify-center border-l border-zinc-700 ${panelLayout === 'compact' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
                 onClick={() => setPanelLayout('compact')}
+                title={tt('contentUi.limitTradePanel.layout.compact')}
               >
-                {tt('contentUi.limitTradePanel.layout.compact')}
+                <PanelRightClose size={13} />
               </button>
             </div>
             <button
               type="button"
-              className="text-[11px] text-zinc-400 hover:text-zinc-200"
+              className="h-7 w-7 rounded border border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-zinc-200 flex items-center justify-center"
               onClick={() => setShowActions((v) => !v)}
+              title={showActions ? tt('contentUi.limitTradePanel.collapseActions') : tt('contentUi.limitTradePanel.expandActions')}
             >
-              {showActions ? tt('contentUi.limitTradePanel.collapseActions') : tt('contentUi.limitTradePanel.expandActions')}
+              {showActions ? <ChevronUpSquare size={13} /> : <ChevronDownSquare size={13} />}
             </button>
             <button
-              className="text-[11px] text-zinc-400 hover:text-zinc-200"
+              className="h-7 w-7 rounded border border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-zinc-200 flex items-center justify-center"
               onClick={() => onVisibleChange(false)}
+              title={tt('contentUi.autotrade.close')}
             >
-              {tt('contentUi.autotrade.close')}
+              <X size={13} />
             </button>
           </div>
         </div>
