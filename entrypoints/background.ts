@@ -30,6 +30,7 @@ import { createTelegramNotifier } from '@/services/telegram/notifier';
 import { createTelegramController } from '@/services/telegram/controller';
 import { getChainRuntime } from '@/constants/chains';
 import { RpcReadBalancer } from '@/services/rpcReadBalancer';
+import { forwardMarketSignalToVision, forwardTwitterSignalToVision } from '@/services/vision/forwarder';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
@@ -1475,13 +1476,17 @@ export default defineBackground(() => {
             await Promise.all([
               (AutoTrade as any).handleTwitterSignal(signal),
               (TokenSniperTrade as any).handleTwitterSignal(signal),
+              forwardTwitterSignalToVision(signal),
             ]);
             return { ok: true };
           }
 
           case 'market:signal': {
             const signal = msg.payload as any;
-            await (NewCoinSniperTrade as any).handleMarketSignal(signal);
+            await Promise.all([
+              (NewCoinSniperTrade as any).handleMarketSignal(signal),
+              forwardMarketSignalToVision(signal),
+            ]);
             return { ok: true };
           }
         }

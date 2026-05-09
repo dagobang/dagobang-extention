@@ -435,6 +435,10 @@ export function defaultSettings(): Settings {
       notifyLimitOrder: true,
       notifyQuickTrade: true,
     },
+    visionReport: {
+      enabled: true,
+      baseUrl: 'http://127.0.0.1:18081',
+    },
     autoTrade: DEFAULT_AUTOTRADE,
     advancedAutoSell: DEFAULT_ADVANCED_AUTO_SELL,
   };

@@ -318,6 +318,11 @@ export type TelegramPollStatus = {
   lastError?: string | null;
 };
 
+export type VisionReportSettings = {
+  enabled: boolean;
+  baseUrl: string;
+};
+
 export type Settings = {
   chainId: number;
   chains: Record<number, ChainSettings>;
@@ -344,6 +349,7 @@ export type Settings = {
   tokenBalancePollIntervalMs?: number;
   ui?: UiSettings;
   telegram?: TelegramSettings;
+  visionReport?: VisionReportSettings;
   autoTrade: AutoTradeConfig;
   advancedAutoSell: AdvancedAutoSellConfig;
 };

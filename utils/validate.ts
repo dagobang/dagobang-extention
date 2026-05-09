@@ -406,6 +406,15 @@ export function validateSettings(input: Settings): Settings | null {
   const telegramNotifyQuickTrade = typeof inputTelegram?.notifyQuickTrade === 'boolean'
     ? inputTelegram.notifyQuickTrade
     : (defaultTelegram?.notifyQuickTrade ?? true);
+  const inputVisionReport = (input as any).visionReport as any;
+  const defaultVisionReport = (defaults as any).visionReport as any;
+  const visionReportEnabled = typeof inputVisionReport?.enabled === 'boolean'
+    ? inputVisionReport.enabled
+    : (defaultVisionReport?.enabled ?? true);
+  const visionReportBaseUrlRaw = typeof inputVisionReport?.baseUrl === 'string'
+    ? inputVisionReport.baseUrl.trim()
+    : (typeof defaultVisionReport?.baseUrl === 'string' ? defaultVisionReport.baseUrl.trim() : 'http://127.0.0.1:18081');
+  const visionReportBaseUrl = visionReportBaseUrlRaw || 'http://127.0.0.1:18081';
 
   const inputAutoTrade = (input as any).autoTrade as Partial<AutoTradeConfig> | undefined;
   const defaultAutoTrade = defaults.autoTrade;
@@ -783,6 +792,10 @@ export function validateSettings(input: Settings): Settings | null {
       notifyTradeRetrying: telegramNotifyTradeRetrying,
       notifyLimitOrder: telegramNotifyLimitOrder,
       notifyQuickTrade: telegramNotifyQuickTrade,
+    },
+    visionReport: {
+      enabled: visionReportEnabled,
+      baseUrl: visionReportBaseUrl,
     },
     tradeSuccessSoundEnabled,
     tradeSuccessSoundPresetBuy,
