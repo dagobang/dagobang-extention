@@ -92,7 +92,7 @@ function isAllowedProtectedRpcUrl(raw: string): boolean {
   if (host.includes('flashbots.net')) return true;
   if (host.includes('alchemy.com')) return true;
   if (host.includes('infura.io')) return true;
-  if (host.includes('drpc.org')) return true;
+  if (host.includes('drpc')) return true;
   return false;
 }
 

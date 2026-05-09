@@ -116,6 +116,26 @@ export function HomeView({
       return '0.0000';
     }
   };
+  const getNativeBalanceValue = (addr: string) => {
+    const raw = balances[addr];
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+  const getTradeBaseBalanceValue = (addr: string) => {
+    const raw = tradeBaseBalances[addr.toLowerCase()];
+    if (!raw) return null;
+    try {
+      const n = Number(formatEther(BigInt(raw)));
+      return Number.isFinite(n) ? n : null;
+    } catch {
+      return null;
+    }
+  };
+  const getBalanceColorClass = (value: number | null) => {
+    if (value == null) return 'text-zinc-500';
+    if (value <= 0) return 'text-zinc-500';
+    return 'text-amber-400';
+  };
   const formatAllowance = (wei: string | undefined) => {
     if (!wei) return '0';
     try {
@@ -450,70 +470,113 @@ export function HomeView({
         )}
 
         <div className="space-y-2">
-          {state.wallet.accounts?.map((acc) => (
-            <div
-              key={acc.address}
-              className={`p-3 rounded-md transition-colors ${
-                acc.address === getCurrentAddress()
-                  ? 'bg-zinc-900 border border-emerald-500/30'
-                  : 'bg-zinc-900/30 border border-transparent hover:bg-zinc-900'
-              }`}
-            >
-              <div className="flex items-start gap-3 overflow-hidden">
-                <div
-                  className={`flex-shrink-0 w-2 h-2 rounded-full ${
-                    acc.address === getCurrentAddress() ? 'bg-emerald-500' : 'bg-zinc-700'
-                  }`}
-                ></div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <div className="text-xs font-medium text-zinc-200 truncate">
+          {state.wallet.accounts?.map((acc) => {
+            const isCurrent = acc.address === getCurrentAddress();
+            const nativeBalanceText = formatBalance(acc.address);
+            const tradeBaseBalanceText = formatTradeBaseBalance(acc.address);
+            const nativeBalanceColor = getBalanceColorClass(getNativeBalanceValue(acc.address));
+            const tradeBaseBalanceColor = getBalanceColorClass(getTradeBaseBalanceValue(acc.address));
+            return (
+              <div
+                key={acc.address}
+                className={`p-2.5 rounded-md transition-colors ${
+                  isCurrent
+                    ? 'bg-zinc-900 border border-emerald-500/30'
+                    : 'bg-zinc-900/30 border border-transparent hover:bg-zinc-900'
+                }`}
+              >
+                <div className="space-y-1.5 overflow-hidden">
+                  <div className="min-w-0 flex items-center gap-1.5">
+                    <div className="text-[13px] font-semibold text-zinc-100 truncate">
                       {state.settings.accountAliases?.[getAliasKey(acc.address)] ?? acc.name}
                     </div>
+                    <div className="text-[12px] text-zinc-500 font-mono truncate">
+                      {acc.address.slice(0, 6)}...{acc.address.slice(-4)}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(acc.address);
+                      }}
+                      className="text-zinc-600 hover:text-zinc-400 transition-colors"
+                      title={tt('popup.home.copyAddress')}
+                    >
+                      {copiedAddr === acc.address ? <Check size={10} className="text-emerald-500" /> : <Copy size={10} />}
+                    </button>
                     {acc.type === 'imported' && (
-                        <span className="text-[9px] bg-amber-900/30 text-amber-500 px-1.5 py-0.5 rounded border border-amber-900/50">{tt('popup.home.imported')}</span>
+                      <span className="text-[9px] bg-amber-900/30 text-amber-500 px-1.5 py-0.5 rounded border border-amber-900/50">{tt('popup.home.imported')}</span>
                     )}
                     {eip7702ByAddress[get7702Key(acc.address)]?.delegated && (
-                        <span
-                          className="text-[9px] bg-fuchsia-900/30 text-fuchsia-400 px-1.5 py-0.5 rounded border border-fuchsia-900/50"
-                          title={`该地址启用了 EIP-7702 智能账户委托（Delegated Account）。
+                      <span
+                        className="text-[9px] bg-fuchsia-900/30 text-fuchsia-400 px-1.5 py-0.5 rounded border border-fuchsia-900/50"
+                        title={`该地址启用了 EIP-7702 智能账户委托（Delegated Account）。
 部分节点会对这类账户施加更严格的 in-flight/pending 限制，可能导致交易发送失败或 nonce 步进异常。
 如果你使用高频买卖/狙击，建议点击“取消7702”恢复普通 EOA 模式，以提升交易稳定性。
 当前委托目标：${eip7702ByAddress[get7702Key(acc.address)]?.delegateAddress || 'unknown'}`}
-                        >
-                          7702
-                        </span>
+                      >
+                        7702
+                      </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                      <div className="text-[12px] text-zinc-500 font-mono truncate">
-                        {acc.address.slice(0, 6)}...{acc.address.slice(-4)}
+
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className={`text-[13px] font-mono font-semibold tabular-nums leading-4 ${nativeBalanceColor}`}>
+                        {nativeBalanceText} <span className="text-[11px] text-zinc-400">{nativeSymbol}</span>
                       </div>
-                      <button 
+                      {tradeBaseTokenAddress.toLowerCase() !== zeroAddress.toLowerCase() && (
+                        <div className={`text-[11px] font-mono tabular-nums leading-4 ${tradeBaseBalanceColor}`}>
+                          {tradeBaseBalanceText} <span className="text-[10px] text-zinc-500">{tradeBaseSymbol}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        className="h-7 w-7 rounded-md bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 transition-colors flex items-center justify-center disabled:opacity-60"
+                        disabled={busy}
                         onClick={(e) => {
-                            e.stopPropagation();
-                            copyToClipboard(acc.address);
+                          e.stopPropagation();
+                          openManage(acc.address, acc.name);
                         }}
-                        className="text-zinc-600 hover:text-zinc-400 transition-colors"
-                        title={tt('popup.home.copyAddress')}
+                        title={tt('popup.home.manage.button')}
                       >
-                          {copiedAddr === acc.address ? <Check size={10} className="text-emerald-500"/> : <Copy size={10} />}
+                        <Settings size={13} />
                       </button>
-                  </div>
-                  {eip7702ByAddress[get7702Key(acc.address)]?.delegated && (
-                    <div className="text-[10px] text-fuchsia-400/80 mt-0.5">
-                      7702 to {String(eip7702ByAddress[get7702Key(acc.address)]?.delegateAddress || '').slice(0, 6)}...{String(eip7702ByAddress[get7702Key(acc.address)]?.delegateAddress || '').slice(-4)}
+                      <button
+                        className="h-7 w-7 rounded-md bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 transition-colors flex items-center justify-center disabled:opacity-60"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openTransfer(acc.address);
+                        }}
+                        title={tt('popup.home.transfer.button')}
+                      >
+                        <Send size={13} />
+                      </button>
+                      {isCurrent ? (
+                        <div className="h-7 px-2 rounded-md border border-emerald-700/60 text-emerald-300 bg-emerald-900/30 flex items-center justify-center text-[11px]" title={locale === 'en' ? 'Active' : '当前'}>
+                          {locale === 'en' ? 'ON' : '当前'}
+                        </div>
+                      ) : (
+                        <button
+                          className="h-7 px-2 rounded-md bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 transition-colors flex items-center justify-center disabled:opacity-60 text-[12px]"
+                          disabled={busy}
+                          onClick={() =>
+                            withBusy(async () => {
+                              await call({ type: 'wallet:switchAccount', address: acc.address });
+                              showActionNotice('success', '已切换钱包');
+                              await onRefresh();
+                            })
+                          }
+                          title={tt('popup.home.switch')}
+                        >
+                          {tt('popup.home.switch')}
+                        </button>
+                      )}
                     </div>
-                  )}
-                  <div className="text-[14px] text-zinc-400 font-mono mt-0.5">
-                    {formatBalance(acc.address)} {nativeSymbol}
                   </div>
-                  {tradeBaseTokenAddress.toLowerCase() !== zeroAddress.toLowerCase() && (
-                    <div className="text-[13px] text-zinc-500 font-mono mt-0.5">
-                      {formatTradeBaseBalance(acc.address)} {tradeBaseSymbol}
-                    </div>
-                  )}
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+
+                  <div className="pt-0.5 flex flex-wrap items-center gap-1.5">
                     {eip7702ByAddress[get7702Key(acc.address)]?.delegated && (
                       <button
                         className="px-2 py-1 rounded bg-fuchsia-900/30 text-[10px] text-fuchsia-300 border border-fuchsia-900/50 hover:bg-fuchsia-900/40 transition-colors disabled:opacity-60"
@@ -556,48 +619,26 @@ export function HomeView({
                         {eip7702ByAddress[get7702Key(acc.address)]?.revoking ? '撤销中' : '取消7702'}
                       </button>
                     )}
-                    <button
-                      className="w-7 h-7 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors flex items-center justify-center"
-                      disabled={busy}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openManage(acc.address, acc.name);
-                      }}
-                      title={tt('popup.home.manage.button')}
-                    >
-                      <Settings size={14} />
-                    </button>
-                    <button
-                      className="w-7 h-7 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors flex items-center justify-center"
-                      disabled={busy}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openTransfer(acc.address);
-                      }}
-                      title={tt('popup.home.transfer.button')}
-                    >
-                      <Send size={14} />
-                    </button>
                     {tradeBaseTokenAddress.toLowerCase() !== zeroAddress.toLowerCase() && routerAddress && (
                       (() => {
                         const status = getAllowanceStatus(acc.address);
                         const statusLabel = status === 'ready' ? '已授权' : (status === 'unknown' ? '检测中' : '授权');
                         return (
-                      <button
-                        className={`px-2 py-1 rounded text-[11px] transition-colors disabled:opacity-60 ${
-                          status === 'ready'
-                            ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50 hover:bg-emerald-900/55'
-                            : 'bg-zinc-800 hover:bg-zinc-700'
-                        }`}
-                        disabled={busy || approvingAddress === acc.address.toLowerCase() || status === 'unknown'}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openApproveDialog(acc.address);
-                        }}
-                        title={`授权 ${tradeBaseSymbol} 给路由合约`}
-                      >
-                        {approvingAddress === acc.address.toLowerCase() ? '授权中' : statusLabel}
-                      </button>
+                          <button
+                            className={`px-2 py-1 rounded text-[11px] transition-colors disabled:opacity-60 ${
+                              status === 'ready'
+                                ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50 hover:bg-emerald-900/55'
+                                : 'bg-zinc-800 hover:bg-zinc-700'
+                            }`}
+                            disabled={busy || approvingAddress === acc.address.toLowerCase() || status === 'unknown'}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openApproveDialog(acc.address);
+                            }}
+                            title={`授权 ${tradeBaseSymbol} 给路由合约`}
+                          >
+                            {approvingAddress === acc.address.toLowerCase() ? '授权中' : statusLabel}
+                          </button>
                         );
                       })()
                     )}
@@ -614,26 +655,11 @@ export function HomeView({
                         兑换
                       </button>
                     )}
-                    {acc.address !== getCurrentAddress() && (
-                      <button
-                        className="px-2 py-1 rounded bg-zinc-800 text-[12px] hover:bg-zinc-700 transition-colors"
-                        disabled={busy}
-                        onClick={() =>
-                          withBusy(async () => {
-                            await call({ type: 'wallet:switchAccount', address: acc.address });
-                            showActionNotice('success', '已切换钱包');
-                            await onRefresh();
-                          })
-                        }
-                      >
-                        {tt('popup.home.switch')}
-                      </button>
-                    )}
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
