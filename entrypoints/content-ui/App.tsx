@@ -972,6 +972,7 @@ export default function App() {
         const record = message?.record as any;
         const isDeleteTweetSell = record?.side === 'sell' && record?.tweetType === 'delete_post';
         if (isDeleteTweetSell) return;
+        if (record?.side !== 'buy' || record?.reason) return;
         if (!shouldPlayOrderSound({ source: 'xsniper', record, ttlMs: 30_000 })) return;
         ensureAutoTradeAudioReady();
         playAutoTradePreset(autoTradeSoundPreset);

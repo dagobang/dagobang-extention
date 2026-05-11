@@ -2,6 +2,7 @@ import { parseEther } from 'viem';
 import { WalletService } from '@/services/wallet';
 import { TradeService } from '@/services/trade';
 import { buildTweetUrl, getSignalTimeMs, isRepostOrQuoteSignal, parseNumber, sanitizeMarketCapUsd, shouldBuyByConfig, type TokenMetrics } from '@/services/xSniper/engine/metrics';
+import type { WsConfirmFailedCheck } from '@/services/xSniper/engine/wsSnapshots';
 import type { UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import type { DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
@@ -85,6 +86,12 @@ const classifyBuySubmitFailureReason = (error: unknown): string => {
   }
   if (text.includes('in flight') || text.includes('in_flight')) return 'buy_submit_failed_in_flight';
   return 'buy_submit_failed_unknown';
+};
+
+const classifyBuyReceiptFailureReason = (error: unknown): string => {
+  const submitLike = classifyBuySubmitFailureReason(error);
+  if (!submitLike.startsWith('buy_submit_failed_')) return 'buy_receipt_failed_unknown';
+  return submitLike.replace('buy_submit_failed_', 'buy_receipt_failed_');
 };
 
 const summarizeTokenInfoForLog = (tokenInfo: TokenInfo | null | undefined) => {
@@ -172,7 +179,7 @@ export const tryAutoBuyOnce = async (input: {
     walletAddress?: `0x${string}`;
   }) => void;
   dryRunAutoSellByPosKey: Map<string, DryRunAutoSellPos>;
-  onAttemptOutcome?: (outcome: { bought: boolean; attempted: boolean; reason?: string }) => void;
+  onAttemptOutcome?: (outcome: { bought: boolean; attempted: boolean; reason?: string; detail?: any }) => void;
 }) => {
   await input.loadBoughtOnceIfNeeded();
   const dryRun = input.strategy?.dryRun === true;
@@ -205,7 +212,7 @@ export const tryAutoBuyOnce = async (input: {
     : null;
   let attempted = false;
   let lastFailureReason: string | undefined;
-  const notifyOutcome = (outcome: { bought: boolean; attempted: boolean; reason?: string }) => {
+  const notifyOutcome = (outcome: { bought: boolean; attempted: boolean; reason?: string; detail?: any }) => {
     try {
       input.onAttemptOutcome?.(outcome);
     } catch {
@@ -216,6 +223,8 @@ export const tryAutoBuyOnce = async (input: {
     metrics?: TokenMetrics;
     tokenInfo?: TokenInfo | null;
     confirm?: { windowMs?: number; stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number } };
+    txHash?: `0x${string}`;
+    buySubmittedAtMs?: number;
   }) => {
     lastFailureReason = reason;
     if (dryRun) {
@@ -249,6 +258,7 @@ export const tryAutoBuyOnce = async (input: {
       id: `${now}-${Math.random().toString(16).slice(2)}`,
       side: 'buy',
       tsMs: now,
+      buySubmittedAtMs: extras?.buySubmittedAtMs,
       tweetAtMs,
       tweetUrl,
       chainId: input.chainId,
@@ -260,6 +270,7 @@ export const tryAutoBuyOnce = async (input: {
       buyAmountNative: extras?.buyAmountNative,
       dryRun: false,
       reason,
+      txHash: extras?.txHash,
       marketCapUsd: m.marketCapUsd,
       liquidityUsd: m.liquidityUsd,
       holders: m.holders,
@@ -384,7 +395,18 @@ export const tryAutoBuyOnce = async (input: {
         buyAmountNative: amountNumber,
         confirm,
       });
-      notifyOutcome({ bought: false, attempted, reason: lastFailureReason });
+      notifyOutcome({
+        bought: false,
+        attempted,
+        reason: lastFailureReason,
+        detail: {
+          wsConfirm: {
+            windowMs: confirm.windowMs,
+            failedChecks: (confirm as any).failedChecks as WsConfirmFailedCheck[] | undefined,
+            stats: confirm.stats ?? undefined,
+          },
+        },
+      });
       return false;
     }
 
@@ -547,6 +569,7 @@ export const tryAutoBuyOnce = async (input: {
     const amountWei = parseEther(String(amountNumber));
     let rsp: any;
     let buySubmittedAtMs: number | undefined;
+    let submittedTxHash: `0x${string}` | undefined;
     let tokenInfoForTrade = tokenInfo;
     try {
       rsp = await TradeService.buyWithReceiptAndNonceRecovery({
@@ -573,6 +596,7 @@ export const tryAutoBuyOnce = async (input: {
         },
         onSubmitted: async (ctx) => {
           buySubmittedAtMs = Date.now();
+          submittedTxHash = ctx.txHash;
           await input.broadcastToActiveTabs({
             type: 'bg:tradeSubmitted',
             source: 'xsniper',
@@ -585,35 +609,40 @@ export const tryAutoBuyOnce = async (input: {
         },
       });
     } catch (e: any) {
-      const buySubmitFailReason = classifyBuySubmitFailureReason(e);
-      console.error('[xsniper.buy.submit.failed]', {
+      const stage = buySubmittedAtMs ? 'receipt' : 'submit';
+      const buyFailReason = stage === 'receipt' ? classifyBuyReceiptFailureReason(e) : classifyBuySubmitFailureReason(e);
+      console.error('[xsniper.buy.failed]', {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         fromAddress: tradeFromAddress,
+        stage,
         buyAmountNative: amountNumber,
         buyAmountWei: amountWei.toString(),
         signalId: input.signal?.id ? String(input.signal.id) : undefined,
         signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
         signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
-        reason: buySubmitFailReason,
+        reason: buyFailReason,
         tokenInfo: summarizeTokenInfoForLog(tokenInfoForTrade),
         error: summarizeErrorForLog(e),
       });
-      console.warn('[xsniper.buy.submit.failed]', {
+      console.warn('[xsniper.buy.failed]', {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         walletAddress: tradeFromAddress,
+        stage,
         signalId: input.signal?.id ? String(input.signal.id) : undefined,
         signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
         signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
-        reason: buySubmitFailReason,
+        reason: buyFailReason,
         error: String(e?.shortMessage || e?.message || e || ''),
       });
-      emitBuyFailure(buySubmitFailReason, {
+      emitBuyFailure(buyFailReason, {
         buyAmountNative: amountNumber,
         metrics: refreshedMetrics,
         tokenInfo: tokenInfoForTrade,
         confirm,
+        txHash: submittedTxHash,
+        buySubmittedAtMs,
       });
     }
     if (!rsp) {

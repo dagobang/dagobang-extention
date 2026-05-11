@@ -23,6 +23,13 @@ export type XSniperDecisionSnapshot = {
   finalFailReasonInTokenAgeWindow?: string;
   finalFailReasonInTweetAgeWindow?: string;
   finalFailReason?: string;
+  wsConfirmWindowMs?: number;
+  wsConfirmFailedChecks?: Array<{
+    key: string;
+    op: 'lt' | 'gt' | 'missing';
+    actual?: number | null;
+    threshold?: number | null;
+  }>;
   everAttemptedBuy: boolean;
   buyAttemptResult: 'success' | 'failed_after_attempt' | 'not_attempted';
   notAttemptedReason?: string;
@@ -44,6 +51,13 @@ export type UpsertDecisionSnapshotInput = {
   finalFailReasonInTokenAgeWindow?: string | null;
   finalFailReasonInTweetAgeWindow?: string | null;
   finalFailReason?: string | null;
+  wsConfirmWindowMs?: number | null;
+  wsConfirmFailedChecks?: Array<{
+    key: string;
+    op: 'lt' | 'gt' | 'missing';
+    actual?: number | null;
+    threshold?: number | null;
+  }> | null;
   everAttemptedBuy?: boolean;
   buyAttemptResult?: 'success' | 'failed_after_attempt' | 'not_attempted';
   notAttemptedReason?: string | null;
@@ -124,6 +138,12 @@ export const upsertXSniperDecisionSnapshot = async (input: UpsertDecisionSnapsho
         }
         if (input.finalFailReason !== undefined) {
           next.finalFailReason = input.finalFailReason || undefined;
+        }
+        if (input.wsConfirmWindowMs !== undefined) {
+          next.wsConfirmWindowMs = input.wsConfirmWindowMs ?? undefined;
+        }
+        if (input.wsConfirmFailedChecks !== undefined) {
+          next.wsConfirmFailedChecks = input.wsConfirmFailedChecks ? input.wsConfirmFailedChecks : undefined;
         }
         if (input.notAttemptedReason !== undefined) {
           next.notAttemptedReason = input.notAttemptedReason || undefined;

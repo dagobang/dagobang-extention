@@ -12,6 +12,23 @@ export type WsSnapshot = {
   smartMoney?: number;
 };
 
+export type WsConfirmFailedCheck = {
+  key:
+    | 'coverage'
+    | 'mcapChangePct'
+    | 'holdersDelta'
+    | 'buySellRatio'
+    | 'netBuy24hUsd'
+    | 'vol24hUsd'
+    | 'volMcapRatio'
+    | 'netBuyMcapRatio'
+    | 'smartMoney'
+    | 'stats';
+  op: 'lt' | 'gt' | 'missing';
+  actual?: number | null;
+  threshold?: number | null;
+};
+
 export const shouldLogWsConfirmFail = (wsConfirmFailDedupe: Map<string, number>, key: string, nowMs: number) => {
   const last = wsConfirmFailDedupe.get(key);
   if (typeof last === 'number' && Number.isFinite(last) && nowMs - last < 20_000) return false;
@@ -149,7 +166,7 @@ export const computeWsConfirm = (
   strategy: any
 ) => {
   const enabled = strategy?.wsConfirmEnabled === true;
-  if (!enabled) return { pass: true, stats: null as any, windowMs: 0 };
+  if (!enabled) return { pass: true, stats: null as any, windowMs: 0, failedChecks: [] as WsConfirmFailedCheck[] };
   const windowMs = Math.max(500, Math.min(60_000, parseNumber(strategy?.wsConfirmWindowMs) ?? 5000));
   const stats = getWsWindowStats(wsSnapshotsByAddr, tokenAddress, nowMs, windowMs);
   const minMcapChangePct = parseNumber(strategy?.wsConfirmMinMcapChangePct) ?? 0;
@@ -188,23 +205,38 @@ export const computeWsConfirm = (
       minNetBuyMcapRatio > 0 ||
       minSmartMoney > 0
     );
-    return { pass, stats: null as any, windowMs };
+    const failedChecks: WsConfirmFailedCheck[] = pass ? [] : [{ key: 'stats', op: 'missing' }];
+    return { pass, stats: null as any, windowMs, failedChecks };
   }
 
   if ((minMcapChangePct > 0 || minHoldersDelta > 0) && stats.hasCoverage !== true) {
-    return { pass: false, stats, windowMs };
+    return { pass: false, stats, windowMs, failedChecks: [{ key: 'coverage', op: 'missing' }] as WsConfirmFailedCheck[] };
   }
 
-  const pass =
-    requireNumberAtLeast(stats.mcapChangePct, minMcapChangePct) &&
-    requireNumberAtMost(stats.mcapChangePct, maxMcapChangePct) &&
-    requireNumberAtLeast(stats.holdersDelta, minHoldersDelta) &&
-    requireNumberAtLeast(stats.buySellRatio, minBuySellRatio) &&
-    requireNumberAtLeast(stats.netBuy24hUsd, minNetBuy24hUsd) &&
-    requireNumberAtLeast(stats.vol24hUsd, minVol24hUsd) &&
-    requireNumberAtLeast(stats.volMcapRatio, minVolMcapRatio) &&
-    requireNumberAtLeast(stats.netBuyMcapRatio, minNetBuyMcapRatio) &&
-    requireNumberAtLeast(stats.smartMoney, minSmartMoney);
+  const failedChecks: WsConfirmFailedCheck[] = [];
+  const checkMin = (key: WsConfirmFailedCheck['key'], actual: number | null | undefined, min: number) => {
+    if (!(min > 0)) return;
+    if (!requireNumberAtLeast(actual, min)) {
+      failedChecks.push({ key, op: 'lt', actual: typeof actual === 'number' ? actual : null, threshold: min });
+    }
+  };
+  const checkMax = (key: WsConfirmFailedCheck['key'], actual: number | null | undefined, max: number | null) => {
+    if (!(typeof max === 'number' && Number.isFinite(max))) return;
+    if (!requireNumberAtMost(actual, max)) {
+      failedChecks.push({ key, op: 'gt', actual: typeof actual === 'number' ? actual : null, threshold: max });
+    }
+  };
+  checkMin('mcapChangePct', stats.mcapChangePct, minMcapChangePct);
+  checkMax('mcapChangePct', stats.mcapChangePct, maxMcapChangePct);
+  checkMin('holdersDelta', stats.holdersDelta, minHoldersDelta);
+  checkMin('buySellRatio', stats.buySellRatio, minBuySellRatio);
+  checkMin('netBuy24hUsd', stats.netBuy24hUsd, minNetBuy24hUsd);
+  checkMin('vol24hUsd', stats.vol24hUsd, minVol24hUsd);
+  checkMin('volMcapRatio', stats.volMcapRatio, minVolMcapRatio);
+  checkMin('netBuyMcapRatio', stats.netBuyMcapRatio, minNetBuyMcapRatio);
+  checkMin('smartMoney', stats.smartMoney, minSmartMoney);
 
-  return { pass, stats, windowMs };
+  const pass = failedChecks.length === 0;
+
+  return { pass, stats, windowMs, failedChecks };
 };

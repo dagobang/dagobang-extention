@@ -77,6 +77,7 @@ export const createXSniperTrade = (deps: {
     tokenAddress: `0x${string}`;
     signal?: UnifiedTwitterSignal;
   }) => {
+    if (input.reason === 'ws_confirm_failed') return false;
     const now = Date.now();
     const signalStableId = (() => {
       const id = typeof input.signal?.id === 'string' ? input.signal.id.trim() : '';
@@ -687,7 +688,7 @@ export const createXSniperTrade = (deps: {
           break;
         }
         let bought = false;
-        let outcome: { bought: boolean; attempted: boolean; reason?: string } = { bought: false, attempted: true };
+        let outcome: { bought: boolean; attempted: boolean; reason?: string; detail?: any } = { bought: false, attempted: true };
         try {
           currentSignalContext = signal;
           bought = await tryAutoBuyOnce({
@@ -712,6 +713,12 @@ export const createXSniperTrade = (deps: {
           const resolvedOutcomeReason = bought
             ? null
             : (outcome.reason || (outcome.attempted ? 'buy_failed_without_reason' : 'buy_not_attempted_without_reason'));
+          const wsConfirmDetail = resolvedOutcomeReason === 'ws_confirm_failed'
+            ? {
+              windowMs: Number(outcome.detail?.wsConfirm?.windowMs ?? 0) || undefined,
+              failedChecks: Array.isArray(outcome.detail?.wsConfirm?.failedChecks) ? outcome.detail.wsConfirm.failedChecks : undefined,
+            }
+            : null;
           void upsertXSniperDecisionSnapshot({
             signalStableId,
             signalId: signal.id ? String(signal.id) : undefined,
@@ -729,6 +736,8 @@ export const createXSniperTrade = (deps: {
               ? 'success'
               : (outcome.attempted ? 'failed_after_attempt' : 'not_attempted'),
             finalFailReason: resolvedOutcomeReason,
+            wsConfirmWindowMs: wsConfirmDetail ? (wsConfirmDetail.windowMs ?? null) : undefined,
+            wsConfirmFailedChecks: wsConfirmDetail ? (wsConfirmDetail.failedChecks ?? null) : undefined,
             notAttemptedReason: bought
               ? null
               : (!outcome.attempted ? resolvedOutcomeReason : null),

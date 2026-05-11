@@ -42,6 +42,8 @@ type XSniperDecisionReasonLite = {
   everEligibleInTweetAgeWindow: boolean;
   finalFailReasonInTokenAgeWindow?: string;
   finalFailReasonInTweetAgeWindow?: string;
+  wsConfirmWindowMs?: number;
+  wsConfirmFailedChecks?: Array<{ key: string; op: 'lt' | 'gt' | 'missing'; actual?: number | null; threshold?: number | null }>;
 };
 
 type MonitorUserFilterMode = 'all' | 'twitterSnipe' | 'tokenSnipe';
@@ -230,6 +232,29 @@ const resolveDecisionReason = (row: XSniperDecisionSnapshot): string => {
     if (s) return s;
   }
   return '';
+};
+
+const formatWsConfirmFailed = (tt: TTFunc, input: { windowMs?: number; checks?: XSniperDecisionReasonLite['wsConfirmFailedChecks'] }) => {
+  const list = Array.isArray(input.checks) ? input.checks : [];
+  if (!list.length) return '';
+  const fmtNum = (v: number | null | undefined) => {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return '-';
+    return Math.abs(v) >= 1000 ? Math.round(v).toString() : v.toFixed(2);
+  };
+  const fmtCheck = (c: NonNullable<XSniperDecisionReasonLite['wsConfirmFailedChecks']>[number]) => {
+    const label = (() => {
+      const key = `contentUi.xMonitor.wsConfirm.${c.key}`;
+      const translated = tt(key);
+      return translated === key ? c.key : translated;
+    })();
+    if (c.op === 'missing') return `${label} ${tt('contentUi.xMonitor.wsConfirm.missing')}`;
+    const opText = c.op === 'lt' ? '<' : '>';
+    return `${label} ${fmtNum(c.actual)} ${opText} ${fmtNum(c.threshold)}`;
+  };
+  const windowPart = typeof input.windowMs === 'number' && Number.isFinite(input.windowMs) && input.windowMs > 0
+    ? `(${Math.round(input.windowMs)}ms)`
+    : '';
+  return `${tt('contentUi.xMonitor.wsConfirm.prefix')}${windowPart} ${list.map(fmtCheck).join('；')}`;
 };
 
 const buildNotBoughtReason = (input: {
@@ -873,6 +898,8 @@ export function XMonitorContent({
               everEligibleInTweetAgeWindow: row.everEligibleInTweetAgeWindow === true,
               finalFailReasonInTokenAgeWindow: typeof row.finalFailReasonInTokenAgeWindow === 'string' ? row.finalFailReasonInTokenAgeWindow : undefined,
               finalFailReasonInTweetAgeWindow: typeof row.finalFailReasonInTweetAgeWindow === 'string' ? row.finalFailReasonInTweetAgeWindow : undefined,
+              wsConfirmWindowMs: typeof (row as any).wsConfirmWindowMs === 'number' ? (row as any).wsConfirmWindowMs : undefined,
+              wsConfirmFailedChecks: Array.isArray((row as any).wsConfirmFailedChecks) ? (row as any).wsConfirmFailedChecks : undefined,
             };
           }
         }
@@ -1610,6 +1637,9 @@ export function XMonitorContent({
                         const tweetWindowFinalReasonLabel = latestDecision?.finalFailReasonInTweetAgeWindow
                           ? resolveReasonLabel(tt, latestDecision.finalFailReasonInTweetAgeWindow)
                           : tt('contentUi.xMonitor.timeUnknown');
+                        const wsConfirmDetailText = latestDecision?.reason === 'ws_confirm_failed'
+                          ? formatWsConfirmFailed(tt, { windowMs: latestDecision.wsConfirmWindowMs, checks: latestDecision.wsConfirmFailedChecks })
+                          : '';
                         const boughtOnce = boughtOnceByAddr[tokenAddr.toLowerCase()] ?? null;
                         const nowMs = Date.now();
                         const strategyDryRun = twitterSnipeStrategy?.dryRun === true;
@@ -1819,6 +1849,9 @@ export function XMonitorContent({
                                         tweetWindowFinalReasonLabel,
                                       ])}
                                     </div>
+                                    {wsConfirmDetailText ? (
+                                      <div className="mt-0.5 text-[10px] text-zinc-500">{wsConfirmDetailText}</div>
+                                    ) : null}
                                   </>
                                 ) : null}
                               </>
