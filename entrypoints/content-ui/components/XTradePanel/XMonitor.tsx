@@ -37,6 +37,7 @@ type XSniperBuyRecordLite = {
 type XSniperDecisionReasonLite = {
   tsMs: number;
   reason: string;
+  walletPriority: number;
   everEligibleInTokenAgeWindow: boolean;
   everEligibleInTweetAgeWindow: boolean;
   finalFailReasonInTokenAgeWindow?: string;
@@ -843,10 +844,14 @@ export function XMonitorContent({
       try {
         const list = await loadXSniperDecisionSnapshots();
         const next: Record<string, XSniperDecisionReasonLite> = {};
+        const allowAllWalletFallback = decisionWalletAddressKey !== 'all-wallets';
         for (const row of list) {
           if (!row) continue;
           const walletKey = typeof row.walletAddressKey === 'string' ? row.walletAddressKey.trim().toLowerCase() : 'all-wallets';
-          if (walletKey !== decisionWalletAddressKey) continue;
+          const walletPriority = walletKey === decisionWalletAddressKey
+            ? 2
+            : (allowAllWalletFallback && walletKey === 'all-wallets' ? 1 : 0);
+          if (walletPriority <= 0) continue;
           const addr = typeof row.tokenAddress === 'string' ? row.tokenAddress.trim().toLowerCase() : '';
           if (!addr) continue;
           const reason = resolveDecisionReason(row);
@@ -856,10 +861,14 @@ export function XMonitorContent({
           for (const sk of signalKeys) {
             const mapKey = `${sk}:${addr}`;
             const prev = next[mapKey];
-            if (prev && prev.tsMs >= tsMs) continue;
+            if (prev) {
+              if (prev.walletPriority > walletPriority) continue;
+              if (prev.walletPriority === walletPriority && prev.tsMs >= tsMs) continue;
+            }
             next[mapKey] = {
               tsMs,
               reason,
+              walletPriority,
               everEligibleInTokenAgeWindow: row.everEligibleInTokenAgeWindow === true,
               everEligibleInTweetAgeWindow: row.everEligibleInTweetAgeWindow === true,
               finalFailReasonInTokenAgeWindow: typeof row.finalFailReasonInTokenAgeWindow === 'string' ? row.finalFailReasonInTokenAgeWindow : undefined,

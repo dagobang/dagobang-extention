@@ -709,6 +709,9 @@ export const createXSniperTrade = (deps: {
           outcome = { bought: false, attempted: true, reason: 'buy_attempt_exception' };
           continue;
         } finally {
+          const resolvedOutcomeReason = bought
+            ? null
+            : (outcome.reason || (outcome.attempted ? 'buy_failed_without_reason' : 'buy_not_attempted_without_reason'));
           void upsertXSniperDecisionSnapshot({
             signalStableId,
             signalId: signal.id ? String(signal.id) : undefined,
@@ -725,10 +728,10 @@ export const createXSniperTrade = (deps: {
             buyAttemptResult: bought
               ? 'success'
               : (outcome.attempted ? 'failed_after_attempt' : 'not_attempted'),
-            finalFailReason: bought ? null : (outcome.reason || null),
+            finalFailReason: resolvedOutcomeReason,
             notAttemptedReason: bought
               ? null
-              : (!outcome.attempted ? (outcome.reason || null) : null),
+              : (!outcome.attempted ? resolvedOutcomeReason : null),
             windowClosedAtMs: Date.now(),
           });
           currentSignalContext = null;

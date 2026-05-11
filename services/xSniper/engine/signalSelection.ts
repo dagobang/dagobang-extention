@@ -197,21 +197,6 @@ export const pickTokensToBuyFromSignal = (input: {
     const confirm = input.computeWsConfirm(m.tokenAddress, now, strategy);
     wsConfirmPass = confirm.pass;
     if (!wsConfirmPass) wsConfirmReason = 'ws_confirm_failed';
-    if (!confirm.pass) {
-      decisions.push({
-        t,
-        m,
-        fullPass: true,
-        tokenWindowPass: tokenWindowDecision.pass,
-        tokenWindowFailReason: tokenWindowDecision.reason,
-        tweetWindowPass: tweetWindowDecision.pass,
-        tweetWindowFailReason: tweetWindowDecision.reason,
-        wsConfirmPass,
-        wsConfirmReason,
-      });
-      skipped.push({ t, m, reason: 'ws_confirm_failed' });
-      continue;
-    }
     decisions.push({
       t,
       m,

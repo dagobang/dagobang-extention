@@ -189,6 +189,10 @@ export const tryAutoBuyOnce = async (input: {
       tokenAddress: input.tokenAddress,
       strategyWalletAddress,
     });
+    try {
+      input.onAttemptOutcome?.({ bought: false, attempted: false, reason: 'configured_wallet_not_unlocked' });
+    } catch {
+    }
     return false;
   }
   const tradeFromAddress =
