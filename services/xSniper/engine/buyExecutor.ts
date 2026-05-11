@@ -172,6 +172,7 @@ export const tryAutoBuyOnce = async (input: {
     walletAddress?: `0x${string}`;
   }) => void;
   dryRunAutoSellByPosKey: Map<string, DryRunAutoSellPos>;
+  onAttemptOutcome?: (outcome: { bought: boolean; attempted: boolean; reason?: string }) => void;
 }) => {
   await input.loadBoughtOnceIfNeeded();
   const dryRun = input.strategy?.dryRun === true;
@@ -198,19 +199,21 @@ export const tryAutoBuyOnce = async (input: {
   const globalLockKey = !dryRun
     ? buildGlobalBuyLockKey({ chainId: input.chainId, tokenAddress: input.tokenAddress, walletAddress: tradeFromAddress })
     : null;
+  let attempted = false;
+  let lastFailureReason: string | undefined;
+  const notifyOutcome = (outcome: { bought: boolean; attempted: boolean; reason?: string }) => {
+    try {
+      input.onAttemptOutcome?.(outcome);
+    } catch {
+    }
+  };
   const emitBuyFailure = (reason: string, extras?: {
     buyAmountNative?: number;
     metrics?: TokenMetrics;
     tokenInfo?: TokenInfo | null;
     confirm?: { windowMs?: number; stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number } };
   }) => {
-    if (
-      reason === 'buy_skipped_recently_bought'
-      || reason === 'buy_skipped_in_flight'
-      || reason === 'buy_skipped_terminal_failed'
-      || reason === 'buy_skipped_global_in_flight'
-      || reason === 'buy_skipped_global_locked'
-    ) return;
+    lastFailureReason = reason;
     if (dryRun) {
       const m = extras?.metrics ?? input.metrics;
       console.log('XSniperTrade dry-run buy skipped', {
@@ -284,32 +287,39 @@ export const tryAutoBuyOnce = async (input: {
   };
   if (input.boughtOnceAtMs.has(key)) {
     emitBuyFailure('buy_skipped_recently_bought');
+    notifyOutcome({ bought: false, attempted: false, reason: lastFailureReason });
     return false;
   }
   if (!dryRun && terminalFailedBuyKeys.has(key)) {
     emitBuyFailure('buy_skipped_terminal_failed');
+    notifyOutcome({ bought: false, attempted: false, reason: lastFailureReason });
     return false;
   }
   if (input.buyInFlight.has(key)) {
     emitBuyFailure('buy_skipped_in_flight');
+    notifyOutcome({ bought: false, attempted: false, reason: lastFailureReason });
     return false;
   }
   if (globalLockKey && globalBoughtLockKeys.has(globalLockKey)) {
     emitBuyFailure('buy_skipped_global_locked');
+    notifyOutcome({ bought: false, attempted: false, reason: lastFailureReason });
     return false;
   }
   if (globalLockKey && globalBuyInFlightKeys.has(globalLockKey)) {
     emitBuyFailure('buy_skipped_global_in_flight');
+    notifyOutcome({ bought: false, attempted: false, reason: lastFailureReason });
     return false;
   }
   input.buyInFlight.add(key);
   if (globalLockKey) globalBuyInFlightKeys.add(globalLockKey);
   try {
+    attempted = true;
     const amountNumber = (typeof input.amountNativeOverride === 'number' && Number.isFinite(input.amountNativeOverride)
       ? input.amountNativeOverride
       : (parseNumber(input.strategy.buyAmountNative) ?? 0));
     if (amountNumber <= 0) {
       emitBuyFailure('buy_invalid_amount', { buyAmountNative: amountNumber });
+      notifyOutcome({ bought: false, attempted, reason: lastFailureReason });
       return false;
     }
 
@@ -370,11 +380,13 @@ export const tryAutoBuyOnce = async (input: {
         buyAmountNative: amountNumber,
         confirm,
       });
+      notifyOutcome({ bought: false, attempted, reason: lastFailureReason });
       return false;
     }
 
     if (!dryRun && (!status || status.locked || !status.address)) {
       emitBuyFailure('wallet_locked', { buyAmountNative: amountNumber, confirm });
+      notifyOutcome({ bought: false, attempted, reason: lastFailureReason });
       return false;
     }
 
@@ -383,6 +395,7 @@ export const tryAutoBuyOnce = async (input: {
       (await input.buildGenericTokenInfo(input.chainId, input.tokenAddress));
     if (!tokenInfo) {
       emitBuyFailure('token_info_missing', { buyAmountNative: amountNumber, confirm });
+      notifyOutcome({ bought: false, attempted, reason: lastFailureReason });
       return false;
     }
 
@@ -407,6 +420,7 @@ export const tryAutoBuyOnce = async (input: {
         tokenInfo,
         confirm,
       });
+      notifyOutcome({ bought: false, attempted, reason: lastFailureReason });
       return false;
     }
 
@@ -522,6 +536,7 @@ export const tryAutoBuyOnce = async (input: {
         signalEventId: input.signal?.eventId ? String(input.signal.eventId) : undefined,
         signalTweetId: input.signal?.tweetId ? String(input.signal.tweetId) : undefined,
       } as XSniperBuyRecord);
+      notifyOutcome({ bought: true, attempted, reason: undefined });
       return true;
     }
 
@@ -606,6 +621,7 @@ export const tryAutoBuyOnce = async (input: {
         buyAmountWei: amountWei.toString(),
         tokenInfo: summarizeTokenInfoForLog(tokenInfoForTrade),
       });
+      notifyOutcome({ bought: false, attempted, reason: lastFailureReason || 'buy_submit_failed' });
       return false;
     }
     void input.broadcastToActiveTabs({
@@ -761,6 +777,7 @@ export const tryAutoBuyOnce = async (input: {
     } as XSniperBuyRecord);
 
     console.log('XSniperTrade buy tx', (rsp as any)?.txHash ?? '');
+    notifyOutcome({ bought: true, attempted, reason: undefined });
     return true;
   } finally {
     input.buyInFlight.delete(key);

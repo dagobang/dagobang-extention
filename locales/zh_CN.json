@@ -259,11 +259,13 @@
       "translation": "翻译",
       "tag": {
         "buy": "买入",
-        "dry": "模拟"
+        "dry": "模拟",
+        "leader": "龙1"
       },
         "tooltip": {
           "devBuyRatio": "Dev最大买入占比",
           "devHoldPercent": "Dev持仓占比",
+          "marketCapRank": "市值排名",
           "viewerCount": "浏览人数",
           "devCreatedTokenCount": "Dev发币数",
         "top10HoldRatio": "Top10 持仓占比",
@@ -305,6 +307,12 @@
           "passedButNoOrder": "已满足筛选但未下单（可能钱包未解锁/重复买入/买入中）",
           "recentBoughtCooldown": "已满足筛选但未下单（近期同币已买入，冷却中）"
         }
+      },
+      "decision": {
+        "yes": "是",
+        "no": "否",
+        "everEligible": "窗口内曾满足：代币窗 {0}，推文窗 {1}",
+        "finalFail": "窗口结束阻断：代币窗 {0}，推文窗 {1}"
       },
       "type": {
         "tweet": "发推",
@@ -566,6 +574,27 @@
         "buy_invalid_amount": "买入数量无效",
         "buy_skipped_recently_bought": "近期已买入（冷却中）",
         "buy_skipped_in_flight": "买入请求进行中（已跳过重复触发）",
+        "buy_skipped_per_tweet_quota_reached": "单条推文买入名额已用完",
+        "buy_filter_invalid_token_address": "代币地址无效",
+        "buy_filter_platform_mismatch": "不在启用的平台范围",
+        "buy_filter_config_missing": "策略配置缺失",
+        "buy_filter_rejected": "被策略过滤",
+        "buy_filter_signal_time_missing": "缺少推文时间",
+        "buy_filter_market_cap_missing": "市值缺失/无效",
+        "buy_filter_market_cap_too_low": "市值低于下限",
+        "buy_filter_market_cap_too_high": "市值高于上限",
+        "buy_filter_holders_missing": "持有人数据缺失",
+        "buy_filter_holders_too_low": "持有人低于下限",
+        "buy_filter_holders_too_high": "持有人高于上限",
+        "buy_filter_ticker_missing": "Ticker 缺失",
+        "buy_filter_ticker_too_short": "Ticker 长度过短",
+        "buy_filter_ticker_too_long": "Ticker 长度过长",
+        "buy_filter_token_created_at_missing": "缺少代币创建时间",
+        "buy_filter_token_age_too_young": "代币时间窗过早",
+        "buy_filter_token_age_too_old": "代币时间窗过晚",
+        "buy_filter_tweet_age_too_young": "推文时间窗过早",
+        "buy_filter_tweet_age_too_old": "推文时间窗超时",
+        "buy_filter_dev_has_sold": "开发者已卖出",
         "buy_filter_mismatch_after_refresh": "二次校验未通过（实时数据变化）",
         "buy_submit_failed": "买入提交失败",
         "sell_submit_failed": "卖出提交失败",

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlarmClockCheck, Trophy, ChefHat, Users, X, UserStar, Eye, Coins, Flame } from 'lucide-react';
-import type { Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
+import type { BgGetStateResponse, Settings, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber, formatCountShort } from '@/utils/format';
 import { call } from '@/utils/messaging';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { browser } from 'wxt/browser';
+import { loadXSniperDecisionSnapshots, XSNIPER_DECISION_SNAPSHOT_STORAGE_KEY, type XSniperDecisionSnapshot } from '@/services/xSniper/xSniperDecisionSnapshot';
 
 type TTFunc = (key: string, subs?: Array<string | number>) => string;
 
@@ -31,6 +32,15 @@ type XSniperBuyRecordLite = {
   signalId?: string;
   signalEventId?: string;
   signalTweetId?: string;
+};
+
+type XSniperDecisionReasonLite = {
+  tsMs: number;
+  reason: string;
+  everEligibleInTokenAgeWindow: boolean;
+  everEligibleInTweetAgeWindow: boolean;
+  finalFailReasonInTokenAgeWindow?: string;
+  finalFailReasonInTweetAgeWindow?: string;
 };
 
 type MonitorUserFilterMode = 'all' | 'twitterSnipe' | 'tokenSnipe';
@@ -62,6 +72,12 @@ const normalizeEpochMs = (v: unknown) => {
   if (n >= 1e14) return Math.floor(n / 1000);
   if (n < 1e11) return Math.floor(n * 1000);
   return Math.floor(n);
+};
+
+const normalizeWalletAddress = (input: unknown): `0x${string}` | undefined => {
+  const raw = String(input ?? '').trim().toLowerCase();
+  if (!raw || !/^0x[a-f0-9]{40}$/.test(raw)) return undefined;
+  return raw as `0x${string}`;
 };
 
 const getSignalAtMs = (signal: UnifiedTwitterSignal) => {
@@ -185,6 +201,34 @@ const getRecordSignalIdentityKeys = (record: XSniperBuyRecordLite): string[] => 
     out.push(s);
   }
   return out;
+};
+
+const getDecisionSignalIdentityKeys = (row: XSniperDecisionSnapshot): string[] => {
+  const list = [row.signalStableId, row.signalId, row.signalEventId, row.signalTweetId];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    const s = typeof item === 'string' ? item.trim() : '';
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+};
+
+const resolveDecisionReason = (row: XSniperDecisionSnapshot): string => {
+  if (row.buyAttemptResult === 'success') return '';
+  const candidates = [
+    row.finalFailReason,
+    row.notAttemptedReason,
+    row.finalFailReasonInTweetAgeWindow,
+    row.finalFailReasonInTokenAgeWindow,
+  ];
+  for (const item of candidates) {
+    const s = typeof item === 'string' ? item.trim() : '';
+    if (s) return s;
+  }
+  return '';
 };
 
 const buildNotBoughtReason = (input: {
@@ -616,6 +660,34 @@ export function XMonitorContent({
     () => resolveTwitterSnipeByActivePreset(twitterSnipeSource),
     [twitterSnipeSource]
   );
+  const [activeWalletAddress, setActiveWalletAddress] = useState<`0x${string}` | undefined>(undefined);
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    const loadWalletState = async () => {
+      try {
+        const res = await call({ type: 'bg:getState' } as const);
+        if (cancelled) return;
+        const state = (res ?? null) as BgGetStateResponse | null;
+        setActiveWalletAddress(normalizeWalletAddress(state?.wallet?.address));
+      } catch {
+      }
+    };
+    void loadWalletState();
+    const onMessage = (message: any) => {
+      if (message?.type !== 'bg:stateChanged') return;
+      void loadWalletState();
+    };
+    browser.runtime.onMessage.addListener(onMessage as any);
+    return () => {
+      cancelled = true;
+      browser.runtime.onMessage.removeListener(onMessage as any);
+    };
+  }, [active]);
+  const decisionWalletAddressKey = useMemo(() => {
+    const strategyWallet = normalizeWalletAddress((twitterSnipeStrategy as any)?.walletAddress);
+    return (strategyWallet || activeWalletAddress || 'all-wallets').toLowerCase();
+  }, [twitterSnipeStrategy, activeWalletAddress]);
   const tickerLenFilter = useMemo(() => {
     const parseLen = (v: any) => {
       if (typeof v !== 'string') return null;
@@ -632,6 +704,7 @@ export function XMonitorContent({
 
   const [boughtByAddr, setBoughtByAddr] = useState<Record<string, { dryRun: boolean; tsMs: number }>>({});
   const [buyFailReasonBySignalToken, setBuyFailReasonBySignalToken] = useState<Record<string, { tsMs: number; reason: string }>>({});
+  const [decisionReasonBySignalToken, setDecisionReasonBySignalToken] = useState<Record<string, XSniperDecisionReasonLite>>({});
   const [boughtOnceByAddr, setBoughtOnceByAddr] = useState<Record<string, { dryTsMs?: number; realTsMs?: number }>>({});
   useEffect(() => {
     if (!active) return;
@@ -762,6 +835,55 @@ export function XMonitorContent({
     browser.runtime.onMessage.addListener(listener as any);
     return () => browser.runtime.onMessage.removeListener(listener as any);
   }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    const reloadDecisionReasons = async () => {
+      try {
+        const list = await loadXSniperDecisionSnapshots();
+        const next: Record<string, XSniperDecisionReasonLite> = {};
+        for (const row of list) {
+          if (!row) continue;
+          const walletKey = typeof row.walletAddressKey === 'string' ? row.walletAddressKey.trim().toLowerCase() : 'all-wallets';
+          if (walletKey !== decisionWalletAddressKey) continue;
+          const addr = typeof row.tokenAddress === 'string' ? row.tokenAddress.trim().toLowerCase() : '';
+          if (!addr) continue;
+          const reason = resolveDecisionReason(row);
+          if (!reason) continue;
+          const tsMs = typeof row.updatedAtMs === 'number' ? row.updatedAtMs : 0;
+          const signalKeys = getDecisionSignalIdentityKeys(row);
+          for (const sk of signalKeys) {
+            const mapKey = `${sk}:${addr}`;
+            const prev = next[mapKey];
+            if (prev && prev.tsMs >= tsMs) continue;
+            next[mapKey] = {
+              tsMs,
+              reason,
+              everEligibleInTokenAgeWindow: row.everEligibleInTokenAgeWindow === true,
+              everEligibleInTweetAgeWindow: row.everEligibleInTweetAgeWindow === true,
+              finalFailReasonInTokenAgeWindow: typeof row.finalFailReasonInTokenAgeWindow === 'string' ? row.finalFailReasonInTokenAgeWindow : undefined,
+              finalFailReasonInTweetAgeWindow: typeof row.finalFailReasonInTweetAgeWindow === 'string' ? row.finalFailReasonInTweetAgeWindow : undefined,
+            };
+          }
+        }
+        if (!cancelled) setDecisionReasonBySignalToken(next);
+      } catch {
+        if (!cancelled) setDecisionReasonBySignalToken({});
+      }
+    };
+    void reloadDecisionReasons();
+    const onStorageChanged = (changes: Record<string, any>, areaName: string) => {
+      if (areaName !== 'local') return;
+      if (!changes?.[XSNIPER_DECISION_SNAPSHOT_STORAGE_KEY]) return;
+      void reloadDecisionReasons();
+    };
+    browser.storage.onChanged.addListener(onStorageChanged as any);
+    return () => {
+      cancelled = true;
+      browser.storage.onChanged.removeListener(onStorageChanged as any);
+    };
+  }, [active, decisionWalletAddressKey]);
 
   const signalsRef = useRef<Map<string, UnifiedTwitterSignal>>(new Map());
   const [signalIds, setSignalIds] = useState<string[]>([]);
@@ -1133,6 +1255,25 @@ export function XMonitorContent({
                   return a.firstSeenAtMs - b.firstSeenAtMs;
                 })
                 .slice(0, tokenLimit);
+              const mcapRankByAddr = (() => {
+                const sortedByMcap = displayTokens
+                  .slice()
+                  .sort((a, b) => {
+                    const ma = typeof a.marketCapUsd === 'number' ? a.marketCapUsd : 0;
+                    const mb = typeof b.marketCapUsd === 'number' ? b.marketCapUsd : 0;
+                    if (mb !== ma) return mb - ma;
+                    return a.firstSeenAtMs - b.firstSeenAtMs;
+                  });
+                const out: Record<string, number> = {};
+                for (let i = 0; i < sortedByMcap.length; i += 1) {
+                  const addr = typeof sortedByMcap[i]?.tokenAddress === 'string'
+                    ? sortedByMcap[i].tokenAddress.trim().toLowerCase()
+                    : '';
+                  if (!addr || out[addr] != null) continue;
+                  out[addr] = i + 1;
+                }
+                return out;
+              })();
 
               return (
                 <div
@@ -1428,6 +1569,38 @@ export function XMonitorContent({
                           }
                           return latestReason ? resolveReasonLabel(tt, latestReason) : '';
                         })();
+                        const decisionFailureReasonLabel = (() => {
+                          const addr = tokenAddr.toLowerCase();
+                          let latestTs = 0;
+                          let latestReason = '';
+                          for (const sk of signalReasonKeys) {
+                            const row = decisionReasonBySignalToken[`${sk}:${addr}`];
+                            if (!row) continue;
+                            if (row.tsMs < latestTs) continue;
+                            latestTs = row.tsMs;
+                            latestReason = row.reason;
+                          }
+                          return latestReason ? resolveReasonLabel(tt, latestReason) : '';
+                        })();
+                        const latestDecision = (() => {
+                          const addr = tokenAddr.toLowerCase();
+                          let latestTs = 0;
+                          let latest: XSniperDecisionReasonLite | null = null;
+                          for (const sk of signalReasonKeys) {
+                            const row = decisionReasonBySignalToken[`${sk}:${addr}`];
+                            if (!row) continue;
+                            if (row.tsMs < latestTs) continue;
+                            latestTs = row.tsMs;
+                            latest = row;
+                          }
+                          return latest;
+                        })();
+                        const tokenWindowFinalReasonLabel = latestDecision?.finalFailReasonInTokenAgeWindow
+                          ? resolveReasonLabel(tt, latestDecision.finalFailReasonInTokenAgeWindow)
+                          : tt('contentUi.xMonitor.timeUnknown');
+                        const tweetWindowFinalReasonLabel = latestDecision?.finalFailReasonInTweetAgeWindow
+                          ? resolveReasonLabel(tt, latestDecision.finalFailReasonInTweetAgeWindow)
+                          : tt('contentUi.xMonitor.timeUnknown');
                         const boughtOnce = boughtOnceByAddr[tokenAddr.toLowerCase()] ?? null;
                         const nowMs = Date.now();
                         const strategyDryRun = twitterSnipeStrategy?.dryRun === true;
@@ -1435,7 +1608,7 @@ export function XMonitorContent({
                           ? (typeof boughtOnce?.dryTsMs === 'number' && nowMs - boughtOnce.dryTsMs <= BOUGHT_ONCE_TTL_MS)
                           : (typeof boughtOnce?.realTsMs === 'number' && nowMs - boughtOnce.realTsMs <= BOUGHT_ONCE_TTL_MS);
                         const notBoughtReason = !bought
-                          ? (persistedFailureReasonLabel || buildNotBoughtReason({
+                          ? (persistedFailureReasonLabel || decisionFailureReasonLabel || buildNotBoughtReason({
                             tt,
                             wsMonitorEnabled,
                             strategy: twitterSnipeStrategy,
@@ -1445,6 +1618,7 @@ export function XMonitorContent({
                           }))
                           : null;
                         const shortAddr = `${tokenAddr.slice(0, 6)}...${tokenAddr.slice(-4)}`;
+                        const mcapRank = mcapRankByAddr[tokenAddr.toLowerCase()] ?? null;
                         const symbol = token.tokenSymbol?.trim() || '';
                         const tokenName = token.tokenName?.trim() || '';
                         const name = symbol || tokenName || shortAddr;
@@ -1498,6 +1672,23 @@ export function XMonitorContent({
                                 }}
                                 title={tokenAddr}
                               >
+                                {mcapRank != null ? (
+                                  <span
+                                    className={`mr-1 inline-flex h-4 min-w-4 items-center justify-center rounded-sm border px-1 text-[10px] font-bold leading-none ${
+                                      mcapRank <= 3
+                                        ? 'border-amber-500/60 bg-amber-500/15 text-amber-200'
+                                        : 'border-zinc-700 bg-zinc-800/60 text-zinc-300'
+                                    }`}
+                                    title={`${tt('contentUi.xMonitor.tooltip.marketCapRank')} #${mcapRank}`}
+                                  >
+                                    {mcapRank}
+                                  </span>
+                                ) : null}
+                                {mcapRank === 1 ? (
+                                  <span className="mr-1 inline-flex h-4 items-center justify-center rounded-sm border border-emerald-500/50 bg-emerald-500/10 px-1 text-[10px] font-bold leading-none text-emerald-200">
+                                    {tt('contentUi.xMonitor.tag.leader')}
+                                  </span>
+                                ) : null}
                                 <span>{name}</span>
                                 {symbol && tokenName ? <span className="ml-1 font-normal text-zinc-400">{tokenName}</span> : null}
                               </button>
@@ -1603,7 +1794,25 @@ export function XMonitorContent({
                               </span>
                             </div>
                             {!bought && notBoughtReason ? (
-                              <div className="mt-1 text-[10px] text-zinc-500">{tt('contentUi.xMonitor.notBought.prefix', [notBoughtReason])}</div>
+                              <>
+                                <div className="mt-1 text-[10px] text-zinc-500">{tt('contentUi.xMonitor.notBought.prefix', [notBoughtReason])}</div>
+                                {latestDecision ? (
+                                  <>
+                                    <div className="mt-0.5 text-[10px] text-zinc-500">
+                                      {tt('contentUi.xMonitor.decision.everEligible', [
+                                        latestDecision.everEligibleInTokenAgeWindow ? tt('contentUi.xMonitor.decision.yes') : tt('contentUi.xMonitor.decision.no'),
+                                        latestDecision.everEligibleInTweetAgeWindow ? tt('contentUi.xMonitor.decision.yes') : tt('contentUi.xMonitor.decision.no'),
+                                      ])}
+                                    </div>
+                                    <div className="mt-0.5 text-[10px] text-zinc-500">
+                                      {tt('contentUi.xMonitor.decision.finalFail', [
+                                        tokenWindowFinalReasonLabel,
+                                        tweetWindowFinalReasonLabel,
+                                      ])}
+                                    </div>
+                                  </>
+                                ) : null}
+                              </>
                             ) : null}
                           </div>
                         );

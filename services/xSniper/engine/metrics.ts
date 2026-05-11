@@ -116,28 +116,47 @@ export const shouldBuyByConfig = (
     tokenAgeMode?: 'signal_delta' | 'now_age';
   },
 ) => {
-  if (!metrics || !config) return false;
+  return evaluateBuyByConfig(metrics, config, signalAtMs, orderAtMs, options).pass;
+};
+
+export type BuyByConfigDecision = {
+  pass: boolean;
+  reason?: string;
+};
+
+export const evaluateBuyByConfig = (
+  metrics: TokenMetrics,
+  config: any,
+  signalAtMs?: number | null,
+  orderAtMs?: number | null,
+  options?: {
+    skipTokenCreatedAtWindowCheck?: boolean;
+    skipTweetAgeWindowCheck?: boolean;
+    tokenAgeMode?: 'signal_delta' | 'now_age';
+  },
+): BuyByConfigDecision => {
+  if (!metrics || !config) return { pass: false, reason: 'buy_filter_config_missing' };
   const marketCapUsd = sanitizeMarketCapUsd(metrics.marketCapUsd);
   const minMcap = parseKNumber(config.minMarketCapUsd);
   const maxMcap = parseKNumber(config.maxMarketCapUsd);
-  if (minMcap != null && marketCapUsd == null) return false;
-  if (maxMcap != null && marketCapUsd == null) return false;
-  if (minMcap != null && marketCapUsd != null && marketCapUsd < minMcap) return false;
-  if (maxMcap != null && marketCapUsd != null && marketCapUsd > maxMcap) return false;
+  if (minMcap != null && marketCapUsd == null) return { pass: false, reason: 'buy_filter_market_cap_missing' };
+  if (maxMcap != null && marketCapUsd == null) return { pass: false, reason: 'buy_filter_market_cap_missing' };
+  if (minMcap != null && marketCapUsd != null && marketCapUsd < minMcap) return { pass: false, reason: 'buy_filter_market_cap_too_low' };
+  if (maxMcap != null && marketCapUsd != null && marketCapUsd > maxMcap) return { pass: false, reason: 'buy_filter_market_cap_too_high' };
 
   const minHolders = parseNumber(config.minHolders);
   const maxHolders = parseNumber(config.maxHolders);
-  if (minHolders != null && metrics.holders == null) return false;
-  if (maxHolders != null && metrics.holders == null) return false;
-  if (minHolders != null && metrics.holders != null && metrics.holders < minHolders) return false;
-  if (maxHolders != null && metrics.holders != null && metrics.holders > maxHolders) return false;
+  if (minHolders != null && metrics.holders == null) return { pass: false, reason: 'buy_filter_holders_missing' };
+  if (maxHolders != null && metrics.holders == null) return { pass: false, reason: 'buy_filter_holders_missing' };
+  if (minHolders != null && metrics.holders != null && metrics.holders < minHolders) return { pass: false, reason: 'buy_filter_holders_too_low' };
+  if (maxHolders != null && metrics.holders != null && metrics.holders > maxHolders) return { pass: false, reason: 'buy_filter_holders_too_high' };
 
   const minKol = parseNumber(config.minKol);
   const maxKol = parseNumber(config.maxKol);
-  if (minKol != null && metrics.kol == null) return false;
-  if (maxKol != null && metrics.kol == null) return false;
-  if (minKol != null && metrics.kol != null && metrics.kol < minKol) return false;
-  if (maxKol != null && metrics.kol != null && metrics.kol > maxKol) return false;
+  if (minKol != null && metrics.kol == null) return { pass: false, reason: 'buy_filter_kol_missing' };
+  if (maxKol != null && metrics.kol == null) return { pass: false, reason: 'buy_filter_kol_missing' };
+  if (minKol != null && metrics.kol != null && metrics.kol < minKol) return { pass: false, reason: 'buy_filter_kol_too_low' };
+  if (maxKol != null && metrics.kol != null && metrics.kol > maxKol) return { pass: false, reason: 'buy_filter_kol_too_high' };
 
   const minTickerLenRaw = parseNumber(config.minTickerLen);
   const maxTickerLenRaw = parseNumber(config.maxTickerLen);
@@ -145,10 +164,10 @@ export const shouldBuyByConfig = (
   const maxTickerLen = maxTickerLenRaw != null ? Math.max(0, Math.floor(maxTickerLenRaw)) : null;
   if (minTickerLen != null || maxTickerLen != null) {
     const symbol = typeof metrics.tokenSymbol === 'string' ? metrics.tokenSymbol.trim() : '';
-    if (!symbol) return false;
+    if (!symbol) return { pass: false, reason: 'buy_filter_ticker_missing' };
     const len = computeTickerLen(symbol);
-    if (minTickerLen != null && len < minTickerLen) return false;
-    if (maxTickerLen != null && len > maxTickerLen) return false;
+    if (minTickerLen != null && len < minTickerLen) return { pass: false, reason: 'buy_filter_ticker_too_short' };
+    if (maxTickerLen != null && len > maxTickerLen) return { pass: false, reason: 'buy_filter_ticker_too_long' };
   }
 
   const minAgeSecRaw = parseNumber(config.minTokenAgeSeconds);
@@ -158,21 +177,21 @@ export const shouldBuyByConfig = (
   const createdAtMs = normalizeEpochMs(metrics.createdAtMs);
   const tokenAtMs = createdAtMs ?? firstSeenAtMs;
   const shouldCheckTokenCreatedAtWindow = options?.skipTokenCreatedAtWindowCheck !== true;
-  if (shouldCheckTokenCreatedAtWindow && (minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return false;
+  if (shouldCheckTokenCreatedAtWindow && (minAgeSec != null || maxAgeSec != null) && tokenAtMs == null) return { pass: false, reason: 'buy_filter_token_created_at_missing' };
   if (shouldCheckTokenCreatedAtWindow && tokenAtMs != null && (minAgeSec != null || maxAgeSec != null)) {
     const tokenAgeMode = options?.tokenAgeMode ?? 'signal_delta';
     if (tokenAgeMode === 'now_age') {
       const now = normalizeEpochMs(orderAtMs) ?? Date.now();
       const tokenAgeMs = now - tokenAtMs;
-      if (tokenAgeMs < 0) return false;
-      if (minAgeSec != null && tokenAgeMs < minAgeSec * 1000) return false;
-      if (maxAgeSec != null && tokenAgeMs > maxAgeSec * 1000) return false;
+      if (tokenAgeMs < 0) return { pass: false, reason: 'buy_filter_token_age_invalid' };
+      if (minAgeSec != null && tokenAgeMs < minAgeSec * 1000) return { pass: false, reason: 'buy_filter_token_age_too_young' };
+      if (maxAgeSec != null && tokenAgeMs > maxAgeSec * 1000) return { pass: false, reason: 'buy_filter_token_age_too_old' };
     } else {
       const ref = normalizeEpochMs(signalAtMs);
-      if (ref == null) return false;
+      if (ref == null) return { pass: false, reason: 'buy_filter_signal_time_missing' };
       const tokenDelayFromSignalMs = tokenAtMs - ref;
-      if (minAgeSec != null && tokenDelayFromSignalMs < minAgeSec * 1000) return false;
-      if (maxAgeSec != null && tokenDelayFromSignalMs > maxAgeSec * 1000) return false;
+      if (minAgeSec != null && tokenDelayFromSignalMs < minAgeSec * 1000) return { pass: false, reason: 'buy_filter_token_age_too_young' };
+      if (maxAgeSec != null && tokenDelayFromSignalMs > maxAgeSec * 1000) return { pass: false, reason: 'buy_filter_token_age_too_old' };
     }
   }
 
@@ -184,11 +203,11 @@ export const shouldBuyByConfig = (
     if (minTweetAgeSec != null || maxTweetAgeSec != null) {
       const ref = normalizeEpochMs(signalAtMs);
       const now = normalizeEpochMs(orderAtMs) ?? Date.now();
-      if (ref == null) return false;
+      if (ref == null) return { pass: false, reason: 'buy_filter_signal_time_missing' };
       const tweetAgeMs = now - ref;
-      if (tweetAgeMs < 0) return false;
-      if (minTweetAgeSec != null && tweetAgeMs < minTweetAgeSec * 1000) return false;
-      if (maxTweetAgeSec != null && tweetAgeMs > maxTweetAgeSec * 1000) return false;
+      if (tweetAgeMs < 0) return { pass: false, reason: 'buy_filter_tweet_age_invalid' };
+      if (minTweetAgeSec != null && tweetAgeMs < minTweetAgeSec * 1000) return { pass: false, reason: 'buy_filter_tweet_age_too_young' };
+      if (maxTweetAgeSec != null && tweetAgeMs > maxTweetAgeSec * 1000) return { pass: false, reason: 'buy_filter_tweet_age_too_old' };
     }
   }
 
@@ -196,12 +215,12 @@ export const shouldBuyByConfig = (
   const maxDevPct = parseNumber(config.maxDevHoldPercent);
   const devHoldPct = typeof metrics.devHoldPercent === 'number' && Number.isFinite(metrics.devHoldPercent) ? metrics.devHoldPercent : null;
   if (minDevPct != null) {
-    if (devHoldPct == null) return false;
-    if (devHoldPct < minDevPct) return false;
+    if (devHoldPct == null) return { pass: false, reason: 'buy_filter_dev_hold_missing' };
+    if (devHoldPct < minDevPct) return { pass: false, reason: 'buy_filter_dev_hold_too_low' };
   }
   if (maxDevPct != null) {
-    if (devHoldPct == null) return false;
-    if (devHoldPct > maxDevPct) return false;
+    if (devHoldPct == null) return { pass: false, reason: 'buy_filter_dev_hold_missing' };
+    if (devHoldPct > maxDevPct) return { pass: false, reason: 'buy_filter_dev_hold_too_high' };
   }
 
   const minDevMaxBuyPct = parseNumber((config as any).minDevMaxBuyPercent);
@@ -210,12 +229,12 @@ export const shouldBuyByConfig = (
     ? metrics.devMaxBuyPercent
     : null;
   if (minDevMaxBuyPct != null) {
-    if (devMaxBuyPct == null) return false;
-    if (devMaxBuyPct < minDevMaxBuyPct) return false;
+    if (devMaxBuyPct == null) return { pass: false, reason: 'buy_filter_dev_max_buy_missing' };
+    if (devMaxBuyPct < minDevMaxBuyPct) return { pass: false, reason: 'buy_filter_dev_max_buy_too_low' };
   }
   if (maxDevMaxBuyPct != null) {
-    if (devMaxBuyPct == null) return false;
-    if (devMaxBuyPct > maxDevMaxBuyPct) return false;
+    if (devMaxBuyPct == null) return { pass: false, reason: 'buy_filter_dev_max_buy_missing' };
+    if (devMaxBuyPct > maxDevMaxBuyPct) return { pass: false, reason: 'buy_filter_dev_max_buy_too_high' };
   }
 
   const minViewerCount = parseNumber((config as any).minViewerCount);
@@ -224,12 +243,12 @@ export const shouldBuyByConfig = (
     ? metrics.viewerCount
     : null;
   if (minViewerCount != null) {
-    if (viewerCount == null) return false;
-    if (viewerCount < minViewerCount) return false;
+    if (viewerCount == null) return { pass: false, reason: 'buy_filter_viewer_count_missing' };
+    if (viewerCount < minViewerCount) return { pass: false, reason: 'buy_filter_viewer_count_too_low' };
   }
   if (maxViewerCount != null) {
-    if (viewerCount == null) return false;
-    if (viewerCount > maxViewerCount) return false;
+    if (viewerCount == null) return { pass: false, reason: 'buy_filter_viewer_count_missing' };
+    if (viewerCount > maxViewerCount) return { pass: false, reason: 'buy_filter_viewer_count_too_high' };
   }
 
   const minDevCreatedTokenCount = parseNumber((config as any).minDevCreatedTokenCount);
@@ -238,14 +257,14 @@ export const shouldBuyByConfig = (
     ? metrics.devCreatedTokenCount
     : null;
   if (minDevCreatedTokenCount != null) {
-    if (devCreatedTokenCount == null) return false;
-    if (devCreatedTokenCount < minDevCreatedTokenCount) return false;
+    if (devCreatedTokenCount == null) return { pass: false, reason: 'buy_filter_dev_created_count_missing' };
+    if (devCreatedTokenCount < minDevCreatedTokenCount) return { pass: false, reason: 'buy_filter_dev_created_count_too_low' };
   }
   if (maxDevCreatedTokenCount != null) {
-    if (devCreatedTokenCount == null) return false;
-    if (devCreatedTokenCount > maxDevCreatedTokenCount) return false;
+    if (devCreatedTokenCount == null) return { pass: false, reason: 'buy_filter_dev_created_count_missing' };
+    if (devCreatedTokenCount > maxDevCreatedTokenCount) return { pass: false, reason: 'buy_filter_dev_created_count_too_high' };
   }
 
-  if (config.blockIfDevSell && metrics.devHasSold === true) return false;
-  return true;
+  if (config.blockIfDevSell && metrics.devHasSold === true) return { pass: false, reason: 'buy_filter_dev_has_sold' };
+  return { pass: true };
 };

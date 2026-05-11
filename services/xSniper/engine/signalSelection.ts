@@ -1,5 +1,5 @@
 import type { UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
-import { getSignalTimeMs, isRepostOrQuoteSignal, normalizeAddress, normalizeEpochMs, parseNumber, sanitizeMarketCapUsd, shouldBuyByConfig, type TokenMetrics } from '@/services/xSniper/engine/metrics';
+import { evaluateBuyByConfig, getSignalTimeMs, isRepostOrQuoteSignal, normalizeAddress, normalizeEpochMs, parseNumber, sanitizeMarketCapUsd, type TokenMetrics } from '@/services/xSniper/engine/metrics';
 import { extractLaunchpadPlatform } from '@/constants/launchpad';
 
 const normalizePlatformFilters = (input: unknown): string[] => {
@@ -100,7 +100,7 @@ export const pickTokensToBuyFromSignal = (input: {
   const skipTokenCreatedAtWindowCheck = isRepostOrQuoteSignal(signal);
   const perTweetMax = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
   const allowedPlatforms = normalizePlatformFilters(strategy?.platforms);
-  if (perTweetMax <= 0) return [];
+  if (perTweetMax <= 0) return { picked: [], skipped: [], decisions: [] };
   const scanLimit = Math.min(500, tokens.length);
   const unique: UnifiedSignalToken[] = [];
   const seen = new Set<string>();
@@ -114,24 +114,117 @@ export const pickTokensToBuyFromSignal = (input: {
     if (unique.length >= scanLimit) break;
   }
 
-  const candidates = unique
-    .map((t) => {
-      const m = metricsFromUnifiedToken(t);
-      if (m?.tokenAddress) {
-        input.pushWsSnapshot(m.tokenAddress, m);
-      }
-      return { t, m };
-    })
-    .filter((x) => {
-      if (!x.m?.tokenAddress) return false;
-      if (allowedPlatforms.length > 0) {
-        const tokenPlatform = extractTokenPlatform(x.t);
-        if (!tokenPlatform || !allowedPlatforms.includes(tokenPlatform)) return false;
-      }
-      if (!shouldBuyByConfig(x.m, strategy, signalAtMs, now, { skipTokenCreatedAtWindowCheck })) return false;
-      const confirm = input.computeWsConfirm(x.m.tokenAddress, now, strategy);
-      return confirm.pass;
+  const candidates: Array<{ t: UnifiedSignalToken; m: TokenMetrics }> = [];
+  const skipped: Array<{ t: UnifiedSignalToken; m: TokenMetrics | null; reason: string }> = [];
+  const decisions: Array<{
+    t: UnifiedSignalToken;
+    m: TokenMetrics | null;
+    fullPass: boolean;
+    fullFailReason?: string;
+    tokenWindowPass: boolean;
+    tokenWindowFailReason?: string;
+    tweetWindowPass: boolean;
+    tweetWindowFailReason?: string;
+    wsConfirmPass: boolean;
+    wsConfirmReason?: string;
+  }> = [];
+  for (const t of unique) {
+    const m = metricsFromUnifiedToken(t);
+    if (m?.tokenAddress) input.pushWsSnapshot(m.tokenAddress, m);
+    if (!m?.tokenAddress) {
+      decisions.push({
+        t,
+        m: m ?? null,
+        fullPass: false,
+        fullFailReason: 'buy_filter_invalid_token_address',
+        tokenWindowPass: false,
+        tokenWindowFailReason: 'buy_filter_invalid_token_address',
+        tweetWindowPass: false,
+        tweetWindowFailReason: 'buy_filter_invalid_token_address',
+        wsConfirmPass: false,
+      });
+      skipped.push({ t, m: m ?? null, reason: 'buy_filter_invalid_token_address' });
+      continue;
+    }
+    const tokenWindowDecision = evaluateBuyByConfig(m, strategy, signalAtMs, now, {
+      skipTokenCreatedAtWindowCheck,
+      skipTweetAgeWindowCheck: true,
     });
+    const tweetWindowDecision = evaluateBuyByConfig(m, strategy, signalAtMs, now, {
+      skipTokenCreatedAtWindowCheck: true,
+    });
+    let fullDecision = evaluateBuyByConfig(m, strategy, signalAtMs, now, {
+      skipTokenCreatedAtWindowCheck,
+    });
+    let wsConfirmPass = false;
+    let wsConfirmReason: string | undefined;
+    if (allowedPlatforms.length > 0) {
+      const tokenPlatform = extractTokenPlatform(t);
+      if (!tokenPlatform || !allowedPlatforms.includes(tokenPlatform)) {
+        fullDecision = { pass: false, reason: 'buy_filter_platform_mismatch' };
+        decisions.push({
+          t,
+          m,
+          fullPass: false,
+          fullFailReason: fullDecision.reason,
+          tokenWindowPass: tokenWindowDecision.pass,
+          tokenWindowFailReason: tokenWindowDecision.reason,
+          tweetWindowPass: tweetWindowDecision.pass,
+          tweetWindowFailReason: tweetWindowDecision.reason,
+          wsConfirmPass,
+          wsConfirmReason,
+        });
+        skipped.push({ t, m, reason: 'buy_filter_platform_mismatch' });
+        continue;
+      }
+    }
+    if (!fullDecision.pass) {
+      decisions.push({
+        t,
+        m,
+        fullPass: false,
+        fullFailReason: fullDecision.reason,
+        tokenWindowPass: tokenWindowDecision.pass,
+        tokenWindowFailReason: tokenWindowDecision.reason,
+        tweetWindowPass: tweetWindowDecision.pass,
+        tweetWindowFailReason: tweetWindowDecision.reason,
+        wsConfirmPass,
+        wsConfirmReason,
+      });
+      skipped.push({ t, m, reason: fullDecision.reason || 'buy_filter_rejected' });
+      continue;
+    }
+    const confirm = input.computeWsConfirm(m.tokenAddress, now, strategy);
+    wsConfirmPass = confirm.pass;
+    if (!wsConfirmPass) wsConfirmReason = 'ws_confirm_failed';
+    if (!confirm.pass) {
+      decisions.push({
+        t,
+        m,
+        fullPass: true,
+        tokenWindowPass: tokenWindowDecision.pass,
+        tokenWindowFailReason: tokenWindowDecision.reason,
+        tweetWindowPass: tweetWindowDecision.pass,
+        tweetWindowFailReason: tweetWindowDecision.reason,
+        wsConfirmPass,
+        wsConfirmReason,
+      });
+      skipped.push({ t, m, reason: 'ws_confirm_failed' });
+      continue;
+    }
+    decisions.push({
+      t,
+      m,
+      fullPass: true,
+      tokenWindowPass: tokenWindowDecision.pass,
+      tokenWindowFailReason: tokenWindowDecision.reason,
+      tweetWindowPass: tweetWindowDecision.pass,
+      tweetWindowFailReason: tweetWindowDecision.reason,
+      wsConfirmPass,
+      wsConfirmReason,
+    });
+    candidates.push({ t, m });
+  }
 
   candidates.sort((a, b) => {
     const ma = typeof a.m?.marketCapUsd === 'number' ? a.m.marketCapUsd : 0;
@@ -142,5 +235,5 @@ export const pickTokensToBuyFromSignal = (input: {
     return ta - tb;
   });
 
-  return candidates;
+  return { picked: candidates, skipped, decisions };
 };
