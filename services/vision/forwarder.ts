@@ -146,7 +146,14 @@ const initVisionConfigWatcher = () => {
   browser.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
     if (!changes[SETTINGS_STORAGE_KEY] && !changes[VISION_BASE_STORAGE_KEY]) return;
-    void refreshVisionConfig();
+    void (async () => {
+      const next = await refreshVisionConfig();
+      await updateStatus({
+        enabled: next.enabled,
+        baseUrl: next.baseUrl,
+        lastPath: 'ws:config_changed',
+      });
+    })();
   });
 };
 
