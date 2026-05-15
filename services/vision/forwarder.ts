@@ -5,9 +5,16 @@ import { DEFAULT_VISION_BASE, VISION_STATUS_STORAGE_KEY } from '@/services/visio
 
 const VISION_BASE_STORAGE_KEY = 'dagobang_vision_base_url';
 const MAX_ROWS_PER_SIGNAL = 80;
+const VISION_AGG_WINDOW_MS = 1000;
+const MAX_ROWS_PER_BATCH_PACKET = 200;
 const WS_FLUSH_INTERVAL_MS = 200;
+const WS_BACKPRESSURE_POLL_MS = 500;
 const WS_RECONNECT_BASE_MS = 1200;
 const WS_MAX_QUEUE = 1000;
+const WS_MAX_BUFFERED_AMOUNT = 512 * 1024;
+const STATUS_FLUSH_INTERVAL_MS = 2000;
+const WS_FAILURE_STREAK_FOR_COOLDOWN = 12;
+const WS_FAILURE_COOLDOWN_MS = 10_000;
 
 export type VisionForwardStatus = {
   enabled: boolean;
@@ -28,6 +35,13 @@ type VisionBatchPacket = {
   tokenMetrics?: any[];
   signalContexts?: any[];
   bridges?: any[];
+};
+
+type VisionAggregateWindow = {
+  windowStartMs: number;
+  tokenMetrics: Map<string, any>;
+  signalContexts: Map<string, any>;
+  bridges: Map<string, any>;
 };
 
 const normalizeAddress = (v: unknown): `0x${string}` | null => {
@@ -111,7 +125,21 @@ let wsConnected = false;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
+let wsFailureStreak = 0;
+let wsCooldownUntilMs = 0;
+let wsConnectPromise: Promise<void> | null = null;
+let statusCache: VisionForwardStatus | null = null;
+let statusLoadPromise: Promise<VisionForwardStatus> | null = null;
+let statusFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let aggregateWindow: VisionAggregateWindow | null = null;
+let aggregateFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const queue: VisionBatchPacket[] = [];
+
+const isWsOpen = (ws: WebSocket | null) => ws?.readyState === WebSocket.OPEN;
+const isWsConnecting = (ws: WebSocket | null) => ws?.readyState === WebSocket.CONNECTING;
+const isWsCoolingDown = () => wsCooldownUntilMs > Date.now();
+const getWsCooldownRemainingMs = () => Math.max(0, wsCooldownUntilMs - Date.now());
+const getAggregateWindowStartMs = (atMs: number) => Math.floor(atMs / VISION_AGG_WINDOW_MS) * VISION_AGG_WINDOW_MS;
 
 const parseVisionConfig = (raw: any): VisionRuntimeConfig => {
   const settings = (raw as any)?.[SETTINGS_STORAGE_KEY] ?? {};
@@ -167,52 +195,103 @@ const getVisionConfig = async () => {
   return cfgLoadPromise;
 };
 
-const updateStatus = async (patch: Partial<VisionForwardStatus>) => {
+const loadVisionStatusFromStorage = async (): Promise<VisionForwardStatus> => {
+  const cfg = await getVisionConfig();
   try {
     const res = await browser.storage.local.get(VISION_STATUS_STORAGE_KEY);
     const prev = (res as any)?.[VISION_STATUS_STORAGE_KEY] as VisionForwardStatus | undefined;
-    const cfg = await getVisionConfig();
-    const next: VisionForwardStatus = {
+    return {
       enabled: cfg.enabled,
       baseUrl: cfg.baseUrl,
       successCount: prev?.successCount ?? 0,
       failCount: prev?.failCount ?? 0,
       ...prev,
-      ...patch,
     };
-    await browser.storage.local.set({ [VISION_STATUS_STORAGE_KEY]: next });
+  } catch {
+    return {
+      enabled: cfg.enabled,
+      baseUrl: cfg.baseUrl,
+      successCount: 0,
+      failCount: 0,
+    };
+  }
+};
+
+const getVisionStatusCache = async (): Promise<VisionForwardStatus> => {
+  if (statusCache) return statusCache;
+  if (statusLoadPromise) return statusLoadPromise;
+  statusLoadPromise = loadVisionStatusFromStorage()
+    .then((next) => {
+      statusCache = next;
+      return next;
+    })
+    .finally(() => {
+      statusLoadPromise = null;
+    });
+  return statusLoadPromise;
+};
+
+const flushVisionStatus = async () => {
+  if (!statusCache) return;
+  try {
+    await browser.storage.local.set({ [VISION_STATUS_STORAGE_KEY]: statusCache });
   } catch {
   }
+};
+
+const scheduleVisionStatusFlush = (immediate = false) => {
+  if (immediate) {
+    if (statusFlushTimer) {
+      clearTimeout(statusFlushTimer);
+      statusFlushTimer = null;
+    }
+    void flushVisionStatus();
+    return;
+  }
+  if (statusFlushTimer) return;
+  statusFlushTimer = setTimeout(() => {
+    statusFlushTimer = null;
+    void flushVisionStatus();
+  }, STATUS_FLUSH_INTERVAL_MS);
+};
+
+const updateStatus = async (patch: Partial<VisionForwardStatus>, options?: { immediate?: boolean }) => {
+  const cfg = await getVisionConfig();
+  const prev = await getVisionStatusCache();
+  statusCache = {
+    ...prev,
+    enabled: cfg.enabled,
+    baseUrl: cfg.baseUrl,
+    ...patch,
+  };
+  scheduleVisionStatusFlush(options?.immediate === true);
 };
 
 const bumpStatusCounter = async (
   kind: 'success' | 'fail',
   base: { enabled: boolean; baseUrl: string; path: string; error?: string },
 ) => {
-  try {
-    const cur = await browser.storage.local.get(VISION_STATUS_STORAGE_KEY);
-    const st = (cur as any)?.[VISION_STATUS_STORAGE_KEY] as VisionForwardStatus | undefined;
-    const now = Date.now();
-    const next: VisionForwardStatus = {
-      enabled: base.enabled,
-      baseUrl: base.baseUrl,
-      successCount: Math.max(0, Number(st?.successCount) || 0),
-      failCount: Math.max(0, Number(st?.failCount) || 0),
-      ...st,
-      lastPath: base.path,
-    };
-    if (kind === 'success') {
-      next.successCount += 1;
-      next.lastSuccessAtMs = now;
-      next.lastError = undefined;
-    } else {
-      next.failCount += 1;
-      next.lastErrorAtMs = now;
-      next.lastError = base.error || 'forward_failed';
-    }
-    await browser.storage.local.set({ [VISION_STATUS_STORAGE_KEY]: next });
-  } catch {
+  const st = await getVisionStatusCache();
+  const now = Date.now();
+  statusCache = {
+    ...st,
+    enabled: base.enabled,
+    baseUrl: base.baseUrl,
+    successCount: Math.max(0, Number(st.successCount) || 0),
+    failCount: Math.max(0, Number(st.failCount) || 0),
+    lastPath: base.path,
+  };
+  if (!statusCache) return;
+  if (kind === 'success') {
+    statusCache.successCount += 1;
+    statusCache.lastSuccessAtMs = now;
+    statusCache.lastError = undefined;
+  } else {
+    statusCache.failCount += 1;
+    statusCache.lastErrorAtMs = now;
+    statusCache.lastError = base.error || 'forward_failed';
   }
+  scheduleVisionStatusFlush();
 };
 
 const makeWSUrl = (baseUrl: string) => {
@@ -228,16 +307,160 @@ const makeWSUrl = (baseUrl: string) => {
   return normalized.replace(/^ws:/i, 'ws:').replace(/^wss:/i, 'wss:').replace(/\/+$/, '') + '/ingest/ws';
 };
 
-const scheduleFlush = () => {
+const scheduleFlush = (delayMs = WS_FLUSH_INTERVAL_MS) => {
   if (flushTimer) return;
   flushTimer = setTimeout(() => {
     flushTimer = null;
     void flushQueue();
-  }, WS_FLUSH_INTERVAL_MS);
+  }, Math.max(0, delayMs));
+};
+
+const createAggregateWindow = (windowStartMs: number): VisionAggregateWindow => ({
+  windowStartMs,
+  tokenMetrics: new Map(),
+  signalContexts: new Map(),
+  bridges: new Map(),
+});
+
+const shouldUseIncomingValue = (value: unknown) => {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+};
+
+const mergeVisionRow = <T extends Record<string, any>>(prev: T | undefined, next: T): T => {
+  if (!prev) return { ...next };
+  const merged: Record<string, any> = { ...prev };
+  for (const [key, value] of Object.entries(next)) {
+    if (!shouldUseIncomingValue(value)) continue;
+    merged[key] = value;
+  }
+  return merged as T;
+};
+
+const normalizeAggregateTokenAddress = (value: unknown) =>
+  normalizeAddress(value) ?? String(value ?? '').trim().toLowerCase();
+
+const getMetricRowKey = (row: any) => [
+  String(row?.sourceSite ?? 'unknown'),
+  String(row?.sourceChannel ?? 'unknown'),
+  String(row?.chain ?? ''),
+  normalizeAggregateTokenAddress(row?.tokenAddress),
+].join('|');
+
+const getSignalRowKey = (row: any) => [
+  String(row?.signalId ?? row?.eventId ?? row?.tweetId ?? 'unknown'),
+  normalizeAggregateTokenAddress(row?.tokenAddress),
+].join('|');
+
+const clearAggregateFlushTimer = () => {
+  if (!aggregateFlushTimer) return;
+  clearTimeout(aggregateFlushTimer);
+  aggregateFlushTimer = null;
+};
+
+const resetAggregateWindow = () => {
+  clearAggregateFlushTimer();
+  aggregateWindow = null;
+};
+
+const scheduleAggregateFlush = () => {
+  if (aggregateFlushTimer || !aggregateWindow) return;
+  const delay = Math.max(0, aggregateWindow.windowStartMs + VISION_AGG_WINDOW_MS - Date.now());
+  aggregateFlushTimer = setTimeout(() => {
+    aggregateFlushTimer = null;
+    const activeWindowStartMs = aggregateWindow?.windowStartMs;
+    if (activeWindowStartMs == null) return;
+    void flushAggregateWindow(activeWindowStartMs);
+  }, delay);
+};
+
+const enqueueAggregatedWindow = async (windowState: VisionAggregateWindow) => {
+  const tokenMetrics = Array.from(windowState.tokenMetrics.values());
+  const signalContexts = Array.from(windowState.signalContexts.values());
+  const bridges = Array.from(windowState.bridges.values());
+  const maxChunks = Math.max(
+    Math.ceil(tokenMetrics.length / MAX_ROWS_PER_BATCH_PACKET),
+    Math.ceil(signalContexts.length / MAX_ROWS_PER_BATCH_PACKET),
+    Math.ceil(bridges.length / MAX_ROWS_PER_BATCH_PACKET),
+  );
+  if (maxChunks <= 0) return;
+  for (let i = 0; i < maxChunks; i += 1) {
+    const start = i * MAX_ROWS_PER_BATCH_PACKET;
+    await enqueuePacket({
+      type: 'batch',
+      id: `agg:${windowState.windowStartMs}:${i}`,
+      sentAtMs: Date.now(),
+      tokenMetrics: tokenMetrics.slice(start, start + MAX_ROWS_PER_BATCH_PACKET),
+      signalContexts: signalContexts.slice(start, start + MAX_ROWS_PER_BATCH_PACKET),
+      bridges: bridges.slice(start, start + MAX_ROWS_PER_BATCH_PACKET),
+    });
+  }
+};
+
+const flushAggregateWindow = async (expectedWindowStartMs?: number) => {
+  const current = aggregateWindow;
+  if (!current) return;
+  if (expectedWindowStartMs != null && current.windowStartMs !== expectedWindowStartMs) return;
+  clearAggregateFlushTimer();
+  aggregateWindow = null;
+  await enqueueAggregatedWindow(current);
+};
+
+const getActiveAggregateWindow = async (nowMs: number) => {
+  const nextWindowStartMs = getAggregateWindowStartMs(nowMs);
+  if (!aggregateWindow) {
+    aggregateWindow = createAggregateWindow(nextWindowStartMs);
+    scheduleAggregateFlush();
+    return aggregateWindow;
+  }
+  if (aggregateWindow.windowStartMs !== nextWindowStartMs) {
+    const prev = aggregateWindow;
+    aggregateWindow = createAggregateWindow(nextWindowStartMs);
+    clearAggregateFlushTimer();
+    scheduleAggregateFlush();
+    await enqueueAggregatedWindow(prev);
+  }
+  return aggregateWindow;
+};
+
+const aggregateRowsIntoWindow = async (input: {
+  tokenMetrics?: any[];
+  signalContexts?: any[];
+  bridges?: any[];
+}) => {
+  const nowMs = Date.now();
+  const windowState = await getActiveAggregateWindow(nowMs);
+  for (const row of input.tokenMetrics ?? []) {
+    const key = getMetricRowKey(row);
+    if (!key) continue;
+    windowState.tokenMetrics.set(key, mergeVisionRow(windowState.tokenMetrics.get(key), row));
+  }
+  for (const row of input.signalContexts ?? []) {
+    const key = getSignalRowKey(row);
+    if (!key) continue;
+    windowState.signalContexts.set(key, mergeVisionRow(windowState.signalContexts.get(key), row));
+  }
+  for (const row of input.bridges ?? []) {
+    const key = getSignalRowKey(row);
+    if (!key) continue;
+    windowState.bridges.set(key, mergeVisionRow(windowState.bridges.get(key), row));
+  }
+  scheduleAggregateFlush();
 };
 
 const scheduleReconnect = async () => {
   if (reconnectTimer) return;
+  if (isWsCoolingDown()) {
+    const wait = getWsCooldownRemainingMs();
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      void ensureWSConnected();
+    }, wait);
+    return;
+  }
   const wait = Math.min(15_000, WS_RECONNECT_BASE_MS * Math.max(1, reconnectAttempt + 1));
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
@@ -249,6 +472,12 @@ const attachWSListeners = (ws: WebSocket) => {
   ws.onopen = () => {
     wsConnected = true;
     reconnectAttempt = 0;
+    wsFailureStreak = 0;
+    wsCooldownUntilMs = 0;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     void updateStatus({ lastPath: 'ws:open', lastSuccessAtMs: Date.now() });
     scheduleFlush();
   };
@@ -256,6 +485,11 @@ const attachWSListeners = (ws: WebSocket) => {
   ws.onclose = () => {
     wsConnected = false;
     reconnectAttempt += 1;
+    wsFailureStreak += 1;
+    if (wsFailureStreak >= WS_FAILURE_STREAK_FOR_COOLDOWN) {
+      wsCooldownUntilMs = Date.now() + WS_FAILURE_COOLDOWN_MS;
+      wsFailureStreak = 0;
+    }
     void updateStatus({ lastErrorAtMs: Date.now(), lastError: 'ws_closed', lastPath: 'ws:close' });
     void scheduleReconnect();
   };
@@ -263,12 +497,18 @@ const attachWSListeners = (ws: WebSocket) => {
   ws.onerror = () => {
     wsConnected = false;
     reconnectAttempt += 1;
+    wsFailureStreak += 1;
+    if (wsFailureStreak >= WS_FAILURE_STREAK_FOR_COOLDOWN) {
+      wsCooldownUntilMs = Date.now() + WS_FAILURE_COOLDOWN_MS;
+      wsFailureStreak = 0;
+    }
     void bumpStatusCounter('fail', {
       enabled: true,
       baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
       path: 'ws:error',
       error: 'ws_error',
     });
+    void scheduleReconnect();
   };
 
   ws.onmessage = (ev) => {
@@ -295,29 +535,70 @@ const attachWSListeners = (ws: WebSocket) => {
   };
 };
 
-const ensureWSConnected = async () => {
+const doEnsureWSConnected = async () => {
   const cfg = await getVisionConfig();
   if (!cfg.enabled) {
     wsConnected = false;
+    wsFailureStreak = 0;
+    wsCooldownUntilMs = 0;
+    resetAggregateWindow();
     try {
       wsClient?.close();
     } catch {
     }
     wsClient = null;
     wsUrlCached = '';
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     await updateStatus({ enabled: false, baseUrl: cfg.baseUrl, lastPath: 'ws:disabled' });
     return;
   }
-  const wsURL = makeWSUrl(cfg.baseUrl);
-  if (wsClient && wsConnected && wsUrlCached === wsURL) {
+  if (isWsCoolingDown()) {
+    await updateStatus({
+      enabled: true,
+      baseUrl: cfg.baseUrl,
+      lastPath: 'ws:cooldown',
+      lastError: `ws_cooldown_${getWsCooldownRemainingMs()}ms`,
+    });
+    await scheduleReconnect();
     return;
   }
-  try {
-    wsClient?.close();
-  } catch {
+  const wsURL = makeWSUrl(cfg.baseUrl);
+  if (reconnectTimer && wsUrlCached === wsURL && !isWsOpen(wsClient) && !isWsConnecting(wsClient)) {
+    return;
   }
-  wsClient = null;
-  wsConnected = false;
+  if (wsClient && wsUrlCached === wsURL) {
+    if (isWsOpen(wsClient)) {
+      wsConnected = true;
+      return;
+    }
+    if (isWsConnecting(wsClient)) {
+      return;
+    }
+  }
+  if (wsClient && wsUrlCached && wsUrlCached !== wsURL) {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    try {
+      wsClient.close();
+    } catch {
+    }
+    wsClient = null;
+    wsConnected = false;
+  } else if (wsClient) {
+    if (wsClient.readyState === WebSocket.CLOSING) return;
+    if (wsClient.readyState === WebSocket.CLOSED) {
+      wsClient = null;
+      wsConnected = false;
+    } else if (wsClient.readyState === WebSocket.OPEN) {
+      wsConnected = true;
+      return;
+    }
+  }
   wsUrlCached = wsURL;
   try {
     const ws = new WebSocket(wsURL);
@@ -326,6 +607,11 @@ const ensureWSConnected = async () => {
     await updateStatus({ enabled: true, baseUrl: cfg.baseUrl, lastPath: 'ws:connecting' });
   } catch (e: any) {
     reconnectAttempt += 1;
+    wsFailureStreak += 1;
+    if (wsFailureStreak >= WS_FAILURE_STREAK_FOR_COOLDOWN) {
+      wsCooldownUntilMs = Date.now() + WS_FAILURE_COOLDOWN_MS;
+      wsFailureStreak = 0;
+    }
     await bumpStatusCounter('fail', {
       enabled: true,
       baseUrl: cfg.baseUrl,
@@ -336,6 +622,14 @@ const ensureWSConnected = async () => {
   }
 };
 
+const ensureWSConnected = async () => {
+  if (wsConnectPromise) return wsConnectPromise;
+  wsConnectPromise = doEnsureWSConnected().finally(() => {
+    wsConnectPromise = null;
+  });
+  return wsConnectPromise;
+};
+
 const flushQueue = async () => {
   await ensureWSConnected();
   if (!wsClient || !wsConnected) {
@@ -344,6 +638,16 @@ const flushQueue = async () => {
   }
   const ws = wsClient;
   while (queue.length > 0 && ws.readyState === WebSocket.OPEN) {
+    if (ws.bufferedAmount > WS_MAX_BUFFERED_AMOUNT) {
+      await updateStatus({
+        enabled: true,
+        baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
+        lastPath: 'ws:backpressure',
+        lastError: `ws_buffered_${ws.bufferedAmount}`,
+      });
+      scheduleFlush(WS_BACKPRESSURE_POLL_MS);
+      break;
+    }
     const pkt = queue.shift();
     if (!pkt) break;
     try {
@@ -352,6 +656,11 @@ const flushQueue = async () => {
     } catch (e: any) {
       queue.unshift(pkt);
       wsConnected = false;
+      wsFailureStreak += 1;
+      if (wsFailureStreak >= WS_FAILURE_STREAK_FOR_COOLDOWN) {
+        wsCooldownUntilMs = Date.now() + WS_FAILURE_COOLDOWN_MS;
+        wsFailureStreak = 0;
+      }
       await bumpStatusCounter('fail', {
         enabled: true,
         baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
@@ -470,6 +779,7 @@ const buildContextAndBridgeRows = (input: {
 export const forwardTwitterSignalToVision = async (signal: UnifiedTwitterSignal) => {
   const cfg = await getVisionConfig();
   if (!cfg.enabled) {
+    resetAggregateWindow();
     await updateStatus({ enabled: false, baseUrl: cfg.baseUrl, lastPath: 'ws:disabled' });
     return;
   }
@@ -480,10 +790,7 @@ export const forwardTwitterSignalToVision = async (signal: UnifiedTwitterSignal)
     signalTs: signal.receivedAtMs || signal.ts,
   });
   const { contexts, bridges } = buildContextAndBridgeRows({ signal, sourceType: 'twitter' });
-  await enqueuePacket({
-    type: 'batch',
-    id: `tw:${stableSignalId(signal)}:${Date.now()}`,
-    sentAtMs: Date.now(),
+  await aggregateRowsIntoWindow({
     tokenMetrics: metrics,
     signalContexts: contexts,
     bridges,
@@ -493,6 +800,7 @@ export const forwardTwitterSignalToVision = async (signal: UnifiedTwitterSignal)
 export const forwardMarketSignalToVision = async (signal: UnifiedMarketSignal) => {
   const cfg = await getVisionConfig();
   if (!cfg.enabled) {
+    resetAggregateWindow();
     await updateStatus({ enabled: false, baseUrl: cfg.baseUrl, lastPath: 'ws:disabled' });
     return;
   }
@@ -504,10 +812,7 @@ export const forwardMarketSignalToVision = async (signal: UnifiedMarketSignal) =
     signalTs: signal.receivedAtMs || signal.ts,
   });
   const { contexts, bridges } = buildContextAndBridgeRows({ signal, sourceType: 'market_ws' });
-  await enqueuePacket({
-    type: 'batch',
-    id: `mk:${stableSignalId(signal as any)}:${Date.now()}`,
-    sentAtMs: Date.now(),
+  await aggregateRowsIntoWindow({
     tokenMetrics: metrics,
     signalContexts: contexts,
     bridges,
