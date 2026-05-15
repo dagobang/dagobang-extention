@@ -1069,6 +1069,83 @@ export function initGmgnWsMonitor(options: {
     marketForwardTimerByChannel.set(normalizedChannel, timer);
   };
 
+  type NewPoolMonitorUiDetail = {
+    source: 'new_pool' | 'token_update';
+    channel: string;
+    tokenData: any;
+    receivedAtMs: number;
+  };
+  const NEWPOOL_MONITOR_UI_CACHE_LIMIT = 800;
+  const NEWPOOL_MONITOR_UI_FLUSH_MS = 80;
+  const isNewPoolMonitorUiActive = () => {
+    try {
+      return (window as any).__DAGOBANG_NEWPOOL_MONITOR_ACTIVE__ === true;
+    } catch {
+      return false;
+    }
+  };
+  const newPoolMonitorUiCache = new Map<string, NewPoolMonitorUiDetail>();
+  const pendingNewPoolMonitorUi = new Map<string, NewPoolMonitorUiDetail>();
+  let newPoolMonitorUiTimer: number | null = null;
+  const mergeNewPoolMonitorTokenData = (prev: any, next: any): any => {
+    if (!isObject(prev)) return isObject(next) ? { ...(next as any) } : next;
+    if (!isObject(next)) return { ...(prev as any) };
+    const merged: Record<string, any> = { ...(prev as any), ...(next as any) };
+    const prevF = isObject((prev as any).f) ? (prev as any).f : null;
+    const nextF = isObject((next as any).f) ? (next as any).f : null;
+    if (prevF || nextF) {
+      merged.f = {
+        ...(prevF ?? {}),
+        ...(nextF ?? {}),
+      };
+    }
+    return merged;
+  };
+  const flushNewPoolMonitorUi = () => {
+    if (newPoolMonitorUiTimer != null) {
+      window.clearTimeout(newPoolMonitorUiTimer);
+      newPoolMonitorUiTimer = null;
+    }
+    if (!pendingNewPoolMonitorUi.size || !isNewPoolMonitorUiActive()) {
+      pendingNewPoolMonitorUi.clear();
+      return;
+    }
+    const items = Array.from(pendingNewPoolMonitorUi.values());
+    pendingNewPoolMonitorUi.clear();
+    window.dispatchEvent(new CustomEvent('dagobang-newpool-monitor-batch', { detail: { items } }));
+  };
+  const pushNewPoolMonitorUiDetail = (detail: NewPoolMonitorUiDetail) => {
+    const addr = typeof detail.tokenData?.tokenAddress === 'string' ? detail.tokenData.tokenAddress.trim().toLowerCase() : '';
+    const key = addr || `${detail.source}:${detail.channel}:${detail.receivedAtMs}`;
+    const prev = newPoolMonitorUiCache.get(key);
+    const mergedDetail: NewPoolMonitorUiDetail = prev ? {
+      source: prev.source === 'new_pool' ? prev.source : detail.source,
+      channel: detail.channel || prev.channel,
+      tokenData: mergeNewPoolMonitorTokenData(prev.tokenData, detail.tokenData),
+      receivedAtMs: Math.max(prev.receivedAtMs, detail.receivedAtMs),
+    } : detail;
+    if (newPoolMonitorUiCache.has(key)) newPoolMonitorUiCache.delete(key);
+    newPoolMonitorUiCache.set(key, mergedDetail);
+    while (newPoolMonitorUiCache.size > NEWPOOL_MONITOR_UI_CACHE_LIMIT) {
+      const oldestKey = newPoolMonitorUiCache.keys().next().value;
+      if (!oldestKey) break;
+      newPoolMonitorUiCache.delete(oldestKey);
+    }
+    if (!isNewPoolMonitorUiActive()) return;
+    pendingNewPoolMonitorUi.set(key, mergedDetail);
+    if (newPoolMonitorUiTimer == null) {
+      newPoolMonitorUiTimer = window.setTimeout(() => flushNewPoolMonitorUi(), NEWPOOL_MONITOR_UI_FLUSH_MS);
+    }
+  };
+  const emitNewPoolMonitorSnapshot = () => {
+    const items = Array.from(newPoolMonitorUiCache.values());
+    window.dispatchEvent(new CustomEvent('dagobang-newpool-monitor-snapshot', { detail: { items } }));
+  };
+  const onRequestNewPoolMonitorSnapshot = () => {
+    emitNewPoolMonitorSnapshot();
+  };
+  window.addEventListener('dagobang-newpool-monitor-request-snapshot', onRequestNewPoolMonitorSnapshot as EventListener);
+
   const emitMarketSignal = (input: {
     source: UnifiedMarketSignal['source'];
     channel: string;
@@ -1561,6 +1638,12 @@ export function initGmgnWsMonitor(options: {
     for (const item of creates) {
       const tokenData = normalizePublicTokenData(item.tokenData, item.chain);
       if (!tokenData.tokenAddress) continue;
+      pushNewPoolMonitorUiDetail({
+        source: 'new_pool',
+        channel,
+        tokenData,
+        receivedAtMs: now,
+      });
       updateTokenSnapshot(tokenData, now);
       wsStatus = {
         ...wsStatus,
@@ -1587,6 +1670,12 @@ export function initGmgnWsMonitor(options: {
       for (const pool of pools) {
         const tokenData = normalizeNewPoolTokenData(pool, chain);
         if (!tokenData.tokenAddress) continue;
+        pushNewPoolMonitorUiDetail({
+          source: 'new_pool',
+          channel,
+          tokenData,
+          receivedAtMs: now,
+        });
         updateTokenSnapshot(tokenData, now);
         wsStatus = {
           ...wsStatus,
@@ -1651,6 +1740,12 @@ export function initGmgnWsMonitor(options: {
       const isNewPoolByToken =
         stage === 'new_created' &&
         (!hasPrevSnapshot || addedAddrs.has(tokenAddrLower) || hasCreateFields);
+      pushNewPoolMonitorUiDetail({
+        source: isNewPoolByToken ? 'new_pool' : 'token_update',
+        channel,
+        tokenData,
+        receivedAtMs: now,
+      });
       const updateTypeRaw = typeof (item as any)?._v_ch === 'string' ? (item as any)._v_ch : wrapperUpdateTypeRaw;
       const updateType = typeof updateTypeRaw === 'string' ? String(updateTypeRaw).trim().toLowerCase() : '';
       emitTrenchesTokenEvent(tokenData, now);
@@ -1750,7 +1845,9 @@ export function initGmgnWsMonitor(options: {
         flushMarketForwardChannel(channel);
       }
       flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
+      flushNewPoolMonitorUi();
       window.removeEventListener('message', onMessage);
+      window.removeEventListener('dagobang-newpool-monitor-request-snapshot', onRequestNewPoolMonitorSnapshot as EventListener);
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('beforeunload', onPageHide);
       onPageHide();

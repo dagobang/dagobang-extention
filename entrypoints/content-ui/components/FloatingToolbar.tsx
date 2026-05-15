@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AlarmClockCheck, Crosshair, Flame, GripHorizontal, MoreHorizontal, NotebookPen, SatelliteDish } from 'lucide-react';
+import { AlarmClockCheck, Crosshair, Flame, GripHorizontal, HardHat, MoreHorizontal, NotebookPen, SatelliteDish } from 'lucide-react';
 import type { Settings } from '@/types/extention';
 import type { SiteInfo } from '@/utils/sites';
 import { Logo } from '@/components/Logo';
@@ -11,6 +11,8 @@ export type FloatingToolbarProps = {
   cookingActive: boolean;
   onToggleXTrade: () => void;
   xTradeActive: boolean;
+  onToggleNewPoolMonitor: () => void;
+  newPoolMonitorActive: boolean;
   onToggleLimitTrade: () => void;
   autotradeActive: boolean;
   onToggleRpc: () => void;
@@ -36,6 +38,8 @@ export function FloatingToolbar({
   cookingActive,
   onToggleXTrade,
   xTradeActive,
+  onToggleNewPoolMonitor,
+  newPoolMonitorActive,
   onToggleLimitTrade,
   autotradeActive,
   onToggleRpc,
@@ -46,7 +50,7 @@ export function FloatingToolbar({
   reviewActive,
 }: FloatingToolbarProps) {
   const showToolbar = settings?.ui?.showToolbar ?? true;
-  const toolbarWidth = 286;
+  const toolbarWidth = 324;
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
     const defaultX = Math.max(0, width - toolbarWidth);
@@ -165,6 +169,10 @@ export function FloatingToolbar({
 
       <ToolBtn active={xTradeActive} title="Twitter Sinper" onClick={onToggleXTrade}>
         <Crosshair size={14} />
+      </ToolBtn>
+
+      <ToolBtn active={newPoolMonitorActive} title="NewPool Monitor" onClick={onToggleNewPoolMonitor}>
+        <HardHat size={14} />
       </ToolBtn>
 
       <ToolBtn active={rpcActive} title="RPC" onClick={onToggleRpc}>

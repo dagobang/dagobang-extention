@@ -23,6 +23,7 @@ import {
 import { CustomToaster } from './components/CustomToaster';
 import { LimitTradePanel } from './components/LimitTradePanel';
 import { XTradePanel } from './components/XTradePanel';
+import { NewPoolMonitorPanel } from './components/XTradePanel/NewPoolMonitor';
 import { RpcPanel } from './components/RpcPanel';
 import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
 import { ReviewPanel } from './components/ReviewPanel';
@@ -130,6 +131,8 @@ export default function App() {
   const [showCookingPanel, setShowCookingPanel] = useState(false);
   const [showLimitTradePanel, setShowLimitTradePanel] = useState(false);
   const [showXTradePanel, setShowXTradePanel] = useState(false);
+  const [showNewPoolMonitorPanel, setShowNewPoolMonitorPanel] = useState(false);
+  const [xTradeActiveTab, setXTradeActiveTab] = useState<'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper'>('xmonitor');
   const [showRpcPanel, setShowRpcPanel] = useState(false);
   const [showDailyAnalysisPanel, setShowDailyAnalysisPanel] = useState(false);
   const [showReviewPanel, setShowReviewPanel] = useState(false);
@@ -2025,12 +2028,25 @@ export default function App() {
     setShowCookingPanel((v) => !v);
   };
 
-  const handleToggleXTradePanel = () => {
+  const handleToggleXTradePanelToTab = (tab: 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper') => {
     if (!showXTradePanel) {
+      setXTradeActiveTab(tab);
       setShowXTradePanel(true);
       return;
     }
+    if (xTradeActiveTab !== tab) {
+      setXTradeActiveTab(tab);
+      return;
+    }
     setShowXTradePanel(false);
+  };
+
+  const handleToggleXTradePanel = () => {
+    handleToggleXTradePanelToTab('xmonitor');
+  };
+
+  const handleToggleNewPoolMonitor = () => {
+    setShowNewPoolMonitorPanel((v) => !v);
   };
 
   const handleToggleKeyboardShortcuts = () => {
@@ -2062,6 +2078,8 @@ export default function App() {
               cookingActive={showCookingPanel}
               onToggleXTrade={handleToggleXTradePanel}
               xTradeActive={showXTradePanel}
+              onToggleNewPoolMonitor={handleToggleNewPoolMonitor}
+              newPoolMonitorActive={showNewPoolMonitorPanel}
               onToggleLimitTrade={handleToggleLimitTradePanel}
               autotradeActive={limitTradePanelVisible}
               onToggleRpc={handleToggleRpcPanel}
@@ -2222,10 +2240,20 @@ export default function App() {
           <XTradePanel
             siteInfo={siteInfo}
             visible={showXTradePanel}
-            activeTab={'xmonitor'}
+            activeTab={xTradeActiveTab}
+            onActiveTabChange={(tab) => {
+              if (tab === 'xhistory') return;
+              setXTradeActiveTab(tab);
+            }}
             onVisibleChange={setShowXTradePanel}
             settings={settings}
             isUnlocked={isUnlocked}
+          />
+          <NewPoolMonitorPanel
+            siteInfo={siteInfo}
+            visible={showNewPoolMonitorPanel}
+            onVisibleChange={setShowNewPoolMonitorPanel}
+            settings={settings}
           />
         </>
       )}

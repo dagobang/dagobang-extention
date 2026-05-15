@@ -36,9 +36,21 @@ export function normalizeLaunchpadPlatform(value: unknown): string | undefined {
     return raw;
 }
 
-export function extractLaunchpadPlatform(input: { launchpadPlatform?: unknown; launchpad_platform?: unknown; platform?: unknown } | null | undefined): string | undefined {
+export function extractLaunchpadPlatform(input: {
+    launchpadPlatform?: unknown;
+    launchpad_platform?: unknown;
+    platform?: unknown;
+    lp?: unknown;
+    lpp?: unknown;
+} | null | undefined): string | undefined {
     if (!input) return undefined;
-    return normalizeLaunchpadPlatform(input.launchpadPlatform ?? input.launchpad_platform ?? input.platform);
+    return normalizeLaunchpadPlatform(
+        input.launchpadPlatform ??
+        input.launchpad_platform ??
+        input.platform ??
+        input.lp ??
+        input.lpp
+    );
 }
 
 export function getAxiomLaunchpad(data: any): string {
