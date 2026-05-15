@@ -79,9 +79,13 @@ export function VisionSettings({ settingsDraft, setSettingsDraft, tt, busy }: Se
           <div>{tt('popup.settings.visionStatusWsUrl')}: {effectiveWsUrl}</div>
           <div>{tt('popup.settings.visionStatusSuccess')}: {status?.successCount ?? 0}</div>
           <div>{tt('popup.settings.visionStatusFail')}: {status?.failCount ?? 0}</div>
+          <div>{tt('popup.settings.visionStatusBackpressure')}: {status?.backpressureCount ?? 0}</div>
+          <div>{tt('popup.settings.visionStatusDroppedPackets')}: {status?.droppedPackets ?? 0}</div>
+          <div>{tt('popup.settings.visionStatusDroppedAggregateRows')}: {status?.droppedAggregateRows ?? 0}</div>
           <div>{tt('popup.settings.visionStatusLastPath')}: {status?.lastPath || '-'}</div>
           <div>{tt('popup.settings.visionStatusLastSuccess')}: {status?.lastSuccessAtMs ? new Date(status.lastSuccessAtMs).toLocaleString() : '-'}</div>
           <div>{tt('popup.settings.visionStatusLastError')}: {status?.lastError ? `${status.lastError}` : '-'}</div>
+          <div className="pt-2 text-[11px] text-zinc-500">{tt('popup.settings.visionStatusProtectionHint')}</div>
         </div>
       </div>
     </div>

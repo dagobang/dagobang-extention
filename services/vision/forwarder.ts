@@ -7,6 +7,7 @@ const VISION_BASE_STORAGE_KEY = 'dagobang_vision_base_url';
 const MAX_ROWS_PER_SIGNAL = 80;
 const VISION_AGG_WINDOW_MS = 1000;
 const MAX_ROWS_PER_BATCH_PACKET = 200;
+const MAX_AGG_ROWS_PER_KIND = 4000;
 const WS_FLUSH_INTERVAL_MS = 200;
 const WS_BACKPRESSURE_POLL_MS = 500;
 const WS_RECONNECT_BASE_MS = 1200;
@@ -26,6 +27,9 @@ export type VisionForwardStatus = {
   successCount: number;
   failCount: number;
   lastPath?: string;
+  droppedPackets?: number;
+  droppedAggregateRows?: number;
+  backpressureCount?: number;
 };
 
 type VisionBatchPacket = {
@@ -294,6 +298,26 @@ const bumpStatusCounter = async (
   scheduleVisionStatusFlush();
 };
 
+const bumpStatusMetric = async (
+  patch: Partial<Pick<VisionForwardStatus, 'droppedPackets' | 'droppedAggregateRows' | 'backpressureCount'>> & { path?: string; error?: string },
+) => {
+  const cfg = await getVisionConfig();
+  const st = await getVisionStatusCache();
+  statusCache = {
+    ...st,
+    enabled: cfg.enabled,
+    baseUrl: cfg.baseUrl,
+    successCount: Math.max(0, Number(st.successCount) || 0),
+    failCount: Math.max(0, Number(st.failCount) || 0),
+    droppedPackets: Math.max(0, Number(st.droppedPackets) || 0) + Math.max(0, Number(patch.droppedPackets) || 0),
+    droppedAggregateRows: Math.max(0, Number(st.droppedAggregateRows) || 0) + Math.max(0, Number(patch.droppedAggregateRows) || 0),
+    backpressureCount: Math.max(0, Number(st.backpressureCount) || 0) + Math.max(0, Number(patch.backpressureCount) || 0),
+    ...(patch.path ? { lastPath: patch.path } : {}),
+    ...(patch.error ? { lastError: patch.error, lastErrorAtMs: Date.now() } : {}),
+  };
+  scheduleVisionStatusFlush();
+};
+
 const makeWSUrl = (baseUrl: string) => {
   const normalized = baseUrl.replace(/\/+$/, '');
   if (/^https?:\/\//i.test(normalized)) {
@@ -433,20 +457,49 @@ const aggregateRowsIntoWindow = async (input: {
 }) => {
   const nowMs = Date.now();
   const windowState = await getActiveAggregateWindow(nowMs);
+  let droppedAggregateRows = 0;
   for (const row of input.tokenMetrics ?? []) {
     const key = getMetricRowKey(row);
     if (!key) continue;
+    if (!windowState.tokenMetrics.has(key) && windowState.tokenMetrics.size >= MAX_AGG_ROWS_PER_KIND) {
+      const oldestKey = windowState.tokenMetrics.keys().next().value;
+      if (oldestKey) {
+        windowState.tokenMetrics.delete(oldestKey);
+        droppedAggregateRows += 1;
+      }
+    }
     windowState.tokenMetrics.set(key, mergeVisionRow(windowState.tokenMetrics.get(key), row));
   }
   for (const row of input.signalContexts ?? []) {
     const key = getSignalRowKey(row);
     if (!key) continue;
+    if (!windowState.signalContexts.has(key) && windowState.signalContexts.size >= MAX_AGG_ROWS_PER_KIND) {
+      const oldestKey = windowState.signalContexts.keys().next().value;
+      if (oldestKey) {
+        windowState.signalContexts.delete(oldestKey);
+        droppedAggregateRows += 1;
+      }
+    }
     windowState.signalContexts.set(key, mergeVisionRow(windowState.signalContexts.get(key), row));
   }
   for (const row of input.bridges ?? []) {
     const key = getSignalRowKey(row);
     if (!key) continue;
+    if (!windowState.bridges.has(key) && windowState.bridges.size >= MAX_AGG_ROWS_PER_KIND) {
+      const oldestKey = windowState.bridges.keys().next().value;
+      if (oldestKey) {
+        windowState.bridges.delete(oldestKey);
+        droppedAggregateRows += 1;
+      }
+    }
     windowState.bridges.set(key, mergeVisionRow(windowState.bridges.get(key), row));
+  }
+  if (droppedAggregateRows > 0) {
+    await bumpStatusMetric({
+      droppedAggregateRows,
+      path: 'ws:aggregate_cap',
+      error: `aggregate_rows_dropped_${droppedAggregateRows}`,
+    });
   }
   scheduleAggregateFlush();
 };
@@ -639,6 +692,11 @@ const flushQueue = async () => {
   const ws = wsClient;
   while (queue.length > 0 && ws.readyState === WebSocket.OPEN) {
     if (ws.bufferedAmount > WS_MAX_BUFFERED_AMOUNT) {
+      await bumpStatusMetric({
+        backpressureCount: 1,
+        path: 'ws:backpressure',
+        error: `ws_buffered_${ws.bufferedAmount}`,
+      });
       await updateStatus({
         enabled: true,
         baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
@@ -680,8 +738,17 @@ const flushQueue = async () => {
 
 const enqueuePacket = async (packet: VisionBatchPacket) => {
   queue.push(packet);
+  let droppedPackets = 0;
   while (queue.length > WS_MAX_QUEUE) {
     queue.shift();
+    droppedPackets += 1;
+  }
+  if (droppedPackets > 0) {
+    await bumpStatusMetric({
+      droppedPackets,
+      path: 'ws:queue_trim',
+      error: `queue_packets_dropped_${droppedPackets}`,
+    });
   }
   scheduleFlush();
 };
