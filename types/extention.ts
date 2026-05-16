@@ -133,6 +133,8 @@ export type AutoTradeTwitterSnipeStrategy = AutoTradeTwitterSnipeRuntimeStrategy
   activePresetId?: string;
 };
 
+export type UnifiedMarketSignalSource = 'new_pool' | 'near_complete' | 'complete' | 'token_update';
+
 export type AutoTradeNewCoinSnipeConfig = Omit<
   AutoTradeTwitterSnipeRuntimeStrategy,
   | 'targetUsers'
@@ -143,7 +145,7 @@ export type AutoTradeNewCoinSnipeConfig = Omit<
 > & {
   playSound?: boolean;
   soundPreset?: TradeSuccessSoundPreset;
-  signalSources?: Array<'new_pool' | 'token_update'>;
+  signalSources?: UnifiedMarketSignalSource[];
   platforms?: string[];
   taskModeEnabled?: boolean;
   autoTaskFromWsEnabled?: boolean;
@@ -590,7 +592,7 @@ export type UnifiedMarketSignal = {
   id: string;
   site: 'gmgn' | 'axiom';
   channel: string;
-  source: 'new_pool' | 'token_update';
+  source: UnifiedMarketSignalSource;
   chain?: string;
   tokens: UnifiedSignalToken[];
   receivedAtMs: number;
@@ -667,7 +669,7 @@ export type XSniperBuyRecord = {
   taskName?: string;
   matchKeywords?: string[];
   matchText?: string;
-  triggerSource?: 'new_pool' | 'token_update';
+  triggerSource?: UnifiedMarketSignalSource;
   reason?: string;
 };
 

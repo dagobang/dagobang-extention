@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import type { XSniperEvalPoint } from '@/types/extention';
+import type { UnifiedMarketSignalSource, XSniperEvalPoint } from '@/types/extention';
 
 export type NewCoinSniperOrderRecord = {
   id: string;
@@ -55,7 +55,7 @@ export type NewCoinSniperOrderRecord = {
   userScreen?: string;
   userName?: string;
   tweetType?: string;
-  source?: 'new_pool' | 'token_update';
+  source?: UnifiedMarketSignalSource;
   signalId?: string;
   signalEventId?: string;
   signalTweetId?: string;
@@ -66,7 +66,7 @@ export type NewCoinSniperOrderRecord = {
   taskName?: string;
   matchKeywords?: string[];
   matchText?: string;
-  triggerSource?: 'new_pool' | 'token_update';
+  triggerSource?: UnifiedMarketSignalSource;
 };
 
 const NEW_COIN_SNIPER_EVAL_WINDOWS = [

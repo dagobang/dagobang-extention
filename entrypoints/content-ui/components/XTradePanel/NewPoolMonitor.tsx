@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AtSign, ChefHat, Coins, ExternalLink, Eye, Flame, Globe2, Image as ImageIcon, Layers3, Trophy, UserStar, Users, X } from 'lucide-react';
-import type { Settings } from '@/types/extention';
+import type { Settings, UnifiedMarketSignalSource } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber } from '@/utils/format';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
@@ -23,7 +23,7 @@ type NewPoolMonitorPanelProps = {
 };
 
 type MarketTokenEventDetail = {
-  source: 'new_pool' | 'token_update';
+  source: UnifiedMarketSignalSource;
   channel: string;
   tokenData: any;
   receivedAtMs: number;

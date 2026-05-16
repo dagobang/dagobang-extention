@@ -144,6 +144,29 @@ const resolveTrenchesStageByFid = (fid: unknown): 'new_created' | 'near_complete
   return 'unknown';
 };
 
+const resolveMarketSignalSourceByStage = (
+  stage: ReturnType<typeof resolveTrenchesStageByFid>,
+  isNewPoolByToken: boolean,
+): UnifiedMarketSignal['source'] => {
+  if (isNewPoolByToken) return 'new_pool';
+  if (stage === 'near_complete') return 'near_complete';
+  if (stage === 'complete') return 'complete';
+  return 'token_update';
+};
+
+const resolvePreferredMarketSignalSource = (
+  prev: UnifiedMarketSignal['source'],
+  next: UnifiedMarketSignal['source'],
+): UnifiedMarketSignal['source'] => {
+  const rank: Record<UnifiedMarketSignal['source'], number> = {
+    token_update: 0,
+    near_complete: 1,
+    complete: 2,
+    new_pool: 3,
+  };
+  return (rank[next] ?? 0) >= (rank[prev] ?? 0) ? next : prev;
+};
+
 const normalizeTrenchesTokenData = (item: any) => {
   const base = isObject(item) ? item : {};
   const delta = isObject((base as any).f) ? (base as any).f : {};
@@ -1070,7 +1093,7 @@ export function initGmgnWsMonitor(options: {
   };
 
   type NewPoolMonitorUiDetail = {
-    source: 'new_pool' | 'token_update';
+    source: UnifiedMarketSignal['source'];
     channel: string;
     tokenData: any;
     receivedAtMs: number;
@@ -1119,7 +1142,7 @@ export function initGmgnWsMonitor(options: {
     const key = addr || `${detail.source}:${detail.channel}:${detail.receivedAtMs}`;
     const prev = newPoolMonitorUiCache.get(key);
     const mergedDetail: NewPoolMonitorUiDetail = prev ? {
-      source: prev.source === 'new_pool' ? prev.source : detail.source,
+      source: resolvePreferredMarketSignalSource(prev.source, detail.source),
       channel: detail.channel || prev.channel,
       tokenData: mergeNewPoolMonitorTokenData(prev.tokenData, detail.tokenData),
       receivedAtMs: Math.max(prev.receivedAtMs, detail.receivedAtMs),
@@ -1740,8 +1763,9 @@ export function initGmgnWsMonitor(options: {
       const isNewPoolByToken =
         stage === 'new_created' &&
         (!hasPrevSnapshot || addedAddrs.has(tokenAddrLower) || hasCreateFields);
+      const signalSource = resolveMarketSignalSourceByStage(stage, isNewPoolByToken);
       pushNewPoolMonitorUiDetail({
-        source: isNewPoolByToken ? 'new_pool' : 'token_update',
+        source: signalSource,
         channel,
         tokenData,
         receivedAtMs: now,
@@ -1764,10 +1788,10 @@ export function initGmgnWsMonitor(options: {
       };
       pushLog(
         'signal',
-        `${isNewPoolByToken ? 'new_pool' : 'trenches'} > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${tokenData.chain ? ` ${tokenData.chain}` : ''}`,
+        `${signalSource} > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${tokenData.chain ? ` ${tokenData.chain}` : ''}`,
       );
       emitMarketSignal({
-        source: isNewPoolByToken ? 'new_pool' : 'token_update',
+        source: signalSource,
         channel,
         tokenAddress: tokenData.tokenAddress,
         chain: tokenData.chain ? String(tokenData.chain) : undefined,

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { browser } from 'wxt/browser';
-import type { Account, AutoTradeNewCoinSnipeConfig, BgGetStateResponse, NewCoinXmodeSnipeTask, Settings, XSniperBuyRecord } from '@/types/extention';
+import type { Account, AutoTradeNewCoinSnipeConfig, BgGetStateResponse, NewCoinXmodeSnipeTask, Settings, UnifiedMarketSignalSource, XSniperBuyRecord } from '@/types/extention';
 import { call } from '@/utils/messaging';
 import { normalizeAddress } from '@/services/xSniper/engine/metrics';
 import { NEW_COIN_SNIPER_HISTORY_STORAGE_KEY, clearNewCoinSniperHistory, type NewCoinSniperOrderRecord } from '@/services/newCoinSniper/newCoinSniperHistory';
@@ -100,12 +100,14 @@ const normalizeNewCoinStrategy = (input: unknown): AutoTradeNewCoinSnipeConfig =
   };
 };
 
-const normalizeSources = (input: unknown): Array<'new_pool' | 'token_update'> => {
+const ALL_SIGNAL_SOURCES: UnifiedMarketSignalSource[] = ['new_pool', 'near_complete', 'complete', 'token_update'];
+
+const normalizeSources = (input: unknown): UnifiedMarketSignalSource[] => {
   const raw = Array.isArray(input) ? input : [];
   const list = raw
     .map((x) => String(x).trim())
-    .filter((x): x is 'new_pool' | 'token_update' => x === 'new_pool' || x === 'token_update');
-  return list.length ? Array.from(new Set(list)) : ['new_pool', 'token_update'];
+    .filter((x): x is UnifiedMarketSignalSource => ALL_SIGNAL_SOURCES.includes(x as UnifiedMarketSignalSource));
+  return list.length ? Array.from(new Set(list)) : ALL_SIGNAL_SOURCES.slice();
 };
 
 export function XNewCoinSniperContent({
@@ -126,8 +128,8 @@ export function XNewCoinSniperContent({
   const ttBase = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
   const tt = (key: string, subs?: Array<string | number>) => {
     if (key === 'contentUi.autoTradeStrategy.twitterSnipeEnabledShort') return '自动狙击启用';
-    if (key === 'contentUi.autoTradeStrategy.twitterSnipeEnabledDesc') return '开启后监听 new_pool / token_update 自动狙击';
-    if (key === 'contentUi.autoTradeStrategy.twitterSnipeDesc') return '基于 WS 的 new_pool / token_update 信号自动执行新币狙击';
+    if (key === 'contentUi.autoTradeStrategy.twitterSnipeEnabledDesc') return '开启后监听 new_pool / near_complete / complete / token_update 自动狙击';
+    if (key === 'contentUi.autoTradeStrategy.twitterSnipeDesc') return '基于 WS 的 new_pool / near_complete / complete / token_update 信号自动执行新币狙击';
     if (key === 'contentUi.autoTradeStrategy.twitterSnipeDryRunShort') return 'Dry Run';
     if (key === 'contentUi.autoTradeStrategy.twitterSnipeDryRun') return 'Dry Run（仅记录，不真实下单）';
     if (key === 'contentUi.autoTradeStrategy.snipeSettings') return '策略配置';

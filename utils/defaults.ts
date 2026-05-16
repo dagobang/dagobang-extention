@@ -347,7 +347,7 @@ const DEFAULT_AUTOTRADE: AutoTradeConfig = {
     rapidProtectQuotaPct: '40',
     rapidTailSellPctOfRemaining: '15',
     rapidTakeProfitFloorPct: '5',
-    signalSources: ['new_pool', 'token_update'],
+    signalSources: ['new_pool', 'near_complete', 'complete', 'token_update'],
     platforms: ['fourmeme', 'fourmeme_agent', 'xmode', 'xmode_agent'],
     autoTaskFromWsEnabled: true,
     autoTaskAthMcapUsd: '10000',
