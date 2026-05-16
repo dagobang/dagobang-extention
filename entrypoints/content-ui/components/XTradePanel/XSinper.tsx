@@ -710,7 +710,7 @@ export function XSniperContent({
 
   return (
     <>
-      <div className="dagobang-scrollbar p-2 space-y-2 max-h-[64vh] overflow-y-auto">
+      <div className="dagobang-scrollbar p-2 space-y-2 max-h-[var(--dagobang-xtrade-content-max-h,64vh)] overflow-y-auto">
         {view === 'config' ? (
           <>
             <XSniperBasicSection

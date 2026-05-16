@@ -18,6 +18,8 @@ type NewPoolMonitorPanelProps = {
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
   settings: Settings | null;
+  displayMode: 'floating' | 'tab';
+  onDisplayModeChange: (mode: 'floating' | 'tab') => void;
 };
 
 type MarketTokenEventDetail = {
@@ -104,8 +106,12 @@ const GROUP_PAGE_SIZE = 20;
 const FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_filters_v1';
 const FILTER_OPEN_STORAGE_KEY = 'dagobang_newpool_monitor_filter_open_v1';
 const GROUP_SOURCE_FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_group_source_filter_v1';
+const ROWS_STORAGE_KEY = 'dagobang_newpool_monitor_rows_v1';
 const ALL_PLATFORM_VALUES = PLATFORM_OPTIONS.map((x) => x.value);
 const MCAP_HIGHLIGHT_WINDOW_MS = 6000;
+const PANEL_MIN_HEIGHT = 420;
+const PANEL_DEFAULT_HEIGHT = 640;
+const PERSISTED_ROWS_LIMIT = 400;
 
 const parseNumber = (v: any) => {
   if (v == null) return null;
@@ -555,12 +561,55 @@ const getGroupIcon = (kind: MarketTokenGroup['kind']) => {
   return <Layers3 size={12} />;
 };
 
-const clampPanelPos = (value: { x: number; y: number }, panelWidth: number) => {
+const clampPanelHeight = (value: number, panelTop: number) => {
+  const viewportHeight = window.innerHeight || 0;
+  const maxHeight = Math.max(PANEL_MIN_HEIGHT, viewportHeight - Math.max(0, panelTop) - 12);
+  return Math.min(Math.max(PANEL_MIN_HEIGHT, value), maxHeight);
+};
+
+const clampPanelPos = (value: { x: number; y: number }, panelWidth: number, panelHeight: number) => {
   const width = window.innerWidth || 0;
   const height = window.innerHeight || 0;
   const clampedX = Math.min(Math.max(0, value.x), Math.max(0, width - panelWidth));
-  const clampedY = Math.min(Math.max(0, value.y), Math.max(0, height - 80));
+  const clampedY = Math.min(Math.max(0, value.y), Math.max(0, height - panelHeight));
   return { x: clampedX, y: clampedY };
+};
+
+const loadPersistedRows = (): MarketTokenRow[] => {
+  try {
+    const raw = window.localStorage.getItem(ROWS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is MarketTokenRow => {
+        return !!item
+          && typeof item === 'object'
+          && typeof (item as any).tokenAddress === 'string'
+          && /^0x[a-f0-9]{40}$/i.test((item as any).tokenAddress)
+          && typeof (item as any).createdAtMs === 'number'
+          && Number.isFinite((item as any).createdAtMs)
+          && typeof (item as any).updatedAtMs === 'number'
+          && Number.isFinite((item as any).updatedAtMs);
+      })
+      .slice(0, PERSISTED_ROWS_LIMIT);
+  } catch {
+    return [];
+  }
+};
+
+const persistRows = (map: Map<string, MarketTokenRow>) => {
+  try {
+    const rows = Array.from(map.values())
+      .sort((a, b) => {
+        const createdDiff = b.createdAtMs - a.createdAtMs;
+        if (createdDiff !== 0) return createdDiff;
+        return b.updatedAtMs - a.updatedAtMs;
+      })
+      .slice(0, PERSISTED_ROWS_LIMIT);
+    window.localStorage.setItem(ROWS_STORAGE_KEY, JSON.stringify(rows));
+  } catch {
+  }
 };
 
 const getPlatformBadgeClassName = (platform?: string) => {
@@ -643,10 +692,28 @@ export function NewPoolMonitorContent({
 
   useEffect(() => {
     if (!active) return;
+    const restoredRows = loadPersistedRows();
     tokenMapRef.current.clear();
-    setTokenIds([]);
+    for (const row of restoredRows) {
+      tokenMapRef.current.set(row.tokenAddress, row);
+    }
+    setTokenIds(
+      restoredRows
+        .slice()
+        .sort((a, b) => b.createdAtMs - a.createdAtMs)
+        .slice(0, MARKET_TOKEN_CACHE_LIMIT)
+        .map((item) => item.tokenAddress)
+    );
     const pendingDetails: MarketTokenEventDetail[] = [];
     let flushTimer: number | null = null;
+    let persistTimer: number | null = null;
+    const schedulePersist = () => {
+      if (persistTimer != null) return;
+      persistTimer = window.setTimeout(() => {
+        persistTimer = null;
+        persistRows(tokenMapRef.current);
+      }, 600);
+    };
     const syncIds = () => {
       const map = tokenMapRef.current;
       const nextIds = Array.from(map.values())
@@ -654,6 +721,7 @@ export function NewPoolMonitorContent({
         .slice(0, MARKET_TOKEN_CACHE_LIMIT)
         .map((item) => item.tokenAddress);
       setTokenIds(nextIds);
+      schedulePersist();
     };
     const flush = () => {
       flushTimer = null;
@@ -696,7 +764,12 @@ export function NewPoolMonitorContent({
         window.clearTimeout(flushTimer);
         flushTimer = null;
       }
+      if (persistTimer != null) {
+        window.clearTimeout(persistTimer);
+        persistTimer = null;
+      }
       flush();
+      persistRows(tokenMapRef.current);
     };
   }, [active]);
 
@@ -810,15 +883,15 @@ export function NewPoolMonitorContent({
   if (!active) return null;
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="border-b border-zinc-800/60 px-4 py-2">
         <div className="flex items-center gap-2 overflow-x-auto">
-          <div
+          {/* <div
             className="shrink-0 text-[10px] font-medium tabular-nums text-zinc-500"
             title="当前显示分组/代币"
           >
             {visibleGroups.length}/{filteredTokens.length}
-          </div>
+          </div> */}
           {([
             ['all', `全部 ${groups.length}`],
             ['withTweet', `有推特 ${groupsBySource.withTweet.length}`],
@@ -865,7 +938,7 @@ export function NewPoolMonitorContent({
       </div>
 
       <div
-        className="dagobang-scrollbar max-h-[62vh] overflow-y-auto px-2 py-2"
+        className="dagobang-scrollbar min-h-0 flex-1 overflow-y-auto px-2 py-2"
         onMouseEnter={handleListMouseEnter}
         onMouseLeave={handleListMouseLeave}
       >
@@ -926,18 +999,23 @@ export function NewPoolMonitorContent({
                       typeof row.marketCapChangedAtMs === 'number' &&
                       Date.now() - row.marketCapChangedAtMs <= MCAP_HIGHLIGHT_WINDOW_MS &&
                       row.marketCapDirection != null;
-                    const marketCapClassName = marketCapHighlightActive
+                    const marketCapValueClassName = (() => {
+                      if (row.marketCapUsd == null || row.marketCapUsd <= 0) return 'text-zinc-500';
+                      if (row.marketCapUsd >= 50_000) return 'text-amber-300';
+                      if (row.marketCapUsd >= 30_000) return 'text-sky-300';
+                      if (row.marketCapUsd >= 10_000) return 'text-emerald-300';
+                      return 'text-zinc-200';
+                    })();
+                    const marketCapPrefix = marketCapHighlightActive
+                      ? row.marketCapDirection === 'up'
+                        ? '▲'
+                        : '▼'
+                      : '';
+                    const marketCapPrefixClassName = marketCapHighlightActive
                       ? row.marketCapDirection === 'up'
                         ? 'text-emerald-300'
                         : 'text-rose-300'
-                      : row.marketCapUsd != null && row.marketCapUsd > 0
-                        ? 'text-emerald-200'
-                        : 'text-zinc-500';
-                    const marketCapPrefix = marketCapHighlightActive
-                      ? row.marketCapDirection === 'up'
-                        ? '▲ '
-                        : '▼ '
-                      : '';
+                      : 'text-transparent';
                     const volumeClassName = row.vol24hUsd != null && row.vol24hUsd > 0 ? 'text-zinc-100' : 'text-zinc-500';
                     const top10HoldRatioPct = typeof row.top10HoldRatio === 'number' ? row.top10HoldRatio * 100 : null;
                     const getRatioClassName = (pct: number | null) => {
@@ -949,13 +1027,90 @@ export function NewPoolMonitorContent({
                     const devHoldClassName = getRatioClassName(typeof row.devHoldPercent === 'number' ? row.devHoldPercent : null);
                     const devMaxBuyClassName = getRatioClassName(typeof row.devMaxBuyPercent === 'number' ? row.devMaxBuyPercent : null);
                     const top10RatioClassName = getRatioClassName(top10HoldRatioPct);
+                    const holdersClassName = (() => {
+                      if (row.holders == null) return 'text-zinc-500';
+                      if (row.holders >= 100) return 'text-cyan-200';
+                      if (row.holders >= 30) return 'text-sky-300';
+                      if (row.holders >= 10) return 'text-sky-200';
+                      return 'text-zinc-400';
+                    })();
+                    const viewersClassName = (() => {
+                      if (row.viewerCount == null) return 'text-zinc-500';
+                      if (row.viewerCount >= 100) return 'text-violet-200';
+                      if (row.viewerCount >= 30) return 'text-fuchsia-300';
+                      if (row.viewerCount >= 10) return 'text-violet-300';
+                      return 'text-zinc-400';
+                    })();
+                    const rankCornerClassName = idx === 0
+                      ? 'bg-amber-500/90'
+                      : idx === 1
+                        ? 'bg-zinc-500/90'
+                        : 'bg-orange-600/90';
+                    const metricItems = [
+                      {
+                        key: 'devCreated',
+                        title: tt('contentUi.xMonitor.tooltip.devCreatedTokenCount'),
+                        icon: Coins,
+                        value: row.devCreatedTokenCount == null ? '-' : formatCompactNumber(Math.round(row.devCreatedTokenCount)),
+                        className: row.devCreatedTokenCount == null ? 'text-zinc-500' : 'text-zinc-300',
+                      },
+                      {
+                        key: 'devHold',
+                        title: tt('contentUi.xMonitor.tooltip.devHoldPercent'),
+                        icon: ChefHat,
+                        value: formatMetricPercent(row.devHoldPercent),
+                        className: row.devHoldPercent == null ? 'text-zinc-500' : devHoldClassName,
+                      },
+                      {
+                        key: 'devMaxBuy',
+                        title: tt('contentUi.xMonitor.tooltip.devBuyRatio'),
+                        icon: Flame,
+                        value: formatMetricPercent(row.devMaxBuyPercent),
+                        className: row.devMaxBuyPercent == null ? 'text-zinc-500' : devMaxBuyClassName,
+                      },
+                      {
+                        key: 'top10',
+                        title: tt('contentUi.xMonitor.tooltip.top10HoldRatio'),
+                        icon: UserStar,
+                        value: formatMetricPercent(top10HoldRatioPct),
+                        className: top10HoldRatioPct == null ? 'text-zinc-500' : top10RatioClassName,
+                      },
+                      {
+                        key: 'kol',
+                        title: tt('contentUi.xMonitor.tooltip.kol'),
+                        icon: Trophy,
+                        value: row.kol == null ? '-' : formatCompactNumber(Math.round(row.kol)),
+                        className: row.kol == null ? 'text-zinc-500' : row.kol > 0 ? 'text-amber-200' : 'text-zinc-500',
+                      },
+                      {
+                        key: 'holders',
+                        title: tt('contentUi.xMonitor.tooltip.holders'),
+                        icon: Users,
+                        value: row.holders == null ? '-' : formatCompactNumber(Math.round(row.holders)),
+                        className: holdersClassName,
+                      },
+                      {
+                        key: 'viewers',
+                        title: tt('contentUi.xMonitor.tooltip.viewerCount'),
+                        icon: Eye,
+                        value: row.viewerCount == null ? '-' : formatCompactNumber(Math.round(row.viewerCount)),
+                        className: viewersClassName,
+                      },
+                    ] as const;
                     return (
                       <button
                         key={`${group.key}:${row.tokenAddress}`}
                         type="button"
-                        className="flex w-full items-start gap-2.5 rounded-md px-1 py-1.5 text-left hover:bg-zinc-900/60"
+                        className="relative grid w-full grid-cols-[52px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1 rounded-md px-1 py-1.5 text-left hover:bg-zinc-900/60"
                         onClick={() => navigateToUrl(parsePlatformTokenLink(resolvedSiteInfo, row.tokenAddress))}
                       >
+                        <span
+                          className={`pointer-events-none absolute left-0 top-0 h-6 w-6 ${rankCornerClassName}`}
+                          style={{ clipPath: 'polygon(0 0, 100% 0, 0 100%)' }}
+                        />
+                        <span className="pointer-events-none absolute left-[4px] top-[1px] text-[9px] font-bold leading-none text-[#111]">
+                          {idx + 1}
+                        </span>
                         <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-zinc-800 bg-zinc-950 text-[10px] text-zinc-500">
                           {row.tokenLogo ? (
                             <img
@@ -969,20 +1124,13 @@ export function NewPoolMonitorContent({
                             <ImageIcon size={14} />
                           )}
                         </div>
-                        <div className="min-w-0 flex-1 pt-0.5">
-                          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1">
+                        <div className="min-w-0 pt-0.5">
+                          <div className="grid grid-cols-[minmax(0,1fr)_78px] items-start gap-x-2 gap-y-1">
                             <div className="min-w-0">
-                              <div className="flex items-center gap-1 leading-none">
-                                <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-sm border px-1 text-[9px] font-bold ${
-                                  idx === 0 ? 'border-amber-500/60 bg-amber-500/15 text-amber-200' :
-                                    idx === 1 ? 'border-zinc-600 bg-zinc-800/60 text-zinc-200' :
-                                      'border-orange-700/60 bg-orange-500/10 text-orange-200'
-                                }`}>
-                                  {idx + 1}
-                                </span>
+                              <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1.5 leading-none">
                                 <div className="min-w-0 truncate text-[13px] font-semibold text-zinc-100">{displayName}</div>
                                 {symbol && tokenName ? (
-                                  <div className="truncate text-[11px] text-zinc-500">{tokenName}</div>
+                                  <div className="min-w-0 truncate text-[11px] text-zinc-500">{tokenName}</div>
                                 ) : null}
                               </div>
                               <div className={`mt-1 flex items-center text-[10px] ${row.launchpadPlatform ? 'gap-2' : 'gap-1.5'}`}>
@@ -992,7 +1140,7 @@ export function NewPoolMonitorContent({
                                   : typeof row.createdAtMs === 'number' && Date.now() - row.createdAtMs <= 5 * 60_000
                                     ? 'text-amber-300'
                                     : 'text-zinc-200'
-                                }`}>
+                                  }`}>
                                   {ageText}
                                 </span>
                                 {row.launchpadPlatform ? (
@@ -1000,51 +1148,36 @@ export function NewPoolMonitorContent({
                                 ) : null}
                               </div>
                             </div>
-                            <div className="w-[88px] shrink-0 pt-0.5 text-right leading-tight self-start">
-                              <div className={`text-[14px] font-semibold tabular-nums ${marketCapClassName}`}>
-                                {marketCapPrefix}MC ${row.marketCapUsd != null ? formatCompactNumber(Math.round(row.marketCapUsd)) : '-'}
+                            <div className="w-[78px] shrink-0 pt-0.5 text-right leading-tight self-start">
+                              <div className="flex flex-row items-center justify-end gap-0.5">
+                                <span className='text-[12px] text-zinc-500 mr-1'>MC </span>
+                                <div className="flex items-center justify-end gap-0.5 text-[14px] font-semibold tabular-nums">
+                                  <span className={marketCapPrefixClassName}>{marketCapPrefix}</span>
+                                  <span className={marketCapValueClassName}>
+                                    ${row.marketCapUsd != null ? formatCompactNumber(Math.round(row.marketCapUsd)) : '-'}
+                                  </span>
+                                </div>
                               </div>
                               <div className={`mt-1 text-[12px] font-medium tabular-nums ${volumeClassName}`}>
                                 V ${row.vol24hUsd != null ? formatCompactNumber(Math.round(row.vol24hUsd)) : '-'}
                               </div>
                             </div>
-                            <div className="col-span-2 mt-0.5 flex items-center gap-1.5 overflow-x-auto whitespace-nowrap text-[11px] font-medium text-zinc-200 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                              <span title={tt('contentUi.xMonitor.tooltip.devCreatedTokenCount')} className="inline-flex shrink-0 items-center gap-1 text-zinc-300">
-                                <Coins size={13} className="shrink-0" />
-                                {row.devCreatedTokenCount == null ? '-' : formatCompactNumber(Math.round(row.devCreatedTokenCount))}
-                              </span>
-                              <span title={tt('contentUi.xMonitor.tooltip.devHoldPercent')} className={`inline-flex shrink-0 items-center gap-1 ${devHoldClassName}`}>
-                                <ChefHat size={13} className="shrink-0" />
-                                {formatMetricPercent(row.devHoldPercent)}
-                              </span>
-                              <span title={tt('contentUi.xMonitor.tooltip.devBuyRatio')} className={`inline-flex shrink-0 items-center gap-1 ${devMaxBuyClassName}`}>
-                                <Flame size={13} className="shrink-0" />
-                                {formatMetricPercent(row.devMaxBuyPercent)}
-                              </span>
-                              {top10HoldRatioPct != null ? (
-                                <span title={tt('contentUi.xMonitor.tooltip.top10HoldRatio')} className={`inline-flex shrink-0 items-center gap-1 ${top10RatioClassName}`}>
-                                  <UserStar size={13} className="shrink-0" />
-                                  {formatMetricPercent(top10HoldRatioPct)}
-                                </span>
-                              ) : null}
-                              {row.kol != null ? (
-                                <span title={tt('contentUi.xMonitor.tooltip.kol')} className={`inline-flex shrink-0 items-center gap-1 ${row.kol > 0 ? 'rounded border border-amber-500/40 bg-amber-500/10 px-1 text-amber-200' : 'text-zinc-500'}`}>
-                                  <Trophy size={13} className="shrink-0" />
-                                  {formatCompactNumber(Math.round(row.kol))}
-                                </span>
-                              ) : null}
-                              {row.holders != null ? (
-                                <span title={tt('contentUi.xMonitor.tooltip.holders')} className={`inline-flex shrink-0 items-center gap-1 ${row.holders > 10 ? 'rounded border border-sky-500/40 bg-sky-500/10 px-1 text-sky-200' : 'text-zinc-500'}`}>
-                                  <Users size={13} className="shrink-0" />
-                                  {formatCompactNumber(Math.round(row.holders))}
-                                </span>
-                              ) : null}
-                              <span title={tt('contentUi.xMonitor.tooltip.viewerCount')} className="inline-flex shrink-0 items-center gap-1 text-zinc-300">
-                                <Eye size={13} className="shrink-0" />
-                                {row.viewerCount == null ? '-' : formatCompactNumber(Math.round(row.viewerCount))}
-                              </span>
-                            </div>
                           </div>
+                        </div>
+                        <div className="col-span-2 mt-0.5 grid grid-cols-[repeat(7,max-content)] justify-between gap-x-1 text-[10px] font-medium tracking-tight text-zinc-200">
+                          {metricItems.map((item) => {
+                            const Icon = item.icon;
+                            return (
+                              <span
+                                key={item.key}
+                                title={item.title}
+                                className={`inline-flex items-center justify-center gap-0.5 whitespace-nowrap tabular-nums ${item.className}`}
+                              >
+                                <Icon size={12} className="shrink-0" />
+                                <span>{item.value}</span>
+                              </span>
+                            );
+                          })}
                         </div>
                       </button>
                     );
@@ -1066,7 +1199,7 @@ export function NewPoolMonitorContent({
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -1075,44 +1208,70 @@ export function NewPoolMonitorPanel({
   visible,
   onVisibleChange,
   settings,
+  displayMode,
+  onDisplayModeChange,
 }: NewPoolMonitorPanelProps) {
   const panelWidth = Math.min(380, Math.max(320, (window.innerWidth || 0) - 24));
+  const [panelHeight, setPanelHeight] = useState(() => clampPanelHeight(PANEL_DEFAULT_HEIGHT, 120));
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
     const defaultX = Math.max(0, width - panelWidth - 12);
     return { x: defaultX, y: 120 };
   });
   const posRef = useRef(pos);
+  const panelHeightRef = useRef(panelHeight);
   const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
+  const resizing = useRef<null | { startY: number; baseHeight: number }>(null);
 
   useEffect(() => {
     posRef.current = pos;
   }, [pos]);
 
   useEffect(() => {
+    panelHeightRef.current = panelHeight;
+  }, [panelHeight]);
+
+  useEffect(() => {
     if (!visible) return;
     try {
+      const rawHeight = window.localStorage.getItem('dagobang_newpool_monitor_panel_height');
+      const storedHeight = rawHeight ? Number(rawHeight) : NaN;
       const raw = window.localStorage.getItem('dagobang_newpool_monitor_panel_pos');
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed.x !== 'number' || typeof parsed.y !== 'number') return;
-      setPos(clampPanelPos(parsed, panelWidth));
+      const parsed = raw ? JSON.parse(raw) : null;
+      const nextPos = parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number'
+        ? { x: parsed.x, y: parsed.y }
+        : posRef.current;
+      const nextHeight = Number.isFinite(storedHeight)
+        ? clampPanelHeight(storedHeight, nextPos.y)
+        : clampPanelHeight(panelHeightRef.current, nextPos.y);
+      setPanelHeight(nextHeight);
+      setPos(clampPanelPos(nextPos, panelWidth, nextHeight));
     } catch {
     }
   }, [visible, panelWidth]);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
-      if (!dragging.current) return;
-      const dx = e.clientX - dragging.current.startX;
-      const dy = e.clientY - dragging.current.startY;
-      setPos(clampPanelPos({ x: dragging.current.baseX + dx, y: dragging.current.baseY + dy }, panelWidth));
+      if (dragging.current) {
+        const dx = e.clientX - dragging.current.startX;
+        const dy = e.clientY - dragging.current.startY;
+        setPos(clampPanelPos({ x: dragging.current.baseX + dx, y: dragging.current.baseY + dy }, panelWidth, panelHeightRef.current));
+        return;
+      }
+      if (resizing.current) {
+        const dy = e.clientY - resizing.current.startY;
+        setPanelHeight(clampPanelHeight(resizing.current.baseHeight + dy, posRef.current.y));
+      }
     };
     const onUp = () => {
-      if (!dragging.current) return;
+      const didDrag = !!dragging.current;
+      const didResize = !!resizing.current;
       dragging.current = null;
+      resizing.current = null;
+      if (!didDrag && !didResize) return;
       try {
         window.localStorage.setItem('dagobang_newpool_monitor_panel_pos', JSON.stringify(posRef.current));
+        window.localStorage.setItem('dagobang_newpool_monitor_panel_height', String(panelHeightRef.current));
       } catch {
       }
     };
@@ -1124,12 +1283,23 @@ export function NewPoolMonitorPanel({
     };
   }, [panelWidth]);
 
+  useEffect(() => {
+    if (!visible) return;
+    const onResize = () => {
+      const nextHeight = clampPanelHeight(panelHeightRef.current, posRef.current.y);
+      setPanelHeight(nextHeight);
+      setPos((prev) => clampPanelPos(prev, panelWidth, nextHeight));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [visible, panelWidth]);
+
   if (!visible) return null;
 
   return (
     <div
-      className="fixed z-[2147483647] overflow-hidden rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/25 font-sans"
-      style={{ left: pos.x, top: pos.y, width: `${panelWidth}px` }}
+      className="fixed z-[2147483647] flex overflow-hidden rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/25 font-sans"
+      style={{ left: pos.x, top: pos.y, width: `${panelWidth}px`, height: `${panelHeight}px`, flexDirection: 'column' }}
     >
       <div
         className="flex cursor-grab items-center justify-between border-b border-zinc-800/60 px-4 py-3"
@@ -1143,19 +1313,51 @@ export function NewPoolMonitorPanel({
         }}
       >
         <div className="text-[13px] font-semibold text-emerald-300">新池监控</div>
-        <button
-          type="button"
-          className="text-zinc-400 hover:text-zinc-200"
-          onClick={() => onVisibleChange(false)}
-        >
-          <X size={16} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded-full border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 hover:border-zinc-500"
+            onClick={() => onDisplayModeChange(displayMode === 'floating' ? 'tab' : 'floating')}
+            title={displayMode === 'floating' ? '切换为 Tab 显示' : '切换为独立浮窗'}
+          >
+            {displayMode === 'floating' ? 'Tab' : '独立'}
+          </button>
+          <button
+            type="button"
+            className="text-zinc-400 hover:text-zinc-200"
+            onClick={() => onVisibleChange(false)}
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
       <NewPoolMonitorContent
         siteInfo={siteInfo}
         active={visible}
         settings={settings}
       />
+      <div
+        className="flex shrink-0 cursor-ns-resize justify-center border-t border-zinc-800/60 px-4 py-1.5"
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          resizing.current = {
+            startY: e.clientY,
+            baseHeight: panelHeightRef.current,
+          };
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          const nextHeight = clampPanelHeight(PANEL_DEFAULT_HEIGHT, posRef.current.y);
+          setPanelHeight(nextHeight);
+          try {
+            window.localStorage.setItem('dagobang_newpool_monitor_panel_height', String(nextHeight));
+          } catch {
+          }
+        }}
+        title="拖动调整高度"
+      >
+        <div className="h-1 w-14 rounded-full bg-zinc-700/80" />
+      </div>
     </div>
   );
 }

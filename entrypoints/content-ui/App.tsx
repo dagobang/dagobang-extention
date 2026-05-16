@@ -31,6 +31,8 @@ import { QuickTradePanel } from './components/QuickTradePanel';
 import { FloatingToolbar } from './components/FloatingToolbar';
 import { CookingPanel } from './components/CookingPanel';
 
+type NewPoolMonitorDisplayMode = 'floating' | 'tab';
+
 const PRIORITY_FEE_PRESETS = ['none', 'slow', 'standard', 'fast'] as const;
 type PriorityFeePreset = (typeof PRIORITY_FEE_PRESETS)[number];
 const DEFAULT_PRIORITY_FEE_PRESET_VALUES = {
@@ -132,7 +134,14 @@ export default function App() {
   const [showLimitTradePanel, setShowLimitTradePanel] = useState(false);
   const [showXTradePanel, setShowXTradePanel] = useState(false);
   const [showNewPoolMonitorPanel, setShowNewPoolMonitorPanel] = useState(false);
-  const [xTradeActiveTab, setXTradeActiveTab] = useState<'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper'>('xmonitor');
+  const [newPoolMonitorDisplayMode, setNewPoolMonitorDisplayMode] = useState<NewPoolMonitorDisplayMode>(() => {
+    try {
+      return window.localStorage.getItem('dagobang_newpool_monitor_display_mode') === 'tab' ? 'tab' : 'floating';
+    } catch {
+      return 'floating';
+    }
+  });
+  const [xTradeActiveTab, setXTradeActiveTab] = useState<'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper' | 'xnewpoolmonitor'>('xmonitor');
   const [showRpcPanel, setShowRpcPanel] = useState(false);
   const [showDailyAnalysisPanel, setShowDailyAnalysisPanel] = useState(false);
   const [showReviewPanel, setShowReviewPanel] = useState(false);
@@ -317,9 +326,25 @@ export default function App() {
     } catch {
     }
 
+    try {
+      const stored = window.localStorage.getItem('dagobang_newpool_monitor_visible');
+      if (stored === '1') {
+        if (newPoolMonitorDisplayMode === 'tab') {
+          setXTradeActiveTab('xnewpoolmonitor');
+          setShowXTradePanel(true);
+        } else {
+          setShowNewPoolMonitorPanel(true);
+        }
+      }
+    } catch {
+    }
+
   }, []);
 
   useEffect(() => {
+    const newPoolMonitorVisible = newPoolMonitorDisplayMode === 'tab'
+      ? showXTradePanel && xTradeActiveTab === 'xnewpoolmonitor'
+      : showNewPoolMonitorPanel;
     try {
       window.localStorage.setItem('dagobang_limit_trade_panel_visible', showLimitTradePanel ? '1' : '0');
     } catch {
@@ -339,7 +364,15 @@ export default function App() {
       window.localStorage.setItem('dagobang_cooking_panel_visible', showCookingPanel ? '1' : '0');
     } catch {
     }
-  }, [showLimitTradePanel, showXTradePanel, showReviewPanel, showCookingPanel]);
+    try {
+      window.localStorage.setItem('dagobang_newpool_monitor_visible', newPoolMonitorVisible ? '1' : '0');
+    } catch {
+    }
+    try {
+      window.localStorage.setItem('dagobang_newpool_monitor_display_mode', newPoolMonitorDisplayMode);
+    } catch {
+    }
+  }, [showLimitTradePanel, showXTradePanel, showReviewPanel, showCookingPanel, showNewPoolMonitorPanel, newPoolMonitorDisplayMode, xTradeActiveTab]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -2028,7 +2061,7 @@ export default function App() {
     setShowCookingPanel((v) => !v);
   };
 
-  const handleToggleXTradePanelToTab = (tab: 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper') => {
+  const handleToggleXTradePanelToTab = (tab: 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper' | 'xnewpoolmonitor') => {
     if (!showXTradePanel) {
       setXTradeActiveTab(tab);
       setShowXTradePanel(true);
@@ -2045,7 +2078,25 @@ export default function App() {
     handleToggleXTradePanelToTab('xmonitor');
   };
 
+  const handleSetNewPoolMonitorDisplayMode = (mode: NewPoolMonitorDisplayMode) => {
+    setNewPoolMonitorDisplayMode(mode);
+    if (mode === 'tab') {
+      setShowNewPoolMonitorPanel(false);
+      setXTradeActiveTab('xnewpoolmonitor');
+      setShowXTradePanel(true);
+      return;
+    }
+    if (showXTradePanel && xTradeActiveTab === 'xnewpoolmonitor') {
+      setShowXTradePanel(false);
+    }
+    setShowNewPoolMonitorPanel(true);
+  };
+
   const handleToggleNewPoolMonitor = () => {
+    if (newPoolMonitorDisplayMode === 'tab') {
+      handleToggleXTradePanelToTab('xnewpoolmonitor');
+      return;
+    }
     setShowNewPoolMonitorPanel((v) => !v);
   };
 
@@ -2064,6 +2115,10 @@ export default function App() {
     void refreshToken(true, true);
   };
 
+  const newPoolMonitorActive = newPoolMonitorDisplayMode === 'tab'
+    ? showXTradePanel && xTradeActiveTab === 'xnewpoolmonitor'
+    : showNewPoolMonitorPanel;
+
   return (
     <>
       <CustomToaster position={toastPosition} />
@@ -2079,7 +2134,7 @@ export default function App() {
               onToggleXTrade={handleToggleXTradePanel}
               xTradeActive={showXTradePanel}
               onToggleNewPoolMonitor={handleToggleNewPoolMonitor}
-              newPoolMonitorActive={showNewPoolMonitorPanel}
+              newPoolMonitorActive={newPoolMonitorActive}
               onToggleLimitTrade={handleToggleLimitTradePanel}
               autotradeActive={limitTradePanelVisible}
               onToggleRpc={handleToggleRpcPanel}
@@ -2248,12 +2303,16 @@ export default function App() {
             onVisibleChange={setShowXTradePanel}
             settings={settings}
             isUnlocked={isUnlocked}
+            newPoolMonitorDisplayMode={newPoolMonitorDisplayMode}
+            onNewPoolMonitorDisplayModeChange={handleSetNewPoolMonitorDisplayMode}
           />
           <NewPoolMonitorPanel
             siteInfo={siteInfo}
-            visible={showNewPoolMonitorPanel}
+            visible={newPoolMonitorDisplayMode === 'floating' && showNewPoolMonitorPanel}
             onVisibleChange={setShowNewPoolMonitorPanel}
             settings={settings}
+            displayMode={newPoolMonitorDisplayMode}
+            onDisplayModeChange={handleSetNewPoolMonitorDisplayMode}
           />
         </>
       )}

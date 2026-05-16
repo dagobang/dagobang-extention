@@ -672,7 +672,7 @@ export function XNewCoinSniperContent({
 
   return (
     <>
-      <div className="dagobang-scrollbar p-2 space-y-2 max-h-[64vh] overflow-y-auto">
+      <div className="dagobang-scrollbar p-2 space-y-2 max-h-[var(--dagobang-xtrade-content-max-h,64vh)] overflow-y-auto">
       {error ? <div className="text-[12px] text-rose-300">{error}</div> : null}
 
       {view === 'config' ? (

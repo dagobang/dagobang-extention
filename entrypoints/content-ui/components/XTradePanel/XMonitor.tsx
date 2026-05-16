@@ -1154,7 +1154,7 @@ export function XMonitorContent({
         </div>
       </div>
 
-      <div className="dagobang-scrollbar max-h-[62vh] overflow-y-auto p-3">
+      <div className="dagobang-scrollbar max-h-[var(--dagobang-xtrade-content-max-h,62vh)] overflow-y-auto p-3">
         {!wsMonitorEnabled ? (
           <div className="px-2 py-8 text-center text-[14px] text-zinc-500">{tt('contentUi.xMonitor.wsMonitorDisabled')}</div>
         ) : visibleSignals.length === 0 ? (
