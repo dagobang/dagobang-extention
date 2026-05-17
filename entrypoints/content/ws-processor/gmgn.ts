@@ -251,6 +251,16 @@ const isWsMonitorEnabled = (): boolean => {
   return true;
 };
 
+const isNewPoolMonitorEnabled = (): boolean => {
+  const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
+  return settings?.ui?.newPoolMonitorEnabled === true;
+};
+
+const shouldForwardMarketSignal = (): boolean => {
+  const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
+  return settings?.ui?.newCoinSniperEnabled === true || settings?.ui?.visionReportEnabled === true;
+};
+
 const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';
 const TWITTER_UNIFIED_CACHE_LIMIT = 50;
 const TWITTER_UNIFIED_CACHE_PERSIST_DEBOUNCE_MS = 5000;
@@ -1138,6 +1148,7 @@ export function initGmgnWsMonitor(options: {
     window.dispatchEvent(new CustomEvent('dagobang-newpool-monitor-batch', { detail: { items } }));
   };
   const pushNewPoolMonitorUiDetail = (detail: NewPoolMonitorUiDetail) => {
+    if (!isNewPoolMonitorEnabled()) return;
     const addr = typeof detail.tokenData?.tokenAddress === 'string' ? detail.tokenData.tokenAddress.trim().toLowerCase() : '';
     const key = addr || `${detail.source}:${detail.channel}:${detail.receivedAtMs}`;
     const prev = newPoolMonitorUiCache.get(key);
@@ -1176,6 +1187,7 @@ export function initGmgnWsMonitor(options: {
     chain?: string;
     receivedAtMs: number;
   }) => {
+    if (!shouldForwardMarketSignal()) return;
     const addr = normalizeTokenKey(input.tokenAddress);
     const snapshot = tokenByAddress.get(addr);
     if (!snapshot) return;

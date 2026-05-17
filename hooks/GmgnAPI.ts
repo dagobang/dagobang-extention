@@ -65,6 +65,40 @@ interface GmgnSearchResponse {
   };
 }
 
+interface GmgnTokenLinkResponse {
+  code: number;
+  reason: string;
+  message: string;
+  data?: {
+    address?: string;
+    link?: {
+      address?: string;
+      gmgn?: string;
+      geckoterminal?: string;
+      twitter_username?: string;
+      twitter?: string;
+      twitter_url?: string;
+      website?: string;
+      telegram?: string;
+      discord?: string;
+      github?: string;
+      youtube?: string;
+      medium?: string;
+      reddit?: string;
+      linkedin?: string;
+      instagram?: string;
+      facebook?: string;
+      tiktok?: string;
+      bitbucket?: string;
+      farcaster?: string | null;
+      fracaster?: string | null;
+      description?: string;
+      [key: string]: any;
+    } | null;
+    [key: string]: any;
+  } | null;
+}
+
 export interface GmgnTokenHolding {
   token_address: string;
   symbol?: string;
@@ -819,16 +853,109 @@ export class GmgnAPI {
     // }
 
     try {
-      return await this.fetchTokenInfoByEndpoint(
+      const [tokenInfo, linkInfo] = await Promise.all([
+        this.fetchTokenInfoByEndpoint(
         '/multi_token_info',
         this.TOKEN_INFO_BASE_URL,
         chain,
         address
-      );
+        ),
+        this.fetchTokenLinkInfo(chain, address).catch((error) => {
+          console.warn('Failed to fetch GMGN token link info:', error);
+          return null;
+        }),
+      ]);
+      if (!tokenInfo) return null;
+      return {
+        ...tokenInfo,
+        description: linkInfo?.description || tokenInfo.description,
+        website: linkInfo?.website || tokenInfo.website,
+        gmgnUrl: linkInfo?.gmgnUrl || tokenInfo.gmgnUrl,
+        geckoTerminalUrl: linkInfo?.geckoTerminalUrl || tokenInfo.geckoTerminalUrl,
+        twitterUrl: linkInfo?.twitterUrl || tokenInfo.twitterUrl,
+        telegramUrl: linkInfo?.telegramUrl || tokenInfo.telegramUrl,
+        discordUrl: linkInfo?.discordUrl || tokenInfo.discordUrl,
+        githubUrl: linkInfo?.githubUrl || tokenInfo.githubUrl,
+        youtubeUrl: linkInfo?.youtubeUrl || tokenInfo.youtubeUrl,
+        mediumUrl: linkInfo?.mediumUrl || tokenInfo.mediumUrl,
+        redditUrl: linkInfo?.redditUrl || tokenInfo.redditUrl,
+        linkedinUrl: linkInfo?.linkedinUrl || tokenInfo.linkedinUrl,
+        instagramUrl: linkInfo?.instagramUrl || tokenInfo.instagramUrl,
+        facebookUrl: linkInfo?.facebookUrl || tokenInfo.facebookUrl,
+        tiktokUrl: linkInfo?.tiktokUrl || tokenInfo.tiktokUrl,
+        bitbucketUrl: linkInfo?.bitbucketUrl || tokenInfo.bitbucketUrl,
+        farcasterUrl: linkInfo?.farcasterUrl || tokenInfo.farcasterUrl,
+      };
     } catch (error) {
       console.error('Failed to fetch token info from fallback endpoint:', error);
       throw error;
     }
+  }
+
+  private static async fetchTokenLinkInfo(
+    chain: string,
+    address: string
+  ): Promise<Pick<
+    TokenInfo,
+    | 'description'
+    | 'website'
+    | 'gmgnUrl'
+    | 'geckoTerminalUrl'
+    | 'twitterUrl'
+    | 'telegramUrl'
+    | 'discordUrl'
+    | 'githubUrl'
+    | 'youtubeUrl'
+    | 'mediumUrl'
+    | 'redditUrl'
+    | 'linkedinUrl'
+    | 'instagramUrl'
+    | 'facebookUrl'
+    | 'tiktokUrl'
+    | 'bitbucketUrl'
+    | 'farcasterUrl'
+  > | null> {
+    const endpoint = `/mutil_window_token_link_rug_vote/${String(chain || '').toLowerCase()}/${address}`;
+    const url = await this.buildApiUrl(endpoint, { worker: '0' }, this.CANDLES_BASE_URL);
+    const headers = await this.getHeaders();
+    const response = await this.makeRequest(url, {
+      method: 'GET',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const result = await response.json() as GmgnTokenLinkResponse;
+    const link = result?.code === 0 ? result.data?.link : null;
+    if (!link) return null;
+    return {
+      description: this.pickFirstString(link.description),
+      gmgnUrl: this.normalizeExternalLink(this.pickFirstString(link.gmgn), 'generic'),
+      geckoTerminalUrl: this.normalizeExternalLink(this.pickFirstString(link.geckoterminal), 'generic'),
+      website: this.normalizeExternalLink(this.pickFirstString(link.website), 'website'),
+      twitterUrl: this.normalizeExternalLink(
+        this.pickFirstString(link.twitter_username, link.twitter_url, link.twitter),
+        'twitter'
+      ),
+      telegramUrl: this.normalizeExternalLink(
+        this.pickFirstString(link.telegram, link.telegram_url, link.tg),
+        'telegram'
+      ),
+      discordUrl: this.normalizeExternalLink(this.pickFirstString(link.discord), 'generic'),
+      githubUrl: this.normalizeExternalLink(this.pickFirstString(link.github), 'generic'),
+      youtubeUrl: this.normalizeExternalLink(this.pickFirstString(link.youtube), 'generic'),
+      mediumUrl: this.normalizeExternalLink(this.pickFirstString(link.medium), 'generic'),
+      redditUrl: this.normalizeExternalLink(this.pickFirstString(link.reddit), 'generic'),
+      linkedinUrl: this.normalizeExternalLink(this.pickFirstString(link.linkedin), 'generic'),
+      instagramUrl: this.normalizeExternalLink(this.pickFirstString(link.instagram), 'generic'),
+      facebookUrl: this.normalizeExternalLink(this.pickFirstString(link.facebook), 'generic'),
+      tiktokUrl: this.normalizeExternalLink(this.pickFirstString(link.tiktok), 'generic'),
+      bitbucketUrl: this.normalizeExternalLink(this.pickFirstString(link.bitbucket), 'generic'),
+      farcasterUrl: this.normalizeExternalLink(
+        this.pickFirstString(link.farcaster, link.fracaster),
+        'generic'
+      ),
+    };
   }
 
   private static async fetchTokenInfoByEndpoint(
@@ -862,12 +989,130 @@ export class GmgnAPI {
     return null;
   }
 
+  private static pickFirstString(...values: unknown[]): string | undefined {
+    for (const value of values) {
+      const text = typeof value === 'string' ? value.trim() : '';
+      if (text) return text;
+    }
+    return undefined;
+  }
+
+  private static pickFromContainers(
+    containers: Array<Record<string, any> | null | undefined>,
+    keys: string[]
+  ): string | undefined {
+    for (const container of containers) {
+      if (!container || typeof container !== 'object') continue;
+      for (const key of keys) {
+        const value = this.pickFirstString(container[key]);
+        if (value) return value;
+      }
+    }
+    return undefined;
+  }
+
+  private static normalizeExternalLink(
+    value: string | undefined,
+    kind: 'website' | 'twitter' | 'telegram' | 'generic'
+  ): string | undefined {
+    const raw = this.pickFirstString(value);
+    if (!raw) return undefined;
+    if (/^https?:\/\//i.test(raw)) return raw;
+
+    if (kind === 'twitter') {
+      const normalized = raw.replace(/^@/, '').trim();
+      if (/^(twitter|x)\.com\//i.test(normalized)) return `https://${normalized}`;
+      if (/^[A-Za-z0-9_]{1,32}\/.+$/.test(normalized)) return `https://twitter.com/${normalized}`;
+      if (/^[A-Za-z0-9_]{1,32}$/.test(normalized)) return `https://twitter.com/${normalized}`;
+      return raw;
+    }
+
+    if (kind === 'telegram') {
+      const normalized = raw.replace(/^@/, '').trim();
+      if (/^(t|telegram)\.me\//i.test(normalized)) return `https://${normalized}`;
+      if (/^[A-Za-z0-9_]{3,}$/.test(normalized)) return `https://t.me/${normalized}`;
+      return raw;
+    }
+
+    if (/^[A-Za-z0-9.-]+\.[A-Za-z]{2,}(\/.*)?$/i.test(raw)) {
+      return `https://${raw}`;
+    }
+
+    if (kind === 'generic' && /^[A-Za-z0-9.-]+\.[A-Za-z]{2,}\/.+$/i.test(raw)) {
+      return `https://${raw}`;
+    }
+    return raw;
+  }
+
   private static normalizeTokenInfo(tokenData: MultiTokenInfoResponse['data'][number], chain: string): TokenInfo {
     const quoteTokenAddress = tokenData.tpool?.quote_address || tokenData.pool?.quote_address;
     const quoteToken = tokenData.migration_market_cap_quote || tokenData.pool?.quote_symbol || '';
     const exchange = tokenData.tpool?.exchange;
     const isMigrated = tokenData.tpool?.launch_type === 'migrated';
     const dexType = isMigrated ? this.getDexType(exchange) : undefined;
+    const socialContainers = [
+      tokenData,
+      tokenData.links,
+      tokenData.link,
+      tokenData.social,
+      tokenData.socials,
+      tokenData.project,
+      tokenData.project?.links,
+      tokenData.base_token_info,
+      tokenData.info,
+      tokenData.metadata,
+      tokenData.token,
+    ];
+    const description = this.pickFromContainers(socialContainers, [
+      'description',
+      'descr',
+      'desc',
+      'introduction',
+      'intro',
+      'bio',
+    ]);
+    const website = this.normalizeExternalLink(
+      this.pickFromContainers(socialContainers, [
+        'website',
+        'website_url',
+        'web_url',
+        'webUrl',
+        'websiteUrl',
+        'official_website',
+        'officialWebsite',
+        'project_website',
+        'projectWebsite',
+        'home_url',
+        'homeUrl',
+      ]),
+      'website'
+    );
+    const twitterUrl = this.normalizeExternalLink(
+      this.pickFromContainers(socialContainers, [
+        'twitterUrl',
+        'twitter_url',
+        'twitter',
+        'twitter_link',
+        'twitterLink',
+        'x',
+        'xUrl',
+        'x_url',
+      ]),
+      'twitter'
+    );
+    const telegramUrl = this.normalizeExternalLink(
+      this.pickFromContainers(socialContainers, [
+        'telegramUrl',
+        'telegram_url',
+        'telegram',
+        'telegram_link',
+        'telegramLink',
+        'tg',
+        'tg_url',
+        'tgUrl',
+      ]),
+      'telegram'
+    );
 
     return {
       chain: tokenData.chain || chain,
@@ -876,6 +1121,10 @@ export class GmgnAPI {
       symbol: tokenData.symbol,
       decimals: Number(tokenData.decimals || 0),
       logo: tokenData.logo || '',
+      description,
+      website,
+      twitterUrl,
+      telegramUrl,
       launchpad: tokenData.launchpad || '',
       launchpad_progress: Number(tokenData.launchpad_progress || 0),
       launchpad_platform: tokenData.launchpad_platform || '',

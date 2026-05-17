@@ -15,6 +15,8 @@ type XTradePanelProps = {
   onVisibleChange: (visible: boolean) => void;
   settings: Settings | null;
   isUnlocked: boolean;
+  newPoolMonitorEnabled: boolean;
+  newCoinSniperEnabled: boolean;
   newPoolMonitorDisplayMode: 'floating' | 'tab';
   onNewPoolMonitorDisplayModeChange: (mode: 'floating' | 'tab') => void;
 };
@@ -72,6 +74,8 @@ export function XTradePanel({
   onVisibleChange,
   settings,
   isUnlocked,
+  newPoolMonitorEnabled,
+  newCoinSniperEnabled,
   newPoolMonitorDisplayMode,
   onNewPoolMonitorDisplayModeChange,
 }: XTradePanelProps) {
@@ -100,6 +104,16 @@ export function XTradePanel({
     if (!activeTabProp) return;
     setActiveTab(normalizeMainTab(activeTabProp));
   }, [activeTabProp]);
+
+  useEffect(() => {
+    if (activeTab === 'xnewpoolmonitor' && !newPoolMonitorEnabled) {
+      applyTab('xmonitor');
+      return;
+    }
+    if (activeTab === 'xnewcoinsniper' && !newCoinSniperEnabled) {
+      applyTab('xmonitor');
+    }
+  }, [activeTab, newCoinSniperEnabled, newPoolMonitorEnabled]);
 
   useEffect(() => {
     if (visible) return;
@@ -190,6 +204,11 @@ export function XTradePanel({
   if (!visible) return null;
 
   const contentMaxHeight = Math.max(260, panelHeight - 68 - 14);
+  const visibleTabs = TAB_ITEMS.filter((item) => {
+    if (item.key === 'xnewpoolmonitor') return newPoolMonitorEnabled;
+    if (item.key === 'xnewcoinsniper') return newCoinSniperEnabled;
+    return true;
+  });
 
   return (
     <div
@@ -215,7 +234,7 @@ export function XTradePanel({
         }}
       >
         <div className="dagobang-scrollbar-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          {TAB_ITEMS.map((item) => {
+          {visibleTabs.map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.key;
             return (
@@ -236,7 +255,7 @@ export function XTradePanel({
             );
           })}
         </div>
-        {activeTab === 'xnewpoolmonitor' ? (
+        {activeTab === 'xnewpoolmonitor' && newPoolMonitorEnabled ? (
           <button
             type="button"
             className="shrink-0 rounded-lg border border-zinc-800 bg-zinc-950/30 px-2 py-1 text-[10px] text-zinc-300 hover:border-zinc-600"
@@ -267,20 +286,24 @@ export function XTradePanel({
         settings={settings}
         isUnlocked={isUnlocked}
       />
-      <XNewCoinSniperContent
-        siteInfo={siteInfo}
-        active={activeTab === 'xnewcoinsniper'}
-        view="history"
-        onOpenConfig={() => setNewCoinModalMode('config')}
-        onOpenTaskManager={() => setNewCoinModalMode('task')}
-        settings={settings}
-        isUnlocked={isUnlocked}
-      />
-      <NewPoolMonitorContent
-        siteInfo={siteInfo}
-        active={activeTab === 'xnewpoolmonitor'}
-        settings={settings}
-      />
+      {newCoinSniperEnabled ? (
+        <XNewCoinSniperContent
+          siteInfo={siteInfo}
+          active={activeTab === 'xnewcoinsniper'}
+          view="history"
+          onOpenConfig={() => setNewCoinModalMode('config')}
+          onOpenTaskManager={() => setNewCoinModalMode('task')}
+          settings={settings}
+          isUnlocked={isUnlocked}
+        />
+      ) : null}
+      {newPoolMonitorEnabled ? (
+        <NewPoolMonitorContent
+          siteInfo={siteInfo}
+          active={activeTab === 'xnewpoolmonitor'}
+          settings={settings}
+        />
+      ) : null}
       <div
         className="flex shrink-0 cursor-ns-resize justify-center border-t border-zinc-800/60 px-4 py-1.5"
         onPointerDown={(e) => {
@@ -326,7 +349,7 @@ export function XTradePanel({
           </div>
         </div>
       ) : null}
-      {newCoinModalMode ? (
+      {newCoinSniperEnabled && newCoinModalMode ? (
         <div className="fixed inset-0 z-[2147483648] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-[560px] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-xl shadow-emerald-500/30">
             <div className="flex items-center justify-between border-b border-zinc-800/60 px-4 py-3">

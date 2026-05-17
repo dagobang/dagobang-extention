@@ -185,6 +185,18 @@ export function validateSettings(input: Settings): Settings | null {
   const limitTradePanelOnlyOnTokenPage = typeof (input as any)?.ui?.limitTradePanelOnlyOnTokenPage === 'boolean'
     ? (input as any).ui.limitTradePanelOnlyOnTokenPage
     : ((defaults as any)?.ui?.limitTradePanelOnlyOnTokenPage ?? false);
+  const quickCookingEnabled = typeof (input as any)?.ui?.quickCookingEnabled === 'boolean'
+    ? (input as any).ui.quickCookingEnabled
+    : ((defaults as any)?.ui?.quickCookingEnabled ?? false);
+  const newPoolMonitorEnabled = typeof (input as any)?.ui?.newPoolMonitorEnabled === 'boolean'
+    ? (input as any).ui.newPoolMonitorEnabled
+    : ((defaults as any)?.ui?.newPoolMonitorEnabled ?? false);
+  const newCoinSniperEnabled = typeof (input as any)?.ui?.newCoinSniperEnabled === 'boolean'
+    ? (input as any).ui.newCoinSniperEnabled
+    : ((defaults as any)?.ui?.newCoinSniperEnabled ?? false);
+  const visionReportMenuEnabled = typeof (input as any)?.ui?.visionReportEnabled === 'boolean'
+    ? (input as any).ui.visionReportEnabled
+    : ((defaults as any)?.ui?.visionReportEnabled ?? false);
   const tradeSuccessSoundEnabled = typeof (input as any).tradeSuccessSoundEnabled === 'boolean'
     ? (input as any).tradeSuccessSoundEnabled
     : ((defaults as any).tradeSuccessSoundEnabled ?? false);
@@ -780,6 +792,10 @@ export function validateSettings(input: Settings): Settings | null {
     ui: {
       showToolbar,
       limitTradePanelOnlyOnTokenPage,
+      quickCookingEnabled,
+      newPoolMonitorEnabled,
+      newCoinSniperEnabled,
+      visionReportEnabled: visionReportMenuEnabled,
     },
     telegram: {
       enabled: telegramEnabled,

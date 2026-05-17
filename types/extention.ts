@@ -294,9 +294,13 @@ export const TRADE_SUCCESS_SOUND_PRESETS = [
 
 export type TradeSuccessSoundPreset = (typeof TRADE_SUCCESS_SOUND_PRESETS)[number];
 
-export type UiSettings = {
+export type SwitchSettings = {
   showToolbar: boolean;
   limitTradePanelOnlyOnTokenPage?: boolean;
+  quickCookingEnabled?: boolean;
+  newPoolMonitorEnabled?: boolean;
+  newCoinSniperEnabled?: boolean;
+  visionReportEnabled?: boolean;
 };
 
 export type TelegramSettings = {
@@ -349,7 +353,7 @@ export type Settings = {
   tradeSuccessSoundVolume?: number;
   limitOrderScanIntervalMs?: number;
   tokenBalancePollIntervalMs?: number;
-  ui?: UiSettings;
+  ui?: SwitchSettings;
   telegram?: TelegramSettings;
   visionReport?: VisionReportSettings;
   autoTrade: AutoTradeConfig;

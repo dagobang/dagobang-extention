@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import toast from 'react-hot-toast';
-import { call } from '@/utils/messaging';
 import type { Account } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
@@ -11,12 +10,13 @@ type CookingPanelProps = {
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
   address: string | null;
-  seedreamApiKey: string;
   walletAccounts: Account[];
   activeWalletAddress: `0x${string}` | null;
   siteInfo: SiteInfo | null;
   currentTokenName?: string | null;
   currentTokenSymbol?: string | null;
+  currentTokenInfo?: TokenInfo | null;
+  tokenInfoLoading?: boolean;
 };
 
 function clampCookingPanelPos(pos: { x: number; y: number }) {
@@ -27,16 +27,25 @@ function clampCookingPanelPos(pos: { x: number; y: number }) {
   return { x: clampedX, y: clampedY };
 }
 
+function pickFirstNonEmpty(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
 export function CookingPanel({
   visible,
   onVisibleChange,
   address,
-  seedreamApiKey,
   walletAccounts,
   activeWalletAddress,
   siteInfo,
   currentTokenName,
   currentTokenSymbol,
+  currentTokenInfo,
+  tokenInfoLoading = false,
 }: CookingPanelProps) {
   type LogoSearchImage = { url: string; thumbnail?: string; title?: string; source?: string };
   type LogoSearchTab = 'token' | 'google';
@@ -95,9 +104,7 @@ export function CookingPanel({
     };
   }, []);
 
-  const [logoPrompt, setLogoPrompt] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
-  const [logoLoading, setLogoLoading] = useState(false);
   const [tokenSymbolInput, setTokenSymbolInput] = useState('');
   const [tokenNameInput, setTokenNameInput] = useState('');
   const [twitterInput, setTwitterInput] = useState('');
@@ -146,15 +153,43 @@ export function CookingPanel({
     }
     if (!siteInfo?.tokenAddress) return;
     const tokenKey = siteInfo.tokenAddress.toLowerCase();
-    if (autoFillTokenKeyRef.current === tokenKey) return;
-    if (!tokenNameInput.trim() && currentTokenName?.trim()) {
-      setTokenNameInput(currentTokenName.trim());
+    const isNewToken = autoFillTokenKeyRef.current !== tokenKey;
+    const nextLogo = pickFirstNonEmpty(currentTokenInfo?.logo);
+    const nextName = pickFirstNonEmpty(currentTokenInfo?.name, currentTokenName);
+    const nextSymbol = pickFirstNonEmpty(currentTokenInfo?.symbol, currentTokenSymbol);
+    const nextTwitter = pickFirstNonEmpty(currentTokenInfo?.twitterUrl);
+    const nextWebsite = pickFirstNonEmpty(currentTokenInfo?.website);
+    const nextTelegram = pickFirstNonEmpty(currentTokenInfo?.telegramUrl);
+
+    if (isNewToken) {
+      setLogoUrl(nextLogo);
+      setTokenNameInput(nextName);
+      setTokenSymbolInput(nextSymbol);
+      setTwitterInput(nextTwitter);
+      setWebsiteInput(nextWebsite);
+      setTelegramInput(nextTelegram);
+      autoFillTokenKeyRef.current = tokenKey;
+      return;
     }
-    if (!tokenSymbolInput.trim() && currentTokenSymbol?.trim()) {
-      setTokenSymbolInput(currentTokenSymbol.trim());
-    }
-    autoFillTokenKeyRef.current = tokenKey;
-  }, [visible, siteInfo?.tokenAddress, currentTokenName, currentTokenSymbol]);
+
+    if (!logoUrl.trim() && nextLogo) setLogoUrl(nextLogo);
+    if (!tokenNameInput.trim() && nextName) setTokenNameInput(nextName);
+    if (!tokenSymbolInput.trim() && nextSymbol) setTokenSymbolInput(nextSymbol);
+    if (!twitterInput.trim() && nextTwitter) setTwitterInput(nextTwitter);
+    if (!websiteInput.trim() && nextWebsite) setWebsiteInput(nextWebsite);
+    if (!telegramInput.trim() && nextTelegram) setTelegramInput(nextTelegram);
+  }, [
+    visible,
+    siteInfo?.tokenAddress,
+    currentTokenName,
+    currentTokenSymbol,
+    currentTokenInfo?.logo,
+    currentTokenInfo?.name,
+    currentTokenInfo?.symbol,
+    currentTokenInfo?.twitterUrl,
+    currentTokenInfo?.website,
+    currentTokenInfo?.telegramUrl,
+  ]);
 
   useEffect(() => {
     if (!deployWallet && activeWalletAddress) {
@@ -210,7 +245,6 @@ export function CookingPanel({
   );
 
   const clearImageAndTokenInputs = () => {
-    setLogoPrompt('');
     setLogoUrl('');
     setGoogleQuery('');
     setGoogleImages([]);
@@ -282,30 +316,6 @@ export function CookingPanel({
       autoSellRulesRef.current = next;
       return next;
     });
-  };
-
-  const handleGenerateLogo = async () => {
-    const prompt = logoPrompt.trim();
-    const apiKey = seedreamApiKey.trim();
-    if (!prompt) {
-      toast.error('请输入提示词');
-      return;
-    }
-    if (!apiKey) {
-      toast.error('请先在设置里配置 Seedream API Key');
-      return;
-    }
-    try {
-      setLogoLoading(true);
-      const res = await call({ type: 'ai:generateLogo', prompt, size: '2K', apiKey });
-      setLogoUrl(res.imageUrl);
-      toast.success('Logo 生成成功', { icon: '✅' });
-    } catch (e: any) {
-      const msg = e?.message ? String(e.message) : 'Logo 生成失败';
-      toast.error(msg, { icon: '❌' });
-    } finally {
-      setLogoLoading(false);
-    }
   };
 
   const handleSearchGoogleImages = async (nextPage = 0) => {
@@ -561,33 +571,15 @@ export function CookingPanel({
           </button>
         </div>
         <div className="flex-1 p-3 space-y-3 overflow-y-auto dagobang-scrollbar">
-          <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-300">
-            平台：Fourmeme（当前仅支持）
-          </div>
+
+          {tokenInfoLoading && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200">
+              正在读取 tokenInfo...
+            </div>
+          )}
 
           <div className="space-y-2 rounded-lg border border-sky-500/25 bg-sky-500/5 p-2.5">
             <div className="text-[12px] font-semibold text-sky-200">图片</div>
-            <div className="space-y-1">
-              <div className="text-[11px] text-zinc-400">提示词（生成 Logo）</div>
-              <textarea
-                className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none resize-none h-16"
-                value={logoPrompt}
-                onChange={(e) => setLogoPrompt(e.target.value)}
-              />
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  className="px-3 py-1 rounded-md bg-amber-500 text-[11px] font-semibold text-black hover:bg-amber-400 disabled:opacity-50"
-                  onClick={handleGenerateLogo}
-                  disabled={logoLoading}
-                >
-                  {logoLoading ? '生成中…' : '生成 Logo'}
-                </button>
-                <div className="text-[10px] text-zinc-500">
-                  Seedream API Key 请在设置页配置
-                </div>
-              </div>
-            </div>
-
             <div className="space-y-1">
               <div className="text-[11px] text-zinc-400">搜索图片</div>
               <div className="flex items-center gap-2">

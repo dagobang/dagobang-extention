@@ -151,6 +151,9 @@ export default function App() {
   const [marketCapDisplay, setMarketCapDisplay] = useState<string | null>(null);
   const [liquidityDisplay, setLiquidityDisplay] = useState<string | null>(null);
   const [pendingQuickBuy, setPendingQuickBuy] = useState<{ tokenAddress: string; amount: string } | null>(null);
+  const [cookingSiteInfoOverride, setCookingSiteInfoOverride] = useState<SiteInfo | null>(null);
+  const [cookingTokenInfoOverride, setCookingTokenInfoOverride] = useState<TokenInfo | null>(null);
+  const [cookingTokenInfoLoading, setCookingTokenInfoLoading] = useState(false);
   const [gmgnBuyEnabled, setGmgnBuyEnabled] = useState(false);
   const [gmgnSellEnabled, setGmgnSellEnabled] = useState(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -168,6 +171,7 @@ export default function App() {
   const prewarmedRpcRef = useRef<Set<string>>(new Set());
   const fastPollingRef = useRef<any>(null);
   const tokenRefreshSeqRef = useRef(0);
+  const cookingTokenInfoReqSeqRef = useRef(0);
   const deleteSoundPlayedAtRef = useRef<Record<string, number>>({});
   const autoTradeOrderSoundPlayedAtRef = useRef<Record<string, number>>({});
 
@@ -520,6 +524,7 @@ export default function App() {
 
   useEffect(() => {
     const handler = (e: Event) => {
+      if (!((settingsRef.current?.ui?.quickCookingEnabled) ?? false)) return;
       const detail = (e as CustomEvent<any>).detail;
       if (!detail) return;
       const addr = detail.tokenAddress as string | undefined;
@@ -543,6 +548,53 @@ export default function App() {
       window.removeEventListener('dagobang-quickbuy' as any, handler as any);
     };
   }, [settings]);
+
+  useEffect(() => {
+    let disposed = false;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<any>).detail;
+      if (!detail) return;
+      const addr = typeof detail.tokenAddress === 'string' ? detail.tokenAddress.trim() : '';
+      if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) return;
+      const chain = typeof detail.chain === 'string' && detail.chain.trim()
+        ? detail.chain.trim().toLowerCase()
+        : 'bsc';
+      const platform = detail.platform === 'gmgn' ? 'gmgn' : 'gmgn';
+      const nextSiteInfo: SiteInfo = {
+        chain,
+        tokenAddress: addr,
+        platform,
+        showBar: true,
+      };
+      const reqSeq = cookingTokenInfoReqSeqRef.current + 1;
+      cookingTokenInfoReqSeqRef.current = reqSeq;
+      setCookingSiteInfoOverride(nextSiteInfo);
+      setCookingTokenInfoOverride(null);
+      setCookingTokenInfoLoading(true);
+      setShowCookingPanel(true);
+      void TokenAPI.getTokenInfo(platform, chain, addr)
+        .then((meta) => {
+          if (disposed) return;
+          if (cookingTokenInfoReqSeqRef.current !== reqSeq) return;
+          setCookingTokenInfoOverride(meta);
+        })
+        .catch((error) => {
+          if (disposed) return;
+          if (cookingTokenInfoReqSeqRef.current !== reqSeq) return;
+          console.error('Failed to load quick cooking token info', error);
+        })
+        .finally(() => {
+          if (disposed) return;
+          if (cookingTokenInfoReqSeqRef.current !== reqSeq) return;
+          setCookingTokenInfoLoading(false);
+        });
+    };
+    window.addEventListener('dagobang-quickcooking' as any, handler as any);
+    return () => {
+      disposed = true;
+      window.removeEventListener('dagobang-quickcooking' as any, handler as any);
+    };
+  }, []);
 
   // Monitor URL changes
   useEffect(() => {
@@ -662,8 +714,38 @@ export default function App() {
     const t = siteInfo.tokenAddress.trim();
     return /^0x[a-fA-F0-9]{40}$/.test(t) ? (t as `0x${string}`) : null;
   }, [siteInfo]);
+  const effectiveCookingSiteInfo = cookingSiteInfoOverride ?? siteInfo;
+  const effectiveCookingTokenInfo = useMemo(() => {
+    if (!cookingSiteInfoOverride) {
+      return (tokenInfo as TokenInfo | null) ?? null;
+    }
+    if (cookingTokenInfoOverride) return cookingTokenInfoOverride;
+    const overrideAddress = cookingSiteInfoOverride.tokenAddress.toLowerCase();
+    if (tokenInfo && tokenAddressNormalized && overrideAddress === tokenAddressNormalized.toLowerCase()) {
+      return tokenInfo as TokenInfo;
+    }
+    return null;
+  }, [cookingSiteInfoOverride, cookingTokenInfoOverride, tokenInfo, tokenAddressNormalized]);
   const limitTradePanelOnlyOnTokenPage = settings?.ui?.limitTradePanelOnlyOnTokenPage ?? false;
+  const quickCookingEnabled = settings?.ui?.quickCookingEnabled ?? false;
+  const newPoolMonitorEnabled = settings?.ui?.newPoolMonitorEnabled ?? false;
+  const newCoinSniperEnabled = settings?.ui?.newCoinSniperEnabled ?? false;
   const limitTradePanelVisible = showLimitTradePanel && (!limitTradePanelOnlyOnTokenPage || !!tokenAddressNormalized);
+
+  useEffect(() => {
+    if (!newPoolMonitorEnabled) {
+      setShowNewPoolMonitorPanel(false);
+      if (xTradeActiveTab === 'xnewpoolmonitor') {
+        setXTradeActiveTab('xmonitor');
+      }
+    }
+  }, [newPoolMonitorEnabled, xTradeActiveTab]);
+
+  useEffect(() => {
+    if (!newCoinSniperEnabled && xTradeActiveTab === 'xnewcoinsniper') {
+      setXTradeActiveTab('xmonitor');
+    }
+  }, [newCoinSniperEnabled, xTradeActiveTab]);
 
   const tokenContextKey = `${siteInfo?.platform ?? ''}:${siteInfo?.chain ?? ''}:${tokenAddressNormalized ?? ''}`;
   const tokenContextKeyRef = useRef(tokenContextKey);
@@ -2276,10 +2358,19 @@ export default function App() {
   };
 
   const handleToggleCookingPanel = () => {
-    setShowCookingPanel((v) => !v);
+    const next = !showCookingPanel;
+    if (next) {
+      cookingTokenInfoReqSeqRef.current += 1;
+      setCookingSiteInfoOverride(null);
+      setCookingTokenInfoOverride(null);
+      setCookingTokenInfoLoading(false);
+    }
+    setShowCookingPanel(next);
   };
 
   const handleToggleXTradePanelToTab = (tab: 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper' | 'xnewpoolmonitor') => {
+    if (tab === 'xnewpoolmonitor' && !newPoolMonitorEnabled) return;
+    if (tab === 'xnewcoinsniper' && !newCoinSniperEnabled) return;
     if (!showXTradePanel) {
       setXTradeActiveTab(tab);
       setShowXTradePanel(true);
@@ -2297,6 +2388,7 @@ export default function App() {
   };
 
   const handleSetNewPoolMonitorDisplayMode = (mode: NewPoolMonitorDisplayMode) => {
+    if (!newPoolMonitorEnabled) return;
     setNewPoolMonitorDisplayMode(mode);
     if (mode === 'tab') {
       setShowNewPoolMonitorPanel(false);
@@ -2311,6 +2403,7 @@ export default function App() {
   };
 
   const handleToggleNewPoolMonitor = () => {
+    if (!newPoolMonitorEnabled) return;
     if (newPoolMonitorDisplayMode === 'tab') {
       handleToggleXTradePanelToTab('xnewpoolmonitor');
       return;
@@ -2333,9 +2426,9 @@ export default function App() {
     void refreshToken(true, true);
   };
 
-  const newPoolMonitorActive = newPoolMonitorDisplayMode === 'tab'
+  const newPoolMonitorActive = newPoolMonitorEnabled && (newPoolMonitorDisplayMode === 'tab'
     ? showXTradePanel && xTradeActiveTab === 'xnewpoolmonitor'
-    : showNewPoolMonitorPanel;
+    : showNewPoolMonitorPanel);
 
   return (
     <>
@@ -2353,6 +2446,7 @@ export default function App() {
               xTradeActive={showXTradePanel}
               onToggleNewPoolMonitor={handleToggleNewPoolMonitor}
               newPoolMonitorActive={newPoolMonitorActive}
+              newPoolMonitorEnabled={newPoolMonitorEnabled}
               onToggleLimitTrade={handleToggleLimitTradePanel}
               autotradeActive={limitTradePanelVisible}
               onToggleRpc={handleToggleRpcPanel}
@@ -2510,13 +2604,14 @@ export default function App() {
           <CookingPanel
             visible={showCookingPanel}
             onVisibleChange={setShowCookingPanel}
-            address={siteInfo?.walletAddress ?? address}
-            seedreamApiKey={settings?.seedreamApiKey ?? ''}
+            address={effectiveCookingSiteInfo?.walletAddress ?? address}
             walletAccounts={walletAccounts}
             activeWalletAddress={address as `0x${string}` | null}
-            siteInfo={siteInfo}
-            currentTokenName={tokenInfo?.name ?? null}
-            currentTokenSymbol={tokenSymbol ?? tokenInfo?.symbol ?? null}
+            siteInfo={effectiveCookingSiteInfo}
+            currentTokenName={effectiveCookingTokenInfo?.name ?? (cookingSiteInfoOverride ? null : tokenInfo?.name ?? null)}
+            currentTokenSymbol={effectiveCookingTokenInfo?.symbol ?? (cookingSiteInfoOverride ? null : tokenSymbol ?? tokenInfo?.symbol ?? null)}
+            currentTokenInfo={effectiveCookingTokenInfo}
+            tokenInfoLoading={cookingTokenInfoLoading}
           />
 
           <XTradePanel
@@ -2530,12 +2625,14 @@ export default function App() {
             onVisibleChange={setShowXTradePanel}
             settings={settings}
             isUnlocked={isUnlocked}
+            newPoolMonitorEnabled={newPoolMonitorEnabled}
+            newCoinSniperEnabled={newCoinSniperEnabled}
             newPoolMonitorDisplayMode={newPoolMonitorDisplayMode}
             onNewPoolMonitorDisplayModeChange={handleSetNewPoolMonitorDisplayMode}
           />
           <NewPoolMonitorPanel
             siteInfo={siteInfo}
-            visible={newPoolMonitorDisplayMode === 'floating' && showNewPoolMonitorPanel}
+            visible={newPoolMonitorEnabled && newPoolMonitorDisplayMode === 'floating' && showNewPoolMonitorPanel}
             onVisibleChange={setShowNewPoolMonitorPanel}
             settings={settings}
             displayMode={newPoolMonitorDisplayMode}

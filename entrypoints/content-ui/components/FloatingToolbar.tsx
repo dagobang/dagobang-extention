@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AlarmClockCheck, Crosshair, Flame, GripHorizontal, HardHat, MoreHorizontal, NotebookPen, SatelliteDish } from 'lucide-react';
+import { AlarmClockCheck, Crosshair, HardHat, LineChart, MoreHorizontal, NotebookPen, Rocket, SatelliteDish } from 'lucide-react';
 import type { Settings } from '@/types/extention';
 import type { SiteInfo } from '@/utils/sites';
 import { Logo } from '@/components/Logo';
@@ -13,6 +13,7 @@ export type FloatingToolbarProps = {
   xTradeActive: boolean;
   onToggleNewPoolMonitor: () => void;
   newPoolMonitorActive: boolean;
+  newPoolMonitorEnabled: boolean;
   onToggleLimitTrade: () => void;
   autotradeActive: boolean;
   onToggleRpc: () => void;
@@ -40,6 +41,7 @@ export function FloatingToolbar({
   xTradeActive,
   onToggleNewPoolMonitor,
   newPoolMonitorActive,
+  newPoolMonitorEnabled,
   onToggleLimitTrade,
   autotradeActive,
   onToggleRpc,
@@ -160,7 +162,7 @@ export function FloatingToolbar({
       <div className="flex-1" />
 
       <ToolBtn active={cookingActive} title="Cooking" onClick={onToggleCooking}>
-        <Flame size={14} />
+        <Rocket size={14} />
       </ToolBtn>
 
       <ToolBtn active={autotradeActive} title="Limit Order" onClick={onToggleLimitTrade}>
@@ -171,9 +173,11 @@ export function FloatingToolbar({
         <Crosshair size={14} />
       </ToolBtn>
 
-      <ToolBtn active={newPoolMonitorActive} title="NewPool Monitor" onClick={onToggleNewPoolMonitor}>
-        <HardHat size={14} />
-      </ToolBtn>
+      {newPoolMonitorEnabled ? (
+        <ToolBtn active={newPoolMonitorActive} title="NewPool Monitor" onClick={onToggleNewPoolMonitor}>
+          <HardHat size={14} />
+        </ToolBtn>
+      ) : null}
 
       <ToolBtn active={rpcActive} title="RPC" onClick={onToggleRpc}>
         <SatelliteDish size={14} />
@@ -196,7 +200,7 @@ export function FloatingToolbar({
                 setMoreOpen(false);
               }}
             >
-              <GripHorizontal size={13} />
+              <LineChart size={13} />
               Daily
             </button>
             <button

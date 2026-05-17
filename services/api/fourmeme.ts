@@ -300,6 +300,10 @@ export class FourmemeAPI {
           symbol: data.shortName || data.name,
           decimals: 18,
           logo: data.image,
+          description: data.descr || undefined,
+          website: data.webUrl || undefined,
+          twitterUrl: data.twitterUrl || undefined,
+          telegramUrl: (data as any).telegramUrl || undefined,
           launchpad: "fourmeme",
           launchpad_progress: Number.isFinite(progress) ? progress : 0,
           launchpad_platform: "fourmeme",
@@ -313,6 +317,7 @@ export class FourmemeAPI {
             marketCap: data.tokenPrice?.marketCap || "0",
             timestamp: Number(data.tokenPrice?.modifyDate || 0),
           },
+          totalSupply: data.totalAmount || undefined,
           aiCreator: data.aiCreator, // is ai agent
         };
       }

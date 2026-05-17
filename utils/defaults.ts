@@ -43,8 +43,8 @@ const BSC_MAINNET: ChainSettings = {
   gasPriceMode: 'fixed',
   slippageBps: 4000,
   deadlineSeconds: 60,
-  buyPresets: ['0.1', '0.5', '1.0', '2.0'],
-  sellPresets: ['25', '50', '75', '100'],
+  buyPresets: ['0.05', '0.1', '0.5', '1'],
+  sellPresets: ['10', '20', '50', '100'],
   buyGasGwei: DEFAULT_GAS_GWEI,
   sellGasGwei: DEFAULT_GAS_GWEI,
   approveGasGwei: '0.06',
@@ -81,7 +81,7 @@ const ETH_MAINNET: ChainSettings = {
   slippageBps: 4000,
   deadlineSeconds: 60,
   buyPresets: ['0.01', '0.05', '0.1', '0.2'],
-  sellPresets: ['25', '50', '75', '100'],
+  sellPresets: ['10', '20', '50', '100'],
   buyGasGwei: ETH_GAS_GWEI,
   sellGasGwei: ETH_GAS_GWEI,
   approveGasGwei: '2',
@@ -94,20 +94,19 @@ const ETH_MAINNET: ChainSettings = {
 };
 
 const HYPER_GAS_GWEI: GasGweiConfig = {
-  slow: '0.001',
-  standard: '0.002',
-  fast: '0.005',
-  turbo: '0.01',
+  slow: '0.4',
+  standard: '0.6',
+  fast: '1',
+  turbo: '3',
 };
 
 const HYPER_MAINNET: ChainSettings = {
   rpcUrls: [
     'https://rpc.hyperliquid.xyz/evm',
-    'https://hyperliquid.drpc.org',
     'https://rpc.hyperlend.finance',
     'https://rpc.hypurrscan.io',
   ],
-  protectedRpcUrls: [],
+  protectedRpcUrls: ['https://hyperliquid.drpc.org',],
   protectedRpcUrlsBuy: [],
   protectedRpcUrlsSell: [],
   antiMev: false,
@@ -118,11 +117,11 @@ const HYPER_MAINNET: ChainSettings = {
   gasPriceMode: 'dynamic',
   slippageBps: 4000,
   deadlineSeconds: 60,
-  buyPresets: ['5', '10', '25', '50'],
-  sellPresets: ['25', '50', '75', '100'],
+  buyPresets: ['1', '2', '5', '10'],
+  sellPresets: ['10', '20', '50', '100'],
   buyGasGwei: HYPER_GAS_GWEI,
   sellGasGwei: HYPER_GAS_GWEI,
-  approveGasGwei: '0.002',
+  approveGasGwei: '0.6',
   buyPriorityFeePreset: 'standard',
   sellPriorityFeePreset: 'standard',
   buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
@@ -460,6 +459,10 @@ export function defaultSettings(): Settings {
     ui: {
       showToolbar: true,
       limitTradePanelOnlyOnTokenPage: false,
+      quickCookingEnabled: false,
+      newPoolMonitorEnabled: false,
+      newCoinSniperEnabled: false,
+      visionReportEnabled: false,
     },
     telegram: {
       enabled: false,

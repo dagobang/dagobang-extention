@@ -1469,20 +1469,31 @@ export default defineBackground(() => {
 
           case 'twitter:signal': {
             const signal = msg.payload as any;
-            await Promise.all([
+            const settings = await SettingsService.get();
+            const tasks: Array<Promise<unknown>> = [
               (AutoTrade as any).handleTwitterSignal(signal),
               (TokenSniperTrade as any).handleTwitterSignal(signal),
-              forwardTwitterSignalToVision(signal),
-            ]);
+            ];
+            if (settings?.ui?.visionReportEnabled === true) {
+              tasks.push(forwardTwitterSignalToVision(signal));
+            }
+            await Promise.all(tasks);
             return { ok: true };
           }
 
           case 'market:signal': {
             const signal = msg.payload as any;
-            await Promise.all([
-              (NewCoinSniperTrade as any).handleMarketSignal(signal),
-              forwardMarketSignalToVision(signal),
-            ]);
+            const settings = await SettingsService.get();
+            const tasks: Array<Promise<unknown>> = [];
+            if (settings?.ui?.newCoinSniperEnabled === true) {
+              tasks.push((NewCoinSniperTrade as any).handleMarketSignal(signal));
+            }
+            if (settings?.ui?.visionReportEnabled === true) {
+              tasks.push(forwardMarketSignalToVision(signal));
+            }
+            if (tasks.length > 0) {
+              await Promise.all(tasks);
+            }
             return { ok: true };
           }
         }

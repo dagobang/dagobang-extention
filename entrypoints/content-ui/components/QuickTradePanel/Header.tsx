@@ -8,7 +8,7 @@ import {
   Keyboard,
   Crosshair,
   NotebookPen,
-  Flame,
+  Rocket,
   MoreHorizontal,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
@@ -187,7 +187,7 @@ export function Header({
           }}
           title="Cooking"
         >
-          <Flame size={14} />
+          <Rocket size={14} />
         </button>
 
         {!siteInfo.showBar && (

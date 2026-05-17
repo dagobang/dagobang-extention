@@ -4,6 +4,7 @@ import type { SettingsSectionId, TFunc } from './types';
 type SettingsHomeProps = {
   tt: TFunc;
   busy: boolean;
+  visionReportVisible: boolean;
   onOpenSection: (section: Exclude<SettingsSectionId, 'root'>) => void;
 };
 
@@ -20,7 +21,7 @@ function getExtensionVersion(): string | undefined {
   }
 }
 
-export function SettingsHome({ tt, busy, onOpenSection }: SettingsHomeProps) {
+export function SettingsHome({ tt, busy, visionReportVisible, onOpenSection }: SettingsHomeProps) {
   const version = getExtensionVersion();
   const Item = (props: { title: string; onClick: () => void }) => (
     <button
@@ -40,7 +41,7 @@ export function SettingsHome({ tt, busy, onOpenSection }: SettingsHomeProps) {
       <Item title={tt('popup.settings.gasPreset')} onClick={() => onOpenSection('gas')} />
       <Item title={tt('popup.settings.notification')} onClick={() => onOpenSection('notification')} />
       <Item title={tt('popup.settings.telegram')} onClick={() => onOpenSection('telegram')} />
-      <Item title={tt('popup.settings.visionReport')} onClick={() => onOpenSection('vision')} />
+      {visionReportVisible ? <Item title={tt('popup.settings.visionReport')} onClick={() => onOpenSection('vision')} /> : null}
       <Item title={tt('popup.settings.ui')} onClick={() => onOpenSection('ui')} />
       <Item title={tt('popup.settings.security')} onClick={() => onOpenSection('security')} />
 
