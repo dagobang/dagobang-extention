@@ -35,6 +35,26 @@ import { FloatingToolbar } from './components/FloatingToolbar';
 import { CookingPanel } from './components/CookingPanel';
 
 type NewPoolMonitorDisplayMode = 'floating' | 'tab';
+type XTradeTab = 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper' | 'xnewpoolmonitor';
+
+const XTRADE_ACTIVE_TAB_STORAGE_KEY = 'dagobang_xtrade_active_tab';
+
+function readPersistedXTradeTab(): XTradeTab {
+  try {
+    const raw = String(window.localStorage.getItem(XTRADE_ACTIVE_TAB_STORAGE_KEY) || '').trim();
+    if (
+      raw === 'xmonitor'
+      || raw === 'xsniper'
+      || raw === 'xtokensniper'
+      || raw === 'xnewcoinsniper'
+      || raw === 'xnewpoolmonitor'
+    ) {
+      return raw;
+    }
+  } catch {
+  }
+  return 'xmonitor';
+}
 
 const PRIORITY_FEE_PRESETS = ['none', 'slow', 'standard', 'fast'] as const;
 type PriorityFeePreset = (typeof PRIORITY_FEE_PRESETS)[number];
@@ -193,7 +213,7 @@ export default function App() {
       return 'floating';
     }
   });
-  const [xTradeActiveTab, setXTradeActiveTab] = useState<'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper' | 'xnewpoolmonitor'>('xmonitor');
+  const [xTradeActiveTab, setXTradeActiveTab] = useState<XTradeTab>(() => readPersistedXTradeTab());
   const [showRpcPanel, setShowRpcPanel] = useState(false);
   const [showDailyAnalysisPanel, setShowDailyAnalysisPanel] = useState(false);
   const [showReviewPanel, setShowReviewPanel] = useState(false);
@@ -417,6 +437,10 @@ export default function App() {
         'dagobang_xtrade_panel_visible',
         showXTradePanel ? '1' : '0'
       );
+    } catch {
+    }
+    try {
+      window.localStorage.setItem(XTRADE_ACTIVE_TAB_STORAGE_KEY, xTradeActiveTab);
     } catch {
     }
     try {
@@ -730,22 +754,25 @@ export default function App() {
   const quickCookingEnabled = settings?.ui?.quickCookingEnabled ?? false;
   const newPoolMonitorEnabled = settings?.ui?.newPoolMonitorEnabled ?? false;
   const newCoinSniperEnabled = settings?.ui?.newCoinSniperEnabled ?? false;
+  const settingsReady = settings != null;
   const limitTradePanelVisible = showLimitTradePanel && (!limitTradePanelOnlyOnTokenPage || !!tokenAddressNormalized);
 
   useEffect(() => {
+    if (!settingsReady) return;
     if (!newPoolMonitorEnabled) {
       setShowNewPoolMonitorPanel(false);
       if (xTradeActiveTab === 'xnewpoolmonitor') {
         setXTradeActiveTab('xmonitor');
       }
     }
-  }, [newPoolMonitorEnabled, xTradeActiveTab]);
+  }, [newPoolMonitorEnabled, settingsReady, xTradeActiveTab]);
 
   useEffect(() => {
+    if (!settingsReady) return;
     if (!newCoinSniperEnabled && xTradeActiveTab === 'xnewcoinsniper') {
       setXTradeActiveTab('xmonitor');
     }
-  }, [newCoinSniperEnabled, xTradeActiveTab]);
+  }, [newCoinSniperEnabled, settingsReady, xTradeActiveTab]);
 
   const tokenContextKey = `${siteInfo?.platform ?? ''}:${siteInfo?.chain ?? ''}:${tokenAddressNormalized ?? ''}`;
   const tokenContextKeyRef = useRef(tokenContextKey);
@@ -2368,7 +2395,7 @@ export default function App() {
     setShowCookingPanel(next);
   };
 
-  const handleToggleXTradePanelToTab = (tab: 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper' | 'xnewpoolmonitor') => {
+  const handleToggleXTradePanelToTab = (tab: XTradeTab) => {
     if (tab === 'xnewpoolmonitor' && !newPoolMonitorEnabled) return;
     if (tab === 'xnewcoinsniper' && !newCoinSniperEnabled) return;
     if (!showXTradePanel) {

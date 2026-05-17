@@ -106,6 +106,7 @@ export function XTradePanel({
   }, [activeTabProp]);
 
   useEffect(() => {
+    if (!settings) return;
     if (activeTab === 'xnewpoolmonitor' && !newPoolMonitorEnabled) {
       applyTab('xmonitor');
       return;
@@ -113,7 +114,7 @@ export function XTradePanel({
     if (activeTab === 'xnewcoinsniper' && !newCoinSniperEnabled) {
       applyTab('xmonitor');
     }
-  }, [activeTab, newCoinSniperEnabled, newPoolMonitorEnabled]);
+  }, [activeTab, newCoinSniperEnabled, newPoolMonitorEnabled, settings]);
 
   useEffect(() => {
     if (visible) return;
