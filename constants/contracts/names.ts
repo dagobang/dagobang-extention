@@ -12,4 +12,6 @@ export enum ContractNames {
   FourMemeTokenManagerV2 = "FourMemeTokenManagerV2",
   FlapshTokenManager = "FlapshTokenManager",
   TokenManagerHelper3 = "TokenManagerHelper3",
+  HyperZap = "HyperZap",
+  HyperBonding = "HyperBonding",
 }

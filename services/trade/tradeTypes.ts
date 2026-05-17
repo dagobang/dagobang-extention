@@ -14,6 +14,20 @@ export enum SwapType {
   FLAP_EXACT_INPUT = 7,
 }
 
+export function toHyperDexSwapType(swapType: SwapType): HyperSwapType {
+  if (swapType === SwapType.V3_EXACT_IN) return HyperSwapType.V3_EXACT_IN;
+  if (swapType === SwapType.V4_EXACT_IN) return HyperSwapType.V4_EXACT_IN;
+  return HyperSwapType.V2_EXACT_IN;
+}
+
+export enum HyperSwapType {
+  V2_EXACT_IN = 0,
+  V3_EXACT_IN = 1,
+  V4_EXACT_IN = 2,
+  HYPER_ZAP_BUY = 3,
+  HYPER_ZAP_SELL = 4,
+}
+
 export type Hex = `0x${string}`;
 export type Address = `0x${string}`;
 
@@ -53,7 +67,7 @@ export function toQuoteToken(chainId: number, routerToken: Address): Address {
   return routerToken === ZERO_ADDRESS ? getWNative(chainId) : routerToken;
 }
 
-export function getRouterSwapDesc(params: { swapType: SwapType; tokenIn: Address; tokenOut: Address; poolAddress: Address; fee: number; data?: Hex }): SwapDescLike {
+export function getRouterSwapDesc(params: { swapType: number; tokenIn: Address; tokenOut: Address; poolAddress: Address; fee: number; data?: Hex }): SwapDescLike {
   return {
     swapType: params.swapType,
     tokenIn: params.tokenIn,

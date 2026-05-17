@@ -34,6 +34,9 @@ type QuickTradePanelProps = {
   onToggleKeyboardShortcuts: () => void;
   formattedNativeBalance: string;
   tradeBaseSymbol: string;
+  tradeBasePriceUsd: number | null;
+  buyPreviewQuotedUsd: Array<number | null>;
+  buyPreviewQuotedTokenAmounts: Array<number | null>;
   busy: boolean;
   isUnlocked: boolean;
   onBuy: (amountStr: string, presetIndex: number) => void;
@@ -58,7 +61,13 @@ type QuickTradePanelProps = {
   advancedAutoSell: Settings['advancedAutoSell'] | null;
   onUpdateAdvancedAutoSell: (next: Settings['advancedAutoSell']) => void;
   formattedTokenBalance: string;
+  tokenBalanceAmount: number | null;
+  tokenPriceUsd: number | null;
+  sellPreviewQuotedUsd: Array<number | null>;
+  sellPreviewQuotedBaseAmounts: Array<number | null>;
   tokenSymbol: string | null;
+  buyPreviewRoute: string | null;
+  sellPreviewRoute: string | null;
   onSell: (pct: number) => void;
   onApprove: () => void;
   siteInfo: SiteInfo;
@@ -105,6 +114,9 @@ export function QuickTradePanel({
   onToggleKeyboardShortcuts,
   formattedNativeBalance,
   tradeBaseSymbol,
+  tradeBasePriceUsd,
+  buyPreviewQuotedUsd,
+  buyPreviewQuotedTokenAmounts,
   busy,
   isUnlocked,
   onBuy,
@@ -129,7 +141,13 @@ export function QuickTradePanel({
   advancedAutoSell,
   onUpdateAdvancedAutoSell,
   formattedTokenBalance,
+  tokenBalanceAmount,
+  tokenPriceUsd,
+  sellPreviewQuotedUsd,
+  sellPreviewQuotedBaseAmounts,
   tokenSymbol,
+  buyPreviewRoute,
+  sellPreviewRoute,
   onSell,
   onApprove,
   siteInfo,
@@ -176,7 +194,7 @@ export function QuickTradePanel({
 
   return (
     <div
-      className="fixed z-[2147483647] w-[360px] select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col"
+      className={`fixed z-[2147483647] ${siteInfo.platform === 'altfun' ? 'w-[400px]' : 'w-[360px]'} select-none rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/50 font-sans flex flex-col`}
       style={{ left: pos.x, top: pos.y }}
     >
       <Header
@@ -228,6 +246,13 @@ export function QuickTradePanel({
           <BuySection
             formattedNativeBalance={formattedNativeBalance}
             baseSymbol={tradeBaseSymbol}
+            baseTokenPriceUsd={tradeBasePriceUsd}
+            quotedUsdValues={buyPreviewQuotedUsd}
+            quotedTokenAmounts={buyPreviewQuotedTokenAmounts}
+            tokenPriceUsd={tokenPriceUsd}
+            tokenSymbol={tokenSymbol}
+            previewRouteLabel={buyPreviewRoute}
+            isAltfunLayout={siteInfo.platform === 'altfun'}
             busy={busy}
             isUnlocked={isUnlocked}
             onBuy={onBuy}
@@ -255,7 +280,15 @@ export function QuickTradePanel({
 
           <SellSection
             formattedTokenBalance={formattedTokenBalance}
+            tokenBalanceAmount={tokenBalanceAmount}
             tokenSymbol={tokenSymbol}
+            baseSymbol={tradeBaseSymbol}
+            baseTokenPriceUsd={tradeBasePriceUsd}
+            quotedUsdValues={sellPreviewQuotedUsd}
+            quotedBaseAmounts={sellPreviewQuotedBaseAmounts}
+            tokenPriceUsd={tokenPriceUsd}
+            previewRouteLabel={sellPreviewRoute}
+            isAltfunLayout={siteInfo.platform === 'altfun'}
             busy={busy}
             isUnlocked={isUnlocked}
             onSell={onSell}

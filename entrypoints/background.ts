@@ -18,6 +18,7 @@ import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/li
 import type { BgRequest, LimitOrderScanStatus } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
+import { TokenAltfunService } from '@/services/token/altfun';
 import FourmemeAPI from '@/services/api/fourmeme';
 import { chainNames } from '@/constants/chains';
 import BloxRouterAPI from '@/services/api/bloxRouter';
@@ -534,6 +535,9 @@ export default defineBackground(() => {
           case 'token:getTokenInfo:flap':
             return { ok: true, ...(await TokenFlapService.getTokenInfo(msg.chainId, msg.tokenAddress)) };
 
+          case 'token:getTokenInfo:altfun':
+            return { ok: true, tokenInfo: await TokenAltfunService.getTokenInfo(msg.chainId, msg.tokenAddress) };
+
           case 'token:getTokenInfo:fourmemeHttp': {
             const tokenInfo = await FourmemeAPI.getTokenInfo(msg.chain, msg.address);
             return { ok: true, tokenInfo };
@@ -621,7 +625,7 @@ export default defineBackground(() => {
                   {
                     chainId: settings.chainId,
                     tokenAddress: onChainResult.tokenAddress!,
-                    bnbAmountWei: amountWei,
+                    nativeAmountWei: amountWei,
                     fromAddress: wallet.address,
                   },
                   {

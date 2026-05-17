@@ -20,6 +20,15 @@ export const USDC_BSC = new ERC20Token(
   'https://www.centre.io/usdc',
 )
 
+export const USDC_HYPER = new ERC20Token(
+  ChainId.HYPER,
+  '0xb88339CB7199b77E23DB6E890353E22632Ba630f',
+  6,
+  'USDC',
+  'USD Coin',
+  'https://www.circle.com/usdc',
+)
+
 export const USDT_BSC = new ERC20Token(
   ChainId.BNB,
   '0x55d398326f99059fF775485246999027B3197955',
@@ -36,6 +45,7 @@ export const CAKE = {
 
 export const USDC = {
   [ChainId.BNB]: USDC_BSC,
+  [ChainId.HYPER]: USDC_HYPER,
 } as const satisfies Partial<Record<ChainId, ERC20Token>>
 
 export const USDT = {

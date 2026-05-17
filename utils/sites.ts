@@ -7,7 +7,7 @@ import { TokenAPI } from '@/hooks/TokenAPI';
 export interface SiteInfo {
   chain: string;
   tokenAddress: string;
-  platform: 'gmgn' | 'axiom' | 'flap' | 'fourmeme' | 'binance' | 'okx' | 'xxyy' | 'debot' | 'dexscreener';
+  platform: 'gmgn' | 'axiom' | 'flap' | 'fourmeme' | 'altfun' | 'binance' | 'okx' | 'xxyy' | 'debot' | 'dexscreener';
   walletAddress?: string;
   showBar?: boolean;
 }
@@ -27,6 +27,8 @@ export function parsePlatformTokenLink(siteInfo: SiteInfo, tokenAddress: string)
       return `https://flap.sh/${siteInfo.chain == 'bsc' ? 'bnb' : siteInfo.chain}/${tokenAddress}`;
     case 'fourmeme':
       return `https://four.meme/zh-TW/token/${tokenAddress}`;
+    case 'altfun':
+      return `https://alt.fun/token/${tokenAddress}`;
     case 'xxyy':
       return `https://www.xxyy.io/${siteInfo.chain}/${tokenAddress}`;
     case 'dexscreener':
@@ -149,6 +151,23 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
           platform: 'fourmeme',
         };
       }
+    }
+
+    // https://alt.fun/token/0x...
+    if (u.hostname.includes('alt.fun')) {
+      if (parts.length >= 2 && parts[0] === 'token') {
+        return {
+          chain: 'hyper',
+          tokenAddress: parts[1],
+          platform: 'altfun',
+        };
+      }
+      return {
+        chain: 'hyper',
+        tokenAddress: '',
+        platform: 'altfun',
+        showBar: true,
+      };
     }
 
     // https://flap.sh/bnb/0x...

@@ -1,18 +1,21 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { SatelliteDish } from 'lucide-react';
-import { parseEther, zeroAddress } from 'viem';
+import { formatUnits, parseUnits, zeroAddress } from 'viem';
 import type { Account, BgGetStateResponse, Settings, TradeSuccessSoundPreset } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
-import { formatBroadcastProvider } from '@/utils/format';
+import { formatBroadcastProvider, formatPriceValue } from '@/utils/format';
 import { parseCurrentUrl, parseCurrentUrlFull, type SiteInfo } from '@/utils/sites';
 import { call } from '@/utils/messaging';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import GmgnAPI from '@/hooks/GmgnAPI';
 import { getChainIdByName, getNativeSymbol } from '@/constants/chains';
 import { getChainRuntime } from '@/constants/chains/runtime';
+import { USDC, USDT } from '@/constants/tokens/chains/common';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
+import { TradeService } from '@/services/trade';
+import { getHyperUsdcAddress, quoteHyperBuyFromUsdc, quoteHyperSellToUsdc } from '@/services/trade/tradeHyper';
 import {
   buildStrategyRollingTakeProfitOrderInputs,
   buildStrategySellOrderInputs,
@@ -53,7 +56,47 @@ function resolveTradeBaseTokenAddress(settings: Settings | null | undefined): `0
   const runtime = getChainRuntime(chainId);
   const baseToken = String(settings?.tradeBaseToken ?? 'BNB').toUpperCase();
   if (baseToken === 'WBNB') return runtime.wrappedNativeAddress;
+  if (baseToken === 'USDC') return (USDC[chainId as keyof typeof USDC]?.address ?? zeroAddress) as `0x${string}`;
+  if (baseToken === 'USDT') return (USDT[chainId as keyof typeof USDT]?.address ?? zeroAddress) as `0x${string}`;
   return zeroAddress;
+}
+
+function resolveTradeBaseTokenMeta(chainId: number, tradeBaseTokenAddress: `0x${string}`) {
+  const runtime = getChainRuntime(chainId);
+  const target = tradeBaseTokenAddress.toLowerCase();
+  if (target === zeroAddress.toLowerCase()) {
+    return { symbol: runtime.nativeSymbol, decimals: runtime.viemChain.nativeCurrency.decimals };
+  }
+
+  if (target === runtime.wrappedNativeAddress.toLowerCase()) {
+    return { symbol: `W${runtime.nativeSymbol}`, decimals: runtime.viemChain.nativeCurrency.decimals };
+  }
+
+  const usdc = USDC[chainId as keyof typeof USDC];
+  if (usdc && target === usdc.address.toLowerCase()) {
+    return { symbol: usdc.symbol, decimals: usdc.decimals };
+  }
+
+  const usdt = USDT[chainId as keyof typeof USDT];
+  if (usdt && target === usdt.address.toLowerCase()) {
+    return { symbol: usdt.symbol, decimals: usdt.decimals };
+  }
+
+  return { symbol: 'TOKEN', decimals: runtime.viemChain.nativeCurrency.decimals };
+}
+
+function formatTokenAmountForDisplay(rawAmountWei: string | null | undefined, decimals: number): string {
+  if (!rawAmountWei) return '0';
+  try {
+    const normalized = formatUnits(BigInt(rawAmountWei), decimals);
+    const numeric = Number(normalized);
+    if (!Number.isFinite(numeric)) return normalized;
+    if (numeric === 0) return '0';
+    const formatted = formatPriceValue(numeric, 4, 6);
+    return formatted === '-' ? '0' : formatted;
+  } catch {
+    return '0';
+  }
 }
 
 function resolveSelectedTradeWallets(
@@ -100,6 +143,11 @@ export default function App() {
   const [draftSellPresets, setDraftSellPresets] = useState<string[]>([]);
   const [tokenStat, setTokenStat] = useState<TokenStat | null>(null);
   const [tokenPriceUsd, setTokenPriceUsd] = useState<number | null>(null);
+  const [tradeBasePriceUsd, setTradeBasePriceUsd] = useState<number | null>(null);
+  const [buyPreviewQuotedUsd, setBuyPreviewQuotedUsd] = useState<Array<number | null>>([null, null, null, null]);
+  const [buyPreviewQuotedTokenAmounts, setBuyPreviewQuotedTokenAmounts] = useState<Array<number | null>>([null, null, null, null]);
+  const [sellPreviewQuotedUsd, setSellPreviewQuotedUsd] = useState<Array<number | null>>([null, null, null, null]);
+  const [sellPreviewQuotedBaseAmounts, setSellPreviewQuotedBaseAmounts] = useState<Array<number | null>>([null, null, null, null]);
   const [marketCapDisplay, setMarketCapDisplay] = useState<string | null>(null);
   const [liquidityDisplay, setLiquidityDisplay] = useState<string | null>(null);
   const [pendingQuickBuy, setPendingQuickBuy] = useState<{ tokenAddress: string; amount: string } | null>(null);
@@ -183,13 +231,12 @@ export default function App() {
     return getNativeSymbol(chainId);
   }, [settings?.chainId, siteInfo?.chain]);
   const tradeBaseTokenAddress = useMemo(() => resolveTradeBaseTokenAddress(settings), [settings]);
-  const tradeBaseTokenSymbol = useMemo(() => {
-    if (tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase()) return nativeSymbol;
+  const tradeBaseTokenMeta = useMemo(() => {
     const chainId = settings?.chainId || getChainIdByName(siteInfo?.chain || 'bsc') || 56;
-    const wrapped = getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
-    if (tradeBaseTokenAddress.toLowerCase() === wrapped) return `W${nativeSymbol}`;
-    return 'TOKEN';
-  }, [tradeBaseTokenAddress, nativeSymbol, settings?.chainId, siteInfo?.chain]);
+    return resolveTradeBaseTokenMeta(chainId, tradeBaseTokenAddress);
+  }, [tradeBaseTokenAddress, settings?.chainId, siteInfo?.chain]);
+  const tradeBaseTokenSymbol = tradeBaseTokenMeta.symbol;
+  const chainId = settings?.chainId || getChainIdByName(siteInfo?.chain || 'bsc') || 56;
   const childPresetTooltipTexts = useMemo<[string, string, string, string]>(() => {
     const totals: [number, number, number, number] = [0, 0, 0, 0];
     if (multiWalletBuyMode === 'child_custom' && selectedTradeWallets.length > 0) {
@@ -217,6 +264,18 @@ export default function App() {
     }) as [string, string, string, string];
   }, [multiWalletBuyMode, selectedTradeWallets, address, childWalletBuyPresetAmountsNative, childPresetActiveWalletCounts, tradeBaseTokenSymbol]);
   const locale: Locale = normalizeLocale(settings?.locale);
+  const displayedBuyPresets = useMemo(
+    () => (isEditing && draftBuyPresets.length > 0
+      ? draftBuyPresets
+      : (settings?.chains[chainId]?.buyPresets || ['0.01', '0.2', '0.5', '1.0'])),
+    [isEditing, draftBuyPresets, settings, chainId]
+  );
+  const displayedSellPresets = useMemo(
+    () => (isEditing && draftSellPresets.length > 0
+      ? draftSellPresets
+      : (settings?.chains[chainId]?.sellPresets || ['10', '25', '50', '100'])),
+    [isEditing, draftSellPresets, settings, chainId]
+  );
   const toastPosition = settings?.toastPosition ?? 'top-center';
   const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
   const tokenBalancePollIntervalMs = settings?.tokenBalancePollIntervalMs ?? 2000;
@@ -676,13 +735,10 @@ export default function App() {
     } as const).catch(() => { });
   }, [isUnlocked, address, settings, tokenAddressNormalized, tokenInfo]);
 
-  const formattedNativeBalance = useMemo(() => {
-    if (!tradeBaseBalanceWei) return '0.00';
-    const val = BigInt(tradeBaseBalanceWei);
-    const whole = val / 10n ** 18n;
-    const frac = (val % 10n ** 18n).toString().padStart(18, '0').slice(0, 4);
-    return `${whole}.${frac}`;
-  }, [tradeBaseBalanceWei]);
+  const formattedNativeBalance = useMemo(
+    () => formatTokenAmountForDisplay(tradeBaseBalanceWei, tradeBaseTokenMeta.decimals),
+    [tradeBaseBalanceWei, tradeBaseTokenMeta.decimals]
+  );
 
   const formattedTokenBalance = useMemo(() => {
     if (!tokenBalanceWei) return '0';
@@ -693,6 +749,19 @@ export default function App() {
     // Simple formatting for display
     if (val === 0n) return '0';
     return val > 1000n ? (val / (10n ** BigInt(decimals))).toString() : '>0';
+  }, [tokenBalanceWei, tokenDecimals]);
+
+  const numericTokenBalance = useMemo(() => {
+    if (!tokenBalanceWei) return null;
+    try {
+      const decimals = Number.isFinite(tokenDecimals as number) && (tokenDecimals as number) >= 0
+        ? Number(tokenDecimals)
+        : 18;
+      const normalized = Number(formatUnits(BigInt(tokenBalanceWei), decimals));
+      return Number.isFinite(normalized) && normalized >= 0 ? normalized : null;
+    } catch {
+      return null;
+    }
   }, [tokenBalanceWei, tokenDecimals]);
 
   const quoteSymbol = useMemo(() => {
@@ -706,6 +775,155 @@ export default function App() {
     }
     return null;
   }, [tokenPriceUsd]);
+
+  useEffect(() => {
+    let canceled = false;
+    if (!settings || !siteInfo) return;
+
+    const chainId = settings.chainId ?? 56;
+    const runtime = getChainRuntime(chainId);
+    const priceTokenAddress = tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase()
+      ? runtime.wrappedNativeAddress
+      : tradeBaseTokenAddress;
+    const priceTokenMeta = priceTokenAddress.toLowerCase() === runtime.wrappedNativeAddress.toLowerCase()
+      ? {
+          address: priceTokenAddress,
+          symbol: `W${runtime.nativeSymbol}`,
+          decimals: runtime.viemChain.nativeCurrency.decimals,
+        } as TokenInfo
+      : null;
+    const stableSymbol = tradeBaseTokenMeta.symbol.toUpperCase();
+    if (stableSymbol === 'USDC' || stableSymbol === 'USDT') {
+      setTradeBasePriceUsd(1);
+      return;
+    }
+
+    void TokenAPI.getTokenPriceUsd(siteInfo.platform, chainId, priceTokenAddress, priceTokenMeta)
+      .then((price) => {
+        if (canceled) return;
+        if (price && Number.isFinite(price) && price > 0) {
+          setTradeBasePriceUsd(price);
+        }
+      })
+      .catch(() => {
+        if (canceled) return;
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [settings, siteInfo, tradeBaseTokenAddress, tradeBaseTokenMeta.symbol]);
+
+  const quickTradePreviewRoutes = useMemo(() => {
+    if (siteInfo?.platform === 'altfun' && (settings?.chainId ?? 56) === 999) {
+      const token = tokenSymbol || 'TOKEN';
+      const base = tradeBaseTokenMeta.symbol;
+      if (base.toUpperCase() === 'USDC') {
+        return {
+          buy: `USDC -> ${token}`,
+          sell: `${token} -> USDC`,
+        };
+      }
+      return {
+        buy: `${base} -> USDC -> ${token}`,
+        sell: `${token} -> USDC -> ${base}`,
+      };
+    }
+    return { buy: null, sell: null };
+  }, [siteInfo?.platform, settings?.chainId, tokenSymbol, tradeBaseTokenMeta.symbol]);
+
+  useEffect(() => {
+    let canceled = false;
+    if (!tokenAddressNormalized || !settings || !siteInfo || chainId !== 999 || siteInfo.platform !== 'altfun') {
+      setBuyPreviewQuotedUsd([null, null, null, null]);
+      setBuyPreviewQuotedTokenAmounts([null, null, null, null]);
+      setSellPreviewQuotedUsd([null, null, null, null]);
+      setSellPreviewQuotedBaseAmounts([null, null, null, null]);
+      return;
+    }
+
+    const tokenAddress = tokenAddressNormalized as `0x${string}`;
+    const usdcAddress = getHyperUsdcAddress();
+    const tokenDecimalsResolved = Number.isFinite(tokenDecimals as number) && (tokenDecimals as number) >= 0
+      ? Number(tokenDecimals)
+      : 18;
+    const buyQuoteOpts =
+      tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase() ||
+      tradeBaseTokenAddress.toLowerCase() === getChainRuntime(chainId).wrappedNativeAddress.toLowerCase()
+        ? { prefer: 'v3' as const, v3Fee: 3000 }
+        : undefined;
+    const sellQuoteOpts =
+      tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase() ||
+      tradeBaseTokenAddress.toLowerCase() === getChainRuntime(chainId).wrappedNativeAddress.toLowerCase()
+        ? { prefer: 'v3' as const, v3Fee: 3000 }
+        : undefined;
+
+    void (async () => {
+      const nextBuyUsd: Array<number | null> = [null, null, null, null];
+      const nextBuyTokens: Array<number | null> = [null, null, null, null];
+      const nextSellUsd: Array<number | null> = [null, null, null, null];
+      const nextSellBase: Array<number | null> = [null, null, null, null];
+
+      await Promise.all(displayedBuyPresets.slice(0, 4).map(async (raw, idx) => {
+        try {
+          const normalized = String(raw || '').replace(/,/g, '').trim();
+          if (!normalized) return;
+          const amountIn = parseUnits(normalized, tradeBaseTokenMeta.decimals);
+          if (amountIn <= 0n) return;
+          const usdcAmount = tradeBaseTokenAddress.toLowerCase() === usdcAddress.toLowerCase()
+            ? amountIn
+            : (await TradeService.quoteBestExactIn(chainId, tradeBaseTokenAddress, usdcAddress, amountIn, buyQuoteOpts)).amountOut;
+          if (usdcAmount <= 0n) return;
+          const tokenOut = await quoteHyperBuyFromUsdc(tokenAddress, usdcAmount);
+          nextBuyUsd[idx] = Number(formatUnits(usdcAmount, 6));
+          if (tokenOut > 0n) {
+            nextBuyTokens[idx] = Number(formatUnits(tokenOut, tokenDecimalsResolved));
+          }
+        } catch {
+        }
+      }));
+
+      await Promise.all(displayedSellPresets.slice(0, 4).map(async (raw, idx) => {
+        try {
+          const pct = Number(String(raw || '').replace(/,/g, '').trim());
+          if (!Number.isFinite(pct) || pct <= 0 || !tokenBalanceWei) return;
+          const tokenAmount = (BigInt(tokenBalanceWei) * BigInt(Math.round(pct * 100))) / 10000n;
+          if (tokenAmount <= 0n) return;
+          const usdcAmount = await quoteHyperSellToUsdc(tokenAddress, tokenAmount);
+          if (usdcAmount <= 0n) return;
+          const baseOut = tradeBaseTokenAddress.toLowerCase() === usdcAddress.toLowerCase()
+            ? usdcAmount
+            : (await TradeService.quoteBestExactIn(chainId, usdcAddress, tradeBaseTokenAddress, usdcAmount, sellQuoteOpts)).amountOut;
+          nextSellUsd[idx] = Number(formatUnits(usdcAmount, 6));
+          if (baseOut > 0n) {
+            nextSellBase[idx] = Number(formatUnits(baseOut, tradeBaseTokenMeta.decimals));
+          }
+        } catch {
+        }
+      }));
+
+      if (canceled) return;
+      setBuyPreviewQuotedUsd(nextBuyUsd);
+      setBuyPreviewQuotedTokenAmounts(nextBuyTokens);
+      setSellPreviewQuotedUsd(nextSellUsd);
+      setSellPreviewQuotedBaseAmounts(nextSellBase);
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [
+    tokenAddressNormalized,
+    settings,
+    siteInfo,
+    chainId,
+    displayedBuyPresets,
+    displayedSellPresets,
+    tradeBaseTokenAddress,
+    tradeBaseTokenMeta.decimals,
+    tokenDecimals,
+    tokenBalanceWei,
+  ]);
 
   const lastTokenPriceRefresh = useRef(0);
   const tokenPriceReqSeq = useRef(0);
@@ -1416,7 +1634,7 @@ export default function App() {
       const parseAmountWei = (rawAmount: string, walletAddress: `0x${string}`) => {
         const normalized = String(rawAmount || '').trim();
         if (!normalized) throw new Error(`钱包 ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)} 金额为空`);
-        const wei = parseEther(normalized);
+        const wei = parseUnits(normalized, tradeBaseTokenMeta.decimals);
         if (wei <= 0n) throw new Error(`钱包 ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)} 金额必须大于 0`);
         return wei;
       };
@@ -1474,10 +1692,10 @@ export default function App() {
             const buyInput = {
               chainId: settings.chainId,
               tokenAddress: tokenAddressNormalized,
-              bnbAmountWei: amountWei.toString(),
+              nativeAmountWei: amountWei.toString(),
               baseTokenAddress: tradeBaseTokenAddress,
               fromAddress: walletAddress,
-              priorityFeeBnb: resolvePriorityFee('buy'),
+              priorityFeeNative: resolvePriorityFee('buy'),
               tokenInfo: tokenInfo ?? undefined,
             } as const;
             const res = await call({
@@ -1670,7 +1888,7 @@ export default function App() {
               sellPercentBps: isTurbo ? percentBps : undefined,
               expectedTokenInWei: isTurbo ? (pendingBuyTokenMinOutWei ?? undefined) : undefined,
               fromAddress: walletAddress,
-              priorityFeeBnb: resolvePriorityFee('sell'),
+              priorityFeeNative: resolvePriorityFee('sell'),
               tokenInfo: tokenInfo ?? undefined
             } as const;
             const res = await call({
@@ -2203,6 +2421,9 @@ export default function App() {
               onOpenWalletSelector={handleWalletSelectorOpen}
               formattedNativeBalance={formattedNativeBalance}
               tradeBaseSymbol={tradeBaseTokenSymbol}
+              tradeBasePriceUsd={tradeBasePriceUsd}
+              buyPreviewQuotedUsd={buyPreviewQuotedUsd}
+              buyPreviewQuotedTokenAmounts={buyPreviewQuotedTokenAmounts}
               busy={busy}
               isUnlocked={isUnlocked}
               onBuy={handleBuy}
@@ -2227,7 +2448,13 @@ export default function App() {
               advancedAutoSell={settings?.advancedAutoSell ?? null}
               onUpdateAdvancedAutoSell={handleUpdateAdvancedAutoSell}
               formattedTokenBalance={formattedTokenBalance}
+              tokenBalanceAmount={numericTokenBalance}
+              tokenPriceUsd={tokenPrice}
+              sellPreviewQuotedUsd={sellPreviewQuotedUsd}
+              sellPreviewQuotedBaseAmounts={sellPreviewQuotedBaseAmounts}
               tokenSymbol={tokenSymbol}
+              buyPreviewRoute={quickTradePreviewRoutes.buy}
+              sellPreviewRoute={quickTradePreviewRoutes.sell}
               onSell={handleSell}
               onApprove={handleApprove}
               siteInfo={siteInfo}

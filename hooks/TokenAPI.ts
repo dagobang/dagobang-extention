@@ -21,6 +21,15 @@ export class TokenAPI {
     }
 
     static async getTokenInfo(platform: string, chain: string, tokenAddress: string): Promise<TokenInfo | null> {
+        if (platform === 'altfun') {
+            const res = await call({
+                type: 'token:getTokenInfo:altfun',
+                chainId: getChainIdByName(chain),
+                tokenAddress: tokenAddress as `0x${string}`,
+            } as any) as { tokenInfo: TokenInfo | null };
+            return res.tokenInfo;
+        }
+
         const api = PLATFORM_API[platform];
         let address = tokenAddress;
         if (api) {

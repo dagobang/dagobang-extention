@@ -65,6 +65,26 @@ export const DeployAddress: AddressMapping = {
       address: "0xF251F83e40a78868FcfA3FA4599Dad6494E46034",
     },
   },
+  [ChainId.HYPER]: {
+    [ContractNames.DagobangRouter]: {
+      address: "0xaCE94176A9Ecb584Ed952c0EFdC1e843090CAC3C",
+    },
+    [ContractNames.WETH]: {
+      address: "0x5555555555555555555555555555555555555555",
+    },
+    [ContractNames.UniswapFactoryV2]: {
+      address: "0xb4a9C4e6Ea8E2191d2FA5B380452a634Fb21240A",
+    },
+    [ContractNames.UniswapFactoryV3]: {
+      address: "0xB1c0fa0B789320044A6F623cFe5eBda9562602E3",
+    },
+    [ContractNames.HyperZap]: {
+      address: "0x693F12E9E6B35b34458793546065E8b08e0299d6",
+    },
+    [ContractNames.HyperBonding]: {
+      address: "0xb68811BcC0e4FcD825aA49F9453b065ddF752FcB",
+    },
+  },
 };
 
 export const getDeploysByName = (chainId: string, name?: ContractNames): any => {

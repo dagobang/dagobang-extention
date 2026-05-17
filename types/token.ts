@@ -24,8 +24,10 @@ export interface TokenInfo {
   tokenPrice?: {
     price: string;
     marketCap: string;
+    liquidity?: string;
     timestamp: number;
   };
+  totalSupply?: string;
   aiCreator?: boolean;
 }
 

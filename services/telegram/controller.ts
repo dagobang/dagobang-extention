@@ -729,7 +729,7 @@ export function createTelegramController(deps: {
       return { ok: false, error: { message: 'token_info_missing' } };
     }
     const amountWei = parseEther(String(amountNative).trim()).toString();
-    const rsp = await TradeService.buyWithReceiptAndNonceRecovery({ chainId: settings.chainId, tokenAddress, bnbAmountWei: amountWei, tokenInfo }, {
+    const rsp = await TradeService.buyWithReceiptAndNonceRecovery({ chainId: settings.chainId, tokenAddress, nativeAmountWei: amountWei, tokenInfo }, {
       maxRetry: 1,
       onSubmitted: async (ctx) => {
         await deps.broadcastTradeSuccess({ type: 'bg:tradeSubmitted', source: 'telegram', side: 'buy', chainId: settings.chainId, tokenAddress, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs });

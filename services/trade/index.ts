@@ -1,4 +1,4 @@
-import { encodeFunctionData, erc20Abi } from 'viem';
+import { encodeFunctionData, erc20Abi, formatUnits } from 'viem';
 import { RpcService } from '../rpc';
 import { WalletService } from '../wallet';
 import { SettingsService } from '../settings';
@@ -8,19 +8,33 @@ import { ContractNames } from '../../constants/contracts/names';
 import { DeployAddress } from '../../constants/contracts/address';
 import { ChainId } from '../../constants/chains/chainId';
 import { getBridgeTokenDexPreference } from '../../constants/tokens/allTokens';
+import { USDC, USDT } from '../../constants/tokens/chains/common';
 import { dagobangAbi } from '@/constants/contracts/abi';
-import { Address, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadline, getRouterSwapDesc, getSlippageBps, getV3FeeForDesc } from './tradeTypes';
+import { Address, HyperSwapType, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadline, getRouterSwapDesc, getSlippageBps, getV3FeeForDesc, toHyperDexSwapType } from './tradeTypes';
 import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInDex, resolveBridgeHopExactIn, resolveDexExactIn } from './tradeDex';
 import { getGasPriceWei, prewarmNonce, sendTransaction } from './tradeTx';
 import { getSellSpenders, hasInsufficientSellAllowance, type SellAllowanceCheckResult } from './sellAllowance';
 import { encodeFourMemeBuyTokenData, encodeFourMemeUint256, tryFourMemeBuyEstimatedAmount, tryFourMemeSellEstimatedFunds } from './tradeFourMeme';
+import {
+  encodeHyperZapBuyData,
+  encodeHyperZapSellData,
+  getHyperZapBuyGrossMinUsdc,
+  getHyperTradeState,
+  getHyperUsdcAddress,
+  isHyperAltfunPlatform,
+  quoteHyperBuyFromUsdc,
+  quoteHyperSellToUsdc,
+} from './tradeHyper';
 import { formatBroadcastProvider } from '@/utils/format';
 import { getDexPoolPrefer, parseGweiToWei } from '@/utils/dexUtils';
 import { classifyBroadcastError, collectErrorText, isAllowanceLikeText, isInFlightLimitLikeText } from '@/utils/txErrorClassify';
 import { tryGetReceiptRevertReason } from '@/services/tx/errors';
-import { token } from 'viem/tempo/actions';
 import { getNativeSymbol } from '@/constants/chains';
 import { getChainRuntime } from '@/constants/chains/runtime';
+
+function getDefaultBridgeV3Fee(chainId: number): number {
+  return chainId === ChainId.HYPER ? 3000 : 500;
+}
 
 export class TradeService {
   private static sellInFlightByToken = new Set<string>();
@@ -91,11 +105,12 @@ export class TradeService {
     const dexPrefer = getDexPoolPrefer(tokenInfo.dex_type);
     const tokenPrefer = dexPrefer === 'v2' || dexPrefer === 'v3' ? dexPrefer : (bridgePrefer ?? 'v2');
 
+    const defaultBridgeV3Fee = getDefaultBridgeV3Fee(input.chainId);
     const bridgeOpts = bridgePrefer === 'v2'
       ? { prefer: 'v2' as const }
       : bridgePrefer === 'v3'
-        ? { v3Fee: 500, prefer: 'v3' as const }
-        : { v3Fee: 500 };
+        ? { v3Fee: defaultBridgeV3Fee, prefer: 'v3' as const }
+        : { v3Fee: defaultBridgeV3Fee };
 
     const amountIn = 0n;
     const warmTasks: Array<Promise<unknown>> = [];
@@ -317,7 +332,7 @@ export class TradeService {
     return t || undefined;
   }
 
-  private static resolveBaseTokenAddress(chainId: number, input: { baseTokenAddress?: `0x${string}` }): Address {
+  private static resolveBaseTokenAddress(_chainId: number, input: { baseTokenAddress?: `0x${string}` }): Address {
     const raw = typeof input.baseTokenAddress === 'string' ? input.baseTokenAddress.trim() : '';
     if (!raw || raw.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return ZERO_ADDRESS;
     return raw as Address;
@@ -327,7 +342,26 @@ export class TradeService {
     if (baseTokenAddress.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return getNativeSymbol(chainId);
     const wrapped = getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
     if (baseTokenAddress.toLowerCase() === wrapped) return `W${getNativeSymbol(chainId)}`;
+    const usdc = USDC[chainId as keyof typeof USDC]?.address?.toLowerCase();
+    if (usdc && baseTokenAddress.toLowerCase() === usdc) return 'USDC';
+    const usdt = USDT[chainId as keyof typeof USDT]?.address?.toLowerCase();
+    if (usdt && baseTokenAddress.toLowerCase() === usdt) return 'USDT';
     return 'TOKEN';
+  }
+
+  private static resolveConfiguredBaseTokenAddress(chainId: number, settings: { tradeBaseToken?: string }): Address {
+    const runtime = getChainRuntime(chainId);
+    const tradeBaseToken = String(settings.tradeBaseToken ?? 'BNB').toUpperCase();
+    if (tradeBaseToken === 'WBNB') return runtime.wrappedNativeAddress as Address;
+    if (tradeBaseToken === 'USDC') {
+      const usdc = USDC[chainId as keyof typeof USDC]?.address;
+      if (usdc) return usdc as Address;
+    }
+    if (tradeBaseToken === 'USDT') {
+      const usdt = USDT[chainId as keyof typeof USDT]?.address;
+      if (usdt) return usdt as Address;
+    }
+    return ZERO_ADDRESS;
   }
 
   static async buy(input: TxBuyInput) {
@@ -341,9 +375,7 @@ export class TradeService {
     const client = await RpcService.getClient();
 
     const amountIn = BigInt(this.resolveNativeAmountWei(input));
-    const configuredBaseTokenAddress = String(settings.tradeBaseToken ?? 'BNB').toUpperCase() === 'WBNB'
-      ? getChainRuntime(input.chainId).wrappedNativeAddress
-      : ZERO_ADDRESS;
+    const configuredBaseTokenAddress = this.resolveConfiguredBaseTokenAddress(input.chainId, settings);
     const baseTokenAddress = (typeof input.baseTokenAddress === 'string' && input.baseTokenAddress.trim())
       ? this.resolveBaseTokenAddress(input.chainId, input)
       : configuredBaseTokenAddress;
@@ -376,149 +408,224 @@ export class TradeService {
       }
       : undefined;
 
-    const isInner = this.isInnerDisk(tokenInfo);
+    const tokenOut = input.tokenAddress;
+    const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(tokenInfo.launchpad_platform);
+    const isInner = isHyperAltfun ? false : this.isInnerDisk(tokenInfo);
     const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
 
-    const bridgeToken = getBridgeToken(input.chainId, tokenInfo.address, tokenInfo.quote_token_address);
+    const bridgeToken = isHyperAltfun
+      ? null
+      : getBridgeToken(input.chainId, tokenInfo.address, tokenInfo.quote_token_address);
     console.log('input.tokenInfo', tokenInfo, isInner, launchpadConfig)
     console.log('bridgeToken', bridgeToken);
     const descs: SwapDescLike[] = [];
     let currentRouterToken: Address = baseTokenAddress;
     let currentAmount = amountIn;
-
-    if (bridgeToken && currentRouterToken.toLowerCase() !== bridgeToken.toLowerCase()) {
-      // Hop 1: [BaseToken] -> [Quote]
-      const bridgePrefer = getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken);
-      const needAmountOut = !isTurbo;
-      const q1 = await timeStep('quote:bridge', () =>
-        resolveBridgeHopExactIn(
-          input.chainId,
-          currentRouterToken,
-          bridgeToken,
-          currentAmount,
-          bridgePrefer,
-          isTurbo,
-          needAmountOut
-        )
-      );
-      if (isTurbo) {
-        if (!q1.poolAddress || q1.poolAddress === ZERO_ADDRESS) {
-          throw new Error(`找不到 ${baseTokenSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
-        }
-      } else {
-        try {
-          assertDexQuoteOk(q1);
-        } catch {
-          throw new Error(`找不到 ${baseTokenSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
-        }
-        if (q1.amountOut <= 0n) {
-          throw new Error(`找不到 ${baseTokenSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
-        }
-      }
-      descs.push(getRouterSwapDesc({
-        swapType: q1.swapType,
-        tokenIn: currentRouterToken,
-        tokenOut: bridgeToken,
-        poolAddress: q1.poolAddress,
-        fee: getV3FeeForDesc(q1, 500),
-      }));
-      currentRouterToken = bridgeToken;
-      currentAmount = isTurbo ? 1n : q1.amountOut;
-    }
-
-    // Hop 2: [BaseToken/Quote] -> Meme
-    const tokenOut = input.tokenAddress;
     let minOut = 0n;
 
-    if (isInner && launchpadConfig) {
-      const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
-      let dataForDesc: `0x${string}` = '0x';
+    if (isHyperAltfun) {
+      const hyperState = await timeStep('hyper:state', () => getHyperTradeState(tokenOut as Address));
+      if (hyperState.isGraduating) throw new Error('该 alt.fun 代币正在迁移流动性，暂时无法交易');
+      if (!hyperState.isInner && !hyperState.isOuter) throw new Error('该代币不是有效的 alt.fun Hyper 代币');
 
-      if (platform.includes('four')) {
-        const to = account.address as Address;
-        const fundsForEstimate = currentRouterToken === ZERO_ADDRESS ? amountIn : currentAmount;
-        let minAmount = 0n;
-        if (!isTurbo) {
+      const routeBridgeToken = getHyperUsdcAddress();
+      if (currentRouterToken.toLowerCase() !== routeBridgeToken.toLowerCase()) {
+        const bridgePrefer = getBridgeTokenDexPreference(input.chainId as ChainId, routeBridgeToken);
+        const q1 = await timeStep('quote:hyper:bridge', () =>
+          resolveBridgeHopExactIn(
+            input.chainId,
+            currentRouterToken,
+            routeBridgeToken,
+            currentAmount,
+            bridgePrefer,
+            isTurbo,
+            !isTurbo
+          )
+        );
+        if (isTurbo) {
+          if (!q1.poolAddress || q1.poolAddress === ZERO_ADDRESS) {
+            throw new Error(`找不到 ${baseTokenSymbol}/USDC 的 Hyper 桥接交易池`);
+          }
+        } else {
           try {
-            const est = await timeStep('fourmeme:tryBuy', () =>
-              tryFourMemeBuyEstimatedAmount(client, input.chainId, tokenOut as Address, fundsForEstimate)
-            );
-            if (est && est.estimatedAmount > 0n) {
-              const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
-              minAmount = applySlippage(est.estimatedAmount, slippageBps);
-            }
+            assertDexQuoteOk(q1);
           } catch {
+            throw new Error(`找不到 ${baseTokenSymbol}/USDC 的 Hyper 桥接交易池`);
+          }
+          if (q1.amountOut <= 0n) throw new Error(`找不到 ${baseTokenSymbol}/USDC 的 Hyper 桥接交易池`);
+        }
+        descs.push(getRouterSwapDesc({
+          swapType: toHyperDexSwapType(q1.swapType),
+          tokenIn: currentRouterToken,
+          tokenOut: routeBridgeToken,
+          poolAddress: q1.poolAddress,
+          fee: getV3FeeForDesc(q1, getDefaultBridgeV3Fee(input.chainId)),
+        }));
+        currentRouterToken = routeBridgeToken;
+        currentAmount = isTurbo ? 1n : q1.amountOut;
+      }
+
+      const canValidateHyperUsdcGrossMin =
+        currentRouterToken.toLowerCase() === routeBridgeToken.toLowerCase()
+        && currentAmount > 0n
+        && (!isTurbo || baseTokenAddress.toLowerCase() === routeBridgeToken.toLowerCase());
+      if (canValidateHyperUsdcGrossMin) {
+        const { minGrossUsdc, buyFeeBps } = await timeStep('quote:hyper:buy:min', () => getHyperZapBuyGrossMinUsdc());
+        if (currentAmount < minGrossUsdc) {
+          const minGrossText = Number(formatUnits(minGrossUsdc, 6)).toFixed(6).replace(/\.?0+$/, '');
+          const feePctText = (Number(buyFeeBps) / 100).toFixed(2).replace(/\.?0+$/, '');
+          throw new Error(`alt.fun 最低买入已按 ${minGrossText} USDC 限制，当前输入扣除 Zap ${feePctText}% 手续费后仍低于门槛`);
+        }
+      }
+
+      const estimatedOut = isTurbo
+        ? 0n
+        : await timeStep('quote:hyper:zap:buy', () => quoteHyperBuyFromUsdc(tokenOut as Address, currentAmount));
+      if (!isTurbo && estimatedOut <= 0n) throw new Error('alt.fun 买入报价失败');
+      if (estimatedOut > 0n) {
+        const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+        minOut = applySlippage(estimatedOut, slippageBps);
+      }
+      descs.push(getRouterSwapDesc({
+        swapType: HyperSwapType.HYPER_ZAP_BUY,
+        tokenIn: routeBridgeToken,
+        tokenOut,
+        poolAddress: ZERO_ADDRESS,
+        fee: 0,
+        data: encodeHyperZapBuyData(minOut),
+      }));
+    } else {
+      if (bridgeToken && currentRouterToken.toLowerCase() !== bridgeToken.toLowerCase()) {
+        // Hop 1: [BaseToken] -> [Quote]
+        const bridgePrefer = getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken);
+        const needAmountOut = !isTurbo;
+        const q1 = await timeStep('quote:bridge', () =>
+          resolveBridgeHopExactIn(
+            input.chainId,
+            currentRouterToken,
+            bridgeToken,
+            currentAmount,
+            bridgePrefer,
+            isTurbo,
+            needAmountOut
+          )
+        );
+        if (isTurbo) {
+          if (!q1.poolAddress || q1.poolAddress === ZERO_ADDRESS) {
+            throw new Error(`找不到 ${baseTokenSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
+          }
+        } else {
+          try {
+            assertDexQuoteOk(q1);
+          } catch {
+            throw new Error(`找不到 ${baseTokenSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
+          }
+          if (q1.amountOut <= 0n) {
+            throw new Error(`找不到 ${baseTokenSymbol}/Quote 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
+          }
+        }
+        descs.push(getRouterSwapDesc({
+          swapType: q1.swapType,
+          tokenIn: currentRouterToken,
+          tokenOut: bridgeToken,
+          poolAddress: q1.poolAddress,
+          fee: getV3FeeForDesc(q1, getDefaultBridgeV3Fee(input.chainId)),
+        }));
+        currentRouterToken = bridgeToken;
+        currentAmount = isTurbo ? 1n : q1.amountOut;
+      }
+
+      // Hop 2: [BaseToken/Quote] -> Meme
+      if (isInner && launchpadConfig) {
+        const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
+        let dataForDesc: `0x${string}` = '0x';
+
+        if (platform.includes('four')) {
+          const to = account.address as Address;
+          const fundsForEstimate = currentRouterToken === ZERO_ADDRESS ? amountIn : currentAmount;
+          let minAmount = 0n;
+          if (!isTurbo) {
+            try {
+              const est = await timeStep('fourmeme:tryBuy', () =>
+                tryFourMemeBuyEstimatedAmount(client, input.chainId, tokenOut as Address, fundsForEstimate)
+              );
+              if (est && est.estimatedAmount > 0n) {
+                const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+                minAmount = applySlippage(est.estimatedAmount, slippageBps);
+              }
+            } catch {
+            }
+          }
+
+          minOut = minAmount;
+
+        const wantEncodedBuy = tokenInfo.aiCreator === true && currentRouterToken === ZERO_ADDRESS;
+          if (wantEncodedBuy) {
+            dataForDesc = encodeFourMemeBuyTokenData({
+              token: tokenOut as Address,
+              to,
+              funds: amountIn,
+              minAmount,
+            });
+          } else {
+            dataForDesc = encodeFourMemeUint256(minAmount);
           }
         }
 
-        minOut = minAmount;
-
-      const wantEncodedBuy = tokenInfo.aiCreator === true && currentRouterToken === ZERO_ADDRESS;
-        if (wantEncodedBuy) {
-          dataForDesc = encodeFourMemeBuyTokenData({
-            token: tokenOut as Address,
-            to,
-            funds: amountIn,
-            minAmount,
-          });
-        } else {
-          dataForDesc = encodeFourMemeUint256(minAmount);
-        }
-      }
-
-      descs.push(getRouterSwapDesc({
-        swapType: launchpadConfig.buyType,
-        tokenIn: currentRouterToken,
-        tokenOut,
-        poolAddress: launchpadConfig.manager,
-        fee: 0,
-        data: dataForDesc,
-      }));
-    } else {
-      const poolVersion = getDexPoolPrefer(tokenInfo.dex_type);
-      const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
-      const q2 = await timeStep('quote:token:hop2', () =>
-        resolveDexExactIn(
-          input.chainId,
-          currentRouterToken,
+        descs.push(getRouterSwapDesc({
+          swapType: launchpadConfig.buyType,
+          tokenIn: currentRouterToken,
           tokenOut,
-          currentAmount,
-          {
-            v3Fee: input.poolFee,
-            poolPair: tokenInfo.pool_pair,
-            prefer: poolVersion ?? (bridgePrefer ?? (isTurbo && !input.poolFee ? 'v2' : undefined)),
-          },
-          isTurbo
-        )
-      );
-      if (isTurbo) {
-        if (!q2.poolAddress || q2.poolAddress === ZERO_ADDRESS) {
-          throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-        }
+          poolAddress: launchpadConfig.manager,
+          fee: 0,
+          data: dataForDesc,
+        }));
       } else {
-        try {
-          assertDexQuoteOk(q2);
-        } catch {
-          throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        const poolVersion = getDexPoolPrefer(tokenInfo.dex_type);
+        const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
+        const q2 = await timeStep('quote:token:hop2', () =>
+          resolveDexExactIn(
+            input.chainId,
+            currentRouterToken,
+            tokenOut,
+            currentAmount,
+            {
+              v3Fee: input.poolFee,
+              poolPair: tokenInfo.pool_pair,
+              prefer: poolVersion ?? (bridgePrefer ?? (isTurbo && !input.poolFee ? 'v2' : undefined)),
+            },
+            isTurbo
+          )
+        );
+        if (isTurbo) {
+          if (!q2.poolAddress || q2.poolAddress === ZERO_ADDRESS) {
+            throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+          }
+        } else {
+          try {
+            assertDexQuoteOk(q2);
+          } catch {
+            throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+          }
         }
-      }
-      const usedFee = getV3FeeForDesc(q2, input.poolFee ?? baseFee);
-      if (isTurbo) {
-        minOut = 0n;
-      } else {
-        if (q2.amountOut <= 0n) {
-          throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+        const usedFee = getV3FeeForDesc(q2, input.poolFee ?? baseFee);
+        if (isTurbo) {
+          minOut = 0n;
+        } else {
+          if (q2.amountOut <= 0n) {
+            throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+          }
+          const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+          minOut = applySlippage(q2.amountOut, slippageBps);
         }
-        const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
-        minOut = applySlippage(q2.amountOut, slippageBps);
+        descs.push(getRouterSwapDesc({
+          swapType: q2.swapType,
+          tokenIn: currentRouterToken,
+          tokenOut,
+          poolAddress: q2.poolAddress,
+          fee: usedFee,
+        }));
       }
-      descs.push(getRouterSwapDesc({
-        swapType: q2.swapType,
-        tokenIn: currentRouterToken,
-        tokenOut,
-        poolAddress: q2.poolAddress,
-        fee: usedFee,
-      }));
     }
 
     const deadline = getDeadline(settings, input.chainId, input.deadlineSeconds);
@@ -894,9 +1001,7 @@ export class TradeService {
       const client = await RpcService.getClient();
 
       let amountIn = BigInt(input.tokenAmountWei);
-      const configuredBaseTokenAddress = String(settings.tradeBaseToken ?? 'BNB').toUpperCase() === 'WBNB'
-        ? getChainRuntime(input.chainId).wrappedNativeAddress
-        : ZERO_ADDRESS;
+      const configuredBaseTokenAddress = this.resolveConfiguredBaseTokenAddress(input.chainId, settings);
       const baseTokenAddress = (typeof input.baseTokenAddress === 'string' && input.baseTokenAddress.trim())
         ? this.resolveBaseTokenAddress(input.chainId, input)
         : configuredBaseTokenAddress;
@@ -928,11 +1033,12 @@ export class TradeService {
         }
         : undefined;
 
-      const isInner = this.isInnerDisk(tokenInfo);
+      const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(tokenInfo.launchpad_platform);
+      const isInner = isHyperAltfun ? false : this.isInnerDisk(tokenInfo);
       const platformLower = tokenInfo.launchpad_platform?.toLowerCase() || '';
       const isInnerFourMeme = isInner && platformLower.includes('four');
       const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
-      const bridgeToken = getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
+      const bridgeToken = isHyperAltfun ? null : getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
       const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
       console.log('sell input.tokenInfo', tokenInfo, isInner, launchpadConfig)
       console.log('sell bridgeToken', bridgeToken, bridgePrefer);
@@ -941,9 +1047,75 @@ export class TradeService {
       let estimatedOut = 0n;
       let minFundsForSell = 0n;
       let sellTokenManager: Address | null = null;
-      let sellManagerForRoute: Address = launchpadConfig?.manager ?? ZERO_ADDRESS;
+      let sellManagerForRoute: Address = isHyperAltfun ? ZERO_ADDRESS : (launchpadConfig?.manager ?? ZERO_ADDRESS);
+      let amountInForQuote = amountIn;
+      if (isTurbo) {
+        if (percentBps <= 0 || percentBps > 10000) throw new Error('Invalid percent');
+        const baseBal = input.expectedTokenInWei ? BigInt(input.expectedTokenInWei) : 0n;
+        amountInForQuote = baseBal > 0n ? (baseBal * BigInt(percentBps)) / 10000n : 1n;
+      }
 
-      if (isInner && launchpadConfig) {
+      if (isHyperAltfun) {
+        const hyperState = await timeStep('hyper:state', () => getHyperTradeState(sellToken));
+        if (hyperState.isGraduating) throw new Error('该 alt.fun 代币正在迁移流动性，暂时无法卖出');
+        if (!hyperState.isInner && !hyperState.isOuter) throw new Error('该代币不是有效的 alt.fun Hyper 代币');
+
+        const innerTokenOut = getHyperUsdcAddress();
+        let minUsdcOut = 0n;
+        if (!isTurbo) {
+          const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+          const estimatedUsdc = await timeStep('quote:hyper:zap:sell', () => quoteHyperSellToUsdc(sellToken, amountIn));
+          if (estimatedUsdc <= 0n) throw new Error('alt.fun 卖出报价失败');
+          minUsdcOut = applySlippage(estimatedUsdc, slippageBps);
+          if (baseTokenAddress.toLowerCase() === innerTokenOut.toLowerCase()) {
+            estimatedOut = estimatedUsdc;
+          }
+        }
+
+        descs.push(getRouterSwapDesc({
+          swapType: HyperSwapType.HYPER_ZAP_SELL,
+          tokenIn: sellToken,
+          tokenOut: innerTokenOut,
+          poolAddress: ZERO_ADDRESS,
+          fee: 0,
+          data: encodeHyperZapSellData(minUsdcOut),
+        }));
+
+        if (baseTokenAddress.toLowerCase() !== innerTokenOut.toLowerCase()) {
+          const bridgePrefer = getBridgeTokenDexPreference(input.chainId as ChainId, innerTokenOut);
+          const hop2AmountIn = isTurbo ? 1n : (minUsdcOut > 0n ? minUsdcOut : 1n);
+          const hop2 = await timeStep('quote:hyper:bridge:hop2', () =>
+            resolveBridgeHopExactIn(
+              input.chainId,
+              innerTokenOut,
+              baseTokenAddress,
+              hop2AmountIn,
+              bridgePrefer,
+              isTurbo,
+              !isTurbo
+            )
+          );
+          if (!hop2.poolAddress || hop2.poolAddress === ZERO_ADDRESS) {
+            throw new Error(`找不到 USDC/${baseTokenSymbol} 的 Hyper 桥接交易池`);
+          }
+          if (!isTurbo) {
+            try {
+              assertDexQuoteOk(hop2);
+            } catch {
+              throw new Error(`找不到 USDC/${baseTokenSymbol} 的 Hyper 桥接交易池`);
+            }
+            if (hop2.amountOut <= 0n) throw new Error(`找不到 USDC/${baseTokenSymbol} 的 Hyper 桥接交易池`);
+            estimatedOut = hop2.amountOut;
+          }
+          descs.push(getRouterSwapDesc({
+            swapType: toHyperDexSwapType(hop2.swapType),
+            tokenIn: innerTokenOut,
+            tokenOut: baseTokenAddress,
+            poolAddress: hop2.poolAddress,
+            fee: getV3FeeForDesc(hop2, getDefaultBridgeV3Fee(input.chainId)),
+          }));
+        }
+      } else if (isInner && launchpadConfig) {
         const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
         let minFunds = 0n;
         let dataForSell: `0x${string}` = '0x';
@@ -1010,7 +1182,7 @@ export class TradeService {
             tokenIn: bridgeToken,
             tokenOut: baseTokenAddress,
             poolAddress: hop2.poolAddress,
-            fee: getV3FeeForDesc(hop2, 500),
+            fee: getV3FeeForDesc(hop2, getDefaultBridgeV3Fee(input.chainId)),
           }));
           if (!isTurbo && hop2.amountOut > 0n) {
             estimatedOut = hop2.amountOut;
@@ -1018,14 +1190,7 @@ export class TradeService {
         }
       }
 
-      let amountInForQuote = amountIn;
-      if (isTurbo) {
-        if (percentBps <= 0 || percentBps > 10000) throw new Error('Invalid percent');
-        const baseBal = input.expectedTokenInWei ? BigInt(input.expectedTokenInWei) : 0n;
-        amountInForQuote = baseBal > 0n ? (baseBal * BigInt(percentBps)) / 10000n : 1n;
-      }
-
-      if (!isInner) {
+      if (!isInner && !isHyperAltfun) {
         // hop1
         const hop1RouterOut = bridgeToken ? bridgeToken : baseTokenAddress;
         const hop1NeedAmountOut = !!bridgeToken && !isTurbo;
@@ -1106,7 +1271,7 @@ export class TradeService {
             tokenIn: bridgeToken,
             tokenOut: baseTokenAddress,
             poolAddress: hop2.poolAddress,
-            fee: getV3FeeForDesc(hop2, 500),
+            fee: getV3FeeForDesc(hop2, getDefaultBridgeV3Fee(input.chainId)),
           }));
           estimatedOut = isTurbo ? 0n : hop2.amountOut;
         }
@@ -1173,6 +1338,9 @@ export class TradeService {
         traceId,
         attempt,
       });
+      const allowanceExtraSpenders = sellManagerForRoute && sellManagerForRoute !== ZERO_ADDRESS
+        ? [sellManagerForRoute]
+        : undefined;
       let allowanceRetried = false;
       let sent: { txHash: `0x${string}`; broadcastVia?: 'rpc' | 'bloxroute'; broadcastUrl?: string; isBundle?: boolean };
       try {
@@ -1209,7 +1377,7 @@ export class TradeService {
           client,
           maxUint256,
           routerAddress,
-          extraSpenders: [sellManagerForRoute],
+          extraSpenders: allowanceExtraSpenders,
           getLaunchpadManager: (ti, cid) => {
             const platform = ti.launchpad_platform?.toLowerCase() || '';
             const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
@@ -1225,7 +1393,7 @@ export class TradeService {
         });
         if (!allowanceCheck.insufficient) throw e;
         const approveTx = await this.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo, {
-          extraSpenders: [sellManagerForRoute],
+          extraSpenders: allowanceExtraSpenders,
         });
         if (approveTx) {
           console.log('[trade.sell.retry.approve]', { chainId: input.chainId, token: input.tokenAddress, approveTx });

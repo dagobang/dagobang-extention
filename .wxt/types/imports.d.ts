@@ -8,10 +8,13 @@ declare global {
   const ETHCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').ETHCoinIcon
   const FlapAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI').default
   const GmgnAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI').default
+  const HYPECoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').HYPECoinIcon
   const InvalidMatchPattern: typeof import('wxt/utils/match-patterns').InvalidMatchPattern
   const Logo: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Logo').Logo
   const MatchPattern: typeof import('wxt/utils/match-patterns').MatchPattern
+  const SymbolCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').SymbolCoinIcon
   const TokenAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/TokenAPI').TokenAPI
+  const USDCCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').USDCCoinIcon
   const asAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').asAddress
   const browser: typeof import('wxt/browser').browser
   const call: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/messaging').call

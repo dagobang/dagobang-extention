@@ -4,11 +4,14 @@ import { Header } from './Header';
 import type { BgGetStateResponse } from '@/types/extention';
 import { Lock, Copy, Check, Settings, KeyRound, Send } from 'lucide-react';
 import { t, type Locale } from '@/utils/i18n';
-import { formatEther, isAddress, parseEther, zeroAddress } from 'viem';
+import { formatEther, formatUnits, isAddress, parseUnits, zeroAddress } from 'viem';
 import { getNativeSymbol } from '@/constants/chains';
 import { getChainRuntime } from '@/constants/chains/runtime';
 import { DeployAddress } from '@/constants/contracts/address';
 import { ContractNames } from '@/constants/contracts/names';
+import { USDC, USDT } from '@/constants/tokens/chains/common';
+import { formatPriceValue } from '@/utils/format';
+import { SymbolCoinIcon } from '@/components/Coins';
 
 type HomeViewProps = {
   state: BgGetStateResponse;
@@ -74,8 +77,29 @@ export function HomeView({
   const nativeSymbol = getNativeSymbol(chainId);
   const tradeBaseToken = String(state.settings.tradeBaseToken ?? 'BNB').toUpperCase();
   const wrappedNativeAddress = getChainRuntime(chainId).wrappedNativeAddress;
-  const tradeBaseTokenAddress = tradeBaseToken === 'WBNB' ? wrappedNativeAddress : zeroAddress;
-  const tradeBaseSymbol = tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase() ? `W${nativeSymbol}` : nativeSymbol;
+  const tradeBaseTokenAddress = tradeBaseToken === 'WBNB'
+    ? wrappedNativeAddress
+    : tradeBaseToken === 'USDC'
+      ? (USDC[chainId as keyof typeof USDC]?.address ?? zeroAddress)
+      : tradeBaseToken === 'USDT'
+        ? (USDT[chainId as keyof typeof USDT]?.address ?? zeroAddress)
+        : zeroAddress;
+  const tradeBaseSymbol = tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase()
+    ? `W${nativeSymbol}`
+    : tradeBaseTokenAddress.toLowerCase() === (USDC[chainId as keyof typeof USDC]?.address ?? '').toLowerCase()
+      ? 'USDC'
+      : tradeBaseTokenAddress.toLowerCase() === (USDT[chainId as keyof typeof USDT]?.address ?? '').toLowerCase()
+        ? 'USDT'
+        : nativeSymbol;
+  const tradeBaseDecimals = tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase()
+    ? 18
+    : tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase()
+      ? 18
+      : tradeBaseTokenAddress.toLowerCase() === (USDC[chainId as keyof typeof USDC]?.address ?? '').toLowerCase()
+        ? (USDC[chainId as keyof typeof USDC]?.decimals ?? 18)
+        : tradeBaseTokenAddress.toLowerCase() === (USDT[chainId as keyof typeof USDT]?.address ?? '').toLowerCase()
+          ? (USDT[chainId as keyof typeof USDT]?.decimals ?? 18)
+          : 18;
   const routerAddress = DeployAddress[chainId as keyof typeof DeployAddress]?.[ContractNames.DagobangRouter]?.address;
   const MAX_UINT256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
   const APPROVAL_READY_THRESHOLD = '1000000000000000000000'; // 1000 tokens
@@ -111,7 +135,9 @@ export function HomeView({
     try {
       const bal = tradeBaseBalances[addr.toLowerCase()];
       if (!bal) return '...';
-      return parseFloat(formatEther(BigInt(bal))).toFixed(4);
+      const numeric = Number(formatUnits(BigInt(bal), tradeBaseDecimals));
+      const formatted = formatPriceValue(numeric, 4, 6);
+      return formatted === '-' ? '0' : formatted;
     } catch {
       return '0.0000';
     }
@@ -125,7 +151,7 @@ export function HomeView({
     const raw = tradeBaseBalances[addr.toLowerCase()];
     if (!raw) return null;
     try {
-      const n = Number(formatEther(BigInt(raw)));
+      const n = Number(formatUnits(BigInt(raw), tradeBaseDecimals));
       return Number.isFinite(n) ? n : null;
     } catch {
       return null;
@@ -521,12 +547,14 @@ export function HomeView({
 
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <div className={`text-[13px] font-mono font-semibold tabular-nums leading-4 ${nativeBalanceColor}`}>
-                        {nativeBalanceText} <span className="text-[11px] text-zinc-400">{nativeSymbol}</span>
+                      <div className={`flex items-center gap-1 text-[13px] font-mono font-semibold tabular-nums leading-4 ${nativeBalanceColor}`}>
+                        <SymbolCoinIcon symbol={nativeSymbol} chainId={chainId} size={{ width: '12px', height: '12px' }} />
+                        <span>{nativeBalanceText} <span className="text-[11px] text-zinc-400">{nativeSymbol}</span></span>
                       </div>
                       {tradeBaseTokenAddress.toLowerCase() !== zeroAddress.toLowerCase() && (
-                        <div className={`text-[11px] font-mono tabular-nums leading-4 ${tradeBaseBalanceColor}`}>
-                          {tradeBaseBalanceText} <span className="text-[10px] text-zinc-500">{tradeBaseSymbol}</span>
+                        <div className={`flex items-center gap-1 text-[11px] font-mono tabular-nums leading-4 ${tradeBaseBalanceColor}`}>
+                          <SymbolCoinIcon symbol={tradeBaseSymbol} chainId={chainId} size={{ width: '11px', height: '11px' }} />
+                          <span>{tradeBaseBalanceText} <span className="text-[10px] text-zinc-500">{tradeBaseSymbol}</span></span>
                         </div>
                       )}
                     </div>
@@ -930,7 +958,10 @@ export function HomeView({
                 onClick={() => setConvertMode('wrap')}
                 disabled={busy}
               >
-                {nativeSymbol} {'->'} {tradeBaseSymbol}
+                <span className="flex items-center justify-center gap-1">
+                  <SymbolCoinIcon symbol={nativeSymbol} chainId={chainId} size={{ width: '12px', height: '12px' }} />
+                  <span>{nativeSymbol} {'->'} {tradeBaseSymbol}</span>
+                </span>
               </button>
               <button
                 type="button"
@@ -938,7 +969,10 @@ export function HomeView({
                 onClick={() => setConvertMode('unwrap')}
                 disabled={busy}
               >
-                {tradeBaseSymbol} {'->'} {nativeSymbol}
+                <span className="flex items-center justify-center gap-1">
+                  <SymbolCoinIcon symbol={tradeBaseSymbol} chainId={chainId} size={{ width: '12px', height: '12px' }} />
+                  <span>{tradeBaseSymbol} {'->'} {nativeSymbol}</span>
+                </span>
               </button>
             </div>
             <div className="space-y-1">
@@ -957,7 +991,7 @@ export function HomeView({
               disabled={busy || !convertAmount.trim()}
               onClick={() =>
                 withBusy(async () => {
-                  const amountWei = parseEther(convertAmount.trim()).toString();
+                  const amountWei = parseUnits(convertAmount.trim(), tradeBaseDecimals).toString();
                   if (convertMode === 'wrap') {
                     await call({ type: 'tx:wrapNative', chainId, fromAddress: convertAddress, amountWei });
                   } else {

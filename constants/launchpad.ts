@@ -4,6 +4,8 @@ export const SUPPORTED_LAUNCHPADS: Partial<Record<ChainId, string[]>> = ({
     [ChainId.BNB]: ["fourmeme", "fourmeme_agent", "bn_fourmeme", "four_xmode_agent", "xmode", "xmode_agent", "flap"],
 
     [ChainId.ETH]: ["livo", "trench"],
+
+    [ChainId.HYPER]: ["altfun", "alt.fun"],
 });
 
 
@@ -20,6 +22,10 @@ export const PLATFORM_OPTIONS_ETH = [
     { value: 'trench', label: 'Trenches' },
 ] as const;
 
+export const PLATFORM_OPTIONS_HYPER = [
+    { value: 'altfun', label: 'alt.fun' },
+] as const;
+
 
 export function getSupportedLaunchpads(chainId: ChainId): readonly string[] {
     return SUPPORTED_LAUNCHPADS[chainId] ?? []
@@ -33,6 +39,7 @@ export function normalizeLaunchpadPlatform(value: unknown): string | undefined {
     if (raw === 'bn_fourmeme' || raw === 'bn_fourmeme' || raw === 'xmode' || raw === 'x mode') return 'xmode';
     if (raw === 'four_xmode_agent') return 'xmode_agent';
     if (raw === 'flap') return 'flap';
+    if (raw === 'alt.fun' || raw === 'altfun') return 'altfun';
     return raw;
 }
 

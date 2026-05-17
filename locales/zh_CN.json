@@ -109,6 +109,8 @@
       "routerAddress": "路由合约地址",
       "slippageBps": "滑点（bps）",
       "deadlineSeconds": "截止时间（秒）",
+      "tradeBaseToken": "交易基础币",
+      "tradeBaseTokenHint": "当前链买入默认用哪种基础币；选 {0} 时直接走原生币，选 USDC/USDT 时会按 ERC20 余额和授权交易",
       "gasPreset": "Gas 档位",
       "ui": "界面",
       "buyGasGwei": "买入 Gas（gwei）",

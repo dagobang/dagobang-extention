@@ -404,7 +404,7 @@ export type TxBuyInput = {
   chainId: number;
   tokenAddress: `0x${string}`;
   nativeAmountWei?: string;
-  bnbAmountWei: string;
+  bnbAmountWei?: string;
   baseTokenAddress?: `0x${string}`;
   fromAddress?: `0x${string}`;
   poolFee?: number;
@@ -702,6 +702,7 @@ export type BgRequest =
   | { type: 'token:getPriceUsd'; chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo | null }
   | { type: 'token:getTokenInfo:fourmeme'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:flap'; chainId: number; tokenAddress: `0x${string}` }
+  | { type: 'token:getTokenInfo:altfun'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:fourmemeHttp'; platform: string; chain: string; address: `0x${string}` }
   | {
     type: 'token:createFourmeme';
@@ -867,6 +868,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? ({ ok: true } & FourmemeTokenInfo)
   : T extends { type: 'token:getTokenInfo:flap' }
   ? ({ ok: true } & FlapTokenStateV7)
+  : T extends { type: 'token:getTokenInfo:altfun' }
+  ? { ok: true; tokenInfo: TokenInfo | null }
   : T extends { type: 'token:getTokenInfo:fourmemeHttp' }
   ? { ok: true; tokenInfo: TokenInfo | null }
   : T extends { type: 'token:createFourmeme' }

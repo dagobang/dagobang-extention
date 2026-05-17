@@ -93,6 +93,44 @@ const ETH_MAINNET: ChainSettings = {
   bloxrouteSellEnabled: true,
 };
 
+const HYPER_GAS_GWEI: GasGweiConfig = {
+  slow: '0.001',
+  standard: '0.002',
+  fast: '0.005',
+  turbo: '0.01',
+};
+
+const HYPER_MAINNET: ChainSettings = {
+  rpcUrls: [
+    'https://rpc.hyperliquid.xyz/evm',
+    'https://hyperliquid.drpc.org',
+    'https://rpc.hyperlend.finance',
+    'https://rpc.hypurrscan.io',
+  ],
+  protectedRpcUrls: [],
+  protectedRpcUrlsBuy: [],
+  protectedRpcUrlsSell: [],
+  antiMev: false,
+  gasPreset: 'standard',
+  buyGasPreset: 'standard',
+  sellGasPreset: 'standard',
+  executionMode: 'default',
+  gasPriceMode: 'dynamic',
+  slippageBps: 4000,
+  deadlineSeconds: 60,
+  buyPresets: ['5', '10', '25', '50'],
+  sellPresets: ['25', '50', '75', '100'],
+  buyGasGwei: HYPER_GAS_GWEI,
+  sellGasGwei: HYPER_GAS_GWEI,
+  approveGasGwei: '0.002',
+  buyPriorityFeePreset: 'standard',
+  sellPriorityFeePreset: 'standard',
+  buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  sellPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  bloxrouteBuyEnabled: false,
+  bloxrouteSellEnabled: false,
+};
+
 const DEFAULT_AUTOTRADE: AutoTradeConfig = {
   takeProfitMultiple: '2',
   stopLossMultiple: '0.5',
@@ -397,6 +435,7 @@ export function defaultSettings(): Settings {
     chains: {
       [ChainId.ETH]: ETH_MAINNET,
       [ChainId.BNB]: BSC_MAINNET,
+      [ChainId.HYPER]: HYPER_MAINNET,
     },
     autoLockSeconds: 30 * 60, // 30 minutes
     selectedTradeWallets: [],

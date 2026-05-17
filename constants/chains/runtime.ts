@@ -1,3 +1,4 @@
+import { defineChain } from "viem";
 import { bsc, mainnet, type Chain } from "viem/chains";
 import { ChainId } from "./chainId";
 
@@ -10,6 +11,30 @@ export type ChainRuntime = {
   bloxrouteNetwork?: string;
   bloxroutePrivateTxMethod?: string;
 };
+
+const hyperEvm = defineChain({
+  id: ChainId.HYPER,
+  name: "HyperEVM",
+  nativeCurrency: {
+    decimals: 18,
+    name: "Hyperliquid",
+    symbol: "HYPE",
+  },
+  rpcUrls: {
+    default: {
+      http: ["https://rpc.hyperliquid.xyz/evm"],
+    },
+    public: {
+      http: ["https://rpc.hyperliquid.xyz/evm"],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: "HypurrScan",
+      url: "https://hypurrscan.io",
+    },
+  },
+});
 
 export const CHAIN_RUNTIME: Record<number, ChainRuntime> = {
   [ChainId.ETH]: {
@@ -28,6 +53,13 @@ export const CHAIN_RUNTIME: Record<number, ChainRuntime> = {
     explorerTxBaseUrl: "https://bscscan.com/tx/",
     bloxrouteNetwork: "BSC-Mainnet",
     bloxroutePrivateTxMethod: "bsc_private_tx",
+  },
+  [ChainId.HYPER]: {
+    viemChain: hyperEvm,
+    nativeSymbol: "HYPE",
+    wrappedNativeAddress: "0x5555555555555555555555555555555555555555",
+    quoterV2: "0x03A918028f22D9E1473B7959C927AD7425A45C7C",
+    explorerTxBaseUrl: "https://hypurrscan.io/tx/",
   },
 };
 

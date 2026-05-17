@@ -575,11 +575,11 @@ export const tryAutoBuyOnce = async (input: {
       rsp = await TradeService.buyWithReceiptAndNonceRecovery({
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
-        bnbAmountWei: amountWei.toString(),
+        nativeAmountWei: amountWei.toString(),
         fromAddress: tradeFromAddress,
         tokenInfo: tokenInfoForTrade,
         gasPriceGwei: input.gasPriceGweiOverride,
-        priorityFeeBnb: input.priorityFeeBnbOverride,
+        priorityFeeNative: input.priorityFeeBnbOverride,
       } as any, {
         // Hard cap: at most one nonce-triggered resend.
         maxRetry: 1,

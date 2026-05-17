@@ -1,8 +1,22 @@
 import type { SettingsDraftProps } from './types';
+import { getNativeSymbol } from '@/constants/chains/runtime';
+import { ChainId } from '@/constants/chains/chainId';
 
 type TradeSettingsProps = SettingsDraftProps;
 
 export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSettingsProps) {
+  const chainId = settingsDraft.chainId;
+  const nativeSymbol = getNativeSymbol(chainId);
+  const tradeBaseTokenOptions = chainId === ChainId.HYPER
+    ? [
+      { value: 'BNB', label: nativeSymbol },
+      { value: 'USDC', label: 'USDC' },
+    ]
+    : [
+      { value: 'BNB', label: nativeSymbol },
+      // { value: 'USDT', label: 'USDT' },
+      // { value: 'USDC', label: 'USDC' },
+    ];
   const tokenBalancePollIntervalMs = settingsDraft.tokenBalancePollIntervalMs ?? 2000;
   const tokenBalancePollIntervalOptions = [500, 1000, 1500, 2000, 3000, 5000, 10000];
   const signalForwardWindowMs = settingsDraft.autoTrade?.signalForwardWindowMs;
@@ -50,6 +64,28 @@ export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSett
                 }))
               }
             />
+          </label>
+          <label className="block space-y-1">
+            <div className="text-[14px] text-zinc-400">{tt('popup.settings.tradeBaseToken')}</div>
+            <select
+              className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
+              value={settingsDraft.tradeBaseToken ?? 'BNB'}
+              onChange={(e) =>
+                setSettingsDraft((s) => ({
+                  ...s,
+                  tradeBaseToken: e.target.value as any,
+                }))
+              }
+            >
+              {tradeBaseTokenOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <div className="text-[12px] text-zinc-500">
+              {tt('popup.settings.tradeBaseTokenHint', [nativeSymbol])}
+            </div>
           </label>
         </div>
       </div>

@@ -243,11 +243,22 @@ export function LimitTradePanel({
     return String(Number(value.toFixed(2)));
   };
 
-  const DEFAULT_TOKEN_SUPPLY = 1_000_000_000;
+  const getEffectiveTokenSupply = () => {
+    const raw = String(tokenInfo?.totalSupply || '').trim();
+    const decimals = Number(tokenInfo?.decimals ?? 18);
+    if (/^\d+$/.test(raw)) {
+      try {
+        const normalized = Number(formatUnits(BigInt(raw), decimals));
+        if (Number.isFinite(normalized) && normalized > 0) return normalized;
+      } catch {
+      }
+    }
+    return 1_000_000_000;
+  };
 
   const getMarketCapByPrice = (priceUsd: number): number | null => {
     if (!Number.isFinite(priceUsd) || priceUsd <= 0) return null;
-    const marketCap = priceUsd * DEFAULT_TOKEN_SUPPLY;
+    const marketCap = priceUsd * getEffectiveTokenSupply();
     if (!Number.isFinite(marketCap) || marketCap <= 0) return null;
     return marketCap;
   };

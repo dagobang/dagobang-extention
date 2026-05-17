@@ -605,10 +605,10 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
               const rsp = await TradeService.buyWithReceiptAndNonceRecovery({
                 chainId: task.chain,
                 tokenAddress: task.tokenAddress,
-                bnbAmountWei: amountWei,
+                nativeAmountWei: amountWei,
                 fromAddress: pluginWalletAddress ? (pluginWalletAddress as `0x${string}`) : undefined,
                 gasPriceGwei: typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() : undefined,
-                priorityFeeBnb: typeof task.buyBribeBnb === 'string' ? String(task.buyBribeBnb).trim() : undefined,
+                priorityFeeNative: typeof task.buyBribeBnb === 'string' ? String(task.buyBribeBnb).trim() : undefined,
                 tokenInfo: tokenInfo as any,
               } as any, {
                 maxRetry: 1,

@@ -4,11 +4,13 @@ import type { TokenInfo } from '@/types/token';
 import { ChainId } from '@/constants/chains';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { ethTokens } from '@/constants/tokens/chains/eth';
+import { hyperTokens } from '@/constants/tokens/chains/hyper';
 
 import { RpcService } from '../rpc';
 import { TradeService } from '../trade';
 import { TokenFourmemeService } from './fourmeme';
 import { TokenFlapService } from './flap';
+import { isHyperAltfunPlatform, quoteHyperSellToUsdc } from '../trade/tradeHyper';
 
 export class TokenService {
   private static poolPairCache = new Map<string, { token0: `0x${string}`; token1: `0x${string}` }>();
@@ -159,14 +161,21 @@ export class TokenService {
     };
 
     const isEth = chainId === ChainId.ETH;
-    const wNativeAddress = (isEth ? ethTokens.weth.address : bscTokens.wbnb.address) as `0x${string}`;
-    const wNativeDecimals = isEth ? ethTokens.weth.decimals : bscTokens.wbnb.decimals;
-    const usdtToken = isEth ? ethTokens.usdt : bscTokens.usdt;
-    const usdcToken = isEth ? ethTokens.usdc : bscTokens.usdc;
+    const isHyper = chainId === ChainId.HYPER;
+    const wNativeAddress = (isEth
+      ? ethTokens.weth.address
+      : isHyper
+        ? hyperTokens.whype.address
+        : bscTokens.wbnb.address) as `0x${string}`;
+    const wNativeDecimals = isEth ? ethTokens.weth.decimals : isHyper ? hyperTokens.whype.decimals : bscTokens.wbnb.decimals;
+    const usdtToken = isEth ? ethTokens.usdt : null;
+    const usdcToken = isHyper ? hyperTokens.usdc : isEth ? ethTokens.usdc : bscTokens.usdc;
     const stableByAddress = new Map<string, { address: `0x${string}`; decimals: number }>();
-    stableByAddress.set(usdtToken.address.toLowerCase(), { address: usdtToken.address as `0x${string}`, decimals: usdtToken.decimals });
+    if (usdtToken) {
+      stableByAddress.set(usdtToken.address.toLowerCase(), { address: usdtToken.address as `0x${string}`, decimals: usdtToken.decimals });
+    }
     stableByAddress.set(usdcToken.address.toLowerCase(), { address: usdcToken.address as `0x${string}`, decimals: usdcToken.decimals });
-    if (!isEth) {
+    if (!isEth && !isHyper) {
       stableByAddress.set(bscTokens.usd1.address.toLowerCase(), { address: bscTokens.usd1.address as `0x${string}`, decimals: bscTokens.usd1.decimals });
     }
 
@@ -176,11 +185,13 @@ export class TokenService {
       const amountOut = (await TradeService.quoteBestExactIn(
         chainId,
         wNativeAddress as `0x${string}`,
-        usdtToken.address as `0x${string}`,
+        usdcToken.address as `0x${string}`,
         10n ** 18n,
-        { v3Fee: 500 }
+        isHyper
+          ? { v3Fee: 3000, prefer: 'v3' }
+          : { v3Fee: 500 }
       )).amountOut;
-      const v = amountOut > 0n ? toNumberFromUnits(amountOut, usdtToken.decimals) : 0;
+      const v = amountOut > 0n ? toNumberFromUnits(amountOut, usdcToken.decimals) : 0;
       if (v > 0) {
         this.bnbUsdCache.ts = now2;
         this.bnbUsdCache.value = v;
@@ -195,7 +206,18 @@ export class TokenService {
     const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
     const isInnerDisk = tokenInfo?.launchpad_status !== 1;
 
-    if (platform.includes('four') && isInnerDisk) {
+    if (chainId === ChainId.HYPER && isHyperAltfunPlatform(platform)) {
+      try {
+        const quotedUsdc = await quoteHyperSellToUsdc(tokenAddress, oneToken);
+        if (quotedUsdc > 0n) {
+          priceUsd = toNumberFromUnits(quotedUsdc, usdcToken.decimals);
+        }
+      } catch (e) {
+        console.error('getTokenPriceUsdFromRpc: failed to get token price from hyper alt.fun', e);
+      }
+    }
+
+    if (!(priceUsd > 0) && platform.includes('four') && isInnerDisk) {
       try {
         const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
         const contractInfo = await TokenFourmemeService.getTokenInfo(chainId, tokenAddress);

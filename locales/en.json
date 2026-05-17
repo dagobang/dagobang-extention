@@ -109,6 +109,8 @@
       "routerAddress": "Router Address",
       "slippageBps": "Slippage (bps)",
       "deadlineSeconds": "Deadline (s)",
+      "tradeBaseToken": "Trade Base Token",
+      "tradeBaseTokenHint": "Choose the default quote token for buys on this chain. Selecting {0} uses the native coin; selecting USDC/USDT uses ERC20 balance and approval flow.",
       "gasPreset": "Gas preset",
       "ui": "UI",
       "buyGasGwei": "Buy gas (gwei)",

@@ -80,7 +80,13 @@ export async function getQuote(chainId: number, tokenIn: Address, tokenOut: Addr
     const m = typeof e?.message === 'string' ? e.message : '';
     const raw = (s || m).trim();
     const low = raw.toLowerCase();
-    if (raw && !low.includes('execution reverted') && !low.includes('revert')) {
+    const isExpectedNoData =
+      low.includes('returned no data') ||
+      low.includes('returned no data ("0x")') ||
+      low.includes('no data') ||
+      low.endsWith('"0x").') ||
+      low.endsWith('("0x")');
+    if (raw && !isExpectedNoData && !low.includes('execution reverted') && !low.includes('revert')) {
       console.warn('Quote failed', raw);
     }
     return 0n;
@@ -88,15 +94,30 @@ export async function getQuote(chainId: number, tokenIn: Address, tokenOut: Addr
 }
 
 function isValidV3Fee(v: number | undefined): v is number {
-  return v === 100 || v === 500 || v === 2500 || v === 10000;
+  return v === 100 || v === 500 || v === 2500 || v === 3000 || v === 10000;
+}
+
+function getDefaultV3Fees(chainId: number, preferBridgeOrder = false): number[] {
+  if (chainId === ChainId.HYPER) {
+    return preferBridgeOrder ? [3000, 500, 2500, 100, 10000] : [3000, 2500, 500, 100, 10000];
+  }
+  return preferBridgeOrder ? [500, 2500, 100, 10000] : [2500, 500, 100, 10000];
 }
 
 async function getBestV3Quote(chainId: number, tokenIn: Address, tokenOut: Address, amountIn: bigint, explicitFee?: number) {
   const fees = explicitFee !== undefined
-    ? (isValidV3Fee(explicitFee) ? [explicitFee, 2500, 500, 100, 10000] : [2500, 500, 100, 10000])
-    : [2500, 500, 100, 10000];
+    ? (isValidV3Fee(explicitFee) ? [explicitFee, ...getDefaultV3Fees(chainId)] : getDefaultV3Fees(chainId))
+    : getDefaultV3Fees(chainId);
   const results = await Promise.allSettled(
     fees.map(async (fee) => {
+      const pool = await getFirstV3PoolCached(chainId, tokenIn, tokenOut, fee);
+      if (!pool || pool === ZERO_ADDRESS) {
+        return { amountOut: 0n, fee };
+      }
+      const usable = await isV3PoolUsable(pool);
+      if (!usable) {
+        return { amountOut: 0n, fee };
+      }
       const amountOut = await getQuote(chainId, tokenIn, tokenOut, amountIn, fee);
       return { amountOut, fee };
     })
@@ -281,15 +302,17 @@ async function getBestV2Quote(chainId: number, tokenIn: Address, tokenOut: Addre
 }
 
 async function getBestDexExactIn(chainId: number, tokenIn: Address, tokenOut: Address, amountIn: bigint, opts?: DexExactInOpts) {
-  const v2Promise = getBestV2Quote(chainId, tokenIn, tokenOut, amountIn, opts?.poolPair);
-  const v3Promise = getBestV3Quote(chainId, tokenIn, tokenOut, amountIn, opts?.v3Fee);
+  const quoteTokenIn = toQuoteToken(chainId, tokenIn);
+  const quoteTokenOut = toQuoteToken(chainId, tokenOut);
+  const v2Promise = getBestV2Quote(chainId, quoteTokenIn, quoteTokenOut, amountIn, opts?.poolPair);
+  const v3Promise = getBestV3Quote(chainId, quoteTokenIn, quoteTokenOut, amountIn, opts?.v3Fee);
 
   const [{ amountOut: v3Out, fee }, v2] = await Promise.all([v3Promise, v2Promise]);
   const v2Out = v2.amountOut ?? 0n;
 
   if (v3Out > 0n && v3Out >= v2Out) {
     const usedFee = fee ?? opts?.v3Fee;
-    const pool = usedFee !== undefined ? await getFirstV3Pool(chainId, tokenIn, tokenOut, usedFee) : null;
+    const pool = usedFee !== undefined ? await getFirstV3Pool(chainId, quoteTokenIn, quoteTokenOut, usedFee) : null;
     return { amountOut: v3Out, swapType: SwapType.V3_EXACT_IN, fee: usedFee, poolAddress: (pool ?? (ZERO_ADDRESS as Address)) };
   }
   if (v2Out > 0n && v2.pair) {
@@ -297,7 +320,7 @@ async function getBestDexExactIn(chainId: number, tokenIn: Address, tokenOut: Ad
   }
   if (v3Out > 0n) {
     const usedFee = fee ?? opts?.v3Fee;
-    const pool = usedFee !== undefined ? await getFirstV3Pool(chainId, tokenIn, tokenOut, usedFee) : null;
+    const pool = usedFee !== undefined ? await getFirstV3Pool(chainId, quoteTokenIn, quoteTokenOut, usedFee) : null;
     return { amountOut: v3Out, swapType: SwapType.V3_EXACT_IN, fee: usedFee, poolAddress: (pool ?? (ZERO_ADDRESS as Address)) };
   }
 
@@ -401,7 +424,7 @@ async function resolveDexExactInTurbo(
 
   const buildV3Fees = (): number[] => {
     const explicit = isValidV3Fee(opts?.v3Fee) ? (opts!.v3Fee as number) : null;
-    const base = (prefer === 'v3' || isBridgeHop) ? [500, 2500, 100, 10000] : [2500, 500, 100, 10000];
+    const base = getDefaultV3Fees(chainId, prefer === 'v3' || isBridgeHop);
     const out: number[] = [];
     const seen = new Set<number>();
     if (explicit !== null && !seen.has(explicit)) {
@@ -442,7 +465,7 @@ async function resolveDexExactInTurbo(
     if (v3) return v3;
     const v2 = await tryV2();
     if (v2) return v2;
-    const fallbackFee = isValidV3Fee(opts?.v3Fee) ? (opts!.v3Fee as number) : 500;
+    const fallbackFee = isValidV3Fee(opts?.v3Fee) ? (opts!.v3Fee as number) : getDefaultV3Fees(chainId, true)[0];
     return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee: fallbackFee, poolAddress: ZERO_ADDRESS as Address };
   }
 
@@ -494,8 +517,8 @@ export async function resolveBridgeHopExactIn(
       prefer === 'v2'
         ? { prefer: 'v2' }
         : prefer === 'v3'
-          ? { prefer: 'v3', v3Fee: 500 }
-          : { v3Fee: 500 };
+          ? { prefer: 'v3', v3Fee: getDefaultV3Fees(chainId, true)[0] }
+          : { v3Fee: getDefaultV3Fees(chainId, true)[0] };
     return await resolveDexExactInTurbo(chainId, tokenIn, tokenOut, amountIn, opts, needAmountOut);
   }
 
@@ -508,7 +531,7 @@ export async function resolveBridgeHopExactIn(
     return { amountOut, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: pair };
   }
 
-  const fees = prefer === 'v3' ? [500, 2500] : [2500, 500];
+  const fees = getDefaultV3Fees(chainId, prefer === 'v3');
   for (const fee of fees) {
     const pool = await getFirstV3PoolCached(chainId, tokenIn, tokenOut, fee);
     if (!pool || pool === ZERO_ADDRESS) continue;
@@ -520,7 +543,7 @@ export async function resolveBridgeHopExactIn(
     }
   }
 
-  const q = await getBestDexExactIn(chainId, tokenIn, tokenOut, amountIn, { v3Fee: 500 });
+  const q = await getBestDexExactIn(chainId, tokenIn, tokenOut, amountIn, { v3Fee: getDefaultV3Fees(chainId, true)[0] });
   return { amountOut: q.amountOut, swapType: q.swapType, fee: q.fee, poolAddress: q.poolAddress };
 }
 

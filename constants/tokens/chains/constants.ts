@@ -9,6 +9,7 @@ export const FACTORY_ADDRESS = '0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73'
 export const FACTORY_ADDRESS_MAP = {
   [ChainId.ETH]: '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
   [ChainId.BNB]: FACTORY_ADDRESS,
+  [ChainId.HYPER]: '0xb4a9C4e6Ea8E2191d2FA5B380452a634Fb21240A',
 } as const satisfies Partial<Record<ChainId, Address>>
 
 export const INIT_CODE_HASH = '0x00fb7f630766e6a796048ea87d01acd3068e8ff67d078148a3fa3f4a84f69bd5'
@@ -34,6 +35,14 @@ export const WETH9 = {
     'Binance-Peg Ethereum Token',
     'https://ethereum.org'
   ),
+  [ChainId.HYPER]: new ERC20Token(
+    ChainId.HYPER,
+    '0x5555555555555555555555555555555555555555',
+    18,
+    'WHYPE',
+    'Wrapped HYPE',
+    'https://hyperliquid.xyz'
+  ),
 } as const satisfies Partial<Record<ChainId, ERC20Token>>
 
 export const WBNB = {
@@ -51,6 +60,7 @@ export const WBNB = {
 export const WNATIVE = {
   [ChainId.ETH]: WETH9[ChainId.ETH]!,
   [ChainId.BNB]: WBNB[ChainId.BNB]!,
+  [ChainId.HYPER]: WETH9[ChainId.HYPER]!,
 } as const satisfies Partial<Record<ChainId, ERC20Token>>
 
 const ETH = {
@@ -65,9 +75,16 @@ const BNB = {
   decimals: 18,
 } as const
 
+const HYPE = {
+  name: 'Hyperliquid',
+  symbol: 'HYPE',
+  decimals: 18,
+} as const
+
 export const NATIVE = {
   [ChainId.ETH]: ETH,
   [ChainId.BNB]: BNB,
+  [ChainId.HYPER]: HYPE,
 } as const satisfies Partial<Record<ChainId, { name: string; symbol: string; decimals: number }>>
 
 export { ERC20Token }
