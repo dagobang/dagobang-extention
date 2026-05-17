@@ -29,6 +29,7 @@ export type ChainSettings = {
   protectedRpcUrls: string[];
   protectedRpcUrlsBuy?: string[];
   protectedRpcUrlsSell?: string[];
+  tradeBaseToken?: TradeBaseToken;
   antiMev: boolean;
   gasPreset: GasPreset;
   executionMode: ExecutionMode;
@@ -345,6 +346,7 @@ export type Settings = {
   bloxrouteAuthHeader?: string;
   quickBuy1Bnb?: string;
   quickBuy2Bnb?: string;
+  // Legacy global field. New logic should prefer chains[chainId].tradeBaseToken.
   tradeBaseToken?: TradeBaseToken;
   keyboardShortcutsEnabled?: boolean;
   tradeSuccessSoundEnabled?: boolean;
@@ -411,6 +413,7 @@ export type TxBuyInput = {
   bnbAmountWei?: string;
   baseTokenAddress?: `0x${string}`;
   fromAddress?: `0x${string}`;
+  executionModeOverride?: 'default' | 'turbo';
   poolFee?: number;
   slippageBps?: number;
   gasPreset?: GasPreset;
@@ -427,6 +430,7 @@ export type TxSellInput = {
   tokenAmountWei: string;
   baseTokenAddress?: `0x${string}`;
   fromAddress?: `0x${string}`;
+  executionModeOverride?: 'default' | 'turbo';
   sellPercentBps?: number;
   expectedTokenInWei?: string;
   poolFee?: number;
@@ -453,6 +457,7 @@ export type LimitOrder = {
   id: string;
   chainId: number;
   tokenAddress: `0x${string}`;
+  baseTokenAddress?: `0x${string}`;
   fromAddress?: `0x${string}`;
   tokenSymbol?: string | null;
   side: LimitOrderSide;
@@ -481,6 +486,7 @@ export type LimitOrder = {
 export type LimitOrderCreateInput = {
   chainId: number;
   tokenAddress: `0x${string}`;
+  baseTokenAddress?: `0x${string}`;
   fromAddress?: `0x${string}`;
   tokenSymbol?: string | null;
   side: LimitOrderSide;

@@ -167,6 +167,7 @@ export const createLimitOrderExecutor = (deps: {
         tokenAddress: order.tokenAddress,
         nativeAmountWei: buyAmountWei,
         bnbAmountWei: buyAmountWei,
+        baseTokenAddress: order.baseTokenAddress,
         fromAddress: order.fromAddress,
         tokenInfo,
       }, {
@@ -202,7 +203,7 @@ export const createLimitOrderExecutor = (deps: {
           basePriceUsd,
         });
         for (const o of orders) {
-          await createLimitOrder({ ...o, fromAddress: order.fromAddress });
+          await createLimitOrder({ ...o, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
           created += 1;
         }
         const mode = (config as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
@@ -220,7 +221,7 @@ export const createLimitOrderExecutor = (deps: {
               entryPriceUsd,
             });
             if (rolling) {
-              await createLimitOrder({ ...rolling, fromAddress: order.fromAddress });
+              await createLimitOrder({ ...rolling, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
               created += 1;
             }
             const floor = buildStrategyRollingFloorOrderInputs({
@@ -232,7 +233,7 @@ export const createLimitOrderExecutor = (deps: {
               entryPriceUsd,
             });
             if (floor) {
-              await createLimitOrder({ ...floor, fromAddress: order.fromAddress });
+              await createLimitOrder({ ...floor, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
               created += 1;
             }
           } else {
@@ -245,7 +246,7 @@ export const createLimitOrderExecutor = (deps: {
               basePriceUsd,
             });
             if (trailing) {
-              await createLimitOrder({ ...trailing, fromAddress: order.fromAddress });
+              await createLimitOrder({ ...trailing, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
               created += 1;
             }
           }
@@ -291,6 +292,7 @@ export const createLimitOrderExecutor = (deps: {
       chainId: order.chainId,
       tokenAddress: order.tokenAddress,
       tokenAmountWei: amountIn.toString(),
+      baseTokenAddress: order.baseTokenAddress,
       fromAddress: order.fromAddress,
       tokenInfo,
       sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
@@ -333,7 +335,7 @@ export const createLimitOrderExecutor = (deps: {
           basePriceUsd,
           entryPriceUsd: Number.isFinite(entryPriceUsd) && entryPriceUsd > 0 ? entryPriceUsd : basePriceUsd,
         });
-        if (nextRolling) await createLimitOrder({ ...nextRolling, fromAddress: order.fromAddress });
+        if (nextRolling) await createLimitOrder({ ...nextRolling, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
 
         if (Number.isFinite(entryPriceUsd) && entryPriceUsd > 0) {
           const floor = buildStrategyRollingFloorOrderInputs({
@@ -344,7 +346,7 @@ export const createLimitOrderExecutor = (deps: {
             tokenInfo,
             entryPriceUsd,
           });
-          if (floor) await createLimitOrder({ ...floor, fromAddress: order.fromAddress });
+          if (floor) await createLimitOrder({ ...floor, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
         }
         deps.onOrdersChanged();
       } else if (type === 'take_profit_sell' && percentBps > 0 && percentBps < 10000) {
@@ -392,7 +394,7 @@ export const createLimitOrderExecutor = (deps: {
                 entryPriceUsd,
               });
               if (nextRolling) {
-                await createLimitOrder({ ...nextRolling, fromAddress: order.fromAddress });
+                await createLimitOrder({ ...nextRolling, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
               }
               const floor = buildStrategyRollingFloorOrderInputs({
                 config,
@@ -402,7 +404,7 @@ export const createLimitOrderExecutor = (deps: {
                 tokenInfo,
                 entryPriceUsd,
               });
-              if (floor) await createLimitOrder({ ...floor, fromAddress: order.fromAddress });
+              if (floor) await createLimitOrder({ ...floor, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
               deps.onOrdersChanged();
             } else {
               const input = buildStrategyTrailingSellOrderInputs({
@@ -414,7 +416,7 @@ export const createLimitOrderExecutor = (deps: {
                 basePriceUsd,
               });
               if (input) {
-                await createLimitOrder({ ...input, fromAddress: order.fromAddress });
+                await createLimitOrder({ ...input, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
                 deps.onOrdersChanged();
               }
             }

@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { Zap, Fuel, RefreshCw, Sliders } from 'lucide-react';
+import { ChainId } from '@/constants/chains/chainId';
+import { getNativeSymbol } from '@/constants/chains/runtime';
 import type { Settings } from '@/types/extention';
 import { formatPriceValue } from '@/utils/format';
 import { t, type Locale } from '@/utils/i18n';
+import { useDynamicGasPreview } from './useDynamicGasPreview';
 
 type SellSectionProps = {
   formattedTokenBalance: string;
@@ -96,8 +99,9 @@ export function SellSection({
   const gasLabel = isDynamicGas
     ? `${t(`popup.settings.gas.${gasPreset}`, locale)} ${dynamicMultiplierLabel}`
     : t(`popup.settings.gas.${gasPreset}`, locale);
+  const dynamicGasPreview = useDynamicGasPreview(settings, gasPreset, isDynamicGas);
   const gasTitle = isDynamicGas
-    ? `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} (Dynamic)`
+    ? `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} (Dynamic)\n当前 gasPrice: ${dynamicGasPreview.baseGasPriceGweiText} Gwei\n倍率后 gasPrice: ${dynamicGasPreview.multipliedGasPriceGweiText} Gwei`
     : `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} ${gasValue} gwei`;
   const priorityPresets = chainSettings?.sellPriorityFeePresets ?? {
     none: '0',
@@ -110,6 +114,8 @@ export function SellSection({
     : 'standard';
   const priorityValue = priorityPresets[priorityPreset] ?? '0';
   const priorityPresetLabel = t(`contentUi.priorityFee.${priorityPreset}`, locale);
+  const nativeSymbol = getNativeSymbol(settings?.chainId ?? ChainId.BNB);
+  const showPriorityFee = settings?.chainId !== ChainId.HYPER;
   const activePreviewPct = (() => {
     const raw = String(sellPresets[activePreviewIndex] ?? '').replace(/,/g, '').trim();
     const value = Number(raw);
@@ -230,14 +236,16 @@ export function SellSection({
             <Fuel size={10} />
             <span className="whitespace-nowrap">{gasLabel}</span>
           </div>
-          <div
-            className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-            title={`${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityValue} BNB`}
-            onClick={onTogglePriorityFeePreset}
-          >
-            <span className="text-[10px] font-semibold">PF</span>
-            <span className="whitespace-nowrap">{priorityPresetLabel}</span>
-          </div>
+          {showPriorityFee ? (
+            <div
+              className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
+              title={`${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityValue} ${nativeSymbol}`}
+              onClick={onTogglePriorityFeePreset}
+            >
+              <span className="text-[10px] font-semibold">PF</span>
+              <span className="whitespace-nowrap">{priorityPresetLabel}</span>
+            </div>
+          ) : null}
 
           <div
             className="flex items-center gap-1 cursor-pointer hover:text-amber-400 text-zinc-500"

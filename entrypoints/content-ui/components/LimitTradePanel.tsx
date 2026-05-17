@@ -1,6 +1,6 @@
 import { browser } from 'wxt/browser';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { parseEther, formatEther, formatUnits } from 'viem';
+import { parseUnits, formatUnits, zeroAddress } from 'viem';
 import { Wallet, PanelRightOpen, PanelRightClose, ChevronUpSquare, ChevronDownSquare, X } from 'lucide-react';
 import type { Account, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
@@ -12,6 +12,7 @@ import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { WalletSelectorDropdown, WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
 import { getChainRuntime, getExplorerTxUrl, getNativeSymbol } from '@/constants/chains';
+import { USDC, USDT } from '@/constants/tokens/chains/common';
 
 const normalizeWalletAddr = (addr?: string | null): `0x${string}` | null => {
   const raw = typeof addr === 'string' ? addr.trim() : '';
@@ -30,11 +31,14 @@ type LimitTradePanelProps = {
   activeWalletAddress: `0x${string}` | null;
   selectedTradeWallets: `0x${string}`[];
   onToggleTradeWallet: (address: `0x${string}`) => void;
-  walletNativeBalancesWei: Record<string, string>;
+  walletTradeBaseBalancesWei: Record<string, string>;
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
   tokenPrice?: number | null;
-  formattedNativeBalance: string;
+  formattedTradeBaseBalance: string;
+  tradeBaseTokenAddress: `0x${string}`;
+  tradeBaseTokenSymbol: string;
+  tradeBaseTokenDecimals: number;
   formattedTokenBalance: string;
   tokenSymbol: string | null;
   tokenAddress: `0x${string}` | null;
@@ -52,11 +56,14 @@ export function LimitTradePanel({
   activeWalletAddress,
   selectedTradeWallets,
   onToggleTradeWallet,
-  walletNativeBalancesWei,
+  walletTradeBaseBalancesWei,
   walletTokenBalancesWei,
   tokenDecimals,
   tokenPrice,
-  formattedNativeBalance,
+  formattedTradeBaseBalance,
+  tradeBaseTokenAddress,
+  tradeBaseTokenSymbol,
+  tradeBaseTokenDecimals,
   formattedTokenBalance,
   tokenSymbol,
   tokenAddress,
@@ -293,6 +300,25 @@ export function LimitTradePanel({
       return null;
     }
   };
+  const resolveBaseTokenMeta = (chainId2: number, baseTokenAddress?: `0x${string}` | null) => {
+    const runtime = getChainRuntime(chainId2);
+    const target = (baseTokenAddress ?? zeroAddress).toLowerCase();
+    if (target === zeroAddress.toLowerCase()) {
+      return { symbol: getNativeSymbol(chainId2), decimals: runtime.viemChain.nativeCurrency.decimals };
+    }
+    if (target === runtime.wrappedNativeAddress.toLowerCase()) {
+      return { symbol: `W${getNativeSymbol(chainId2)}`, decimals: runtime.viemChain.nativeCurrency.decimals };
+    }
+    const usdc = USDC[chainId2 as keyof typeof USDC];
+    if (usdc && target === usdc.address.toLowerCase()) {
+      return { symbol: usdc.symbol, decimals: usdc.decimals };
+    }
+    const usdt = USDT[chainId2 as keyof typeof USDT];
+    if (usdt && target === usdt.address.toLowerCase()) {
+      return { symbol: usdt.symbol, decimals: usdt.decimals };
+    }
+    return { symbol: getNativeSymbol(chainId2), decimals: runtime.viemChain.nativeCurrency.decimals };
+  };
 
   const explorerTxUrl = (txHash: string) => getExplorerTxUrl(chainId, txHash);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
@@ -441,9 +467,16 @@ export function LimitTradePanel({
 
   const formatPay = (o: LimitOrder) => {
     if (o.side === 'buy') {
-      const wei = o.buyBnbAmountWei ? BigInt(o.buyBnbAmountWei) : 0n;
-      const v = Number(formatEther(wei));
-      const symbol = getNativeSymbol(o.chainId);
+      const wei = (() => {
+        try {
+          return BigInt(o.buyNativeAmountWei || o.buyBnbAmountWei || '0');
+        } catch {
+          return 0n;
+        }
+      })();
+      const baseMeta = resolveBaseTokenMeta(o.chainId, o.baseTokenAddress);
+      const v = Number(formatUnits(wei, baseMeta.decimals));
+      const symbol = baseMeta.symbol;
       return Number.isFinite(v) && v > 0 ? `${v} ${symbol}` : '-';
     }
     const fixedAmountWei = (() => {
@@ -740,13 +773,14 @@ export function LimitTradePanel({
               const input: LimitOrderCreateInput = {
                 chainId: o.chainId,
                 tokenAddress: o.tokenAddress,
+                baseTokenAddress: o.baseTokenAddress,
                 fromAddress: o.fromAddress,
                 tokenSymbol: o.tokenSymbol ?? null,
                 side: o.side,
                 orderType: normalizeOrderType(o),
                 triggerPriceUsd: o.triggerPriceUsd,
                 targetChangePercent: o.targetChangePercent,
-                buyBnbAmountWei: o.buyBnbAmountWei,
+                buyNativeAmountWei: o.buyNativeAmountWei ?? o.buyBnbAmountWei,
                 sellPercentBps: o.sellPercentBps,
                 sellTokenAmountWei: o.sellTokenAmountWei,
                 trailingStopBps: o.trailingStopBps,
@@ -878,7 +912,8 @@ export function LimitTradePanel({
                     {tt('contentUi.autotrade.buySection')}
                   </div>
                   <div className="flex items-center gap-1 text-[11px] text-emerald-400">
-                    <span>{formattedNativeBalance}</span>
+                    <span>{formattedTradeBaseBalance}</span>
+                    <span>{tradeBaseTokenSymbol}</span>
                   </div>
                 </div>
 
@@ -947,18 +982,19 @@ export function LimitTradePanel({
                     const trigger = parsePositiveNumber(buyPrice);
                     if (trigger == null) return;
                     if (selectedTradeWallets.length <= 0) return;
-                    const amountWei = parseEther(buyAmount).toString();
+                    const amountWei = parseUnits(buyAmount, tradeBaseTokenDecimals).toString();
                     for (const walletAddress of selectedTradeWallets) {
                       await call({
                         type: 'limitOrder:create',
                         input: {
                           chainId,
                           tokenAddress,
+                          baseTokenAddress: tradeBaseTokenAddress,
                           tokenSymbol,
                           side: 'buy',
                           orderType: buyOrderType,
                           triggerPriceUsd: trigger,
-                          buyBnbAmountWei: amountWei,
+                          buyNativeAmountWei: amountWei,
                           tokenInfo,
                           fromAddress: walletAddress,
                         },
@@ -1064,6 +1100,7 @@ export function LimitTradePanel({
                           input: {
                             chainId,
                             tokenAddress,
+                            baseTokenAddress: tradeBaseTokenAddress,
                             tokenSymbol,
                             side: 'sell',
                             orderType: sellOrderType,
@@ -1509,14 +1546,14 @@ export function LimitTradePanel({
             walletAccounts={walletAccounts}
             activeWalletAddress={activeWalletAddress}
             onToggleTradeWallet={onToggleTradeWallet}
-            walletNativeBalancesWei={walletNativeBalancesWei}
+            walletNativeBalancesWei={walletTradeBaseBalancesWei}
             walletTokenBalancesWei={walletTokenBalancesWei}
             tokenDecimals={tokenDecimals}
             multiWalletBuyMode={settings?.multiWalletBuyMode ?? 'uniform'}
             childWalletBuyAmountsNative={settings?.childWalletBuyAmountsBnb ?? {}}
             onChangeMultiWalletBuyMode={() => {}}
             onUpdateChildWalletBuyAmount={() => {}}
-            nativeSymbol={getNativeSymbol(chainId)}
+            nativeSymbol={tradeBaseTokenSymbol}
             className="absolute right-3 top-11 z-30 w-[340px] rounded-lg border border-zinc-700 bg-[#141416] p-2 shadow-xl"
             onRequestClose={() => setWalletSelectorOpen(false)}
           />

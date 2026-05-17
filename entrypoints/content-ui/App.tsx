@@ -74,7 +74,7 @@ function normalizeAddr(addr: string): `0x${string}` | null {
 function resolveTradeBaseTokenAddress(settings: Settings | null | undefined): `0x${string}` {
   const chainId = settings?.chainId ?? 56;
   const runtime = getChainRuntime(chainId);
-  const baseToken = String(settings?.tradeBaseToken ?? 'BNB').toUpperCase();
+  const baseToken = String(settings?.chains?.[chainId]?.tradeBaseToken ?? settings?.tradeBaseToken ?? 'BNB').toUpperCase();
   if (baseToken === 'WBNB') return runtime.wrappedNativeAddress;
   if (baseToken === 'USDC') return (USDC[chainId as keyof typeof USDC]?.address ?? zeroAddress) as `0x${string}`;
   if (baseToken === 'USDT') return (USDT[chainId as keyof typeof USDT]?.address ?? zeroAddress) as `0x${string}`;
@@ -2594,10 +2594,13 @@ export default function App() {
             activeWalletAddress={address as `0x${string}` | null}
             selectedTradeWallets={selectedTradeWallets}
             onToggleTradeWallet={handleToggleTradeWallet}
-            walletNativeBalancesWei={walletNativeBalancesWei}
+            walletTradeBaseBalancesWei={walletTradeBaseBalancesWei}
             walletTokenBalancesWei={walletTokenBalancesWei}
             tokenDecimals={tokenDecimals}
-            formattedNativeBalance={formattedNativeBalance}
+            formattedTradeBaseBalance={formattedNativeBalance}
+            tradeBaseTokenAddress={tradeBaseTokenAddress}
+            tradeBaseTokenSymbol={tradeBaseTokenSymbol}
+            tradeBaseTokenDecimals={tradeBaseTokenMeta.decimals}
             formattedTokenBalance={formattedTokenBalance}
             tokenSymbol={tokenSymbol}
             tokenPrice={tokenPrice}

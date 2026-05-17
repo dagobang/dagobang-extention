@@ -91,7 +91,7 @@ export function Header({
     >
       <div className="flex items-center gap-1 text-zinc-400">
 
-        <div className="flex items-center">
+        <div className="flex items-center mr-1">
           <Logo size={{ width: '24px', height: '24px' }} />
         </div>
         {!siteInfo.showBar && <button
@@ -190,29 +190,6 @@ export function Header({
           <Rocket size={14} />
         </button>
 
-        {!siteInfo.showBar && (
-          isEditing ? (
-            <Check
-              size={14}
-              className="cursor-pointer text-emerald-500 hover:text-emerald-400 ml-2"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEditToggle();
-              }}
-            />
-          ) : (
-            <Pencil
-              size={14}
-              className="cursor-pointer hover:text-zinc-200 ml-1"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEditToggle();
-              }}
-            />
-          ))}
-      </div>
-
-      <div className="flex items-center gap-2">
         <div ref={moreRef} className="relative">
           <button
             type="button"
@@ -262,6 +239,30 @@ export function Header({
             </div>
           )}
         </div>
+
+      </div>
+
+      <div className="flex items-center gap-2">
+        {!siteInfo.showBar && (
+          isEditing ? (
+            <Check
+              size={14}
+              className="cursor-pointer text-emerald-500 hover:text-emerald-400 ml-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditToggle();
+              }}
+            />
+          ) : (
+            <Pencil
+              size={14}
+              className="cursor-pointer hover:text-zinc-200 ml-1"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditToggle();
+              }}
+            />
+          ))}
         {walletSelectorVisible && (
           <WalletSelectorTrigger
             walletSelectorOpen={walletSelectorOpen}

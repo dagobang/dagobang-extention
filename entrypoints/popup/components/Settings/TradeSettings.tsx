@@ -7,6 +7,7 @@ type TradeSettingsProps = SettingsDraftProps;
 export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSettingsProps) {
   const chainId = settingsDraft.chainId;
   const nativeSymbol = getNativeSymbol(chainId);
+  const tradeBaseTokenValue = settingsDraft.chains[chainId]?.tradeBaseToken ?? 'BNB';
   const tradeBaseTokenOptions = chainId === ChainId.HYPER
     ? [
       { value: 'BNB', label: nativeSymbol },
@@ -69,11 +70,17 @@ export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSett
             <div className="text-[14px] text-zinc-400">{tt('popup.settings.tradeBaseToken')}</div>
             <select
               className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
-              value={settingsDraft.tradeBaseToken ?? 'BNB'}
+              value={tradeBaseTokenValue}
               onChange={(e) =>
                 setSettingsDraft((s) => ({
                   ...s,
-                  tradeBaseToken: e.target.value as any,
+                  chains: {
+                    ...s.chains,
+                    [s.chainId]: {
+                      ...s.chains[s.chainId],
+                      tradeBaseToken: e.target.value as any,
+                    },
+                  },
                 }))
               }
             >

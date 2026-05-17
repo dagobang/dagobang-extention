@@ -349,9 +349,9 @@ export class TradeService {
     return 'TOKEN';
   }
 
-  private static resolveConfiguredBaseTokenAddress(chainId: number, settings: { tradeBaseToken?: string }): Address {
+  private static resolveConfiguredBaseTokenAddress(chainId: number, settings: { tradeBaseToken?: string; chains?: Record<number, { tradeBaseToken?: string }> }): Address {
     const runtime = getChainRuntime(chainId);
-    const tradeBaseToken = String(settings.tradeBaseToken ?? 'BNB').toUpperCase();
+    const tradeBaseToken = String(settings.chains?.[chainId]?.tradeBaseToken ?? settings.tradeBaseToken ?? 'BNB').toUpperCase();
     if (tradeBaseToken === 'WBNB') return runtime.wrappedNativeAddress as Address;
     if (tradeBaseToken === 'USDC') {
       const usdc = USDC[chainId as keyof typeof USDC]?.address;
@@ -381,7 +381,7 @@ export class TradeService {
       : configuredBaseTokenAddress;
     const baseTokenSymbol = this.resolveBaseTokenSymbol(input.chainId, baseTokenAddress);
     const baseFee = input.poolFee ?? 2500;
-    const executionMode = settings.chains[input.chainId]?.executionMode ?? 'default';
+    const executionMode = input.executionModeOverride ?? settings.chains[input.chainId]?.executionMode ?? 'default';
     const isTurbo = executionMode === 'turbo';
     const chainSettings = settings.chains[input.chainId];
     const gasPriceMode = chainSettings.gasPriceMode ?? 'fixed';
@@ -1007,7 +1007,7 @@ export class TradeService {
         : configuredBaseTokenAddress;
       const baseTokenSymbol = this.resolveBaseTokenSymbol(input.chainId, baseTokenAddress);
       const baseFee = input.poolFee ?? 2500;
-      const executionMode = settings.chains[input.chainId]?.executionMode ?? 'default';
+      const executionMode = input.executionModeOverride ?? settings.chains[input.chainId]?.executionMode ?? 'default';
       const isTurbo = executionMode === 'turbo';
       const percentBps = isTurbo ? (input.sellPercentBps ?? 0) : 0;
       if (!isTurbo && amountIn <= 0n) throw new Error('Invalid amount');

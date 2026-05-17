@@ -108,8 +108,9 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
   }
 
   if (side === 'buy') {
-    if (!input.buyBnbAmountWei) throw new Error('Buy amount required');
-    const v = BigInt(input.buyBnbAmountWei);
+    const buyAmountWei = input.buyNativeAmountWei || input.buyBnbAmountWei;
+    if (!buyAmountWei) throw new Error('Buy amount required');
+    const v = BigInt(buyAmountWei);
     if (v <= 0n) throw new Error('Invalid buy amount');
   } else {
     const tokenAmountWei = (() => {
@@ -128,6 +129,7 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
   const all = await getLimitOrders();
   const keyAddr = input.tokenAddress.toLowerCase();
   const inputFromLower = input.fromAddress?.toLowerCase() ?? null;
+  const inputBaseTokenLower = input.baseTokenAddress?.toLowerCase() ?? null;
   const normalizedTrigger = triggerPriceUsd;
   const normalizedTrailingPeak =
     orderType === 'trailing_stop_sell'
@@ -137,7 +139,12 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
       : undefined;
   const hasSameAmount = (o: LimitOrder) => {
     if (side === 'buy') {
-      return !!input.buyBnbAmountWei && o.buyBnbAmountWei === input.buyBnbAmountWei;
+      const buyAmountWei = input.buyNativeAmountWei || input.buyBnbAmountWei;
+      const orderBuyAmountWei = o.buyNativeAmountWei || o.buyBnbAmountWei;
+      if (!buyAmountWei || orderBuyAmountWei !== buyAmountWei) return false;
+      const inputBase = input.baseTokenAddress?.toLowerCase() ?? null;
+      const orderBase = o.baseTokenAddress?.toLowerCase() ?? null;
+      return inputBase === orderBase;
     }
     if (input.sellTokenAmountWei) {
       return o.sellTokenAmountWei === input.sellTokenAmountWei;
@@ -156,6 +163,8 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
   const existing = all.find((o) => {
     if (o.chainId !== input.chainId) return false;
     if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+    const orderBaseTokenLower = o.baseTokenAddress?.toLowerCase() ?? null;
+    if (orderBaseTokenLower !== inputBaseTokenLower) return false;
     const orderFromLower = o.fromAddress?.toLowerCase() ?? null;
     if (orderFromLower !== inputFromLower) return false;
     if (o.status !== 'open') return false;
@@ -190,6 +199,7 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
     id: makeLimitOrderId(),
     chainId: input.chainId,
     tokenAddress: input.tokenAddress,
+    baseTokenAddress: input.baseTokenAddress,
     fromAddress: input.fromAddress,
     tokenSymbol: input.tokenSymbol ?? null,
     side,
@@ -207,7 +217,8 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
     rollingFloorPercent: rollingFloorPercent ?? undefined,
     rollingEntryPriceUsd: rollingEntryPriceUsd ?? undefined,
     rollingIsFloor: rollingIsFloor || undefined,
-    buyBnbAmountWei: input.buyBnbAmountWei,
+    buyNativeAmountWei: input.buyNativeAmountWei ?? input.buyBnbAmountWei,
+    buyBnbAmountWei: input.buyBnbAmountWei ?? input.buyNativeAmountWei,
     sellPercentBps: input.sellPercentBps,
     sellTokenAmountWei: input.sellTokenAmountWei,
     createdAtMs: Date.now(),

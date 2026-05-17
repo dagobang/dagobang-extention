@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { call } from '@/utils/messaging';
 import { Header } from './Header';
 import type { BgGetStateResponse } from '@/types/extention';
+import type { TokenInfo } from '@/types/token';
 import { Lock, Copy, Check, Settings, KeyRound, Send } from 'lucide-react';
 import { t, type Locale } from '@/utils/i18n';
 import { formatEther, formatUnits, isAddress, parseUnits, zeroAddress } from 'viem';
+import { ChainId } from '@/constants/chains/chainId';
 import { getNativeSymbol } from '@/constants/chains';
 import { getChainRuntime } from '@/constants/chains/runtime';
 import { DeployAddress } from '@/constants/contracts/address';
@@ -12,6 +14,8 @@ import { ContractNames } from '@/constants/contracts/names';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
 import { formatPriceValue } from '@/utils/format';
 import { SymbolCoinIcon } from '@/components/Coins';
+import { TradeService } from '@/services/trade';
+import { SwapType } from '@/services/trade/tradeTypes';
 
 type HomeViewProps = {
   state: BgGetStateResponse;
@@ -60,6 +64,17 @@ export function HomeView({
   const [convertAddress, setConvertAddress] = useState<`0x${string}` | null>(null);
   const [convertAmount, setConvertAmount] = useState('');
   const [convertMode, setConvertMode] = useState<'wrap' | 'unwrap'>('wrap');
+  const [convertQuote, setConvertQuote] = useState<{
+    loading: boolean;
+    outputText: string;
+    routeText: string | null;
+    errorText: string | null;
+  }>({
+    loading: false,
+    outputText: '--',
+    routeText: null,
+    errorText: null,
+  });
   const [allowances, setAllowances] = useState<Record<string, string>>({});
   const [approveDialogAddress, setApproveDialogAddress] = useState<`0x${string}` | null>(null);
   const [approvingAddress, setApprovingAddress] = useState<string | null>(null);
@@ -75,7 +90,7 @@ export function HomeView({
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
   const chainId = state.settings.chainId;
   const nativeSymbol = getNativeSymbol(chainId);
-  const tradeBaseToken = String(state.settings.tradeBaseToken ?? 'BNB').toUpperCase();
+  const tradeBaseToken = String(state.settings.chains?.[chainId]?.tradeBaseToken ?? state.settings.tradeBaseToken ?? 'BNB').toUpperCase();
   const wrappedNativeAddress = getChainRuntime(chainId).wrappedNativeAddress;
   const tradeBaseTokenAddress = tradeBaseToken === 'WBNB'
     ? wrappedNativeAddress
@@ -100,6 +115,7 @@ export function HomeView({
         : tradeBaseTokenAddress.toLowerCase() === (USDT[chainId as keyof typeof USDT]?.address ?? '').toLowerCase()
           ? (USDT[chainId as keyof typeof USDT]?.decimals ?? 18)
           : 18;
+  const isWrappedTradeBase = tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase();
   const routerAddress = DeployAddress[chainId as keyof typeof DeployAddress]?.[ContractNames.DagobangRouter]?.address;
   const MAX_UINT256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
   const APPROVAL_READY_THRESHOLD = '1000000000000000000000'; // 1000 tokens
@@ -191,6 +207,132 @@ export function HomeView({
     setActionNotice({ type, text });
     setTimeout(() => setActionNotice(null), 2200);
   };
+  const formatSwapRouteLabel = (fromSymbol: string, toSymbol: string, swapType: number, fee?: number) => {
+    if (swapType === SwapType.V3_EXACT_IN) {
+      const feePct = typeof fee === 'number' && Number.isFinite(fee)
+        ? `${(fee / 10000).toFixed(fee % 1000 === 0 ? 1 : 2).replace(/\.?0+$/, '')}%`
+        : '';
+      return `${fromSymbol} -> ${toSymbol} (V3${feePct ? ` ${feePct}` : ''})`;
+    }
+    if (swapType === SwapType.V2_EXACT_IN) {
+      return `${fromSymbol} -> ${toSymbol} (V2)`;
+    }
+    return `${fromSymbol} -> ${toSymbol}`;
+  };
+  const getTradeBaseSwapTokenInfo = (): TokenInfo => ({
+    chain: String(chainId),
+    address: tradeBaseTokenAddress,
+    name: tradeBaseSymbol,
+    symbol: tradeBaseSymbol,
+    decimals: tradeBaseDecimals,
+    logo: '',
+    launchpad: '',
+    launchpad_progress: 100,
+    launchpad_platform: '',
+    launchpad_status: 2,
+    quote_token: nativeSymbol,
+    quote_token_address: zeroAddress,
+    dex_type: chainId === ChainId.HYPER ? 'v3' : '',
+  });
+  useEffect(() => {
+    let cancelled = false;
+    if (!convertAddress) {
+      setConvertQuote({ loading: false, outputText: '--', routeText: null, errorText: null });
+      return () => {
+        cancelled = true;
+      };
+    }
+    const raw = convertAmount.trim();
+    if (!raw) {
+      setConvertQuote({ loading: false, outputText: '--', routeText: null, errorText: null });
+      return () => {
+        cancelled = true;
+      };
+    }
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      setConvertQuote({ loading: false, outputText: '--', routeText: null, errorText: '请输入有效数量' });
+      return () => {
+        cancelled = true;
+      };
+    }
+    setConvertQuote((prev) => ({ ...prev, loading: true, errorText: null }));
+    void (async () => {
+      try {
+        if (isWrappedTradeBase) {
+          const outputDecimals = convertMode === 'wrap' ? tradeBaseDecimals : 18;
+          const outputSymbol = convertMode === 'wrap' ? tradeBaseSymbol : nativeSymbol;
+          const outputAmount = formatUnits(parseUnits(raw, convertMode === 'wrap' ? 18 : tradeBaseDecimals), outputDecimals);
+          if (cancelled) return;
+          setConvertQuote({
+            loading: false,
+            outputText: `${formatPriceValue(Number(outputAmount), 4, 8)} ${outputSymbol}`,
+            routeText: convertMode === 'wrap'
+              ? `${nativeSymbol} -> ${tradeBaseSymbol} (1:1 包装)`
+              : `${tradeBaseSymbol} -> ${nativeSymbol} (1:1 解包)`,
+            errorText: null,
+          });
+          return;
+        }
+
+        const tokenIn = (convertMode === 'wrap' ? zeroAddress : tradeBaseTokenAddress) as `0x${string}`;
+        const tokenOut = (convertMode === 'wrap' ? tradeBaseTokenAddress : zeroAddress) as `0x${string}`;
+        const amountIn = parseUnits(raw, convertMode === 'wrap' ? 18 : tradeBaseDecimals);
+        const quote = await TradeService.quoteBestExactIn(
+          chainId,
+          tokenIn,
+          tokenOut,
+          amountIn,
+          chainId === ChainId.HYPER ? { prefer: 'v3', v3Fee: 3000 } : undefined
+        );
+        if (cancelled) return;
+        if (!quote || quote.amountOut <= 0n) {
+          setConvertQuote({
+            loading: false,
+            outputText: '--',
+            routeText: null,
+            errorText: '暂无可用报价',
+          });
+          return;
+        }
+        const outputSymbol = convertMode === 'wrap' ? tradeBaseSymbol : nativeSymbol;
+        const outputDecimals = convertMode === 'wrap' ? tradeBaseDecimals : 18;
+        const outputValue = Number(formatUnits(quote.amountOut, outputDecimals));
+        setConvertQuote({
+          loading: false,
+          outputText: `${formatPriceValue(outputValue, 4, 8)} ${outputSymbol}`,
+          routeText: formatSwapRouteLabel(
+            convertMode === 'wrap' ? nativeSymbol : tradeBaseSymbol,
+            convertMode === 'wrap' ? tradeBaseSymbol : nativeSymbol,
+            quote.swapType,
+            quote.fee
+          ),
+          errorText: null,
+        });
+      } catch {
+        if (cancelled) return;
+        setConvertQuote({
+          loading: false,
+          outputText: '--',
+          routeText: null,
+          errorText: '报价失败',
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    chainId,
+    convertAddress,
+    convertAmount,
+    convertMode,
+    isWrappedTradeBase,
+    nativeSymbol,
+    tradeBaseDecimals,
+    tradeBaseSymbol,
+    tradeBaseTokenAddress,
+  ]);
 
   const getAliasKey = (addr: `0x${string}`) => addr.toLowerCase();
   const get7702Key = (addr: `0x${string}`) => addr.toLowerCase();
@@ -986,19 +1128,94 @@ export function HomeView({
                 inputMode="decimal"
               />
             </div>
+            <div className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 space-y-1">
+              <div className="flex items-center justify-between gap-3 text-[12px]">
+                <span className="text-zinc-400">预计收到</span>
+                <span className="font-mono text-zinc-200">
+                  {convertQuote.loading ? '报价中...' : convertQuote.outputText}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[11px]">
+                <span className="text-zinc-500">当前路由</span>
+                <span className="text-right text-zinc-400">
+                  {convertQuote.routeText ?? '--'}
+                </span>
+              </div>
+              {convertQuote.errorText ? (
+                <div className="text-[11px] text-red-300">{convertQuote.errorText}</div>
+              ) : null}
+            </div>
             <button
               className="w-full rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold disabled:opacity-60 hover:bg-emerald-500 transition-colors"
               disabled={busy || !convertAmount.trim()}
               onClick={() =>
                 withBusy(async () => {
-                  const amountWei = parseUnits(convertAmount.trim(), tradeBaseDecimals).toString();
-                  if (convertMode === 'wrap') {
-                    await call({ type: 'tx:wrapNative', chainId, fromAddress: convertAddress, amountWei });
-                  } else {
-                    await call({ type: 'tx:unwrapWrapped', chainId, fromAddress: convertAddress, amountWei });
+                  const amountText = convertAmount.trim();
+                  const amountWei = parseUnits(
+                    amountText,
+                    convertMode === 'wrap' ? 18 : tradeBaseDecimals
+                  ).toString();
+                  try {
+                    if (isWrappedTradeBase) {
+                      if (convertMode === 'wrap') {
+                        const rsp = await call({ type: 'tx:wrapNative', chainId, fromAddress: convertAddress, amountWei });
+                        showActionNotice('success', `兑换已提交: ${String(rsp.txHash).slice(0, 10)}...`);
+                      } else {
+                        const rsp = await call({ type: 'tx:unwrapWrapped', chainId, fromAddress: convertAddress, amountWei });
+                        showActionNotice('success', `兑换已提交: ${String(rsp.txHash).slice(0, 10)}...`);
+                      }
+                    } else if (convertMode === 'wrap') {
+                      const rsp = await call({
+                        type: 'tx:buyWithReceiptAuto',
+                        input: {
+                          chainId,
+                          tokenAddress: tradeBaseTokenAddress,
+                          nativeAmountWei: amountWei,
+                          baseTokenAddress: zeroAddress,
+                          fromAddress: convertAddress,
+                          executionModeOverride: 'default',
+                          poolFee: chainId === ChainId.HYPER ? 3000 : undefined,
+                          tokenInfo: getTradeBaseSwapTokenInfo(),
+                        },
+                      });
+                      if (!rsp.ok) {
+                        const msg = rsp.revertReason || rsp.error?.message || '兑换失败';
+                        showActionNotice('error', msg);
+                        return;
+                      }
+                      showActionNotice('success', `兑换成功: ${String(rsp.txHash).slice(0, 10)}...`);
+                    } else {
+                      const rsp = await call({
+                        type: 'tx:sellWithReceiptAuto',
+                        input: {
+                          chainId,
+                          tokenAddress: tradeBaseTokenAddress,
+                          tokenAmountWei: amountWei,
+                          baseTokenAddress: zeroAddress,
+                          fromAddress: convertAddress,
+                          executionModeOverride: 'default',
+                          poolFee: chainId === ChainId.HYPER ? 3000 : undefined,
+                          tokenInfo: getTradeBaseSwapTokenInfo(),
+                        },
+                      });
+                      if (!rsp.ok) {
+                        const msg = rsp.revertReason || rsp.error?.message || '兑换失败';
+                        showActionNotice('error', msg);
+                        return;
+                      }
+                      showActionNotice('success', `兑换成功: ${String(rsp.txHash).slice(0, 10)}...`);
+                    }
+                  } catch (e: any) {
+                    showActionNotice('error', e?.message ? String(e.message) : '兑换失败');
+                    return;
                   }
-                  closeConvert();
-                  await onRefresh();
+                  if (isWrappedTradeBase) {
+                    closeConvert();
+                    await onRefresh();
+                  } else {
+                    closeConvert();
+                    await onRefresh();
+                  }
                 })
               }
             >

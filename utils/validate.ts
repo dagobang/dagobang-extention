@@ -170,12 +170,13 @@ export function validateSettings(input: Settings): Settings | null {
   const quickBuy2Bnb = typeof (input as any).quickBuy2Bnb === 'string'
     ? (input as any).quickBuy2Bnb.trim() || defaults.quickBuy2Bnb || '0.1'
     : defaults.quickBuy2Bnb || '0.1';
+  const allowedTradeBaseTokens = ['BNB', 'WBNB', 'USDT', 'USDC'] as const;
   const inputTradeBaseToken = typeof (input as any).tradeBaseToken === 'string'
     ? String((input as any).tradeBaseToken).trim().toUpperCase()
     : '';
-  const tradeBaseToken = (['BNB', 'WBNB', 'USDT', 'USDC'] as const).includes(inputTradeBaseToken as any)
+  const legacyTradeBaseToken = allowedTradeBaseTokens.includes(inputTradeBaseToken as any)
     ? (inputTradeBaseToken as 'BNB' | 'WBNB' | 'USDT' | 'USDC')
-    : ((defaults as any).tradeBaseToken ?? 'BNB');
+    : 'BNB';
   const keyboardShortcutsEnabled = typeof (input as any).keyboardShortcutsEnabled === 'boolean'
     ? (input as any).keyboardShortcutsEnabled
     : ((defaults as any).keyboardShortcutsEnabled ?? false);
@@ -326,11 +327,18 @@ export function validateSettings(input: Settings): Settings | null {
         const bloxrouteSellEnabled = typeof (cInput as any).bloxrouteSellEnabled === 'boolean'
           ? (cInput as any).bloxrouteSellEnabled
           : ((cDef as any).bloxrouteSellEnabled ?? true);
+        const chainTradeBaseTokenInput = typeof (cInput as any).tradeBaseToken === 'string'
+          ? String((cInput as any).tradeBaseToken).trim().toUpperCase()
+          : '';
+        const tradeBaseToken = allowedTradeBaseTokens.includes(chainTradeBaseTokenInput as any)
+          ? (chainTradeBaseTokenInput as 'BNB' | 'WBNB' | 'USDT' | 'USDC')
+          : ((cDef as any).tradeBaseToken ?? legacyTradeBaseToken ?? 'BNB');
         chains[cid] = {
           rpcUrls: (cInput.rpcUrls || []).map((x) => x.trim()).filter(Boolean),
           protectedRpcUrls,
           protectedRpcUrlsBuy,
           protectedRpcUrlsSell,
+          tradeBaseToken,
           antiMev: !!cInput.antiMev && protectedRpcUrls.length > 0,
           gasPreset: ['slow', 'standard', 'fast', 'turbo'].includes(cInput.gasPreset) ? cInput.gasPreset : cDef.gasPreset,
           buyGasPreset,
@@ -787,7 +795,7 @@ export function validateSettings(input: Settings): Settings | null {
     bloxrouteAuthHeader,
     quickBuy1Bnb,
     quickBuy2Bnb,
-    tradeBaseToken,
+    tradeBaseToken: chains[chainId]?.tradeBaseToken ?? legacyTradeBaseToken,
     keyboardShortcutsEnabled,
     ui: {
       showToolbar,
