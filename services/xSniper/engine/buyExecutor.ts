@@ -37,6 +37,14 @@ const terminalFailedBuyKeys = new Map<string, number>();
 const globalBuyInFlightKeys = new Set<string>();
 const globalBoughtLockKeys = new Set<string>();
 
+const resolveStrategyBuyAmountNative = (strategy: any, chainId: number) => {
+  const byChain = strategy?.buyAmountNativeByChain;
+  const chainRaw = typeof byChain?.[chainId] === 'string' ? byChain[chainId].trim() : '';
+  const chainNum = parseNumber(chainRaw);
+  if (typeof chainNum === 'number' && Number.isFinite(chainNum) && chainNum > 0) return chainNum;
+  return parseNumber(strategy?.buyAmountNative) ?? 0;
+};
+
 const buildGlobalBuyLockKey = (input: {
   chainId: number;
   tokenAddress: `0x${string}`;
@@ -331,7 +339,7 @@ export const tryAutoBuyOnce = async (input: {
     attempted = true;
     const amountNumber = (typeof input.amountNativeOverride === 'number' && Number.isFinite(input.amountNativeOverride)
       ? input.amountNativeOverride
-      : (parseNumber(input.strategy.buyAmountNative) ?? 0));
+      : resolveStrategyBuyAmountNative(input.strategy, input.chainId));
     if (amountNumber <= 0) {
       emitBuyFailure('buy_invalid_amount', { buyAmountNative: amountNumber });
       notifyOutcome({ bought: false, attempted, reason: lastFailureReason });

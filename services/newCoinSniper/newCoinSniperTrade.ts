@@ -537,7 +537,12 @@ export const createNewCoinSniperTrade = (deps: {
     return list.length ? Array.from(new Set(list)) : ['fourmeme', 'fourmeme_agent'];
   };
 
-  const readDefaultTaskBuyAmountNative = (strategy: any): string => {
+  const readDefaultTaskBuyAmountNative = (strategy: any, chainId?: number | null): string => {
+    const rawByChain = chainId != null && typeof strategy?.buyAmountNativeByChain?.[chainId] === 'string'
+      ? String(strategy.buyAmountNativeByChain[chainId]).trim()
+      : '';
+    const nByChain = parseNumber(rawByChain);
+    if (typeof nByChain === 'number' && Number.isFinite(nByChain) && nByChain > 0) return rawByChain;
     const raw = String(strategy?.buyAmountNative ?? '').trim();
     const n = parseNumber(raw);
     if (typeof n === 'number' && Number.isFinite(n) && n > 0) return raw;
@@ -622,7 +627,12 @@ export const createNewCoinSniperTrade = (deps: {
       : Math.max(100, Math.min(50_000_000, athThresholdRaw));
     const maxPerSignal = parsePositiveInt(input.strategy?.autoTaskMaxPerSignal, 5, 1, 50);
     const tasks = normalizeXmodeTasks(input.strategy?.xmodeTasks);
-    const defaultTaskBuyAmountNative = readDefaultTaskBuyAmountNative(input.strategy);
+    const defaultTaskChainId = resolveTradeChainId({
+      signalChain: input.signal?.chain,
+      fallbackChainId: input.settings.chainId,
+      settings: input.settings,
+    });
+    const defaultTaskBuyAmountNative = readDefaultTaskBuyAmountNative(input.strategy, defaultTaskChainId);
     const existingKeywordKeySet = new Set(tasks.map((t) => buildTaskKeywordKey(t.keywords)));
     const tokens = normalizeSignalTokens(input.signal);
     const additions: NewCoinXmodeSnipeTask[] = [];

@@ -64,6 +64,7 @@ export type AutoTradeStrategyBase = {
   enabled: boolean;
   autoSellEnabled: boolean;
   buyAmountNative: string;
+  buyAmountNativeByChain?: Partial<Record<number, string>>;
   buyNewCaCount: string;
   buyOgCount: string;
   minMarketCapUsd: string;
@@ -311,6 +312,7 @@ export type TelegramSettings = {
   chatId?: string;
   userId?: string;
   enforceUserId?: boolean;
+  chainId?: number;
   pollIntervalMs?: number;
   notifyTradeSubmitted?: boolean;
   notifyTradeSuccess?: boolean;

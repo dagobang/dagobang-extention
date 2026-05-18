@@ -408,6 +408,13 @@ export function validateSettings(input: Settings): Settings | null {
   const telegramEnforceUserId = typeof inputTelegram?.enforceUserId === 'boolean'
     ? inputTelegram.enforceUserId
     : (defaultTelegram?.enforceUserId ?? false);
+  const inputTelegramChainId = Number(inputTelegram?.chainId);
+  const defaultTelegramChainId = Number(defaultTelegram?.chainId);
+  const telegramChainId = Number.isFinite(inputTelegramChainId) && inputTelegramChainId > 0
+    ? Math.floor(inputTelegramChainId)
+    : (Number.isFinite(defaultTelegramChainId) && defaultTelegramChainId > 0
+      ? Math.floor(defaultTelegramChainId)
+      : chainId);
   const inputTelegramPollIntervalMs = Number(inputTelegram?.pollIntervalMs);
   const defaultTelegramPollIntervalMs = Number(defaultTelegram?.pollIntervalMs);
   const telegramPollIntervalMs = Number.isFinite(inputTelegramPollIntervalMs) && inputTelegramPollIntervalMs >= 1000 && inputTelegramPollIntervalMs <= 10000
@@ -468,6 +475,21 @@ export function validateSettings(input: Settings): Settings | null {
     const list = raw.filter((x) => allowedInteractionTypes.includes(x as any));
     return list.length ? (list as any) : fallback;
   };
+  const normalizeBuyAmountNativeByChain = (value: any, fallback: any) => {
+    const inputMap = value && typeof value === 'object' ? value : {};
+    const fallbackMap = fallback && typeof fallback === 'object' ? fallback : {};
+    const keys = Array.from(new Set([...Object.keys(fallbackMap), ...Object.keys(inputMap)]));
+    const out: Record<string, string> = {};
+    for (const key of keys) {
+      const chainId = Number(key);
+      if (!Number.isFinite(chainId) || chainId <= 0) continue;
+      const raw = clampStringNumber((inputMap as any)[key], clampStringNumber((fallbackMap as any)[key], ''));
+      const n = Number(raw);
+      if (!raw || !Number.isFinite(n) || n <= 0) continue;
+      out[String(Math.floor(chainId))] = raw;
+    }
+    return out;
+  };
   const normalizeTwitterSnipeCore = (rawInput: any, fallbackInput: any) => ({
     enabled: typeof rawInput?.enabled === 'boolean'
       ? rawInput.enabled
@@ -481,6 +503,7 @@ export function validateSettings(input: Settings): Settings | null {
       ? rawInput.autoSellEnabled
       : fallbackInput.autoSellEnabled,
     buyAmountNative: readAmountStringAlias(rawInput, fallbackInput.buyAmountNative),
+    buyAmountNativeByChain: normalizeBuyAmountNativeByChain(rawInput?.buyAmountNativeByChain, fallbackInput?.buyAmountNativeByChain),
     buyNewCaCount: clampStringNumber(rawInput?.buyNewCaCount, fallbackInput.buyNewCaCount),
     buyOgCount: clampStringNumber(rawInput?.buyOgCount, fallbackInput.buyOgCount),
     minMarketCapUsd: clampStringNumber(rawInput?.minMarketCapUsd, fallbackInput.minMarketCapUsd),
@@ -695,6 +718,10 @@ export function validateSettings(input: Settings): Settings | null {
       ...inputNewCoinSnipe,
       playSound: newCoinSnipePlaySound,
       soundPreset: newCoinSnipeSoundPreset,
+      buyAmountNativeByChain: normalizeBuyAmountNativeByChain(
+        (inputNewCoinSnipe as any)?.buyAmountNativeByChain,
+        (defaultNewCoinSnipe as any)?.buyAmountNativeByChain,
+      ),
     },
     tokenSnipe,
   };
@@ -815,6 +842,7 @@ export function validateSettings(input: Settings): Settings | null {
       chatId: telegramChatId,
       userId: telegramUserId,
       enforceUserId: telegramEnforceUserId,
+      chainId: telegramChainId,
       pollIntervalMs: telegramPollIntervalMs,
       notifyTradeSubmitted: telegramNotifyTradeSubmitted,
       notifyTradeSuccess: telegramNotifyTradeSuccess,

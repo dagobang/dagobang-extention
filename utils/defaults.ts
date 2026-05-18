@@ -473,6 +473,7 @@ export function defaultSettings(): Settings {
       chatId: '',
       userId: '',
       enforceUserId: false,
+      chainId: 56,
       pollIntervalMs: 2000,
       notifyTradeSubmitted: true,
       notifyTradeSuccess: true,

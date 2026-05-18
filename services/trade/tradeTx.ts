@@ -362,7 +362,6 @@ export async function sendTransaction(
     const scaled = (value * dynamicMultiplierBps + 9999n) / 10000n;
     return scaled > 0n ? scaled : 1n;
   };
-
   const resolveDynamicFees = async () => {
     const feeStart = Date.now();
     try {

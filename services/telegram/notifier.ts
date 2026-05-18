@@ -178,8 +178,9 @@ export function createTelegramNotifier(deps: {
     ].filter(Boolean).join('\n');
     const rows: Array<Array<{ text: string; callbackData: string }>> = [];
     const tokenAddress = String(input.tokenAddress || '').trim();
+    const buttonChainId = typeof input.chainId === 'number' ? input.chainId : null;
     if (/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
-      rows.push([{ text: '🔍 查看代币', callbackData: `act:token:${tokenAddress}` }]);
+      rows.push([{ text: '🔍 查看代币', callbackData: buttonChainId ? `act:token:${buttonChainId}:${tokenAddress}` : `act:token:${tokenAddress}` }]);
     }
     rows.push([{ text: '↩️ 返回菜单', callbackData: 'act:menu' }]);
     return await sendText(
@@ -293,7 +294,7 @@ export function createTelegramNotifier(deps: {
         inlineKeyboard: [
           [
             { text: '🔄 刷新', callbackData: `act:xso:${record.id}` },
-            { text: '🔍 查看代币', callbackData: `act:token:${record.tokenAddress}` },
+            { text: '🔍 查看代币', callbackData: `act:token:${record.chainId}:${record.tokenAddress}` },
           ],
         ],
       }
