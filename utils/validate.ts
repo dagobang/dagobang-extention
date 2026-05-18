@@ -198,6 +198,9 @@ export function validateSettings(input: Settings): Settings | null {
   const visionReportMenuEnabled = typeof (input as any)?.ui?.visionReportEnabled === 'boolean'
     ? (input as any).ui.visionReportEnabled
     : ((defaults as any)?.ui?.visionReportEnabled ?? false);
+  const consoleLogsEnabled = typeof (input as any)?.ui?.consoleLogsEnabled === 'boolean'
+    ? (input as any).ui.consoleLogsEnabled
+    : ((defaults as any)?.ui?.consoleLogsEnabled ?? false);
   const tradeSuccessSoundEnabled = typeof (input as any).tradeSuccessSoundEnabled === 'boolean'
     ? (input as any).tradeSuccessSoundEnabled
     : ((defaults as any).tradeSuccessSoundEnabled ?? false);
@@ -803,6 +806,7 @@ export function validateSettings(input: Settings): Settings | null {
       quickCookingEnabled,
       newPoolMonitorEnabled,
       newCoinSniperEnabled,
+      consoleLogsEnabled,
       visionReportEnabled: visionReportMenuEnabled,
     },
     telegram: {

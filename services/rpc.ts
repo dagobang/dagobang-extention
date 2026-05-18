@@ -283,7 +283,8 @@ export class RpcService {
     const settings = await SettingsService.get();
     const chainId = input.chainId ?? settings.chainId;
     const caller = String(input.caller || 'rpc.read').trim() || 'rpc.read';
-    const shouldDebugRead = chainId === 999;
+    const consoleLogsEnabled = settings.ui?.consoleLogsEnabled === true;
+    const shouldDebugRead = consoleLogsEnabled && chainId === 999;
     const urls = this.resolveReadUrls(settings, chainId, input.scope ?? 'public', input.txSide);
     if (!urls.length) {
       const client = await this.getClient(chainId);
@@ -309,13 +310,15 @@ export class RpcService {
           return result;
         } catch (error: any) {
           const message = String(error?.shortMessage || error?.message || error || '');
-          console.log('[rpc.read.fail]', {
-            chainId,
-            caller,
-            url,
-            elapsedMs: Date.now() - startedAt,
-            error: message,
-          });
+          if (shouldDebugRead) {
+            console.log('[rpc.read.fail]', {
+              chainId,
+              caller,
+              url,
+              elapsedMs: Date.now() - startedAt,
+              error: message,
+            });
+          }
           throw error;
         }
       },

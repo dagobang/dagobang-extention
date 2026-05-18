@@ -527,7 +527,7 @@ export default defineBackground(() => {
               chainId: msg.chainId,
               tokenAddress: msg.tokenAddress,
               tokenInfo: msg.tokenInfo ?? null,
-              cacheTtlMs: 3000,
+              cacheTtlMs: 5000,
             });
             return { ok: true, priceUsd };
           }

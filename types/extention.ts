@@ -302,6 +302,7 @@ export type SwitchSettings = {
   newPoolMonitorEnabled?: boolean;
   newCoinSniperEnabled?: boolean;
   visionReportEnabled?: boolean;
+  consoleLogsEnabled?: boolean;
 };
 
 export type TelegramSettings = {

@@ -7,6 +7,7 @@ import { hyperTokens } from '@/constants/tokens/chains/hyper';
 import type { TokenInfo } from '@/types/token';
 
 import { RpcService } from '../rpc';
+import { SettingsService } from '../settings';
 import { quoteHyperSellToUsdc } from '../trade/tradeHyper';
 
 const erc20MetaAbi = parseAbi([
@@ -155,10 +156,13 @@ export class TokenAltfunService {
     if (!bonding || !/^0x[a-fA-F0-9]{40}$/.test(bonding)) return null;
 
     const startedAt = Date.now();
-    console.log('[altfun.tokenInfo.rpc.start]', {
-      chainId,
-      tokenAddress: tokenAddress.toLowerCase(),
-    });
+    const consoleLogsEnabled = (await SettingsService.get()).ui?.consoleLogsEnabled === true;
+    if (consoleLogsEnabled) {
+      console.log('[altfun.tokenInfo.rpc.start]', {
+        chainId,
+        tokenAddress: tokenAddress.toLowerCase(),
+      });
+    }
     return await RpcService.withBalancedReadClient({
       chainId: ChainId.HYPER,
       caller: 'altfun.tokenInfo',
@@ -237,14 +241,16 @@ export class TokenAltfunService {
           ltAddress,
           creator,
         } as TokenInfo & { ltAddress: `0x${string}`; creator: `0x${string}` };
-        console.log('[altfun.tokenInfo.rpc.done]', {
-          chainId,
-          tokenAddress: tokenAddress.toLowerCase(),
-          elapsedMs: Date.now() - startedAt,
-          graduated: isGraduated,
-          hasPrice: priceUsd > 0,
-          hasLiquidity: liquidityUsd > 0,
-        });
+        if (consoleLogsEnabled) {
+          console.log('[altfun.tokenInfo.rpc.done]', {
+            chainId,
+            tokenAddress: tokenAddress.toLowerCase(),
+            elapsedMs: Date.now() - startedAt,
+            graduated: isGraduated,
+            hasPrice: priceUsd > 0,
+            hasLiquidity: liquidityUsd > 0,
+          });
+        }
         return result;
       },
     });

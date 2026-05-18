@@ -14,7 +14,7 @@ import { isHyperAltfunPlatform, quoteHyperSellToUsdc } from '../trade/tradeHyper
 
 export class TokenService {
   private static poolPairCache = new Map<string, { token0: `0x${string}`; token1: `0x${string}` }>();
-  private static bnbUsdCache = { ts: 0, value: 0 };
+  private static nativeUsdCache = new Map<number, { ts: number; value: number }>();
   private static tokenUsdCache = new Map<string, { ts: number; value: number }>();
   private static balanceCacheTtlMs = 1000;
   private static nativeBalanceCache = new Map<string, { ts: number; value: string }>();
@@ -198,7 +198,8 @@ export class TokenService {
 
     const getNativePriceUsd = async () => {
       const now2 = Date.now();
-      if (this.bnbUsdCache.value > 0 && now2 - this.bnbUsdCache.ts < 30_000) return this.bnbUsdCache.value;
+      const nativeCached = this.nativeUsdCache.get(chainId);
+      if (nativeCached && nativeCached.value > 0 && now2 - nativeCached.ts < 30_000) return nativeCached.value;
       const amountOut = (await TradeService.quoteBestExactIn(
         chainId,
         wNativeAddress as `0x${string}`,
@@ -210,11 +211,18 @@ export class TokenService {
       )).amountOut;
       const v = amountOut > 0n ? toNumberFromUnits(amountOut, usdcToken.decimals) : 0;
       if (v > 0) {
-        this.bnbUsdCache.ts = now2;
-        this.bnbUsdCache.value = v;
+        this.nativeUsdCache.set(chainId, { ts: now2, value: v });
       }
       return v;
     };
+
+    if (tokenAddress.toLowerCase() === wNativeAddress.toLowerCase()) {
+      const nativeUsd = await getNativePriceUsd();
+      if (nativeUsd > 0) {
+        this.tokenUsdCache.set(key, { ts: now, value: nativeUsd });
+        return nativeUsd;
+      }
+    }
 
     const tokenDecimals = tokenInfo?.decimals ?? (await this.getMeta(tokenAddress, chainId)).decimals;
     const oneToken = 10n ** BigInt(tokenDecimals);

@@ -19,6 +19,9 @@ export class TokenAPI {
     private static tokenInfoCache = new Map<string, { ts: number; value: TokenInfo | null }>();
     private static tokenInfoInFlight = new Map<string, Promise<TokenInfo | null>>();
     private static readonly altfunGraduatedTokenInfoCacheTtlMs = 15000;
+    private static shouldDebugAltfunTokenInfo() {
+        return (window as any).__DAGOBANG_SETTINGS__?.ui?.consoleLogsEnabled === true;
+    }
     private static toBalanceKey(platform: string, chain: string, address: string, tokenAddress: string) {
         return `${platform}:${chain}:${address.toLowerCase()}:${tokenAddress.toLowerCase()}`;
     }
@@ -47,7 +50,7 @@ export class TokenAPI {
         const cached = this.tokenInfoCache.get(key);
         const effectiveCachedTtl = this.resolveTokenInfoCacheTtlMs(platform, requestedTtl, cached?.value);
         if (effectiveCachedTtl > 0 && cached && now - cached.ts < effectiveCachedTtl) {
-            if (platform === 'altfun') {
+            if (platform === 'altfun' && this.shouldDebugAltfunTokenInfo()) {
                 console.log('[tokenInfo.cache.hit]', {
                     platform,
                     chain,
@@ -62,7 +65,7 @@ export class TokenAPI {
         }
         const inflight = this.tokenInfoInFlight.get(key);
         if (inflight) {
-            if (platform === 'altfun') {
+            if (platform === 'altfun' && this.shouldDebugAltfunTokenInfo()) {
                 console.log('[tokenInfo.inflight.reuse]', {
                     platform,
                     chain,
@@ -75,7 +78,8 @@ export class TokenAPI {
         const p = (async (): Promise<TokenInfo | null> => {
             const startedAt = Date.now();
             let nextValue: TokenInfo | null = null;
-            if (platform === 'altfun') {
+            const shouldDebugAltfun = platform === 'altfun' && this.shouldDebugAltfunTokenInfo();
+            if (shouldDebugAltfun) {
                 console.log('[tokenInfo.fetch.start]', {
                     platform,
                     chain,
@@ -127,7 +131,7 @@ export class TokenAPI {
                 }
             }
             this.tokenInfoCache.set(key, { ts: Date.now(), value: nextValue });
-            if (platform === 'altfun') {
+            if (shouldDebugAltfun) {
                 const effectiveNextTtl = this.resolveTokenInfoCacheTtlMs(platform, requestedTtl, nextValue);
                 console.log('[tokenInfo.fetch.done]', {
                     platform,

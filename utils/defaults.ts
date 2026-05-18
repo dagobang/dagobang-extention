@@ -465,6 +465,7 @@ export function defaultSettings(): Settings {
       newPoolMonitorEnabled: false,
       newCoinSniperEnabled: false,
       visionReportEnabled: false,
+      consoleLogsEnabled: false,
     },
     telegram: {
       enabled: false,
