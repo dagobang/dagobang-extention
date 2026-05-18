@@ -40,51 +40,101 @@ type RpcNodeProfile = {
 
 type SortKey = 'name' | 'score' | 'latency' | 'usage';
 
+const RPC_PANEL_WIDTH = 360;
+const RPC_PANEL_MIN_HEIGHT = 360;
+const RPC_PANEL_DEFAULT_HEIGHT = 620;
+
+const clampRpcPanelHeight = (value: number, panelTop: number) => {
+  const viewportHeight = window.innerHeight || 0;
+  const maxHeight = Math.max(RPC_PANEL_MIN_HEIGHT, viewportHeight - Math.max(0, panelTop) - 12);
+  return Math.min(Math.max(RPC_PANEL_MIN_HEIGHT, value), maxHeight);
+};
+
+const clampRpcPanelPos = (value: { x: number; y: number }, panelHeight: number) => {
+  const width = window.innerWidth || 0;
+  const height = window.innerHeight || 0;
+  const clampedX = Math.min(Math.max(0, value.x), Math.max(0, width - RPC_PANEL_WIDTH));
+  const clampedY = Math.min(Math.max(0, value.y), Math.max(0, height - panelHeight));
+  return { x: clampedX, y: clampedY };
+};
+
 export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPanelProps) {
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
-    const defaultX = Math.max(0, width - 340);
+    const defaultX = Math.max(0, width - RPC_PANEL_WIDTH);
     const defaultY = 420;
     return { x: defaultX, y: defaultY };
   });
   const posRef = useRef(pos);
+  const [panelHeight, setPanelHeight] = useState(() => clampRpcPanelHeight(RPC_PANEL_DEFAULT_HEIGHT, 420));
+  const panelHeightRef = useRef(panelHeight);
   const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
+  const resizing = useRef<null | { startY: number; baseHeight: number }>(null);
 
   useEffect(() => {
     posRef.current = pos;
   }, [pos]);
 
   useEffect(() => {
+    panelHeightRef.current = panelHeight;
+  }, [panelHeight]);
+
+  useEffect(() => {
     try {
       const key = 'dagobang_rpc_panel_pos';
       const stored = window.localStorage.getItem(key);
-      if (!stored) return;
-      const parsed = JSON.parse(stored);
-      if (!parsed || typeof parsed.x !== 'number' || typeof parsed.y !== 'number') return;
-      const width = window.innerWidth || 0;
-      const height = window.innerHeight || 0;
-      const clampedX = Math.min(Math.max(0, parsed.x), Math.max(0, width - 340));
-      const clampedY = Math.min(Math.max(0, parsed.y), Math.max(0, height - 80));
-      setPos({ x: clampedX, y: clampedY });
+      const rawHeight = window.localStorage.getItem('dagobang_rpc_panel_height_v1');
+      const storedHeight = rawHeight ? Number(rawHeight) : NaN;
+      const parsed = stored ? JSON.parse(stored) : null;
+      const nextPos = parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number'
+        ? { x: parsed.x, y: parsed.y }
+        : posRef.current;
+      const nextHeight = Number.isFinite(storedHeight)
+        ? clampRpcPanelHeight(storedHeight, nextPos.y)
+        : clampRpcPanelHeight(panelHeightRef.current, nextPos.y);
+      setPanelHeight(nextHeight);
+      setPos(clampRpcPanelPos(nextPos, nextHeight));
     } catch {
     }
   }, []);
 
   useEffect(() => {
+    const onResize = () => {
+      const nextHeight = clampRpcPanelHeight(panelHeightRef.current, posRef.current.y);
+      setPanelHeight(nextHeight);
+      setPos((prev) => clampRpcPanelPos(prev, nextHeight));
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+
+  useEffect(() => {
     const onMove = (e: PointerEvent) => {
-      if (!dragging.current) return;
-      const dx = e.clientX - dragging.current.startX;
-      const dy = e.clientY - dragging.current.startY;
-      const nextX = dragging.current.baseX + dx;
-      const nextY = dragging.current.baseY + dy;
-      setPos({ x: nextX, y: nextY });
+      if (dragging.current) {
+        const dx = e.clientX - dragging.current.startX;
+        const dy = e.clientY - dragging.current.startY;
+        const nextX = dragging.current.baseX + dx;
+        const nextY = dragging.current.baseY + dy;
+        setPos(clampRpcPanelPos({ x: nextX, y: nextY }, panelHeightRef.current));
+        return;
+      }
+      if (resizing.current) {
+        const dy = e.clientY - resizing.current.startY;
+        setPanelHeight(clampRpcPanelHeight(resizing.current.baseHeight + dy, posRef.current.y));
+      }
     };
     const onUp = () => {
-      if (!dragging.current) return;
+      const didDrag = !!dragging.current;
+      const didResize = !!resizing.current;
       dragging.current = null;
+      resizing.current = null;
+      if (!didDrag && !didResize) return;
       try {
         const key = 'dagobang_rpc_panel_pos';
         window.localStorage.setItem(key, JSON.stringify(posRef.current));
+        window.localStorage.setItem('dagobang_rpc_panel_height_v1', String(panelHeightRef.current));
       } catch {
       }
     };
@@ -396,7 +446,10 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
       className="fixed z-[2147483647]"
       style={{ left: pos.x, top: pos.y }}
     >
-      <div className="w-[360px] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-emerald-500/40 text-[12px]">
+      <div
+        className="flex rounded-xl border border-zinc-800 bg-[#0F0F11] text-[12px] text-zinc-100 shadow-lg shadow-emerald-500/40"
+        style={{ width: RPC_PANEL_WIDTH, height: panelHeight, flexDirection: 'column' }}
+      >
         <div
           className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 cursor-grab"
           onPointerDown={(e) => {
@@ -421,7 +474,7 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
             {tt('contentUi.rpcPanel.close')}
           </button>
         </div>
-        <div className="p-3 space-y-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
           <div className="flex items-center justify-between text-[11px] text-zinc-400">
             <div>{tt('contentUi.rpcPanel.nodeCount')}</div>
             <div className="font-mono text-[11px] text-zinc-200">{totalCount}</div>
@@ -475,7 +528,7 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
             </button>
           </div>
 
-          <div className="max-h-[260px] overflow-auto border border-zinc-800 rounded-md divide-y divide-zinc-800">
+          <div className="min-h-0 flex-1 overflow-auto rounded-md border border-zinc-800 divide-y divide-zinc-800">
             {totalCount === 0 ? (
               <div className="px-3 py-2 text-[11px] text-zinc-500">
                 {tt('contentUi.rpcPanel.empty')}
@@ -613,6 +666,28 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
               </>
             )}
           </div>
+        </div>
+        <div
+          className="flex shrink-0 cursor-ns-resize justify-center border-t border-zinc-800/60 px-4 py-1.5"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            resizing.current = {
+              startY: e.clientY,
+              baseHeight: panelHeightRef.current,
+            };
+          }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            const nextHeight = clampRpcPanelHeight(RPC_PANEL_DEFAULT_HEIGHT, posRef.current.y);
+            setPanelHeight(nextHeight);
+            try {
+              window.localStorage.setItem('dagobang_rpc_panel_height_v1', String(nextHeight));
+            } catch {
+            }
+          }}
+          title="拖动调整高度，双击恢复默认高度"
+        >
+          <div className="h-1 w-14 rounded-full bg-zinc-700/80" />
         </div>
       </div>
     </div>

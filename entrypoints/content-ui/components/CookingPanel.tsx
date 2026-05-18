@@ -19,11 +19,21 @@ type CookingPanelProps = {
   tokenInfoLoading?: boolean;
 };
 
-function clampCookingPanelPos(pos: { x: number; y: number }) {
+const COOKING_PANEL_WIDTH = 360;
+const COOKING_PANEL_MIN_HEIGHT = 420;
+const COOKING_PANEL_DEFAULT_HEIGHT = 700;
+
+function clampCookingPanelHeight(value: number, panelTop: number) {
+  const viewportHeight = window.innerHeight || 0;
+  const maxHeight = Math.max(COOKING_PANEL_MIN_HEIGHT, viewportHeight - Math.max(0, panelTop) - 12);
+  return Math.min(Math.max(COOKING_PANEL_MIN_HEIGHT, value), maxHeight);
+}
+
+function clampCookingPanelPos(pos: { x: number; y: number }, panelHeight: number) {
   const width = window.innerWidth || 0;
   const height = window.innerHeight || 0;
-  const clampedX = Math.min(Math.max(0, pos.x), Math.max(0, width - 340));
-  const clampedY = Math.min(Math.max(0, pos.y), Math.max(0, height - 80));
+  const clampedX = Math.min(Math.max(0, pos.x), Math.max(0, width - COOKING_PANEL_WIDTH));
+  const clampedY = Math.min(Math.max(0, pos.y), Math.max(0, height - panelHeight));
   return { x: clampedX, y: clampedY };
 }
 
@@ -55,44 +65,80 @@ export function CookingPanel({
   type AutoSellRule = { marketCapUsd: string; sellPercent: string };
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
-    const defaultX = Math.max(0, width - 340);
+    const defaultX = Math.max(0, width - COOKING_PANEL_WIDTH);
     const defaultY = 360;
     return { x: defaultX, y: defaultY };
   });
   const posRef = useRef(pos);
+  const [panelHeight, setPanelHeight] = useState(() => clampCookingPanelHeight(COOKING_PANEL_DEFAULT_HEIGHT, 360));
+  const panelHeightRef = useRef(panelHeight);
   const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
+  const resizing = useRef<null | { startY: number; baseHeight: number }>(null);
 
   useEffect(() => {
     posRef.current = pos;
   }, [pos]);
 
   useEffect(() => {
+    panelHeightRef.current = panelHeight;
+  }, [panelHeight]);
+
+  useEffect(() => {
     try {
       const key = 'dagobang_cooking_panel_pos';
       const stored = window.localStorage.getItem(key);
-      if (!stored) return;
-      const parsed = JSON.parse(stored);
-      if (!parsed || typeof parsed.x !== 'number' || typeof parsed.y !== 'number') return;
-      setPos(clampCookingPanelPos(parsed));
+      const rawHeight = window.localStorage.getItem('dagobang_cooking_panel_height_v1');
+      const storedHeight = rawHeight ? Number(rawHeight) : NaN;
+      const parsed = stored ? JSON.parse(stored) : null;
+      const nextPos = parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number'
+        ? parsed
+        : posRef.current;
+      const nextHeight = Number.isFinite(storedHeight)
+        ? clampCookingPanelHeight(storedHeight, nextPos.y)
+        : clampCookingPanelHeight(panelHeightRef.current, nextPos.y);
+      setPanelHeight(nextHeight);
+      setPos(clampCookingPanelPos(nextPos, nextHeight));
     } catch {
     }
   }, []);
 
   useEffect(() => {
+    const onResize = () => {
+      const nextHeight = clampCookingPanelHeight(panelHeightRef.current, posRef.current.y);
+      setPanelHeight(nextHeight);
+      setPos((prev) => clampCookingPanelPos(prev, nextHeight));
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+
+  useEffect(() => {
     const onMove = (e: PointerEvent) => {
-      if (!dragging.current) return;
-      const dx = e.clientX - dragging.current.startX;
-      const dy = e.clientY - dragging.current.startY;
-      const nextX = dragging.current.baseX + dx;
-      const nextY = dragging.current.baseY + dy;
-      setPos(clampCookingPanelPos({ x: nextX, y: nextY }));
+      if (dragging.current) {
+        const dx = e.clientX - dragging.current.startX;
+        const dy = e.clientY - dragging.current.startY;
+        const nextX = dragging.current.baseX + dx;
+        const nextY = dragging.current.baseY + dy;
+        setPos(clampCookingPanelPos({ x: nextX, y: nextY }, panelHeightRef.current));
+        return;
+      }
+      if (resizing.current) {
+        const dy = e.clientY - resizing.current.startY;
+        setPanelHeight(clampCookingPanelHeight(resizing.current.baseHeight + dy, posRef.current.y));
+      }
     };
     const onUp = () => {
-      if (!dragging.current) return;
+      const didDrag = !!dragging.current;
+      const didResize = !!resizing.current;
       dragging.current = null;
+      resizing.current = null;
+      if (!didDrag && !didResize) return;
       try {
         const key = 'dagobang_cooking_panel_pos';
-        window.localStorage.setItem(key, JSON.stringify(clampCookingPanelPos(posRef.current)));
+        window.localStorage.setItem(key, JSON.stringify(clampCookingPanelPos(posRef.current, panelHeightRef.current)));
+        window.localStorage.setItem('dagobang_cooking_panel_height_v1', String(panelHeightRef.current));
       } catch {
       }
     };
@@ -548,7 +594,10 @@ export function CookingPanel({
       className="fixed z-[2147483647]"
       style={{ left: pos.x, top: pos.y }}
     >
-      <div className="w-[360px] h-[700px] rounded-xl border border-zinc-800 bg-[#0F0F11] text-zinc-100 shadow-lg shadow-amber-500/40 text-[12px] flex flex-col">
+      <div
+        className="rounded-xl border border-zinc-800 bg-[#0F0F11] text-[12px] text-zinc-100 shadow-lg shadow-amber-500/40 flex flex-col"
+        style={{ width: COOKING_PANEL_WIDTH, height: panelHeight }}
+      >
         <div
           className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 cursor-grab"
           onPointerDown={(e) => {
@@ -868,6 +917,28 @@ export function CookingPanel({
           >
             发布
           </button>
+        </div>
+        <div
+          className="flex shrink-0 cursor-ns-resize justify-center border-t border-zinc-800/60 px-4 py-1.5"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            resizing.current = {
+              startY: e.clientY,
+              baseHeight: panelHeightRef.current,
+            };
+          }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            const nextHeight = clampCookingPanelHeight(COOKING_PANEL_DEFAULT_HEIGHT, posRef.current.y);
+            setPanelHeight(nextHeight);
+            try {
+              window.localStorage.setItem('dagobang_cooking_panel_height_v1', String(nextHeight));
+            } catch {
+            }
+          }}
+          title="拖动调整高度，双击恢复默认高度"
+        >
+          <div className="h-1 w-14 rounded-full bg-zinc-700/80" />
         </div>
       </div>
     </div>
