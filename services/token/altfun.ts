@@ -35,74 +35,144 @@ const pairV2Abi = parseAbi([
 ]);
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
+type AltfunStaticTokenMeta = {
+  name: string;
+  symbol: string;
+  decimals: number;
+  totalSupply: bigint;
+  creator: `0x${string}`;
+  ltAddress: `0x${string}`;
+};
+type PairStaticMeta = {
+  token0: `0x${string}`;
+  token1: `0x${string}`;
+};
 
 export class TokenAltfunService {
+  private static staticMetaCache = new Map<string, AltfunStaticTokenMeta | null>();
+  private static staticMetaInFlight = new Map<string, Promise<AltfunStaticTokenMeta | null>>();
+  private static pairStaticMetaCache = new Map<string, PairStaticMeta>();
+  private static pairStaticMetaInFlight = new Map<string, Promise<PairStaticMeta>>();
+  private static async getStaticTokenMeta(
+    client: Awaited<ReturnType<typeof RpcService.getClient>>,
+    bonding: `0x${string}`,
+    tokenAddress: `0x${string}`,
+  ): Promise<AltfunStaticTokenMeta | null> {
+    const key = tokenAddress.toLowerCase();
+    const cached = this.staticMetaCache.get(key);
+    if (cached !== undefined) return cached;
+    const inflight = this.staticMetaInFlight.get(key);
+    if (inflight) return await inflight;
+    const p = (async () => {
+      const [[name, symbol, decimals, totalSupply], creator, ltAddress] = await Promise.all([
+        Promise.all([
+          client.readContract({
+            address: tokenAddress,
+            abi: erc20MetaAbi,
+            functionName: 'name',
+          }) as Promise<string>,
+          client.readContract({
+            address: tokenAddress,
+            abi: erc20MetaAbi,
+            functionName: 'symbol',
+          }) as Promise<string>,
+          client.readContract({
+            address: tokenAddress,
+            abi: erc20MetaAbi,
+            functionName: 'decimals',
+          }) as Promise<number>,
+          client.readContract({
+            address: tokenAddress,
+            abi: erc20MetaAbi,
+            functionName: 'totalSupply',
+          }) as Promise<bigint>,
+        ]),
+        client.readContract({
+          address: bonding,
+          abi: hyperBondingAbi,
+          functionName: 'creatorOf',
+          args: [tokenAddress],
+        }) as Promise<`0x${string}`>,
+        client.readContract({
+          address: bonding,
+          abi: hyperBondingAbi,
+          functionName: 'ltOf',
+          args: [tokenAddress],
+        }) as Promise<`0x${string}`>,
+      ]);
+      if (!creator || creator.toLowerCase() === ZERO_ADDRESS) return null;
+      return {
+        name,
+        symbol,
+        decimals: Number(decimals),
+        totalSupply,
+        creator,
+        ltAddress,
+      } satisfies AltfunStaticTokenMeta;
+    })().finally(() => {
+      this.staticMetaInFlight.delete(key);
+    });
+    this.staticMetaInFlight.set(key, p);
+    const resolved = await p;
+    this.staticMetaCache.set(key, resolved);
+    return resolved;
+  }
+  private static async getPairStaticMeta(
+    client: Awaited<ReturnType<typeof RpcService.getClient>>,
+    pairAddress: `0x${string}`,
+  ): Promise<PairStaticMeta> {
+    const key = pairAddress.toLowerCase();
+    const cached = this.pairStaticMetaCache.get(key);
+    if (cached) return cached;
+    const inflight = this.pairStaticMetaInFlight.get(key);
+    if (inflight) return await inflight;
+    const p = (async () => {
+      const [token0, token1] = await Promise.all([
+        client.readContract({
+          address: pairAddress,
+          abi: pairV2Abi,
+          functionName: 'token0',
+        }) as Promise<`0x${string}`>,
+        client.readContract({
+          address: pairAddress,
+          abi: pairV2Abi,
+          functionName: 'token1',
+        }) as Promise<`0x${string}`>,
+      ]);
+      return { token0, token1 } satisfies PairStaticMeta;
+    })().finally(() => {
+      this.pairStaticMetaInFlight.delete(key);
+    });
+    this.pairStaticMetaInFlight.set(key, p);
+    const resolved = await p;
+    this.pairStaticMetaCache.set(key, resolved);
+    return resolved;
+  }
   static async getTokenInfo(chainId: number, tokenAddress: `0x${string}`): Promise<TokenInfo | null> {
     if (chainId !== ChainId.HYPER) return null;
 
     const bonding = DeployAddress[ChainId.HYPER]?.[ContractNames.HyperBonding]?.address;
     if (!bonding || !/^0x[a-fA-F0-9]{40}$/.test(bonding)) return null;
 
+    const startedAt = Date.now();
+    console.log('[altfun.tokenInfo.rpc.start]', {
+      chainId,
+      tokenAddress: tokenAddress.toLowerCase(),
+    });
     return await RpcService.withBalancedReadClient({
       chainId: ChainId.HYPER,
+      caller: 'altfun.tokenInfo',
       run: async (client) => {
-        const [[name, symbol, decimals, totalSupply], creator, ltAddress, isGraduating, isGraduated, graduatedPair] = await Promise.all([
-          Promise.all([
-            client.readContract({
-              address: tokenAddress,
-              abi: erc20MetaAbi,
-              functionName: 'name',
-            }) as Promise<string>,
-            client.readContract({
-              address: tokenAddress,
-              abi: erc20MetaAbi,
-              functionName: 'symbol',
-            }) as Promise<string>,
-            client.readContract({
-              address: tokenAddress,
-              abi: erc20MetaAbi,
-              functionName: 'decimals',
-            }) as Promise<number>,
-            client.readContract({
-              address: tokenAddress,
-              abi: erc20MetaAbi,
-              functionName: 'totalSupply',
-            }) as Promise<bigint>,
-          ]),
-          client.readContract({
-            address: bonding as `0x${string}`,
-            abi: hyperBondingAbi,
-            functionName: 'creatorOf',
-            args: [tokenAddress],
-          }) as Promise<`0x${string}`>,
-          client.readContract({
-            address: bonding as `0x${string}`,
-            abi: hyperBondingAbi,
-            functionName: 'ltOf',
-            args: [tokenAddress],
-          }) as Promise<`0x${string}`>,
-          client.readContract({
-            address: bonding as `0x${string}`,
-            abi: hyperBondingAbi,
-            functionName: 'isGraduating',
-            args: [tokenAddress],
-          }) as Promise<boolean>,
-          client.readContract({
-            address: bonding as `0x${string}`,
-            abi: hyperBondingAbi,
-            functionName: 'isGraduated',
-            args: [tokenAddress],
-          }) as Promise<boolean>,
-          client.readContract({
-            address: bonding as `0x${string}`,
-            abi: hyperBondingAbi,
-            functionName: 'graduatedPair',
-            args: [tokenAddress],
-          }) as Promise<`0x${string}`>,
-        ]);
-
-        if (!creator || creator.toLowerCase() === ZERO_ADDRESS) return null;
-
+        const staticMeta = await this.getStaticTokenMeta(client, bonding as `0x${string}`, tokenAddress);
+        if (!staticMeta) return null;
+        const { name, symbol, decimals, totalSupply, creator, ltAddress } = staticMeta;
+        const graduatedPair = await (client.readContract({
+          address: bonding as `0x${string}`,
+          abi: hyperBondingAbi,
+          functionName: 'graduatedPair',
+          args: [tokenAddress],
+        }) as Promise<`0x${string}`>);
+        const isGraduated = graduatedPair.toLowerCase() !== ZERO_ADDRESS;
         const normalizedDecimals = Number(decimals);
         const oneToken = 10n ** BigInt(normalizedDecimals || 18);
         const quotedUsdc = await quoteHyperSellToUsdc(tokenAddress, oneToken).catch(() => 0n);
@@ -113,17 +183,8 @@ export class TokenAltfunService {
         let liquidityUsd = 0;
         if (isGraduated && graduatedPair.toLowerCase() !== ZERO_ADDRESS && ltAddress.toLowerCase() !== ZERO_ADDRESS) {
           try {
-            const [token0, token1, reserves] = await Promise.all([
-              client.readContract({
-                address: graduatedPair,
-                abi: pairV2Abi,
-                functionName: 'token0',
-              }) as Promise<`0x${string}`>,
-              client.readContract({
-                address: graduatedPair,
-                abi: pairV2Abi,
-                functionName: 'token1',
-              }) as Promise<`0x${string}`>,
+            const [{ token0, token1 }, reserves] = await Promise.all([
+              this.getPairStaticMeta(client, graduatedPair),
               client.readContract({
                 address: graduatedPair,
                 abi: pairV2Abi,
@@ -149,17 +210,17 @@ export class TokenAltfunService {
           }
         }
 
-        return {
+        const result = {
           chain: 'hyper',
           address: tokenAddress,
           name,
           symbol,
-          decimals: Number(decimals),
+          decimals: normalizedDecimals,
           logo: '',
           launchpad: 'altfun',
-          launchpad_progress: isGraduated ? 100 : isGraduating ? 99 : 0,
+          launchpad_progress: isGraduated ? 100 : 0,
           launchpad_platform: 'altfun',
-          launchpad_status: isGraduated ? 1 : isGraduating ? 2 : 0,
+          launchpad_status: isGraduated ? 1 : 0,
           quote_token: 'USDC',
           quote_token_address: hyperTokens.usdc.address,
           pool_pair: isGraduated && graduatedPair.toLowerCase() !== ZERO_ADDRESS ? graduatedPair : undefined,
@@ -176,6 +237,15 @@ export class TokenAltfunService {
           ltAddress,
           creator,
         } as TokenInfo & { ltAddress: `0x${string}`; creator: `0x${string}` };
+        console.log('[altfun.tokenInfo.rpc.done]', {
+          chainId,
+          tokenAddress: tokenAddress.toLowerCase(),
+          elapsedMs: Date.now() - startedAt,
+          graduated: isGraduated,
+          hasPrice: priceUsd > 0,
+          hasLiquidity: liquidityUsd > 0,
+        });
+        return result;
       },
     });
   }

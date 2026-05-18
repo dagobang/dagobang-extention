@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Account, Settings, XSniperBuyRecord, XSniperEvalPoint } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
+import { getChainIdByName } from '@/constants/chains';
 import { chainNames } from '@/constants/chains/chainName';
 import { extractLaunchpadPlatform } from '@/constants/launchpad';
 import { call } from '@/utils/messaging';
@@ -382,7 +383,11 @@ export function XSniperHistoryView({
   const sellByPercent = async (record: XSniperBuyRecord, pct: number) => {
     if (!settings) return;
     if (!isUnlocked) return;
-    const chainId = typeof record.chainId === 'number' ? record.chainId : settings.chainId;
+    const pageChainId = (() => {
+      const resolved = siteInfo?.chain ? getChainIdByName(siteInfo.chain) : 0;
+      return Number.isFinite(resolved) && resolved > 0 ? resolved : settings.chainId;
+    })();
+    const chainId = typeof record.chainId === 'number' ? record.chainId : pageChainId;
     const tokenAddressNormalized = String(record.tokenAddress || '').toLowerCase() as `0x${string}`;
     if (!tokenAddressNormalized || !tokenAddressNormalized.startsWith('0x')) return;
 
@@ -396,11 +401,11 @@ export function XSniperHistoryView({
       const address = state?.wallet?.address;
       if (!address) throw new Error('Wallet not ready');
 
-      const balRes = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address } as const);
+      const balRes = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address, chainId } as const);
       const balanceWei = BigInt(balRes.balanceWei || '0');
       if (balanceWei <= 0n) throw new Error('No balance');
 
-      const meta = await call({ type: 'token:getMeta', tokenAddress: tokenAddressNormalized } as const);
+      const meta = await call({ type: 'token:getMeta', tokenAddress: tokenAddressNormalized, chainId } as const);
       const chain = chainNames[chainId] ?? String(chainId);
       const httpTokenInfoRes = await call({
         type: 'token:getTokenInfo:fourmemeHttp',

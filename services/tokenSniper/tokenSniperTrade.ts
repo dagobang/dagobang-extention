@@ -435,7 +435,6 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
 
       for (const task of tokenSnipe.tasks) {
         if (!task || !task.id || !task.tokenAddress) continue;
-        if (Number(task.chain) !== Number(settings.chainId)) continue;
         if (signalActionAtMs <= Number(task.createdAt || 0)) continue;
         const taskTweetTypes = normalizeTaskTweetTypes(task);
         if (!taskTweetTypes.includes(signalType)) continue;

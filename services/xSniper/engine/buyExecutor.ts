@@ -136,7 +136,7 @@ export const tryAutoBuyOnce = async (input: {
   getKey: (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean; walletAddress?: `0x${string}` }) => string;
   boughtOnceAtMs: Map<string, number>;
   buyInFlight: Set<string>;
-  computeWsConfirm: (tokenAddress: `0x${string}`, nowMs: number, strategy: any) => {
+  computeWsConfirm: (chainId: number, tokenAddress: `0x${string}`, nowMs: number, strategy: any) => {
     pass: boolean;
     windowMs: number;
     stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number };
@@ -339,7 +339,7 @@ export const tryAutoBuyOnce = async (input: {
     }
 
     const confirmNowMs = Date.now();
-    const confirm = input.computeWsConfirm(input.tokenAddress, confirmNowMs, input.strategy);
+    const confirm = input.computeWsConfirm(input.chainId, input.tokenAddress, confirmNowMs, input.strategy);
     if (!confirm.pass) {
       if (dryRun) {
         const sigKey = typeof input.signal?.id === 'string' && input.signal.id.trim() ? input.signal.id.trim() : '';

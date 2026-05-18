@@ -12,6 +12,13 @@ export type WsSnapshot = {
   smartMoney?: number;
 };
 
+const normalizeSnapshotKey = (input: { chainId?: number | null; tokenAddress: `0x${string}` }) => {
+  const token = String(input.tokenAddress || '').trim().toLowerCase();
+  const chainId = Number(input.chainId);
+  if (Number.isFinite(chainId) && chainId > 0) return `${chainId}:${token}`;
+  return token;
+};
+
 export type WsConfirmFailedCheck = {
   key:
     | 'coverage'
@@ -41,6 +48,7 @@ export const shouldLogWsConfirmFail = (wsConfirmFailDedupe: Map<string, number>,
 };
 
 export const pushWsSnapshot = (input: {
+  chainId?: number;
   tokenAddress: `0x${string}`;
   metrics: TokenMetrics;
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>;
@@ -48,7 +56,8 @@ export const pushWsSnapshot = (input: {
   onUpdated: (tokenAddress: `0x${string}`, atMs: number) => void;
 }) => {
   const atMsRaw = typeof input.metrics.updatedAtMs === 'number' && input.metrics.updatedAtMs > 0 ? input.metrics.updatedAtMs : (input.nowMs ?? Date.now());
-  const list = input.wsSnapshotsByAddr.get(input.tokenAddress) ?? [];
+  const snapshotKey = normalizeSnapshotKey({ chainId: input.chainId, tokenAddress: input.tokenAddress });
+  const list = input.wsSnapshotsByAddr.get(snapshotKey) ?? [];
   const last = list.length ? list[list.length - 1] : null;
   if (last && Math.abs(last.atMs - atMsRaw) < 200) return;
   const next = list.concat({
@@ -64,17 +73,18 @@ export const pushWsSnapshot = (input: {
   const keepMs = 2 * 60 * 1000;
   const cutoff = atMsRaw - keepMs;
   const trimmed = next.filter((x) => x.atMs >= cutoff).slice(-80);
-  input.wsSnapshotsByAddr.set(input.tokenAddress, trimmed);
+  input.wsSnapshotsByAddr.set(snapshotKey, trimmed);
   input.onUpdated(input.tokenAddress, atMsRaw);
 };
 
 export const getWsWindowStats = (
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>,
+  chainId: number | undefined,
   tokenAddress: `0x${string}`,
   nowMs: number,
   windowMs: number
 ) => {
-  const list = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+  const list = wsSnapshotsByAddr.get(normalizeSnapshotKey({ chainId, tokenAddress })) ?? [];
   if (!list.length) return null;
   const cutoff = nowMs - windowMs;
   const cur = list[list.length - 1];
@@ -140,10 +150,11 @@ export const getWsWindowStats = (
 
 export const getWsDrawdownPctSince = (
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>,
+  chainId: number | undefined,
   tokenAddress: `0x${string}`,
   sinceMs: number
 ) => {
-  const list = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+  const list = wsSnapshotsByAddr.get(normalizeSnapshotKey({ chainId, tokenAddress })) ?? [];
   if (!list.length) return null;
   const cur = list[list.length - 1];
   const curMcap = typeof cur.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
@@ -161,6 +172,7 @@ export const getWsDrawdownPctSince = (
 
 export const computeWsConfirm = (
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>,
+  chainId: number | undefined,
   tokenAddress: `0x${string}`,
   nowMs: number,
   strategy: any
@@ -168,7 +180,7 @@ export const computeWsConfirm = (
   const enabled = strategy?.wsConfirmEnabled === true;
   if (!enabled) return { pass: true, stats: null as any, windowMs: 0, failedChecks: [] as WsConfirmFailedCheck[] };
   const windowMs = Math.max(500, Math.min(60_000, parseNumber(strategy?.wsConfirmWindowMs) ?? 5000));
-  const stats = getWsWindowStats(wsSnapshotsByAddr, tokenAddress, nowMs, windowMs);
+  const stats = getWsWindowStats(wsSnapshotsByAddr, chainId, tokenAddress, nowMs, windowMs);
   const minMcapChangePct = parseNumber(strategy?.wsConfirmMinMcapChangePct) ?? 0;
   const maxMcapChangePctRaw = parseNumber(strategy?.wsConfirmMaxMcapChangePct);
   const maxMcapChangePct = typeof maxMcapChangePctRaw === 'number' && Number.isFinite(maxMcapChangePctRaw)

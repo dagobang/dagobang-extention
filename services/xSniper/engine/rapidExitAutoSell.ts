@@ -147,6 +147,7 @@ export const registerRapidExitPosition = (input: {
 };
 
 export const maybeEvaluateRapidExitAutoSell = async (input: {
+  chainId: number;
   tokenAddress: `0x${string}`;
   nowMs: number;
   strategy: any;
@@ -181,7 +182,8 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
     };
   }) => Promise<boolean>;
 }) => {
-  const snapshots = input.wsSnapshotsByAddr.get(input.tokenAddress) ?? [];
+  const snapshotKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+  const snapshots = input.wsSnapshotsByAddr.get(snapshotKey) ?? [];
   const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
   const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
   if (!(curMcap != null && curMcap > 0)) return;
@@ -193,6 +195,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
   for (const posKey of keys) {
     const pos = input.rapidExitByPosKey.get(posKey);
     if (!pos) continue;
+    if (Number(pos.chainId) !== Number(input.chainId)) continue;
     if (pos.evalInProgress) continue;
     pos.evalInProgress = true;
     let cleanedUp = false;

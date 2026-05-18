@@ -5,7 +5,7 @@ import { getNativeSymbol } from '@/constants/chains/runtime';
 import type { Settings } from '@/types/extention';
 import { formatPriceValue } from '@/utils/format';
 import { t, type Locale } from '@/utils/i18n';
-import { useDynamicGasPreview } from './useDynamicGasPreview';
+import { getDynamicGasPreview } from './useDynamicGasPreview';
 
 type SellSectionProps = {
   formattedTokenBalance: string;
@@ -22,6 +22,7 @@ type SellSectionProps = {
   isUnlocked: boolean;
   onSell: (pct: number) => void;
   settings: Settings | null;
+  dynamicGasBasePriceWei: bigint | null;
   onToggleMode: () => void;
   onToggleGas: () => void;
   onTogglePriorityFeePreset: () => void;
@@ -53,6 +54,7 @@ export function SellSection({
   isUnlocked,
   onSell,
   settings,
+  dynamicGasBasePriceWei,
   onToggleMode,
   onToggleGas,
   onTogglePriorityFeePreset,
@@ -99,7 +101,7 @@ export function SellSection({
   const gasLabel = isDynamicGas
     ? `${t(`popup.settings.gas.${gasPreset}`, locale)} ${dynamicMultiplierLabel}`
     : t(`popup.settings.gas.${gasPreset}`, locale);
-  const dynamicGasPreview = useDynamicGasPreview(settings, gasPreset, isDynamicGas);
+  const dynamicGasPreview = getDynamicGasPreview(dynamicGasBasePriceWei, gasPreset);
   const gasTitle = isDynamicGas
     ? `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} (Dynamic)\n当前 gasPrice: ${dynamicGasPreview.baseGasPriceGweiText} Gwei\n倍率后 gasPrice: ${dynamicGasPreview.multipliedGasPriceGweiText} Gwei`
     : `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} ${gasValue} gwei`;

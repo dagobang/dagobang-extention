@@ -75,7 +75,7 @@ export const createSellExecutors = (deps: {
   broadcastToActiveTabs: (message: any) => Promise<void>;
   fetchTokenInfoFresh: (chainId: number, tokenAddress: `0x${string}`) => Promise<TokenInfo | null>;
   buildGenericTokenInfo: (chainId: number, tokenAddress: `0x${string}`) => Promise<TokenInfo | null>;
-  getLatestMarketCapUsd: (tokenAddress: `0x${string}`) => number | null;
+  getLatestMarketCapUsd: (chainId: number, tokenAddress: `0x${string}`) => number | null;
 }) => {
   const deleteSellInFlight = new Set<string>();
   const rapidSellInFlight = new Set<string>();
@@ -114,7 +114,7 @@ export const createSellExecutors = (deps: {
   }) => {
     let balanceWei = 0n;
     try {
-      balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, input.fromAddress));
+      balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, input.fromAddress, input.chainId));
     } catch {
       balanceWei = 0n;
     }
@@ -211,7 +211,7 @@ export const createSellExecutors = (deps: {
       const now = Date.now();
       const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
       const tweetUrl = buildTweetUrl(input.signal);
-      const latestMarketCapUsd = deps.getLatestMarketCapUsd(input.tokenAddress);
+      const latestMarketCapUsd = deps.getLatestMarketCapUsd(input.chainId, input.tokenAddress);
       const baseRecord: XSniperBuyRecord = {
         id: `${now}-${Math.random().toString(16).slice(2)}`,
         side: 'sell',
@@ -238,7 +238,7 @@ export const createSellExecutors = (deps: {
       if (input.dryRun) {
         const delayMs = await readDryRunSellDelayMs();
         if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-        const latestAfterDelay = deps.getLatestMarketCapUsd(input.tokenAddress);
+        const latestAfterDelay = deps.getLatestMarketCapUsd(input.chainId, input.tokenAddress);
         const now2 = Date.now();
         deps.emitRecord({
           ...baseRecord,
@@ -282,7 +282,7 @@ export const createSellExecutors = (deps: {
       if (!isTurbo) {
         let balanceWei = 0n;
         try {
-          balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, sellFromAddress));
+          balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, sellFromAddress, input.chainId));
         } catch {
           balanceWei = 0n;
         }
@@ -530,7 +530,7 @@ export const createSellExecutors = (deps: {
     rapidSellInFlight.add(dedupeKey);
     try {
       const now = Date.now();
-      const latestMarketCapUsd = deps.getLatestMarketCapUsd(input.tokenAddress);
+      const latestMarketCapUsd = deps.getLatestMarketCapUsd(input.chainId, input.tokenAddress);
       const triggerMarketCapUsd = Number(input.meta.triggerMarketCapUsd);
       const lockedTriggerMcapUsd =
         Number.isFinite(triggerMarketCapUsd) && triggerMarketCapUsd > 0 ? triggerMarketCapUsd : null;
@@ -566,7 +566,7 @@ export const createSellExecutors = (deps: {
       if (input.dryRun) {
         const delayMs = await readDryRunSellDelayMs();
         if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-        const latestAfterDelay = deps.getLatestMarketCapUsd(input.tokenAddress);
+        const latestAfterDelay = deps.getLatestMarketCapUsd(input.chainId, input.tokenAddress);
         const now2 = Date.now();
         deps.emitRecord({
           ...baseRecord,
@@ -612,7 +612,7 @@ export const createSellExecutors = (deps: {
       if (!isTurbo) {
         let balanceWei = 0n;
         try {
-          balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, sellFromAddress));
+          balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, sellFromAddress, input.chainId));
         } catch {
           balanceWei = 0n;
         }

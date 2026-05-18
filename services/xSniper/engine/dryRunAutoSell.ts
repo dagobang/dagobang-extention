@@ -33,6 +33,7 @@ export type DryRunAutoSellPos = {
 };
 
 export const maybeEvaluateDryRunAutoSell = async (input: {
+  chainId: number;
   tokenAddress: `0x${string}`;
   nowMs: number;
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>;
@@ -40,13 +41,14 @@ export const maybeEvaluateDryRunAutoSell = async (input: {
   cleanupPosKey: (posKey: string) => void;
   emitRecord: (record: XSniperBuyRecord) => void;
 }) => {
+  const snapshotKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
   const parseTokenAddressFromPosKey = (posKey: string): `0x${string}` | null => {
     const parts = String(posKey || '').split(':');
     const match = parts.find((p) => /^0x[a-f0-9]{40}$/i.test(String(p)));
     if (!match) return null;
     return String(match).toLowerCase() as `0x${string}`;
   };
-  const snapshots = input.wsSnapshotsByAddr.get(input.tokenAddress) ?? [];
+  const snapshots = input.wsSnapshotsByAddr.get(snapshotKey) ?? [];
   const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
   const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
   if (curMcap == null || curMcap <= 0) return;
@@ -58,6 +60,7 @@ export const maybeEvaluateDryRunAutoSell = async (input: {
   for (const posKey of keys) {
     const pos = input.dryRunAutoSellByPosKey.get(posKey);
     if (!pos) continue;
+    if (Number(pos.chainId) !== Number(input.chainId)) continue;
     if (!(pos.remainingBps > 0)) {
       input.cleanupPosKey(posKey);
       continue;

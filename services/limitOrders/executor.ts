@@ -122,7 +122,7 @@ export const createLimitOrderExecutor = (deps: {
     try {
       const receipt = await RpcService.waitForTransactionReceiptAny(txHash, { chainId, txSide, timeoutMs: 20_000 });
       if (receipt.status !== 'success') {
-        const client = await RpcService.getClient();
+        const client = await RpcService.getClient(chainId);
         const reason = await tryGetReceiptRevertReason(client, txHash, receipt.blockNumber);
         throw new Error(reason ?? 'Transaction failed');
       }
@@ -259,7 +259,7 @@ export const createLimitOrderExecutor = (deps: {
     }
 
     const account = await WalletService.getSigner(order.fromAddress);
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(order.chainId);
     const balance = await client.readContract({
       address: order.tokenAddress,
       abi: erc20AbiLite,

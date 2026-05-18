@@ -507,7 +507,7 @@ export function createTelegramController(deps: {
       if (byHttp) return byHttp;
     } catch { }
     try {
-      const meta = await TokenService.getMeta(tokenAddress);
+      const meta = await TokenService.getMeta(tokenAddress, chainId);
       return {
         chain: chainCode,
         address: tokenAddress,
@@ -553,7 +553,7 @@ export function createTelegramController(deps: {
     let balanceAmount = '-';
     let balanceUsd: number | null = null;
     if (holderAddress) {
-      balanceWei = await TokenService.getBalance(tokenAddress, holderAddress).catch(() => '0');
+      balanceWei = await TokenService.getBalance(tokenAddress, holderAddress, chainId).catch(() => '0');
       balanceAmount = formatTokenAmount(balanceWei, decimals);
       if (normalizedPriceUsd && balanceAmount !== '-') {
         const n = Number(balanceAmount);
@@ -820,7 +820,7 @@ export function createTelegramController(deps: {
       await sendTelegramReply('卖出失败: 无法获取 Token 信息');
       return { ok: false, error: { message: 'token_info_missing' } };
     }
-    const balanceWei = BigInt(await TokenService.getBalance(tokenAddress, status.address));
+    const balanceWei = BigInt(await TokenService.getBalance(tokenAddress, status.address, settings.chainId));
     const pct = Math.max(1, Math.min(100, Math.floor(sellPercent)));
     const amountWei = (balanceWei * BigInt(pct)) / 100n;
     if (amountWei <= 0n) {
@@ -974,8 +974,8 @@ export function createTelegramController(deps: {
     const rows = (await Promise.all(candidates.map(async (tokenAddress) => {
       try {
         const [meta, balanceWei] = await Promise.all([
-          TokenService.getMeta(tokenAddress),
-          TokenService.getBalance(tokenAddress, walletAddress),
+          TokenService.getMeta(tokenAddress, chainId),
+          TokenService.getBalance(tokenAddress, walletAddress, chainId),
         ]);
         const bal = BigInt(balanceWei || '0');
         if (bal <= 0n) return null;

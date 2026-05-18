@@ -16,48 +16,136 @@ const PLATFORM_API: Record<string, { getTokenInfo: (chain: string, address: stri
 export class TokenAPI {
     private static balanceCache = new Map<string, { ts: number; value: string | null }>();
     private static balanceInFlight = new Map<string, Promise<string | null>>();
+    private static tokenInfoCache = new Map<string, { ts: number; value: TokenInfo | null }>();
+    private static tokenInfoInFlight = new Map<string, Promise<TokenInfo | null>>();
+    private static readonly altfunGraduatedTokenInfoCacheTtlMs = 15000;
     private static toBalanceKey(platform: string, chain: string, address: string, tokenAddress: string) {
         return `${platform}:${chain}:${address.toLowerCase()}:${tokenAddress.toLowerCase()}`;
     }
-
-    static async getTokenInfo(platform: string, chain: string, tokenAddress: string): Promise<TokenInfo | null> {
-        if (platform === 'altfun') {
-            const res = await call({
-                type: 'token:getTokenInfo:altfun',
-                chainId: getChainIdByName(chain),
-                tokenAddress: tokenAddress as `0x${string}`,
-            } as any) as { tokenInfo: TokenInfo | null };
-            return res.tokenInfo;
+    private static toTokenInfoKey(platform: string, chain: string, tokenAddress: string) {
+        return `${platform}:${chain}:${tokenAddress.toLowerCase()}`;
+    }
+    private static resolveTokenInfoCacheTtlMs(platform: string, requestedTtlMs: number, value: TokenInfo | null | undefined) {
+        if (!(requestedTtlMs > 0)) return 0;
+        if (platform === 'altfun' && value?.launchpad_status === 1) {
+            return Math.max(requestedTtlMs, this.altfunGraduatedTokenInfoCacheTtlMs);
         }
+        return requestedTtlMs;
+    }
 
-        const api = PLATFORM_API[platform];
-        let address = tokenAddress;
-        if (api) {
-            try {
-                const tokenInfo = await api.getTokenInfo(chain, address);
-                if (tokenInfo) {
-                    if (tokenInfo.launchpad_platform.includes('four') && tokenInfo.quote_token != "BNB") {
-                        const fourmemeTokenInfo = await this.getTokenInfoByFourmeme(platform, chain, address);
-                        if (fourmemeTokenInfo) {
-                            return fourmemeTokenInfo
-                        }
-                    }
-                    if (MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
-                        tokenInfo.launchpad_platform.includes('four')) {
-                        return tokenInfo;
-                    }
-                    return null;
-                }
-            } catch {
-                // Fallback to Fourmeme/Flap resolvers when third-party platform API is unavailable.
+    static async getTokenInfo(
+        platform: string,
+        chain: string,
+        tokenAddress: string,
+        opts?: { cacheTtlMs?: number }
+    ): Promise<TokenInfo | null> {
+        const key = this.toTokenInfoKey(platform, chain, tokenAddress);
+        const now = Date.now();
+        const requestedTtl = typeof opts?.cacheTtlMs === 'number' && opts.cacheTtlMs >= 0
+            ? opts.cacheTtlMs
+            : 0;
+        const cached = this.tokenInfoCache.get(key);
+        const effectiveCachedTtl = this.resolveTokenInfoCacheTtlMs(platform, requestedTtl, cached?.value);
+        if (effectiveCachedTtl > 0 && cached && now - cached.ts < effectiveCachedTtl) {
+            if (platform === 'altfun') {
+                console.log('[tokenInfo.cache.hit]', {
+                    platform,
+                    chain,
+                    tokenAddress: tokenAddress.toLowerCase(),
+                    ageMs: now - cached.ts,
+                    requestedTtlMs: requestedTtl,
+                    effectiveTtlMs: effectiveCachedTtl,
+                    graduated: cached.value?.launchpad_status === 1,
+                });
             }
+            return cached.value;
+        }
+        const inflight = this.tokenInfoInFlight.get(key);
+        if (inflight) {
+            if (platform === 'altfun') {
+                console.log('[tokenInfo.inflight.reuse]', {
+                    platform,
+                    chain,
+                    tokenAddress: tokenAddress.toLowerCase(),
+                });
+            }
+            return await inflight;
         }
 
-        if (address.endsWith("7777") || address.endsWith("8888")) {
-            return await this.getTokenInfoByFlap(platform, chain, address);
-        }
+        const p = (async (): Promise<TokenInfo | null> => {
+            const startedAt = Date.now();
+            let nextValue: TokenInfo | null = null;
+            if (platform === 'altfun') {
+                console.log('[tokenInfo.fetch.start]', {
+                    platform,
+                    chain,
+                    tokenAddress: tokenAddress.toLowerCase(),
+                    requestedTtlMs: requestedTtl,
+                });
+            }
+            if (platform === 'altfun') {
+                const res = await call({
+                    type: 'token:getTokenInfo:altfun',
+                    chainId: getChainIdByName(chain),
+                    tokenAddress: tokenAddress as `0x${string}`,
+                } as any) as { tokenInfo: TokenInfo | null };
+                nextValue = res.tokenInfo;
+            } else {
+                const api = PLATFORM_API[platform];
+                let address = tokenAddress;
+                if (api) {
+                    try {
+                        const tokenInfo = await api.getTokenInfo(chain, address);
+                        if (tokenInfo) {
+                            if (tokenInfo.launchpad_platform.includes('four') && tokenInfo.quote_token != "BNB") {
+                                const fourmemeTokenInfo = await this.getTokenInfoByFourmeme(platform, chain, address);
+                                if (fourmemeTokenInfo) {
+                                    nextValue = fourmemeTokenInfo;
+                                } else {
+                                    nextValue = tokenInfo;
+                                }
+                            } else if (
+                                MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
+                                tokenInfo.launchpad_platform.includes('four')
+                            ) {
+                                nextValue = tokenInfo;
+                            } else {
+                                nextValue = null;
+                            }
+                        }
+                    } catch {
+                        // Fallback to Fourmeme/Flap resolvers when third-party platform API is unavailable.
+                    }
+                }
 
-        return await this.getTokenInfoByFourmeme(platform, chain, address);
+                if (nextValue == null) {
+                    if (address.endsWith("7777") || address.endsWith("8888")) {
+                        nextValue = await this.getTokenInfoByFlap(platform, chain, address);
+                    } else {
+                        nextValue = await this.getTokenInfoByFourmeme(platform, chain, address);
+                    }
+                }
+            }
+            this.tokenInfoCache.set(key, { ts: Date.now(), value: nextValue });
+            if (platform === 'altfun') {
+                const effectiveNextTtl = this.resolveTokenInfoCacheTtlMs(platform, requestedTtl, nextValue);
+                console.log('[tokenInfo.fetch.done]', {
+                    platform,
+                    chain,
+                    tokenAddress: tokenAddress.toLowerCase(),
+                    elapsedMs: Date.now() - startedAt,
+                    hasValue: !!nextValue,
+                    requestedTtlMs: requestedTtl,
+                    effectiveTtlMs: effectiveNextTtl,
+                    graduated: nextValue?.launchpad_status === 1,
+                });
+            }
+            return nextValue;
+        })().finally(() => {
+            this.tokenInfoInFlight.delete(key);
+        });
+        this.tokenInfoInFlight.set(key, p);
+        return await p;
     }
 
     static async getBalance(platform: string, chain: string, address: string, tokenAddress: string, opts?: { cacheTtlMs?: number }): Promise<string | null> {
@@ -71,12 +159,18 @@ export class TokenAPI {
 
         const p = (async (): Promise<string | null> => {
             const readOnchainWei = async (): Promise<string | null> => {
+                const chainId = getChainIdByName(chain);
                 if (tokenAddress === '0x0000000000000000000000000000000000000000') {
-                    const bal = await call({ type: 'chain:getBalance', address: address as `0x${string}` });
+                    const bal = await call({ type: 'chain:getBalance', address: address as `0x${string}`, chainId });
                     return bal?.balanceWei ?? null;
                 }
                 const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
-                const bal = await call({ type: 'token:getBalance', tokenAddress: tokenAddressNormalized, address: address as `0x${string}` });
+                const bal = await call({
+                    type: 'token:getBalance',
+                    tokenAddress: tokenAddressNormalized,
+                    address: address as `0x${string}`,
+                    chainId,
+                });
                 return bal?.balanceWei ?? null;
             };
 
@@ -200,9 +294,10 @@ export class TokenAPI {
     }
 
     static async getPoolPair(chain: string, address: string): Promise<{ token0: string; token1: string } | null> {
+        const chainId = getChainIdByName(chain);
         const res = await call({
             type: 'token:getPoolPair',
-            chain,
+            chainId,
             pair: address as `0x${string}`,
         });
         return { token0: res.token0, token1: res.token1 };

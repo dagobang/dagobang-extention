@@ -52,7 +52,7 @@ export const createTokenInfoResolvers = () => {
     if (isFlapAddress(typedAddress)) {
       try {
         const state = await TokenFlapService.getTokenInfo(chainId, typedAddress);
-        const meta = await TokenService.getMeta(typedAddress);
+        const meta = await TokenService.getMeta(typedAddress, chainId);
         const quote = state.quoteTokenAddress && state.quoteTokenAddress !== '0x0000000000000000000000000000000000000000'
           ? state.quoteTokenAddress
           : '';
@@ -125,7 +125,7 @@ export const createTokenInfoResolvers = () => {
       const typedAddress = tokenAddress as `0x${string}`;
       const chain = chainNames[chainId as any] ?? 'bsc';
       try {
-        const meta = await TokenService.getMeta(typedAddress);
+        const meta = await TokenService.getMeta(typedAddress, chainId);
         return {
           tokenInfo: {
             chain,

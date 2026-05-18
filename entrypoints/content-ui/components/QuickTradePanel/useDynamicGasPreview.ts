@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { createPublicClient, formatGwei, http } from 'viem';
+import { formatGwei } from 'viem';
 import { ChainId } from '@/constants/chains/chainId';
-import { getChainRuntime } from '@/constants/chains/runtime';
 import type { Settings } from '@/types/extention';
+import { RpcService } from '@/services/rpc';
 
 const DYNAMIC_GAS_MULTIPLIER: Record<'slow' | 'standard' | 'fast' | 'turbo', number> = {
   slow: 1.0,
@@ -11,19 +11,7 @@ const DYNAMIC_GAS_MULTIPLIER: Record<'slow' | 'standard' | 'fast' | 'turbo', num
   turbo: 1.4,
 };
 
-const normalizeUrls = (urls: string[] | undefined, fallbackUrls: readonly string[]) => {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const raw of [...(urls ?? []), ...fallbackUrls]) {
-    const url = String(raw ?? '').trim();
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    result.push(url);
-  }
-  return result;
-};
-
-const formatGweiText = (value: bigint | null) => {
+export const formatGasGweiText = (value: bigint | null) => {
   if (value == null || value <= 0n) return '--';
   const text = formatGwei(value);
   const num = Number(text);
@@ -34,41 +22,49 @@ const formatGweiText = (value: bigint | null) => {
   return num.toFixed(4);
 };
 
-export function useDynamicGasPreview(
-  settings: Settings | null,
-  gasPreset: 'slow' | 'standard' | 'fast' | 'turbo',
-  enabled: boolean,
-) {
-  const [baseGasPriceWei, setBaseGasPriceWei] = useState<bigint | null>(null);
+const MULTIPLIER_BPS: Record<'slow' | 'standard' | 'fast' | 'turbo', bigint> = {
+  slow: 10000n,
+  standard: 11000n,
+  fast: 12000n,
+  turbo: 14000n,
+};
 
-  const rpcUrls = useMemo(() => {
-    if (!settings) return [] as string[];
-    const runtime = getChainRuntime(settings.chainId);
-    const fallbackUrls = runtime.viemChain.rpcUrls.default.http;
-    return normalizeUrls(settings.chains[settings.chainId]?.rpcUrls ?? [], fallbackUrls);
-  }, [settings]);
+export function getDynamicGasPreview(baseGasPriceWei: bigint | null, gasPreset: 'slow' | 'standard' | 'fast' | 'turbo') {
+  const multiplierBps = MULTIPLIER_BPS[gasPreset] ?? 10000n;
+  const multipliedGasPriceWei =
+    baseGasPriceWei == null || baseGasPriceWei <= 0n
+      ? null
+      : (() => {
+          const scaled = (baseGasPriceWei * multiplierBps + 9999n) / 10000n;
+          return scaled > 0n ? scaled : 1n;
+        })();
+
+  return {
+    baseGasPriceWei,
+    multipliedGasPriceWei,
+    baseGasPriceGweiText: formatGasGweiText(baseGasPriceWei),
+    multipliedGasPriceGweiText: formatGasGweiText(multipliedGasPriceWei),
+    multiplierLabel: `${DYNAMIC_GAS_MULTIPLIER[gasPreset] ?? 1}x`,
+  };
+}
+
+export function useDynamicGasPreview(settings: Settings | null, enabled: boolean) {
+  const [baseGasPriceWei, setBaseGasPriceWei] = useState<bigint | null>(null);
+  const chainId = settings?.chainId ?? null;
 
   useEffect(() => {
-    if (!settings || !enabled || rpcUrls.length <= 0) {
+    if (!settings || !enabled || !chainId) {
       setBaseGasPriceWei(null);
       return;
     }
     let cancelled = false;
-    const chain = getChainRuntime(settings.chainId).viemChain;
-    const clients = rpcUrls.slice(0, 4).map((url) => createPublicClient({
-      chain,
-      transport: http(url),
-    }));
-    const pickMedian = (values: bigint[]) => {
-      if (values.length <= 0) return null;
-      const sorted = [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-      return sorted[Math.floor(sorted.length / 2)] ?? null;
-    };
     const load = async () => {
       try {
-        const samples = await Promise.allSettled(
-          clients.map(async (client) => {
-            if (settings.chainId === ChainId.ETH) {
+        const resolved = await RpcService.withBalancedReadClient({
+          chainId,
+          caller: 'quickTrade.dynamicGas',
+          run: async (client) => {
+            if (chainId === ChainId.ETH) {
               const estimated = await client.estimateFeesPerGas();
               if (typeof estimated?.maxFeePerGas === 'bigint' && estimated.maxFeePerGas > 0n) {
                 return estimated.maxFeePerGas;
@@ -78,14 +74,9 @@ export function useDynamicGasPreview(
               }
             }
             return await client.getGasPrice();
-          })
-        );
-        const positiveValues = samples
-          .filter((item): item is PromiseFulfilledResult<bigint> => item.status === 'fulfilled')
-          .map((item) => item.value)
-          .filter((value) => value > 0n);
-        const resolved = pickMedian(positiveValues);
-        if (!cancelled && resolved && resolved > 0n) {
+          },
+        });
+        if (!cancelled && resolved > 0n) {
           setBaseGasPriceWei(resolved);
           return;
         }
@@ -102,26 +93,10 @@ export function useDynamicGasPreview(
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [enabled, rpcUrls, settings, gasPreset]);
+  }, [chainId, enabled, settings]);
 
-  const multipliedGasPriceWei = useMemo(() => {
-    const multiplierBpsMap: Record<'slow' | 'standard' | 'fast' | 'turbo', bigint> = {
-      slow: 10000n,
-      standard: 11000n,
-      fast: 12000n,
-      turbo: 14000n,
-    };
-    const multiplierBps = multiplierBpsMap[gasPreset] ?? 10000n;
-    if (baseGasPriceWei == null || baseGasPriceWei <= 0n) return null;
-    const scaled = (baseGasPriceWei * multiplierBps + 9999n) / 10000n;
-    return scaled > 0n ? scaled : 1n;
-  }, [baseGasPriceWei, gasPreset]);
-
-  return {
+  return useMemo(() => ({
     baseGasPriceWei,
-    multipliedGasPriceWei,
-    baseGasPriceGweiText: formatGweiText(baseGasPriceWei),
-    multipliedGasPriceGweiText: formatGweiText(multipliedGasPriceWei),
-    multiplierLabel: `${DYNAMIC_GAS_MULTIPLIER[gasPreset] ?? 1}x`,
-  };
+    baseGasPriceGweiText: formatGasGweiText(baseGasPriceWei),
+  }), [baseGasPriceWei]);
 }

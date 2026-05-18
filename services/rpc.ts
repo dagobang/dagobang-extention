@@ -241,20 +241,21 @@ export class RpcService {
     return keccak256(signedTx) as `0x${string}`;
   }
 
-  static async getClient(): Promise<PublicClient> {
+  static async getClient(chainIdOverride?: number): Promise<PublicClient> {
     const settings = await SettingsService.get();
-    const urls = this.normalizeUrls(settings.chains[settings.chainId].rpcUrls);
+    const chainId = chainIdOverride ?? settings.chainId;
+    const urls = this.normalizeUrls(settings.chains[chainId].rpcUrls);
 
     // Check cache
     if (
       this.clientCache &&
-      this.clientCache.chainId === settings.chainId &&
+      this.clientCache.chainId === chainId &&
       this.clientCache.urls.join(',') === urls.join(',')
     ) {
       return this.clientCache.client;
     }
 
-    const chain = getChainRuntime(settings.chainId).viemChain;
+    const chain = getChainRuntime(chainId).viemChain;
     // Use fallback transport with ranking to optimize for latency
     const transports = urls.map((url) => http(url));
 
@@ -264,7 +265,7 @@ export class RpcService {
     });
 
     this.clientCache = {
-      chainId: settings.chainId,
+      chainId,
       urls,
       client,
     };
@@ -276,13 +277,16 @@ export class RpcService {
     chainId?: number;
     scope?: 'public' | 'both';
     txSide?: BroadcastTxSide;
+    caller?: string;
     run: (client: PublicClient, meta: { url: string }) => Promise<T>;
   }): Promise<T> {
     const settings = await SettingsService.get();
     const chainId = input.chainId ?? settings.chainId;
+    const caller = String(input.caller || 'rpc.read').trim() || 'rpc.read';
+    const shouldDebugRead = chainId === 999;
     const urls = this.resolveReadUrls(settings, chainId, input.scope ?? 'public', input.txSide);
     if (!urls.length) {
-      const client = await this.getClient();
+      const client = await this.getClient(chainId);
       return await input.run(client, { url: '' });
     }
     return await RpcReadBalancer.execute({
@@ -291,7 +295,29 @@ export class RpcService {
       probe: async (url) => await this.measureLatency(url, chainId),
       operation: async (url) => {
         const client = this.getClientForUrl(url, chainId);
-        return await input.run(client, { url });
+        const startedAt = Date.now();
+        try {
+          const result = await input.run(client, { url });
+          if (shouldDebugRead) {
+            console.log('[rpc.read.ok]', {
+              chainId,
+              caller,
+              url,
+              elapsedMs: Date.now() - startedAt,
+            });
+          }
+          return result;
+        } catch (error: any) {
+          const message = String(error?.shortMessage || error?.message || error || '');
+          console.log('[rpc.read.fail]', {
+            chainId,
+            caller,
+            url,
+            elapsedMs: Date.now() - startedAt,
+            error: message,
+          });
+          throw error;
+        }
       },
     });
   }

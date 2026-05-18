@@ -20,7 +20,7 @@ export class TokenFlapService {
   }
 
   static async getTokenInfo(chainId: number, tokenAddress: string): Promise<FlapTokenStateV7> {
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(chainId);
     const managerAddress = this.getFlapTokenManagerAddress(chainId);
 
     if (managerAddress === ZERO_ADDRESS) {

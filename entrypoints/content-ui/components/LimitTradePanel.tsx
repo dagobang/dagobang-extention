@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { parseUnits, formatUnits, zeroAddress } from 'viem';
 import { Wallet, PanelRightOpen, PanelRightClose, ChevronUpSquare, ChevronDownSquare, X } from 'lucide-react';
 import type { Account, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
@@ -11,7 +11,7 @@ import { formatPriceValue, parseNumberLoose, formatTime } from '@/utils/format';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { WalletSelectorDropdown, WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
-import { getChainRuntime, getExplorerTxUrl, getNativeSymbol } from '@/constants/chains';
+import { getChainIdByName, getChainRuntime, getExplorerTxUrl, getNativeSymbol } from '@/constants/chains';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
 
 const normalizeWalletAddr = (addr?: string | null): `0x${string}` | null => {
@@ -177,10 +177,15 @@ export function LimitTradePanel({
   const locale: Locale = normalizeLocale(settings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
 
-  const chainId = settings?.chainId ?? 56;
+  const siteChainId = useMemo(() => {
+    if (!siteInfo?.chain) return null;
+    const resolved = getChainIdByName(siteInfo.chain);
+    return Number.isFinite(resolved) && resolved > 0 ? resolved : null;
+  }, [siteInfo?.chain]);
+  const chainId = siteChainId ?? settings?.chainId ?? 56;
   const chain = settings?.chains?.[chainId];
   const buyPresets = chain?.buyPresets ?? ['0.1', '0.5', '1.0', '2.0'];
-  const sellPresets = chain?.sellPresets ?? ['25', '50', '75', '100'];
+  const sellPresets = chain?.sellPresets ?? ['10', '20', '50', '100'];
   const limitOrderScanIntervalMs = settings?.limitOrderScanIntervalMs ?? 3000;
   const limitOrderScanIntervalOptions = [
     { label: '1s', value: 1000 },

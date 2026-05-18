@@ -35,6 +35,26 @@ export const createNewCoinSniperTrade = (deps: {
     }
     return input.fallbackChainId;
   };
+  const resolveSignalChainIdLoose = (input: {
+    tokenAddress?: string | null;
+    signal?: UnifiedMarketSignal | null;
+  }) => {
+    const addr = String(input.tokenAddress || '').trim().toLowerCase();
+    const tokens = Array.isArray(input.signal?.tokens) ? input.signal.tokens : [];
+    if (addr) {
+      const matched = tokens.find((x) => String((x as any)?.tokenAddress || '').trim().toLowerCase() === addr);
+      const tokenChain = String((matched as any)?.chain || '').trim();
+      if (tokenChain) {
+        const chainId = getChainIdByName(tokenChain);
+        if (Number.isFinite(chainId) && chainId > 0) return chainId;
+      }
+    }
+    const signalChain = String(input.signal?.chain || '').trim();
+    if (!signalChain) return null;
+    const chainId = getChainIdByName(signalChain);
+    return Number.isFinite(chainId) && chainId > 0 ? chainId : null;
+  };
+  const toModeMetaKey = (chainId: number, tokenAddrLower: string) => `${chainId}:${tokenAddrLower}`;
 
   const DEFAULT_PLATFORM_FILTERS = ['fourmeme', 'fourmeme_agent', 'xmode', 'xmode_agent'] as const;
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -62,12 +82,13 @@ export const createNewCoinSniperTrade = (deps: {
     dryRunAutoSellByPosKey.delete(posKey);
     rapidExitByPosKey.delete(posKey);
   };
+  const toScopedTokenKey = (chainId: number, tokenAddress: `0x${string}`) => `${chainId}:${tokenAddress.toLowerCase()}`;
 
   const { fetchTokenInfoFresh, buildGenericTokenInfo, getEntryPriceUsd } = createTokenInfoResolvers();
 
   const shouldLogWsConfirmFail = (key: string, nowMs: number) => shouldLogWsConfirmFailFromWs(wsConfirmFailDedupe, key, nowMs);
-  const computeWsConfirm = (tokenAddress: `0x${string}`, nowMs: number, strategy: any) =>
-    computeWsConfirmFromWs(wsSnapshotsByAddr, tokenAddress, nowMs, strategy);
+  const computeWsConfirm = (chainId: number, tokenAddress: `0x${string}`, nowMs: number, strategy: any) =>
+    computeWsConfirmFromWs(wsSnapshotsByAddr, chainId, tokenAddress, nowMs, strategy);
 
   const readRapidWatchdogIntervalMs = (strategy: any) => {
     const secRaw = parseNumber(strategy?.rapidWatchdogSec);
@@ -83,27 +104,30 @@ export const createNewCoinSniperTrade = (deps: {
     const nowMs = Date.now();
     const staleMs = 3000;
     const rpcCooldownMs = 3000;
-    const addrs = new Set<`0x${string}`>();
+    const scopedTokens = new Map<string, { chainId: number; tokenAddress: `0x${string}` }>();
     for (const pos of rapidExitByPosKey.values()) {
       const addr = normalizeAddress(pos?.tokenAddress);
       if (!addr) continue;
-      addrs.add(addr);
+      scopedTokens.set(toScopedTokenKey(pos.chainId, addr), { chainId: pos.chainId, tokenAddress: addr });
     }
-    for (const tokenAddress of addrs) {
-      const latestList = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+    for (const { chainId, tokenAddress } of scopedTokens.values()) {
+      const scopedKey = toScopedTokenKey(chainId, tokenAddress);
+      const latestList = wsSnapshotsByAddr.get(scopedKey) ?? [];
       const latest = latestList.length ? latestList[latestList.length - 1] : null;
       const wsAgeMs = latest ? nowMs - latest.atMs : Number.POSITIVE_INFINITY;
       if (wsAgeMs > staleMs) {
-        const rpcKey = tokenAddress.toLowerCase();
+        const rpcKey = scopedKey;
         const lastRpcAt = rapidWatchdogRpcAtMs.get(rpcKey) ?? 0;
         if (nowMs - lastRpcAt >= rpcCooldownMs) {
           rapidWatchdogRpcAtMs.set(rpcKey, nowMs);
           try {
-            const anyPos = Array.from(rapidExitByPosKey.values()).find((p) => p.tokenAddress.toLowerCase() === rpcKey);
-            const chainId = anyPos?.chainId ?? 56;
+            const anyPos = Array.from(rapidExitByPosKey.values()).find(
+              (p) => Number(p.chainId) === Number(chainId) && p.tokenAddress.toLowerCase() === tokenAddress.toLowerCase()
+            );
+            const resolvedChainId = anyPos?.chainId ?? chainId;
             const impliedSupply = Number(anyPos?.impliedSupply);
             const priceUsd = await TokenService.getPriceUsdFromRpc({
-              chainId,
+              chainId: resolvedChainId,
               tokenAddress,
               cacheTtlMs: 0,
               allowTokenInfoPriceFallback: false,
@@ -123,13 +147,14 @@ export const createNewCoinSniperTrade = (deps: {
                 smartMoney: latest?.smartMoney,
               };
               const next = latestList.concat(merged).slice(-80);
-              wsSnapshotsByAddr.set(tokenAddress, next);
+              wsSnapshotsByAddr.set(scopedKey, next);
             }
           } catch {
           }
         }
       }
       void maybeEvaluateRapidExitAutoSellFromMod({
+        chainId,
         tokenAddress,
         nowMs,
         strategy,
@@ -163,23 +188,24 @@ export const createNewCoinSniperTrade = (deps: {
     }, nextIntervalMs);
   };
 
-  const pushWsSnapshot = (tokenAddress: `0x${string}`, metrics: TokenMetrics) => {
+  const pushWsSnapshot = (chainId: number, tokenAddress: `0x${string}`, metrics: TokenMetrics) => {
     pushWsSnapshotFromWs({
+      chainId,
       tokenAddress,
       metrics,
       wsSnapshotsByAddr,
-      onUpdated: () => {
-        const nowMs = Date.now();
-        void onWsSnapshotUpdated(tokenAddress, nowMs);
+      onUpdated: (_updatedTokenAddress, atMs) => {
+        void onWsSnapshotUpdated(chainId, tokenAddress, atMs);
       },
     });
   };
 
-  async function onWsSnapshotUpdated(tokenAddress: `0x${string}`, nowMs: number) {
-    const snapshots = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+  async function onWsSnapshotUpdated(chainId: number, tokenAddress: `0x${string}`, nowMs: number) {
+    const snapshots = wsSnapshotsByAddr.get(toScopedTokenKey(chainId, tokenAddress)) ?? [];
     const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
     if (cur) {
       void maybeUpdateNewCoinSniperHistoryEvaluations({
+        chainId,
         tokenAddress,
         nowMs,
         marketCapUsd: cur.marketCapUsd,
@@ -187,6 +213,7 @@ export const createNewCoinSniperTrade = (deps: {
       });
     }
     void maybeEvaluateDryRunAutoSellFromMod({
+      chainId,
       tokenAddress,
       nowMs,
       wsSnapshotsByAddr,
@@ -195,6 +222,7 @@ export const createNewCoinSniperTrade = (deps: {
       emitRecord,
     });
     void maybeEvaluateRapidExitAutoSellFromMod({
+      chainId,
       tokenAddress,
       nowMs,
       strategy: latestNewCoinSnipeStrategy,
@@ -343,6 +371,16 @@ export const createNewCoinSniperTrade = (deps: {
     const signal = currentSignalContext;
     const signalSourceTag = signal?.source ? String(signal.source) : undefined;
     const tokenAddrLower = String(record?.tokenAddress || '').trim().toLowerCase();
+    const resolvedChainId = (() => {
+      const fromSignal = resolveSignalChainIdLoose({
+        tokenAddress: record?.tokenAddress,
+        signal,
+      });
+      if (typeof fromSignal === 'number' && fromSignal > 0) return fromSignal;
+      const fromRecord = Number(record?.chainId);
+      return Number.isFinite(fromRecord) && fromRecord > 0 ? fromRecord : 56;
+    })();
+    const modeMetaKey = tokenAddrLower ? toModeMetaKey(resolvedChainId, tokenAddrLower) : '';
     const fallbackModeMeta = (() => {
       if (currentStrategyMode === 'xmode_task') {
         return {
@@ -354,7 +392,7 @@ export const createNewCoinSniperTrade = (deps: {
         };
       }
       if (record?.side === 'sell' && tokenAddrLower) {
-        return latestModeMetaByToken.get(tokenAddrLower) ?? { strategyMode: 'auto_filter' as const };
+        return latestModeMetaByToken.get(modeMetaKey) ?? { strategyMode: 'auto_filter' as const };
       }
       return { strategyMode: 'auto_filter' as const };
     })();
@@ -365,8 +403,8 @@ export const createNewCoinSniperTrade = (deps: {
       matchKeywords: Array.isArray(record?.matchKeywords) ? record.matchKeywords : fallbackModeMeta.matchKeywords,
       matchText: record?.matchText ?? fallbackModeMeta.matchText,
     };
-    if (tokenAddrLower && resolvedModeMeta.strategyMode) {
-      latestModeMetaByToken.set(tokenAddrLower, resolvedModeMeta);
+    if (modeMetaKey && resolvedModeMeta.strategyMode) {
+      latestModeMetaByToken.set(modeMetaKey, resolvedModeMeta);
     }
     const resolvedLaunchpadPlatform = (() => {
       const fromRecord = extractLaunchpadPlatform(record as any);
@@ -385,7 +423,7 @@ export const createNewCoinSniperTrade = (deps: {
       reason: record.reason,
       tweetAtMs: record.tweetAtMs,
       tweetUrl: record.tweetUrl,
-      chainId: record.chainId,
+      chainId: resolvedChainId,
       tokenAddress: record.tokenAddress,
       walletAddress: record.walletAddress,
       tokenSymbol: record.tokenSymbol,
@@ -551,8 +589,8 @@ export const createNewCoinSniperTrade = (deps: {
     return true;
   };
 
-  const getWsAthMarketCapUsd = (tokenAddress: `0x${string}`): number => {
-    const snapshots = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+  const getWsAthMarketCapUsd = (chainId: number, tokenAddress: `0x${string}`): number => {
+    const snapshots = wsSnapshotsByAddr.get(toScopedTokenKey(chainId, tokenAddress)) ?? [];
     let ath = 0;
     for (const snap of snapshots) {
       const mcap = Number(snap?.marketCapUsd);
@@ -593,11 +631,17 @@ export const createNewCoinSniperTrade = (deps: {
       if (additions.length >= maxPerSignal) break;
       const metrics = metricsFromUnifiedToken(token);
       if (!metrics?.tokenAddress) continue;
-      pushWsSnapshot(metrics.tokenAddress, metrics);
+      const chainId = resolveTradeChainId({
+        tokenChain: metrics.chain,
+        signalChain: input.signal.chain,
+        fallbackChainId: input.settings.chainId,
+        settings: input.settings,
+      });
+      pushWsSnapshot(chainId, metrics.tokenAddress, metrics);
       const platform = extractTokenPlatform(token);
       if (!platform || !allowedPlatforms.includes(platform)) continue;
       if (!passAutoTaskRangeFilters(metrics, input.strategy, now)) continue;
-      const athMcapUsd = getWsAthMarketCapUsd(metrics.tokenAddress);
+      const athMcapUsd = getWsAthMarketCapUsd(chainId, metrics.tokenAddress);
       if (athThresholdUsd != null && (!Number.isFinite(athMcapUsd) || athMcapUsd < athThresholdUsd)) continue;
       const symbol = String(token.tokenSymbol || '').trim();
       const name = String(token.tokenName || '').trim();
@@ -721,7 +765,15 @@ export const createNewCoinSniperTrade = (deps: {
     const candidates = unique
       .map((t) => {
         const m = metricsFromUnifiedToken(t);
-        if (m?.tokenAddress) pushWsSnapshot(m.tokenAddress, m);
+        if (m?.tokenAddress) {
+          const chainId = resolveTradeChainId({
+            tokenChain: m.chain,
+            signalChain: signal.chain,
+            fallbackChainId: 56,
+            settings: defaultSettings,
+          });
+          pushWsSnapshot(chainId, m.tokenAddress, m);
+        }
         return { t, m };
       })
       .filter((x) => {
@@ -736,7 +788,13 @@ export const createNewCoinSniperTrade = (deps: {
           tokenAgeMode: 'now_age',
         });
         if (!configPass) return false;
-        const confirm = computeWsConfirm(tokenAddress, now, strategy);
+        const chainId = resolveTradeChainId({
+          tokenChain: x.m?.chain,
+          signalChain: signal.chain,
+          fallbackChainId: 56,
+          settings: defaultSettings,
+        });
+        const confirm = computeWsConfirm(chainId, tokenAddress, now, strategy);
         if (!confirm.pass) return false;
         return true;
       });
@@ -774,7 +832,15 @@ export const createNewCoinSniperTrade = (deps: {
     const candidates = unique
       .map((t) => {
         const m = metricsFromUnifiedToken(t);
-        if (m?.tokenAddress) pushWsSnapshot(m.tokenAddress, m);
+        if (m?.tokenAddress) {
+          const chainId = resolveTradeChainId({
+            tokenChain: m.chain,
+            signalChain: signal.chain,
+            fallbackChainId: 56,
+            settings: defaultSettings,
+          });
+          pushWsSnapshot(chainId, m.tokenAddress, m);
+        }
         return { t, m };
       })
       .filter((x) => {
@@ -790,7 +856,13 @@ export const createNewCoinSniperTrade = (deps: {
           tokenAgeMode: 'now_age',
         });
         if (!configPass) return false;
-        const confirm = computeWsConfirm(tokenAddress, now, strategyForTask);
+        const chainId = resolveTradeChainId({
+          tokenChain: x.m?.chain,
+          signalChain: signal.chain,
+          fallbackChainId: 56,
+          settings: defaultSettings,
+        });
+        const confirm = computeWsConfirm(chainId, tokenAddress, now, strategyForTask);
         if (!confirm.pass) return false;
         return true;
       });
@@ -938,8 +1010,8 @@ export const createNewCoinSniperTrade = (deps: {
     broadcastToActiveTabs,
     fetchTokenInfoFresh,
     buildGenericTokenInfo,
-    getLatestMarketCapUsd: (tokenAddress) => {
-      const snaps = wsSnapshotsByAddr.get(tokenAddress) ?? [];
+    getLatestMarketCapUsd: (chainId, tokenAddress) => {
+      const snaps = wsSnapshotsByAddr.get(toScopedTokenKey(chainId, tokenAddress)) ?? [];
       const latest = snaps.length ? snaps[snaps.length - 1] : null;
       const mcap = latest?.marketCapUsd;
       return typeof mcap === 'number' && Number.isFinite(mcap) && mcap > 0 ? mcap : null;

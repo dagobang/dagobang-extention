@@ -41,6 +41,8 @@ export class TradeService {
   private static readonly approveInFlightByKey = new Map<string, Promise<`0x${string}`>>();
   private static readonly fastApproveRetryMaxWaitMs = 800;
   private static readonly fastApproveRetryPollMs = 200;
+  private static readonly quoteBestExactInCache = new Map<string, { ts: number; value: { amountOut: bigint; swapType: number; fee?: number; poolAddress: string } }>();
+  private static readonly quoteBestExactInInFlight = new Map<string, Promise<{ amountOut: bigint; swapType: number; fee?: number; poolAddress: string }>>();
 
   private static makeApproveKey(chainId: number, owner: string, token: string, spender: string) {
     return `${chainId}:${owner.toLowerCase()}:${token.toLowerCase()}:${spender.toLowerCase()}`;
@@ -82,9 +84,30 @@ export class TradeService {
     tokenIn: `0x${string}`,
     tokenOut: `0x${string}`,
     amountIn: bigint,
-    opts?: { v3Fee?: number; poolPair?: string; prefer?: 'v2' | 'v3' }
+    opts?: { v3Fee?: number; poolPair?: string; prefer?: 'v2' | 'v3'; cacheTtlMs?: number; force?: boolean }
   ): Promise<{ amountOut: bigint; swapType: number; fee?: number; poolAddress: string }> {
-    return await quoteBestExactInDex(chainId, tokenIn, tokenOut, amountIn, opts);
+    const ttlMs = Math.max(0, Number(opts?.cacheTtlMs ?? 0));
+    const force = opts?.force === true;
+    const cacheKey = [
+      chainId,
+      tokenIn.toLowerCase(),
+      tokenOut.toLowerCase(),
+      amountIn.toString(),
+      opts?.v3Fee ?? '',
+      opts?.poolPair?.toLowerCase() ?? '',
+      opts?.prefer ?? '',
+    ].join(':');
+    const cached = this.quoteBestExactInCache.get(cacheKey);
+    if (!force && ttlMs > 0 && cached && Date.now() - cached.ts < ttlMs) return cached.value;
+    const inflight = this.quoteBestExactInInFlight.get(cacheKey);
+    if (!force && ttlMs > 0 && inflight) return await inflight;
+    const p = quoteBestExactInDex(chainId, tokenIn, tokenOut, amountIn, opts).finally(() => {
+      this.quoteBestExactInInFlight.delete(cacheKey);
+    });
+    if (ttlMs > 0) this.quoteBestExactInInFlight.set(cacheKey, p);
+    const resolved = await p;
+    if (ttlMs > 0) this.quoteBestExactInCache.set(cacheKey, { ts: Date.now(), value: resolved });
+    return resolved;
   }
 
   static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo; fromAddress?: `0x${string}` }) {
@@ -95,7 +118,7 @@ export class TradeService {
     const tokenInfo = input.tokenInfo;
     if (!tokenInfo) return;
 
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(input.chainId);
     const account = await WalletService.getSigner(input.fromAddress);
     await prewarmNonce(client, input.chainId, account.address);
 
@@ -159,7 +182,7 @@ export class TradeService {
   }
 
   static async refreshNonce(input: { chainId: number; fromAddress?: `0x${string}` }): Promise<number> {
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(input.chainId);
     const account = await WalletService.getSigner(input.fromAddress);
     const nextNonce = await prewarmNonce(client, input.chainId, account.address, { force: true });
     console.info('[nonce.refresh]', {
@@ -211,7 +234,7 @@ export class TradeService {
     if (receipt.status === 'success') return;
     let revertReason: string | null = null;
     try {
-      const client = await RpcService.getClient();
+      const client = await RpcService.getClient(chainId);
       revertReason = await tryGetReceiptRevertReason(client, txHash, receipt.blockNumber);
     } catch {
     }
@@ -242,7 +265,7 @@ export class TradeService {
     // Fast path for allowance recovery:
     // poll receipt briefly and continue as soon as approve is visible/success.
     // keep total wait short to preserve sniping speed.
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(chainId);
     const deadline = Date.now() + this.fastApproveRetryMaxWaitMs;
     const start = Date.now();
     let polls = 0;
@@ -364,7 +387,12 @@ export class TradeService {
     return ZERO_ADDRESS;
   }
 
-  static async buy(input: TxBuyInput) {
+  static async buy(
+    input: TxBuyInput,
+    runtimeOpts?: {
+      forceRefreshHyperState?: boolean;
+    }
+  ) {
     const settings = await SettingsService.get();
     const routerAddress = DeployAddress[input.chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
@@ -372,7 +400,7 @@ export class TradeService {
     const tokenInfo = input.tokenInfo;
 
     const account = await WalletService.getSigner(input.fromAddress);
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(input.chainId);
 
     const amountIn = BigInt(this.resolveNativeAmountWei(input));
     const configuredBaseTokenAddress = this.resolveConfiguredBaseTokenAddress(input.chainId, settings);
@@ -424,8 +452,7 @@ export class TradeService {
     let minOut = 0n;
 
     if (isHyperAltfun) {
-      const hyperState = await timeStep('hyper:state', () => getHyperTradeState(tokenOut as Address));
-      if (hyperState.isGraduating) throw new Error('该 alt.fun 代币正在迁移流动性，暂时无法交易');
+      const hyperState = await timeStep('hyper:state', () => getHyperTradeState(tokenOut as Address, { force: runtimeOpts?.forceRefreshHyperState === true }));
       if (!hyperState.isInner && !hyperState.isOuter) throw new Error('该代币不是有效的 alt.fun Hyper 代币');
 
       const routeBridgeToken = getHyperUsdcAddress();
@@ -720,7 +747,9 @@ export class TradeService {
       console.log('[trade.buy.auto][attempt.start]', { flowId, attempt: attemptNo });
       try {
         const submitStart = Date.now();
-        const rsp = await this.buy(input);
+        const rsp = await this.buy(input, {
+          forceRefreshHyperState: attempt > 0,
+        });
         const submitElapsedMs = Date.now() - submitStart;
         await opts?.onSubmitted?.({ side: 'buy', txHash: rsp.txHash, submitElapsedMs });
         const receiptStart = Date.now();
@@ -808,6 +837,7 @@ export class TradeService {
         const rsp = await this.sell(input, {
           traceId: flowId,
           attempt: attemptNo,
+          forceRefreshHyperState: attempt > 0,
           onAllowanceRepairStart: async () => {
             console.log('[trade.sell.auto][allowance.repair.start]', { flowId, attempt: attemptNo });
             await opts?.onRetry?.({
@@ -900,7 +930,7 @@ export class TradeService {
     if (!routerAddress) throw new Error('Router address not set');
 
     const account = await WalletService.getSigner(opts?.fromAddress);
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(chainId);
 
     const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
     const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
@@ -956,7 +986,7 @@ export class TradeService {
     const routerAddress = DeployAddress[chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
     const account = await WalletService.getSigner(opts?.fromAddress);
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(chainId);
     const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
     return await hasInsufficientSellAllowance({
       chainId,
@@ -982,6 +1012,7 @@ export class TradeService {
       onAllowanceRepairStart?: (ctx: { chainId: number; tokenAddress: string }) => void | Promise<void>;
       traceId?: string;
       attempt?: number;
+      forceRefreshHyperState?: boolean;
     }
   ) {
     const sellFrom = String(input.fromAddress || 'default').toLowerCase();
@@ -998,7 +1029,7 @@ export class TradeService {
       const tokenInfo = input.tokenInfo;
 
       const account = await WalletService.getSigner(input.fromAddress);
-      const client = await RpcService.getClient();
+      const client = await RpcService.getClient(input.chainId);
 
       let amountIn = BigInt(input.tokenAmountWei);
       const configuredBaseTokenAddress = this.resolveConfiguredBaseTokenAddress(input.chainId, settings);
@@ -1056,8 +1087,7 @@ export class TradeService {
       }
 
       if (isHyperAltfun) {
-        const hyperState = await timeStep('hyper:state', () => getHyperTradeState(sellToken));
-        if (hyperState.isGraduating) throw new Error('该 alt.fun 代币正在迁移流动性，暂时无法卖出');
+        const hyperState = await timeStep('hyper:state', () => getHyperTradeState(sellToken, { force: runtimeOpts?.forceRefreshHyperState === true }));
         if (!hyperState.isInner && !hyperState.isOuter) throw new Error('该代币不是有效的 alt.fun Hyper 代币');
 
         const innerTokenOut = getHyperUsdcAddress();
@@ -1431,7 +1461,7 @@ export class TradeService {
   ) {
     const settings = await SettingsService.get();
     const account = await WalletService.getSigner(fromAddress);
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(chainId);
     const chainSettings = settings.chains[chainId];
     const gasPriceMode = chainSettings.gasPriceMode ?? 'fixed';
     const gasPreset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;
@@ -1465,7 +1495,7 @@ export class TradeService {
   static async wrapNative(chainId: number, amountWei: string, fromAddress?: `0x${string}`) {
     const settings = await SettingsService.get();
     const account = await WalletService.getSigner(fromAddress);
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(chainId);
     const chainSettings = settings.chains[chainId];
     const gasPriceMode = chainSettings.gasPriceMode ?? 'fixed';
     const gasPreset = chainSettings.buyGasPreset ?? chainSettings.gasPreset;
@@ -1494,7 +1524,7 @@ export class TradeService {
   static async unwrapWrapped(chainId: number, amountWei: string, fromAddress?: `0x${string}`) {
     const settings = await SettingsService.get();
     const account = await WalletService.getSigner(fromAddress);
-    const client = await RpcService.getClient();
+    const client = await RpcService.getClient(chainId);
     const chainSettings = settings.chains[chainId];
     const gasPriceMode = chainSettings.gasPriceMode ?? 'fixed';
     const gasPreset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;

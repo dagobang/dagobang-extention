@@ -41,6 +41,7 @@ type QuickTradePanelProps = {
   isUnlocked: boolean;
   onBuy: (amountStr: string, presetIndex: number) => void;
   settings: Settings | null;
+  dynamicGasBasePriceWei: bigint | null;
   onToggleMode: () => void;
   onToggleBuyGas: () => void;
   onToggleSellGas: () => void;
@@ -121,6 +122,7 @@ export function QuickTradePanel({
   isUnlocked,
   onBuy,
   settings,
+  dynamicGasBasePriceWei,
   onToggleMode,
   onToggleBuyGas,
   onToggleSellGas,
@@ -257,6 +259,7 @@ export function QuickTradePanel({
             isUnlocked={isUnlocked}
             onBuy={onBuy}
             settings={settings}
+            dynamicGasBasePriceWei={dynamicGasBasePriceWei}
             onToggleMode={onToggleMode}
             onToggleGas={onToggleBuyGas}
             onTogglePriorityFeePreset={onToggleBuyPriorityFeePreset}
@@ -293,6 +296,7 @@ export function QuickTradePanel({
             isUnlocked={isUnlocked}
             onSell={onSell}
             settings={settings}
+            dynamicGasBasePriceWei={dynamicGasBasePriceWei}
             onToggleMode={onToggleMode}
             onToggleGas={onToggleSellGas}
             onTogglePriorityFeePreset={onToggleSellPriorityFeePreset}

@@ -85,7 +85,7 @@ function App() {
         await Promise.all(
           res.wallet.accounts.map(async (acc) => {
             try {
-              const balRes = await call({ type: 'chain:getBalance', address: acc.address });
+              const balRes = await call({ type: 'chain:getBalance', address: acc.address, chainId: res.settings.chainId });
               newBalances[acc.address] = formatEther(BigInt(balRes.balanceWei));
             } catch (e) {
               console.error(`Failed to fetch balance for ${acc.address}`, e);

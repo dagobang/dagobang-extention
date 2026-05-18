@@ -14,6 +14,18 @@ const v2PairCache = new Map<string, { ts: number; pair: Address }>();
 const V3_POOL_FEE_CACHE_MS = 30 * 60_000;
 const v3PoolFeeCache = new Map<string, { ts: number; fee: number }>();
 
+async function withTradeDexRead<T>(
+  chainId: number,
+  caller: string,
+  run: (client: Awaited<ReturnType<typeof RpcService.getClient>>) => Promise<T>,
+): Promise<T> {
+  return await RpcService.withBalancedReadClient({
+    chainId,
+    caller,
+    run: async (client) => await run(client),
+  });
+}
+
 function seedV2PairCache(chainId: number, tokenIn: Address, tokenOut: Address, pair: Address) {
   const now = Date.now();
   const a = tokenIn.toLowerCase();
@@ -55,13 +67,12 @@ function getQuoter(chainId: number) {
 }
 
 export async function getQuote(chainId: number, tokenIn: Address, tokenOut: Address, amountIn: bigint, fee: number) {
-  const client = await RpcService.getClient();
   const quoter = getQuoter(chainId);
 
   if (quoter === ZERO_ADDRESS) return 0n;
 
   try {
-    const { result } = await client.simulateContract({
+    const { result } = await withTradeDexRead(chainId, 'tradeDex.v3Quote', async (client) => await client.simulateContract({
       address: quoter,
       abi: quoterV2Abi,
       functionName: 'quoteExactInputSingle',
@@ -72,7 +83,7 @@ export async function getQuote(chainId: number, tokenIn: Address, tokenOut: Addr
         fee,
         sqrtPriceLimitX96: 0n,
       }],
-    });
+    }));
 
     return result[0];
   } catch (e: any) {
@@ -114,7 +125,7 @@ async function getBestV3Quote(chainId: number, tokenIn: Address, tokenOut: Addre
       if (!pool || pool === ZERO_ADDRESS) {
         return { amountOut: 0n, fee };
       }
-      const usable = await isV3PoolUsable(pool);
+      const usable = await isV3PoolUsable(chainId, pool);
       if (!usable) {
         return { amountOut: 0n, fee };
       }
@@ -153,9 +164,8 @@ function getV3Factories(chainId: number) {
 
 async function getFirstV3Pool(chainId: number, tokenIn: Address, tokenOut: Address, fee: number): Promise<Address | null> {
   if (!isValidV3Fee(fee)) return null;
-  const client = await RpcService.getClient();
   const factories = getV3Factories(chainId);
-  const poolResults = await Promise.allSettled(
+  const poolResults = await withTradeDexRead(chainId, 'tradeDex.v3Pool', async (client) => await Promise.allSettled(
     factories.map((factory) =>
       client.readContract({
         address: factory as Address,
@@ -164,7 +174,7 @@ async function getFirstV3Pool(chainId: number, tokenIn: Address, tokenOut: Addre
         args: [tokenIn, tokenOut, fee],
       }) as Promise<Address>
     )
-  );
+  ));
   for (const r of poolResults) {
     if (r.status !== 'fulfilled') continue;
     if (r.value !== ZERO_ADDRESS) return r.value;
@@ -184,33 +194,31 @@ async function getFirstV3PoolCached(chainId: number, tokenIn: Address, tokenOut:
   return pool;
 }
 
-async function isV3PoolUsable(pool: Address): Promise<boolean> {
-  const client = await RpcService.getClient();
+async function isV3PoolUsable(chainId: number, pool: Address): Promise<boolean> {
   try {
-    const liquidity = await (client.readContract({
+    const liquidity = await withTradeDexRead(chainId, 'tradeDex.v3Liquidity', async (client) => await (client.readContract({
       address: pool,
       abi: poolV3Abi,
       functionName: 'liquidity',
-    }) as Promise<bigint>);
+    }) as Promise<bigint>));
     return BigInt(liquidity) > 0n;
   } catch {
     return false;
   }
 }
 
-async function getV3PoolFeeCached(pool: Address): Promise<number | null> {
+async function getV3PoolFeeCached(chainId: number, pool: Address): Promise<number | null> {
   const key = pool.toLowerCase();
   const now = Date.now();
   const cached = v3PoolFeeCache.get(key);
   if (cached && now - cached.ts < V3_POOL_FEE_CACHE_MS) return cached.fee;
 
-  const client = await RpcService.getClient();
   try {
-    const fee = await (client.readContract({
+    const fee = await withTradeDexRead(chainId, 'tradeDex.v3Fee', async (client) => await (client.readContract({
       address: pool,
       abi: poolV3Abi,
       functionName: 'fee',
-    }) as Promise<number>);
+    }) as Promise<number>));
     if (!isValidV3Fee(fee)) return null;
     v3PoolFeeCache.set(key, { ts: now, fee });
     return fee;
@@ -219,12 +227,11 @@ async function getV3PoolFeeCached(pool: Address): Promise<number | null> {
   }
 }
 
-async function quoteV2ExactInByPair(pair: Address, tokenIn: Address, tokenOut: Address, amountIn: bigint, feeBps: number) {
-  const client = await RpcService.getClient();
+async function quoteV2ExactInByPair(chainId: number, pair: Address, tokenIn: Address, tokenOut: Address, amountIn: bigint, feeBps: number) {
   const tokenInAddr = getAddress(tokenIn);
   const tokenOutAddr = getAddress(tokenOut);
 
-  const [token0, token1, reserves] = await Promise.all([
+  const [token0, token1, reserves] = await withTradeDexRead(chainId, 'tradeDex.v2QuotePair', async (client) => await Promise.all([
     client.readContract({
       address: pair,
       abi: pairV2Abi,
@@ -240,7 +247,7 @@ async function quoteV2ExactInByPair(pair: Address, tokenIn: Address, tokenOut: A
       abi: pairV2Abi,
       functionName: 'getReserves',
     }) as Promise<[bigint, bigint, number]>,
-  ]);
+  ]));
 
   if (
     (token0.toLowerCase() !== tokenInAddr.toLowerCase() && token0.toLowerCase() !== tokenOutAddr.toLowerCase()) ||
@@ -265,7 +272,6 @@ async function quoteV2ExactInByPair(pair: Address, tokenIn: Address, tokenOut: A
 }
 
 async function getBestV2Quote(chainId: number, tokenIn: Address, tokenOut: Address, amountIn: bigint, hintPair?: string) {
-  const client = await RpcService.getClient();
   const feeBps = 25;
 
   const pairs: Address[] = [];
@@ -274,7 +280,7 @@ async function getBestV2Quote(chainId: number, tokenIn: Address, tokenOut: Addre
   }
 
   const factories = getV2Factories(chainId);
-  const pairResults = await Promise.allSettled(
+  const pairResults = await withTradeDexRead(chainId, 'tradeDex.v2Pair', async (client) => await Promise.allSettled(
     factories.map((factory) =>
       client.readContract({
         address: factory as Address,
@@ -283,7 +289,7 @@ async function getBestV2Quote(chainId: number, tokenIn: Address, tokenOut: Addre
         args: [tokenIn, tokenOut],
       }) as Promise<Address>
     )
-  );
+  ));
   for (const r of pairResults) {
     if (r.status !== 'fulfilled') continue;
     if (r.value !== ZERO_ADDRESS) pairs.push(r.value);
@@ -291,7 +297,7 @@ async function getBestV2Quote(chainId: number, tokenIn: Address, tokenOut: Addre
 
   let best: { amountOut: bigint; pair?: Address } = { amountOut: 0n };
   const outResults = await Promise.allSettled(
-    pairs.map((pair) => quoteV2ExactInByPair(pair, tokenIn, tokenOut, amountIn, feeBps).then((amountOut) => ({ pair, amountOut })))
+    pairs.map((pair) => quoteV2ExactInByPair(chainId, pair, tokenIn, tokenOut, amountIn, feeBps).then((amountOut) => ({ pair, amountOut })))
   );
   for (const r of outResults) {
     if (r.status !== 'fulfilled') continue;
@@ -328,9 +334,8 @@ async function getBestDexExactIn(chainId: number, tokenIn: Address, tokenOut: Ad
 }
 
 async function getFirstV2Pair(chainId: number, tokenIn: Address, tokenOut: Address): Promise<Address | null> {
-  const client = await RpcService.getClient();
   const factories = getV2Factories(chainId);
-  const pairResults = await Promise.allSettled(
+  const pairResults = await withTradeDexRead(chainId, 'tradeDex.v2FirstPair', async (client) => await Promise.allSettled(
     factories.map((factory) =>
       client.readContract({
         address: factory as Address,
@@ -339,7 +344,7 @@ async function getFirstV2Pair(chainId: number, tokenIn: Address, tokenOut: Addre
         args: [tokenIn, tokenOut],
       }) as Promise<Address>
     )
-  );
+  ));
   for (const r of pairResults) {
     if (r.status !== 'fulfilled') continue;
     if (r.value !== ZERO_ADDRESS) return r.value;
@@ -389,7 +394,7 @@ async function resolveDexExactInTurbo(
 
   if (prefer === 'v3' && hintPool) {
     const explicitFee = isValidV3Fee(opts?.v3Fee) ? (opts!.v3Fee as number) : null;
-    const fee = explicitFee ?? await getV3PoolFeeCached(hintPool);
+    const fee = explicitFee ?? await getV3PoolFeeCached(chainId, hintPool);
     if (fee !== null) {
       seedV3PoolCache(chainId, tokenIn, tokenOut, fee, hintPool);
       return { amountOut: 0n, swapType: SwapType.V3_EXACT_IN, fee, poolAddress: hintPool };
@@ -500,7 +505,7 @@ export async function resolveBridgeHopExactIn(
 
   if (hardcoded) {
     if (hardcoded.kind === 'v2') {
-      const amountOut = needAmountOut ? await quoteV2ExactInByPair(hardcoded.poolAddress, tokenIn, tokenOut, amountIn, 25) : 0n;
+      const amountOut = needAmountOut ? await quoteV2ExactInByPair(chainId, hardcoded.poolAddress, tokenIn, tokenOut, amountIn, 25) : 0n;
       if (!needAmountOut || amountOut > 0n) {
         return { amountOut, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: hardcoded.poolAddress };
       }
@@ -527,7 +532,7 @@ export async function resolveBridgeHopExactIn(
     if (!pair) {
       return { amountOut: 0n, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: ZERO_ADDRESS as Address };
     }
-    const amountOut = await quoteV2ExactInByPair(pair, tokenIn, tokenOut, amountIn, 25);
+    const amountOut = await quoteV2ExactInByPair(chainId, pair, tokenIn, tokenOut, amountIn, 25);
     return { amountOut, swapType: SwapType.V2_EXACT_IN, fee: 0, poolAddress: pair };
   }
 
@@ -535,7 +540,7 @@ export async function resolveBridgeHopExactIn(
   for (const fee of fees) {
     const pool = await getFirstV3PoolCached(chainId, tokenIn, tokenOut, fee);
     if (!pool || pool === ZERO_ADDRESS) continue;
-    const usable = await isV3PoolUsable(pool);
+    const usable = await isV3PoolUsable(chainId, pool);
     if (!usable) continue;
     const amountOut = needAmountOut ? await getQuote(chainId, tokenIn, tokenOut, amountIn, fee) : 0n;
     if (!needAmountOut || amountOut > 0n) {

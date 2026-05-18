@@ -14,8 +14,6 @@ import { getChainIdByName, getNativeSymbol } from '@/constants/chains';
 import { getChainRuntime } from '@/constants/chains/runtime';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
-import { TradeService } from '@/services/trade';
-import { getHyperUsdcAddress, quoteHyperBuyFromUsdc, quoteHyperSellToUsdc } from '@/services/trade/tradeHyper';
 import {
   buildStrategyRollingTakeProfitOrderInputs,
   buildStrategySellOrderInputs,
@@ -33,6 +31,7 @@ import { ReviewPanel } from './components/ReviewPanel';
 import { QuickTradePanel } from './components/QuickTradePanel';
 import { FloatingToolbar } from './components/FloatingToolbar';
 import { CookingPanel } from './components/CookingPanel';
+import { useDynamicGasPreview } from './components/QuickTradePanel/useDynamicGasPreview';
 
 type NewPoolMonitorDisplayMode = 'floating' | 'tab';
 type XTradeTab = 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper' | 'xnewpoolmonitor';
@@ -71,8 +70,8 @@ function normalizeAddr(addr: string): `0x${string}` | null {
   return trimmed as `0x${string}`;
 }
 
-function resolveTradeBaseTokenAddress(settings: Settings | null | undefined): `0x${string}` {
-  const chainId = settings?.chainId ?? 56;
+function resolveTradeBaseTokenAddress(settings: Settings | null | undefined, chainIdOverride?: number): `0x${string}` {
+  const chainId = chainIdOverride ?? settings?.chainId ?? 56;
   const runtime = getChainRuntime(chainId);
   const baseToken = String(settings?.chains?.[chainId]?.tradeBaseToken ?? settings?.tradeBaseToken ?? 'BNB').toUpperCase();
   if (baseToken === 'WBNB') return runtime.wrappedNativeAddress;
@@ -103,6 +102,32 @@ function resolveTradeBaseTokenMeta(chainId: number, tradeBaseTokenAddress: `0x${
   }
 
   return { symbol: 'TOKEN', decimals: runtime.viemChain.nativeCurrency.decimals };
+}
+
+function deriveUsdFromBaseAmount(
+  amount: number,
+  tradeBaseTokenAddress: `0x${string}`,
+  tradeBaseTokenMeta: { symbol: string },
+  baseTokenPriceUsd: number | null,
+): number | null {
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const symbol = tradeBaseTokenMeta.symbol.toUpperCase();
+  if (symbol === 'USDC' || symbol === 'USDT') return amount;
+  if (tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase()) {
+    return baseTokenPriceUsd && baseTokenPriceUsd > 0 ? amount * baseTokenPriceUsd : null;
+  }
+  return baseTokenPriceUsd && baseTokenPriceUsd > 0 ? amount * baseTokenPriceUsd : null;
+}
+
+function deriveBaseAmountFromUsd(
+  usdAmount: number,
+  tradeBaseTokenMeta: { symbol: string },
+  baseTokenPriceUsd: number | null,
+): number | null {
+  if (!Number.isFinite(usdAmount) || usdAmount <= 0) return null;
+  const symbol = tradeBaseTokenMeta.symbol.toUpperCase();
+  if (symbol === 'USDC' || symbol === 'USDT') return usdAmount;
+  return baseTokenPriceUsd && baseTokenPriceUsd > 0 ? usdAmount / baseTokenPriceUsd : null;
 }
 
 function formatTokenAmountForDisplay(rawAmountWei: string | null | undefined, decimals: number): string {
@@ -181,6 +206,7 @@ export default function App() {
   const siteInfoRef = useRef<SiteInfo | null>(siteInfo);
   const pendingQuickBuyRef = useRef<{ tokenAddress: string; amount: string } | null>(pendingQuickBuy);
   const settingsRef = useRef<Settings | null>(null);
+  const effectiveChainIdRef = useRef<number>(56);
   const minimizedRef = useRef(false);
   const isEditingRef = useRef(false);
   const keyboardEnabledRef = useRef(false);
@@ -191,6 +217,9 @@ export default function App() {
   const prewarmedRpcRef = useRef<Set<string>>(new Set());
   const fastPollingRef = useRef<any>(null);
   const tokenRefreshSeqRef = useRef(0);
+  const bgStateChangedSeqRef = useRef(0);
+  const buyPreviewSeqRef = useRef(0);
+  const sellPreviewSeqRef = useRef(0);
   const cookingTokenInfoReqSeqRef = useRef(0);
   const deleteSoundPlayedAtRef = useRef<Record<string, number>>({});
   const autoTradeOrderSoundPlayedAtRef = useRef<Record<string, number>>({});
@@ -223,6 +252,17 @@ export default function App() {
   const settings: Settings | null = state?.settings ?? null;
   const address = state?.wallet.address ?? null;
   const walletAccounts = (state?.wallet.accounts ?? []) as Account[];
+  const siteChainId = useMemo(() => {
+    if (!siteInfo?.chain) return null;
+    const resolved = getChainIdByName(siteInfo.chain);
+    return Number.isFinite(resolved) && resolved > 0 ? resolved : null;
+  }, [siteInfo?.chain]);
+  const chainId = siteChainId ?? settings?.chainId ?? 56;
+  const effectiveChainSettings = settings?.chains?.[chainId] ?? null;
+  const effectiveScopedSettings = useMemo(
+    () => (settings ? { ...settings, chainId } : null),
+    [settings, chainId]
+  );
   const selectedTradeWallets = useMemo(
     () => resolveSelectedTradeWallets(state?.wallet, settings),
     [state?.wallet, settings]
@@ -251,16 +291,24 @@ export default function App() {
     return counts;
   }, [multiWalletBuyMode, selectedTradeWallets, address, childWalletBuyPresetAmountsNative]);
   const nativeSymbol = useMemo(() => {
-    const chainId = settings?.chainId || getChainIdByName(siteInfo?.chain || 'bsc') || 56;
     return getNativeSymbol(chainId);
-  }, [settings?.chainId, siteInfo?.chain]);
-  const tradeBaseTokenAddress = useMemo(() => resolveTradeBaseTokenAddress(settings), [settings]);
+  }, [chainId]);
+  const tradeBaseTokenAddress = useMemo(() => resolveTradeBaseTokenAddress(settings, chainId), [settings, chainId]);
   const tradeBaseTokenMeta = useMemo(() => {
-    const chainId = settings?.chainId || getChainIdByName(siteInfo?.chain || 'bsc') || 56;
     return resolveTradeBaseTokenMeta(chainId, tradeBaseTokenAddress);
-  }, [tradeBaseTokenAddress, settings?.chainId, siteInfo?.chain]);
+  }, [tradeBaseTokenAddress, chainId]);
   const tradeBaseTokenSymbol = tradeBaseTokenMeta.symbol;
-  const chainId = settings?.chainId || getChainIdByName(siteInfo?.chain || 'bsc') || 56;
+  const shouldDebugHyperReads = chainId === 999 || siteInfo?.platform === 'altfun';
+  const logHyperReadDebug = (event: string, payload: Record<string, unknown>) => {
+    if (!shouldDebugHyperReads) return;
+    console.log(`[content-ui.${event}]`, {
+      platform: siteInfo?.platform ?? null,
+      chain: siteInfo?.chain ?? null,
+      chainId,
+      tokenAddress: tokenAddressNormalized ?? null,
+      ...payload,
+    });
+  };
   const childPresetTooltipTexts = useMemo<[string, string, string, string]>(() => {
     const totals: [number, number, number, number] = [0, 0, 0, 0];
     if (multiWalletBuyMode === 'child_custom' && selectedTradeWallets.length > 0) {
@@ -304,6 +352,8 @@ export default function App() {
   const keyboardShortcutsEnabled = !!settings?.keyboardShortcutsEnabled;
   const tokenBalancePollIntervalMs = settings?.tokenBalancePollIntervalMs ?? 2000;
   const tokenBalanceRefreshThrottleMs = Math.max(200, tokenBalancePollIntervalMs);
+  const dynamicGasEnabled = effectiveChainSettings?.gasPriceMode === 'dynamic';
+  const { baseGasPriceWei: dynamicGasBasePriceWei } = useDynamicGasPreview(effectiveScopedSettings, dynamicGasEnabled);
   const { ensureReady: ensureTradeSuccessAudioReady, playBuy: playTradeBuySound, playSell: playTradeSellSound } = useTradeSuccessSound({
     enabled: settings?.tradeSuccessSoundEnabled,
     volume: settings?.tradeSuccessSoundVolume,
@@ -330,31 +380,17 @@ export default function App() {
     siteInfoRef.current = siteInfo;
     pendingQuickBuyRef.current = pendingQuickBuy;
     settingsRef.current = settings;
+    effectiveChainIdRef.current = chainId;
     minimizedRef.current = minimized;
     isEditingRef.current = isEditing;
     posRef.current = pos;
-  }, [siteInfo, pendingQuickBuy, settings, minimized, isEditing, pos]);
+  }, [siteInfo, pendingQuickBuy, settings, chainId, minimized, isEditing, pos]);
 
   useEffect(() => {
     if (settings) {
       (window as any).__DAGOBANG_SETTINGS__ = settings;
     }
   }, [settings]);
-
-  useEffect(() => {
-    if (!settings || !siteInfo?.chain) return;
-    const targetChainId = getChainIdByName(siteInfo.chain);
-    if (!Number.isFinite(targetChainId) || targetChainId <= 0) return;
-    if (settings.chainId === targetChainId) return;
-    if (!settings.chains[targetChainId]) return;
-    void call({
-      type: 'settings:set',
-      settings: {
-        ...settings,
-        chainId: targetChainId,
-      },
-    } as const).catch(() => { });
-  }, [settings, siteInfo?.chain]);
 
   useEffect(() => {
     keyboardEnabledRef.current = keyboardShortcutsEnabled;
@@ -508,7 +544,8 @@ export default function App() {
         const s = settingsRef.current;
         if (!s) return;
         const idx = buyMap.indexOf(key);
-        const presets = s.chains[s.chainId]?.buyPresets ?? ['0.01', '0.2', '0.5', '1.0'];
+        const activeChainId = effectiveChainIdRef.current;
+        const presets = s.chains[activeChainId]?.buyPresets ?? ['0.01', '0.2', '0.5', '1.0'];
         const amt = presets[idx];
         if (!amt) return;
         handleBuyRef.current(amt, idx);
@@ -519,7 +556,8 @@ export default function App() {
         const s = settingsRef.current;
         if (!s) return;
         const idx = sellMap.indexOf(key);
-        const presets = s.chains[s.chainId]?.sellPresets ?? ['10', '25', '50', '100'];
+        const activeChainId = effectiveChainIdRef.current;
+        const presets = s.chains[activeChainId]?.sellPresets ?? ['10', '25', '50', '100'];
         const pctStr = presets[idx];
         const pct = Number(pctStr);
         if (!Number.isFinite(pct)) return;
@@ -563,8 +601,9 @@ export default function App() {
       siteInfoRef.current = site;
       setSiteInfo(site);
       setIsEditing(false);
-      setDraftBuyPresets(settings.chains[settings.chainId].buyPresets || ['0.01', '0.2', '0.5', '1.0']);
-      setDraftSellPresets(settings.chains[settings.chainId].sellPresets || ['10', '25', '50', '100']);
+      const quickBuyChainId = getChainIdByName(site.chain) || 56;
+      setDraftBuyPresets(settings.chains[quickBuyChainId]?.buyPresets || ['0.01', '0.2', '0.5', '1.0']);
+      setDraftSellPresets(settings.chains[quickBuyChainId]?.sellPresets || ['10', '25', '50', '100']);
       setPendingQuickBuy({ tokenAddress: addr.toLowerCase(), amount });
     };
     window.addEventListener('dagobang-quickbuy' as any, handler as any);
@@ -808,7 +847,6 @@ export default function App() {
 
   useEffect(() => {
     if (!settings) return;
-    const chainId = settings.chainId ?? 56;
     const chain = settings.chains[chainId];
     if (!chain) return;
     const key = [
@@ -824,7 +862,7 @@ export default function App() {
       type: 'rpc:prewarm',
       input: { timeoutMs: 1500 },
     } as const).catch(() => { });
-  }, [settings]);
+  }, [settings, chainId]);
 
   useEffect(() => {
     if (!isUnlocked) return;
@@ -832,7 +870,6 @@ export default function App() {
     if (!settings) return;
     if (!tokenAddressNormalized) return;
     if (!tokenInfo) return;
-    const chainId = settings.chainId ?? 56;
     const isTurbo = settings.chains[chainId]?.executionMode === 'turbo';
     if (!isTurbo) return;
     const key = `${chainId}:${address.toLowerCase()}:${tokenAddressNormalized.toLowerCase()}`;
@@ -842,7 +879,7 @@ export default function App() {
       type: 'trade:prewarmTurbo',
       input: { chainId, tokenAddress: tokenAddressNormalized, tokenInfo: tokenInfo ?? undefined },
     } as const).catch(() => { });
-  }, [isUnlocked, address, settings, tokenAddressNormalized, tokenInfo]);
+  }, [isUnlocked, address, settings, tokenAddressNormalized, tokenInfo, chainId]);
 
   const formattedNativeBalance = useMemo(
     () => formatTokenAmountForDisplay(tradeBaseBalanceWei, tradeBaseTokenMeta.decimals),
@@ -889,7 +926,6 @@ export default function App() {
     let canceled = false;
     if (!settings || !siteInfo) return;
 
-    const chainId = settings.chainId ?? 56;
     const runtime = getChainRuntime(chainId);
     const priceTokenAddress = tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase()
       ? runtime.wrappedNativeAddress
@@ -921,10 +957,10 @@ export default function App() {
     return () => {
       canceled = true;
     };
-  }, [settings, siteInfo, tradeBaseTokenAddress, tradeBaseTokenMeta.symbol]);
+  }, [settings, siteInfo, tradeBaseTokenAddress, tradeBaseTokenMeta.symbol, chainId]);
 
   const quickTradePreviewRoutes = useMemo(() => {
-    if (siteInfo?.platform === 'altfun' && (settings?.chainId ?? 56) === 999) {
+    if (siteInfo?.platform === 'altfun' && chainId === 999) {
       const token = tokenSymbol || 'TOKEN';
       const base = tradeBaseTokenMeta.symbol;
       if (base.toUpperCase() === 'USDC') {
@@ -939,99 +975,108 @@ export default function App() {
       };
     }
     return { buy: null, sell: null };
-  }, [siteInfo?.platform, settings?.chainId, tokenSymbol, tradeBaseTokenMeta.symbol]);
+  }, [siteInfo?.platform, chainId, tokenSymbol, tradeBaseTokenMeta.symbol]);
 
   useEffect(() => {
-    let canceled = false;
     if (!tokenAddressNormalized || !settings || !siteInfo || chainId !== 999 || siteInfo.platform !== 'altfun') {
       setBuyPreviewQuotedUsd([null, null, null, null]);
       setBuyPreviewQuotedTokenAmounts([null, null, null, null]);
-      setSellPreviewQuotedUsd([null, null, null, null]);
-      setSellPreviewQuotedBaseAmounts([null, null, null, null]);
       return;
     }
 
-    const tokenAddress = tokenAddressNormalized as `0x${string}`;
-    const usdcAddress = getHyperUsdcAddress();
-    const tokenDecimalsResolved = Number.isFinite(tokenDecimals as number) && (tokenDecimals as number) >= 0
-      ? Number(tokenDecimals)
-      : 18;
-    const buyQuoteOpts =
-      tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase() ||
-      tradeBaseTokenAddress.toLowerCase() === getChainRuntime(chainId).wrappedNativeAddress.toLowerCase()
-        ? { prefer: 'v3' as const, v3Fee: 3000 }
-        : undefined;
-    const sellQuoteOpts =
-      tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase() ||
-      tradeBaseTokenAddress.toLowerCase() === getChainRuntime(chainId).wrappedNativeAddress.toLowerCase()
-        ? { prefer: 'v3' as const, v3Fee: 3000 }
-        : undefined;
+    const nextBuyUsd: Array<number | null> = [null, null, null, null];
+    const nextBuyTokens: Array<number | null> = [null, null, null, null];
+    const previewSeq = buyPreviewSeqRef.current + 1;
+    buyPreviewSeqRef.current = previewSeq;
+    let successCount = 0;
+    let skippedCount = 0;
 
-    void (async () => {
-      const nextBuyUsd: Array<number | null> = [null, null, null, null];
-      const nextBuyTokens: Array<number | null> = [null, null, null, null];
-      const nextSellUsd: Array<number | null> = [null, null, null, null];
-      const nextSellBase: Array<number | null> = [null, null, null, null];
+    displayedBuyPresets.slice(0, 4).forEach((raw, idx) => {
+      const normalized = String(raw || '').replace(/,/g, '').trim();
+      const amount = Number(normalized);
+      if (!normalized || !Number.isFinite(amount) || amount <= 0) {
+        skippedCount += 1;
+        return;
+      }
+      const usdAmount = deriveUsdFromBaseAmount(amount, tradeBaseTokenAddress, tradeBaseTokenMeta, tradeBasePriceUsd);
+      nextBuyUsd[idx] = usdAmount;
+      nextBuyTokens[idx] = usdAmount != null && tokenPriceUsd && tokenPriceUsd > 0
+        ? usdAmount / tokenPriceUsd
+        : null;
+      successCount += 1;
+    });
 
-      await Promise.all(displayedBuyPresets.slice(0, 4).map(async (raw, idx) => {
-        try {
-          const normalized = String(raw || '').replace(/,/g, '').trim();
-          if (!normalized) return;
-          const amountIn = parseUnits(normalized, tradeBaseTokenMeta.decimals);
-          if (amountIn <= 0n) return;
-          const usdcAmount = tradeBaseTokenAddress.toLowerCase() === usdcAddress.toLowerCase()
-            ? amountIn
-            : (await TradeService.quoteBestExactIn(chainId, tradeBaseTokenAddress, usdcAddress, amountIn, buyQuoteOpts)).amountOut;
-          if (usdcAmount <= 0n) return;
-          const tokenOut = await quoteHyperBuyFromUsdc(tokenAddress, usdcAmount);
-          nextBuyUsd[idx] = Number(formatUnits(usdcAmount, 6));
-          if (tokenOut > 0n) {
-            nextBuyTokens[idx] = Number(formatUnits(tokenOut, tokenDecimalsResolved));
-          }
-        } catch {
-        }
-      }));
-
-      await Promise.all(displayedSellPresets.slice(0, 4).map(async (raw, idx) => {
-        try {
-          const pct = Number(String(raw || '').replace(/,/g, '').trim());
-          if (!Number.isFinite(pct) || pct <= 0 || !tokenBalanceWei) return;
-          const tokenAmount = (BigInt(tokenBalanceWei) * BigInt(Math.round(pct * 100))) / 10000n;
-          if (tokenAmount <= 0n) return;
-          const usdcAmount = await quoteHyperSellToUsdc(tokenAddress, tokenAmount);
-          if (usdcAmount <= 0n) return;
-          const baseOut = tradeBaseTokenAddress.toLowerCase() === usdcAddress.toLowerCase()
-            ? usdcAmount
-            : (await TradeService.quoteBestExactIn(chainId, usdcAddress, tradeBaseTokenAddress, usdcAmount, sellQuoteOpts)).amountOut;
-          nextSellUsd[idx] = Number(formatUnits(usdcAmount, 6));
-          if (baseOut > 0n) {
-            nextSellBase[idx] = Number(formatUnits(baseOut, tradeBaseTokenMeta.decimals));
-          }
-        } catch {
-        }
-      }));
-
-      if (canceled) return;
-      setBuyPreviewQuotedUsd(nextBuyUsd);
-      setBuyPreviewQuotedTokenAmounts(nextBuyTokens);
-      setSellPreviewQuotedUsd(nextSellUsd);
-      setSellPreviewQuotedBaseAmounts(nextSellBase);
-    })();
-
-    return () => {
-      canceled = true;
-    };
+    setBuyPreviewQuotedUsd(nextBuyUsd);
+    setBuyPreviewQuotedTokenAmounts(nextBuyTokens);
+    logHyperReadDebug('altfun.buyPreview.derived', {
+      seq: previewSeq,
+      presetCount: displayedBuyPresets.slice(0, 4).length,
+      successCount,
+      skippedCount,
+      quotedUsdCount: nextBuyUsd.filter((v) => v != null).length,
+      quotedTokenCount: nextBuyTokens.filter((v) => v != null).length,
+    });
   }, [
     tokenAddressNormalized,
     settings,
     siteInfo,
     chainId,
     displayedBuyPresets,
-    displayedSellPresets,
     tradeBaseTokenAddress,
-    tradeBaseTokenMeta.decimals,
-    tokenDecimals,
-    tokenBalanceWei,
+    tradeBaseTokenMeta,
+    tradeBasePriceUsd,
+    tokenPriceUsd,
+  ]);
+
+  useEffect(() => {
+    if (!tokenAddressNormalized || !settings || !siteInfo || chainId !== 999 || siteInfo.platform !== 'altfun') {
+      setSellPreviewQuotedUsd([null, null, null, null]);
+      setSellPreviewQuotedBaseAmounts([null, null, null, null]);
+      return;
+    }
+
+    const nextSellUsd: Array<number | null> = [null, null, null, null];
+    const nextSellBase: Array<number | null> = [null, null, null, null];
+    const previewSeq = sellPreviewSeqRef.current + 1;
+    sellPreviewSeqRef.current = previewSeq;
+    let successCount = 0;
+    let skippedCount = 0;
+    const balanceAmount = numericTokenBalance ?? null;
+
+    displayedSellPresets.slice(0, 4).forEach((raw, idx) => {
+      const pct = Number(String(raw || '').replace(/,/g, '').trim());
+      if (!Number.isFinite(pct) || pct <= 0 || balanceAmount == null || balanceAmount <= 0) {
+        skippedCount += 1;
+        return;
+      }
+      const tokenAmount = (balanceAmount * pct) / 100;
+      const usdAmount = tokenPriceUsd && tokenPriceUsd > 0 ? tokenAmount * tokenPriceUsd : null;
+      const baseAmount = usdAmount != null ? deriveBaseAmountFromUsd(usdAmount, tradeBaseTokenMeta, tradeBasePriceUsd) : null;
+      nextSellUsd[idx] = usdAmount;
+      nextSellBase[idx] = baseAmount;
+      successCount += 1;
+    });
+
+    setSellPreviewQuotedUsd(nextSellUsd);
+    setSellPreviewQuotedBaseAmounts(nextSellBase);
+    logHyperReadDebug('altfun.sellPreview.derived', {
+      seq: previewSeq,
+      presetCount: displayedSellPresets.slice(0, 4).length,
+      successCount,
+      skippedCount,
+      quotedUsdCount: nextSellUsd.filter((v) => v != null).length,
+      quotedBaseCount: nextSellBase.filter((v) => v != null).length,
+    });
+  }, [
+    tokenAddressNormalized,
+    settings,
+    siteInfo,
+    chainId,
+    displayedSellPresets,
+    numericTokenBalance,
+    tradeBaseTokenMeta,
+    tradeBasePriceUsd,
+    tokenPriceUsd,
   ]);
 
   const lastTokenPriceRefresh = useRef(0);
@@ -1039,7 +1084,7 @@ export default function App() {
   useEffect(() => {
     tokenPriceReqSeq.current += 1;
     setTokenPriceUsd(null);
-  }, [tokenAddressNormalized, settings?.chainId, siteInfo?.platform]);
+  }, [tokenAddressNormalized, chainId, siteInfo?.platform]);
   async function refreshTokenPrice(force = false, tokenInfoOverride?: TokenInfo | null) {
     if (document.hidden && !force) return;
     if (!settings || !siteInfo || !tokenAddressNormalized) {
@@ -1051,7 +1096,6 @@ export default function App() {
     if (!force && now - lastTokenPriceRefresh.current < 5000) return;
     lastTokenPriceRefresh.current = now;
 
-    const chainId = settings.chainId ?? 56;
     const tokenAddr = tokenAddressNormalized;
     const addrLower = tokenAddr.toLowerCase();
     const baseTokenInfo = tokenInfoOverride !== undefined ? tokenInfoOverride : tokenInfo;
@@ -1078,14 +1122,17 @@ export default function App() {
     setGmgnSellEnabled((v) => !v);
   };
 
-  async function refreshAll(queryAllWallets = false) {
+  async function refreshAll(queryAllWallets = false, source = 'unknown') {
     if (document.hidden) return;
     if (!siteInfo) return;
+    const startedAt = Date.now();
+    logHyperReadDebug('refreshAll.start', { source, queryAllWallets });
     const res = await call({ type: 'bg:getState' });
     setState(res);
     setError(null);
     if (res.wallet.isUnlocked) {
-      const tradeBaseAddress = resolveTradeBaseTokenAddress(res.settings);
+      const resolvedChainId = siteInfo?.chain ? (getChainIdByName(siteInfo.chain) || (res.settings?.chainId ?? 56)) : (res.settings?.chainId ?? 56);
+      const tradeBaseAddress = resolveTradeBaseTokenAddress(res.settings, resolvedChainId);
       const allWallets = ((res.wallet.accounts ?? []) as Account[])
         .map((acc) => normalizeAddr(String(acc.address || '')))
         .filter(Boolean) as `0x${string}`[];
@@ -1124,16 +1171,30 @@ export default function App() {
 
       const total = targetWallets.reduce((sum, addr) => sum + BigInt(byTradeBaseWallet[addr.toLowerCase()] || '0'), 0n);
       setTradeBaseBalanceWei(total.toString());
+      logHyperReadDebug('refreshAll.done', {
+        source,
+        queryAllWallets,
+        elapsedMs: Date.now() - startedAt,
+        selectedWalletCount: selectedWallets.length,
+        queryWalletCount: queryWallets.length,
+        tradeBaseAddress,
+      });
     } else {
       setTradeBaseBalanceWei('0');
       setWalletNativeBalancesWei({});
       setWalletTradeBaseBalancesWei({});
       setWalletTokenBalancesWei({});
+      logHyperReadDebug('refreshAll.done', {
+        source,
+        queryAllWallets,
+        elapsedMs: Date.now() - startedAt,
+        unlocked: false,
+      });
     }
   }
 
   const lastTokenRefresh = useRef(0);
-  async function refreshToken(force = false, queryAllWallets = false) {
+  async function refreshToken(force = false, queryAllWallets = false, source = 'unknown') {
     const seq = tokenRefreshSeqRef.current;
     if (document.hidden && !force) return;
     if (!tokenAddressNormalized || !siteInfo) {
@@ -1153,10 +1214,23 @@ export default function App() {
     const now = Date.now();
     if (!force && now - lastTokenRefresh.current < tokenBalanceRefreshThrottleMs) return;
     lastTokenRefresh.current = now;
+    const startedAt = Date.now();
+    const tokenInfoCacheTtlMs = source === 'interval:token' ? 5000 : 0;
+    logHyperReadDebug('refreshToken.start', {
+      source,
+      force,
+      queryAllWallets,
+      throttleMs: tokenBalanceRefreshThrottleMs,
+      tokenInfoCacheTtlMs,
+    });
 
     const reqCtxKey = `${siteInfo.platform ?? ''}:${siteInfo.chain ?? ''}:${tokenAddressNormalized ?? ''}`;
     try {
-      const meta = await TokenAPI.getTokenInfo(siteInfo.platform, siteInfo.chain, tokenAddressNormalized);
+      const metaStartedAt = Date.now();
+      const meta = await TokenAPI.getTokenInfo(siteInfo.platform, siteInfo.chain, tokenAddressNormalized, {
+        cacheTtlMs: tokenInfoCacheTtlMs,
+      });
+      const metaElapsedMs = Date.now() - metaStartedAt;
       if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
       if (meta) {
         const normalizedDecimals =
@@ -1185,7 +1259,9 @@ export default function App() {
         .filter(Boolean) as `0x${string}`[];
       const targetWalletsForToken = selectedWalletsForToken.length > 0 ? selectedWalletsForToken : allWalletsForToken.slice(0, 1);
       const queryWalletsForToken = queryAllWallets ? allWalletsForToken : targetWalletsForToken;
+      let holdingsElapsedMs = 0;
       if (isUnlocked && queryWalletsForToken.length > 0) {
+        const holdingsStartedAt = Date.now();
         const holdings = await Promise.all(
           queryWalletsForToken.map((walletAddr) =>
             TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, walletAddr, tokenAddressNormalized, {
@@ -1193,6 +1269,7 @@ export default function App() {
             })
           )
         );
+        holdingsElapsedMs = Date.now() - holdingsStartedAt;
         if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
         const byWallet: Record<string, string> = {};
         allWalletsForToken.forEach((addr) => {
@@ -1209,7 +1286,21 @@ export default function App() {
         setWalletTokenBalancesWei({});
       }
 
+      const priceStartedAt = Date.now();
       await refreshTokenPrice(force, meta ?? null);
+      const priceElapsedMs = Date.now() - priceStartedAt;
+      logHyperReadDebug('refreshToken.done', {
+        source,
+        force,
+        queryAllWallets,
+        elapsedMs: Date.now() - startedAt,
+        hasMeta: !!meta,
+        metaElapsedMs,
+        holdingsElapsedMs,
+        priceElapsedMs,
+        selectedWalletCount: targetWalletsForToken.length,
+        queriedWalletCount: queryWalletsForToken.length,
+      });
     } catch (e: any) {
       if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
       setTokenSymbol(null);
@@ -1220,14 +1311,21 @@ export default function App() {
       setTokenPriceUsd(null);
       setMarketCapDisplay(null);
       setLiquidityDisplay(null);
+      logHyperReadDebug('refreshToken.failed', {
+        source,
+        force,
+        queryAllWallets,
+        elapsedMs: Date.now() - startedAt,
+        error: String(e?.message || e || ''),
+      });
       // Don't show error for token fetch to avoid noise
     }
   }
 
   useEffect(() => {
     if (!siteInfo) return;
-    refreshAll();
-    const timer = setInterval(refreshAll, 10000);
+    refreshAll(false, 'siteInfo:init');
+    const timer = setInterval(() => refreshAll(false, 'interval:10s'), 10000);
     return () => clearInterval(timer);
   }, [siteInfo]);
 
@@ -1327,8 +1425,18 @@ export default function App() {
         })();
       }
       if (message.type === 'bg:stateChanged') {
-        refreshAll();
-        refreshToken();
+        const seq = bgStateChangedSeqRef.current + 1;
+        bgStateChangedSeqRef.current = seq;
+        const sentAtMs = Number(message?.ts ?? 0) || null;
+        logHyperReadDebug('bg.stateChanged', {
+          seq,
+          broadcastSeq: typeof message?.seq === 'number' ? message.seq : null,
+          sentAtMs,
+          receivedLagMs: sentAtMs ? Math.max(0, Date.now() - sentAtMs) : null,
+          hidden: document.hidden,
+        });
+        refreshAll(false, 'bg:stateChanged');
+        refreshToken(false, false, 'bg:stateChanged');
         return;
       }
       if (message.type === 'bg:xsniper:buy') {
@@ -1582,8 +1690,8 @@ export default function App() {
   }, [ensureDeleteTweetAudioReady, playDeleteTweetPreset]);
 
   useEffect(() => {
-    refreshToken(true);
-    const timer = setInterval(() => refreshToken(), tokenBalancePollIntervalMs);
+    refreshToken(true, false, 'token:init');
+    const timer = setInterval(() => refreshToken(false, false, 'interval:token'), tokenBalancePollIntervalMs);
     return () => clearInterval(timer);
   }, [tokenAddressNormalized, address, siteInfo, tokenBalancePollIntervalMs]);
 
@@ -1643,8 +1751,8 @@ export default function App() {
     let count = 0;
     fastPollingRef.current = setInterval(() => {
       count++;
-      refreshAll();
-      refreshToken(true); // force refresh
+        refreshAll(false, 'fastPolling');
+        refreshToken(true, false, 'fastPolling'); // force refresh
       if (count >= 15) {
         if (fastPollingRef.current) clearInterval(fastPollingRef.current);
         fastPollingRef.current = null;
@@ -1654,7 +1762,8 @@ export default function App() {
 
   const resolvePriorityFee = (side: 'buy' | 'sell') => {
     if (!settings) return undefined;
-    const chainSettings = settings.chains[settings.chainId];
+    const chainSettings = effectiveChainSettings;
+    if (!chainSettings) return undefined;
     const selectedPreset = side === 'buy'
       ? ((chainSettings.buyPriorityFeePreset ?? 'standard') as PriorityFeePreset)
       : ((chainSettings.sellPriorityFeePreset ?? 'standard') as PriorityFeePreset);
@@ -1799,7 +1908,7 @@ export default function App() {
         const results = await Promise.allSettled(
           executablePlan.map(async ({ walletAddress, amountWei }) => {
             const buyInput = {
-              chainId: settings.chainId,
+              chainId,
               tokenAddress: tokenAddressNormalized,
               nativeAmountWei: amountWei.toString(),
               baseTokenAddress: tradeBaseTokenAddress,
@@ -1842,7 +1951,7 @@ export default function App() {
             successes.map(({ walletAddress }) =>
               call({
                 type: 'tx:approveMaxForSellIfNeeded',
-                chainId: settings.chainId,
+                chainId,
                 tokenAddress: tokenAddressNormalized,
                 tokenInfo: tokenInfo,
                 fromAddress: walletAddress,
@@ -1860,7 +1969,6 @@ export default function App() {
           if (!config?.enabled) return;
           if (!siteInfo) return;
           if (!tokenInfo) return;
-          const chainId = settings.chainId ?? 56;
           const fetchedPriceUsd = await TokenAPI.getTokenPriceUsd(siteInfo.platform, chainId, tokenAddressNormalized, tokenInfo);
           const basePriceUsd = fetchedPriceUsd != null && fetchedPriceUsd > 0
             ? fetchedPriceUsd
@@ -1954,7 +2062,6 @@ export default function App() {
       const wallets = selectedTradeWallets;
       if (wallets.length <= 0) throw new Error('No wallet selected');
 
-      const chainId = settings.chainId;
       const isTurbo = settings.chains[chainId]?.executionMode === 'turbo';
       const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
       const isInnerFourMeme = !!tokenInfo?.launchpad && (platform.includes('four')) && tokenInfo.launchpad_status !== 1;
@@ -2098,7 +2205,7 @@ export default function App() {
         wallets.map((walletAddress) =>
           call({
             type: 'tx:approveMaxForSellIfNeeded',
-            chainId: settings.chainId,
+            chainId,
             tokenAddress: tokenAddressNormalized,
             tokenInfo,
             fromAddress: walletAddress,
@@ -2122,8 +2229,8 @@ export default function App() {
 
   const handleToggleBuyGas = () => {
     if (!settings) return;
-    const chainId = settings.chainId;
-    const currentChainSettings = settings.chains[chainId];
+    const currentChainSettings = effectiveChainSettings;
+    if (!currentChainSettings) return;
     const presets: ('slow' | 'standard' | 'fast' | 'turbo')[] = ['slow', 'standard', 'fast', 'turbo'];
     const current = (currentChainSettings as any).buyGasPreset ?? currentChainSettings.gasPreset ?? 'standard';
     const next = presets[(presets.indexOf(current) + 1) % 4];
@@ -2144,8 +2251,8 @@ export default function App() {
 
   const handleToggleSellGas = () => {
     if (!settings) return;
-    const chainId = settings.chainId;
-    const currentChainSettings = settings.chains[chainId];
+    const currentChainSettings = effectiveChainSettings;
+    if (!currentChainSettings) return;
     const presets: ('slow' | 'standard' | 'fast' | 'turbo')[] = ['slow', 'standard', 'fast', 'turbo'];
     const current = (currentChainSettings as any).sellGasPreset ?? currentChainSettings.gasPreset ?? 'standard';
     const next = presets[(presets.indexOf(current) + 1) % 4];
@@ -2166,8 +2273,8 @@ export default function App() {
 
   const handleToggleSlippage = () => {
     if (!settings) return;
-    const chainId = settings.chainId;
-    const currentChainSettings = settings.chains[chainId];
+    const currentChainSettings = effectiveChainSettings;
+    if (!currentChainSettings) return;
     const options = [3000, 4000, 5000, 9000];
     const current = currentChainSettings.slippageBps ?? 4000;
     const idx = options.indexOf(current);
@@ -2189,8 +2296,8 @@ export default function App() {
 
   const handleToggleBuyPriorityFeePreset = () => {
     if (!settings) return;
-    const chainId = settings.chainId;
-    const currentChainSettings = settings.chains[chainId];
+    const currentChainSettings = effectiveChainSettings;
+    if (!currentChainSettings) return;
     const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).buyPriorityFeePreset)
       ? (currentChainSettings as any).buyPriorityFeePreset as PriorityFeePreset
       : 'standard';
@@ -2212,8 +2319,8 @@ export default function App() {
 
   const handleToggleSellPriorityFeePreset = () => {
     if (!settings) return;
-    const chainId = settings.chainId;
-    const currentChainSettings = settings.chains[chainId];
+    const currentChainSettings = effectiveChainSettings;
+    if (!currentChainSettings) return;
     const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).sellPriorityFeePreset)
       ? (currentChainSettings as any).sellPriorityFeePreset as PriorityFeePreset
       : 'standard';
@@ -2235,8 +2342,8 @@ export default function App() {
 
   const handleToggleMode = () => {
     if (!settings) return;
-    const chainId = settings.chainId;
-    const currentChainSettings = settings.chains[chainId];
+    const currentChainSettings = effectiveChainSettings;
+    if (!currentChainSettings) return;
     const next = currentChainSettings.executionMode === 'turbo' ? 'default' : 'turbo';
     call({
       type: 'settings:set',
@@ -2257,16 +2364,15 @@ export default function App() {
     if (!isEditing) {
       // Start editing: initialize drafts
       if (settings) {
-        const chainId = settings.chainId;
-        setDraftBuyPresets(settings.chains[chainId].buyPresets || ['0.01', '0.2', '0.5', '1.0']);
-        setDraftSellPresets(settings.chains[chainId].sellPresets || ['10', '25', '50', '100']);
+        setDraftBuyPresets(settings.chains[chainId]?.buyPresets || ['0.01', '0.2', '0.5', '1.0']);
+        setDraftSellPresets(settings.chains[chainId]?.sellPresets || ['10', '25', '50', '100']);
       }
       setIsEditing(true);
     } else {
       // Stop editing: save drafts
       if (settings) {
-        const chainId = settings.chainId;
-        const currentChainSettings = settings.chains[chainId];
+        const currentChainSettings = effectiveChainSettings;
+        if (!currentChainSettings) return;
         call({
           type: 'settings:set',
           settings: {
@@ -2449,8 +2555,8 @@ export default function App() {
   };
 
   const handleWalletSelectorOpen = () => {
-    void refreshAll(true);
-    void refreshToken(true, true);
+    void refreshAll(true, 'walletSelectorOpen');
+    void refreshToken(true, true, 'walletSelectorOpen');
   };
 
   const newPoolMonitorActive = newPoolMonitorEnabled && (newPoolMonitorDisplayMode === 'tab'
@@ -2466,7 +2572,7 @@ export default function App() {
           {siteInfo.showBar ? (
             <FloatingToolbar
               siteInfo={siteInfo}
-              settings={settings}
+              settings={effectiveScopedSettings}
               onToggleCooking={handleToggleCookingPanel}
               cookingActive={showCookingPanel}
               onToggleXTrade={handleToggleXTradePanel}
@@ -2548,7 +2654,8 @@ export default function App() {
               busy={busy}
               isUnlocked={isUnlocked}
               onBuy={handleBuy}
-              settings={settings}
+              settings={effectiveScopedSettings}
+              dynamicGasBasePriceWei={dynamicGasBasePriceWei}
               onToggleMode={handleToggleMode}
               onToggleBuyGas={handleToggleBuyGas}
               onToggleSellGas={handleToggleSellGas}
@@ -2587,7 +2694,7 @@ export default function App() {
             siteInfo={siteInfo}
             visible={limitTradePanelVisible}
             onVisibleChange={setShowLimitTradePanel}
-            settings={settings}
+            settings={effectiveScopedSettings}
             isUnlocked={isUnlocked}
             address={address}
             walletAccounts={walletAccounts}
@@ -2611,21 +2718,21 @@ export default function App() {
           <RpcPanel
             visible={showRpcPanel}
             onVisibleChange={setShowRpcPanel}
-            settings={settings}
+            settings={effectiveScopedSettings}
             locale={locale}
           />
 
           <DailyAnalysisPanel
             visible={showDailyAnalysisPanel}
             onVisibleChange={setShowDailyAnalysisPanel}
-            settings={settings}
+            settings={effectiveScopedSettings}
             address={siteInfo?.walletAddress ?? address}
           />
 
           <ReviewPanel
             visible={showReviewPanel}
             onVisibleChange={setShowReviewPanel}
-            settings={settings}
+            settings={effectiveScopedSettings}
             address={siteInfo?.walletAddress ?? address}
             tokenAddress={tokenAddressNormalized}
             tokenSymbol={tokenSymbol}
@@ -2653,7 +2760,7 @@ export default function App() {
               setXTradeActiveTab(tab);
             }}
             onVisibleChange={setShowXTradePanel}
-            settings={settings}
+            settings={effectiveScopedSettings}
             isUnlocked={isUnlocked}
             newPoolMonitorEnabled={newPoolMonitorEnabled}
             newCoinSniperEnabled={newCoinSniperEnabled}
@@ -2664,7 +2771,7 @@ export default function App() {
             siteInfo={siteInfo}
             visible={newPoolMonitorEnabled && newPoolMonitorDisplayMode === 'floating' && showNewPoolMonitorPanel}
             onVisibleChange={setShowNewPoolMonitorPanel}
-            settings={settings}
+            settings={effectiveScopedSettings}
             displayMode={newPoolMonitorDisplayMode}
             onDisplayModeChange={handleSetNewPoolMonitorDisplayMode}
           />

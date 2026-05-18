@@ -16,6 +16,7 @@ import { XNewCoinSniperTasksSection } from './XNewCoinSniperTasksSection';
 import { XNewCoinSniperTaskModal } from './XNewCoinSniperTaskModal';
 import { XSniperAutoTaskSection } from './XSniperAutoTaskSection';
 import { PLATFORM_OPTIONS, extractLaunchpadPlatform } from '@/constants/launchpad';
+import { getChainIdByName } from '@/constants/chains';
 import { WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
 
 type XNewCoinSniperContentProps = {
@@ -487,10 +488,15 @@ export function XNewCoinSniperContent({
     const now = Date.now();
     let presetKeywords: string[] = [];
     let presetTokenName = '';
+    const pageChainId = (() => {
+      const resolved = siteInfo?.chain ? getChainIdByName(siteInfo.chain) : 0;
+      if (Number.isFinite(resolved) && resolved > 0) return resolved;
+      return resolvedSettings?.chainId ?? 56;
+    })();
     const currentTokenAddress = normalizeAddress(String(siteInfo?.tokenAddress || '').trim());
     if (currentTokenAddress) {
       try {
-        const metaRes = await call({ type: 'token:getMeta', tokenAddress: currentTokenAddress as `0x${string}` } as const);
+        const metaRes = await call({ type: 'token:getMeta', tokenAddress: currentTokenAddress as `0x${string}`, chainId: pageChainId } as const);
         const symbol = String((metaRes as any)?.symbol || '').trim();
         const name = String((metaRes as any)?.name || '').trim();
         if (name) presetTokenName = name;

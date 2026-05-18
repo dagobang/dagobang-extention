@@ -90,7 +90,7 @@ export class TokenFourmemeService {
     }
 
     static async getTokenInfo(chainId: number, tokenAddress: string): Promise<FourmemeTokenInfo> {
-        const client = await RpcService.getClient();
+        const client = await RpcService.getClient(chainId);
         const helperAddress = this.getTokenManagerHelper3Address(chainId);
 
         if (helperAddress === '0x0000000000000000000000000000000000000000') {
@@ -176,7 +176,7 @@ export class TokenFourmemeService {
         }
 
         const account = await WalletService.getSigner(fromAddress);
-        const client = await RpcService.getClient();
+        const client = await RpcService.getClient(chainId);
         const settings = await SettingsService.get();
         const chainSettings = settings.chains[chainId as ChainId] as ChainSettings;
         const gasPreset: GasPreset = chainSettings.buyGasPreset ?? chainSettings.gasPreset;

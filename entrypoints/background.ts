@@ -46,6 +46,7 @@ export default defineBackground(() => {
     if (!isAddress(delegateAddress)) return { delegated: false, code: normalized };
     return { delegated: true, delegateAddress, code: normalized };
   };
+  let stateChangeSeq = 0;
 
   browser.action.onClicked.addListener(async (tab) => {
     try {
@@ -73,7 +74,10 @@ export default defineBackground(() => {
   };
 
   const broadcastStateChange = async () => {
-    await broadcastToTabs({ type: 'bg:stateChanged' });
+    stateChangeSeq += 1;
+    const payload = { type: 'bg:stateChanged', seq: stateChangeSeq, ts: Date.now() };
+    console.log('[background.broadcastStateChange]', payload);
+    await broadcastToTabs(payload);
   };
 
   const requestGmgnHoldingsFromContent = async (chain: string, walletAddress: string): Promise<any[]> => {
@@ -135,8 +139,8 @@ export default defineBackground(() => {
       tokenSymbol: undefined,
       marketCapUsd: null,
     };
+    const resolvedChainId = chainId ?? 56;
     try {
-      const resolvedChainId = chainId ?? 56;
       const chain = chainNames[resolvedChainId] ?? String(resolvedChainId);
       const tokenInfo = await FourmemeAPI.getTokenInfo(chain, addr as `0x${string}`);
       const mcapRaw = Number((tokenInfo as any)?.tokenPrice?.marketCap ?? 0);
@@ -149,7 +153,7 @@ export default defineBackground(() => {
     }
     if (!out.tokenSymbol || !out.tokenName) {
       try {
-        const meta = await TokenService.getMeta(addr as `0x${string}`);
+        const meta = await TokenService.getMeta(addr as `0x${string}`, resolvedChainId);
         const symbol = String(meta?.symbol || '').trim();
         out.tokenSymbol = out.tokenSymbol || symbol || undefined;
         out.tokenName = out.tokenName || symbol || undefined;
@@ -437,15 +441,14 @@ export default defineBackground(() => {
             return { ok: true, mnemonic: await WalletService.exportMnemonic(msg.password) };
 
           case 'wallet:getEip7702Status': {
-            const client = await RpcService.getClient();
+            const client = await RpcService.getClient(msg.chainId);
             const code = await client.getCode({ address: msg.address });
             return { ok: true, ...parseEip7702Delegation(code) };
           }
 
           case 'wallet:revokeEip7702': {
-            const settings = await SettingsService.get();
-            const chainId = settings.chainId;
-            const client = await RpcService.getClient();
+            const chainId = msg.chainId;
+            const client = await RpcService.getClient(chainId);
             const code = await client.getCode({ address: msg.address });
             const status = parseEip7702Delegation(code);
             if (!status.delegated) throw new Error('Address is not in EIP-7702 delegated state');
@@ -500,22 +503,22 @@ export default defineBackground(() => {
           }
 
           case 'chain:getBalance':
-            return { ok: true, balanceWei: await TokenService.getNativeBalance(msg.address) };
+            return { ok: true, balanceWei: await TokenService.getNativeBalance(msg.address, msg.chainId) };
 
           case 'token:getMeta':
-            return { ok: true, ...(await TokenService.getMeta(msg.tokenAddress)) };
+            return { ok: true, ...(await TokenService.getMeta(msg.tokenAddress, msg.chainId)) };
 
           case 'token:getBalance':
-            return { ok: true, balanceWei: await TokenService.getBalance(msg.tokenAddress, msg.address) };
+            return { ok: true, balanceWei: await TokenService.getBalance(msg.tokenAddress, msg.address, msg.chainId) };
 
           case 'token:getAllowance':
             return {
               ok: true,
-              allowanceWei: await TokenService.getAllowance(msg.tokenAddress, msg.owner, msg.spender),
+              allowanceWei: await TokenService.getAllowance(msg.tokenAddress, msg.owner, msg.spender, msg.chainId),
             };
 
           case 'token:getPoolPair': {
-            const { token0, token1 } = await TokenService.getPoolPair(msg.pair);
+            const { token0, token1 } = await TokenService.getPoolPair(msg.pair, msg.chainId);
             return { ok: true, token0, token1 };
           }
 
@@ -869,7 +872,7 @@ export default defineBackground(() => {
 
           case 'tx:transferNative': {
             const settings = await SettingsService.get();
-            const chainId = settings.chainId;
+            const chainId = msg.chainId;
             const chainSettings = settings.chains[chainId];
 
             if (!isAddress(msg.fromAddress)) throw new Error('Invalid from address');
@@ -881,13 +884,13 @@ export default defineBackground(() => {
               throw new Error('Invalid from address');
             }
 
-            const client = await RpcService.getClient();
+            const client = await RpcService.getClient(chainId);
             const gasPreset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;
             const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
             const gasLimit = 21000n;
             const reserve = gasLimit * gasPriceWei;
 
-            const balanceWei = BigInt(await TokenService.getNativeBalance(msg.fromAddress));
+            const balanceWei = BigInt(await TokenService.getNativeBalance(msg.fromAddress, chainId));
             const useMax = !!msg.useMax;
             const valueWei = (() => {
               if (useMax) {
@@ -972,7 +975,7 @@ export default defineBackground(() => {
                     token: msg.input.tokenAddress,
                     refreshedNonce,
                   });
-                  const rsp = await TradeService.buy(msg.input);
+                  const rsp = await TradeService.buy(msg.input, { forceRefreshHyperState: true });
                   console.info('[nonce.repair][buy.submit.retry.success]', {
                     chainId: msg.input.chainId,
                     token: msg.input.tokenAddress,
@@ -1157,7 +1160,7 @@ export default defineBackground(() => {
                     token: msg.input.tokenAddress,
                     refreshedNonce,
                   });
-                  const rsp = await TradeService.sell(msg.input);
+                  const rsp = await TradeService.sell(msg.input, { forceRefreshHyperState: true });
                   console.info('[nonce.repair][sell.submit.retry.success]', {
                     chainId: msg.input.chainId,
                     token: msg.input.tokenAddress,
@@ -1401,7 +1404,7 @@ export default defineBackground(() => {
               let finalTxHash = receipt.transactionHash;
               let finalStatus = receipt.status;
               let finalBlockNumber = Number(receipt.blockNumber);
-              const client = await RpcService.getClient();
+              const client = await RpcService.getClient(msg.chainId);
               let revertReason = !ok ? await tryGetReceiptRevertReason(client, msg.hash, receipt.blockNumber) : null;
 
               if (!ok) {
@@ -1428,7 +1431,7 @@ export default defineBackground(() => {
                     oldTxHash: msg.hash,
                     refreshedNonce,
                   });
-                  const retryRsp = await TradeService.buy(tracked.input);
+                  const retryRsp = await TradeService.buy(tracked.input, { forceRefreshHyperState: true });
                   const retryHash = retryRsp.txHash as `0x${string}`;
                   console.info('[nonce.repair][buy.receipt.retry.sent]', {
                     chainId: tracked.input.chainId,

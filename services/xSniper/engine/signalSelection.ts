@@ -1,6 +1,7 @@
 import type { UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { evaluateBuyByConfig, getSignalTimeMs, isRepostOrQuoteSignal, normalizeAddress, normalizeEpochMs, parseNumber, sanitizeMarketCapUsd, type TokenMetrics } from '@/services/xSniper/engine/metrics';
 import { extractLaunchpadPlatform } from '@/constants/launchpad';
+import { getChainIdByName } from '@/constants/chains';
 
 const normalizePlatformFilters = (input: unknown): string[] => {
   const raw = Array.isArray(input) ? input : [];
@@ -90,8 +91,8 @@ export const metricsFromUnifiedToken = (t: UnifiedSignalToken): TokenMetrics | n
 export const pickTokensToBuyFromSignal = (input: {
   signal: UnifiedTwitterSignal;
   strategy: any;
-  pushWsSnapshot: (tokenAddress: `0x${string}`, metrics: TokenMetrics) => void;
-  computeWsConfirm: (tokenAddress: `0x${string}`, nowMs: number, strategy: any) => { pass: boolean };
+  pushWsSnapshot: (chainId: number, tokenAddress: `0x${string}`, metrics: TokenMetrics) => void;
+  computeWsConfirm: (chainId: number, tokenAddress: `0x${string}`, nowMs: number, strategy: any) => { pass: boolean };
 }) => {
   const { signal, strategy } = input;
   const tokens = Array.isArray(signal.tokens) ? (signal.tokens as UnifiedSignalToken[]) : [];
@@ -130,7 +131,10 @@ export const pickTokensToBuyFromSignal = (input: {
   }> = [];
   for (const t of unique) {
     const m = metricsFromUnifiedToken(t);
-    if (m?.tokenAddress) input.pushWsSnapshot(m.tokenAddress, m);
+    if (m?.tokenAddress) {
+      const chainId = getChainIdByName(String(m.chain || '').trim());
+      if (Number.isFinite(chainId) && chainId > 0) input.pushWsSnapshot(chainId, m.tokenAddress, m);
+    }
     if (!m?.tokenAddress) {
       decisions.push({
         t,
@@ -194,7 +198,8 @@ export const pickTokensToBuyFromSignal = (input: {
       skipped.push({ t, m, reason: fullDecision.reason || 'buy_filter_rejected' });
       continue;
     }
-    const confirm = input.computeWsConfirm(m.tokenAddress, now, strategy);
+    const chainId = getChainIdByName(String(m.chain || '').trim());
+    const confirm = input.computeWsConfirm(chainId, m.tokenAddress, now, strategy);
     wsConfirmPass = confirm.pass;
     if (!wsConfirmPass) wsConfirmReason = 'ws_confirm_failed';
     decisions.push({

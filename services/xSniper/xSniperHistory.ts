@@ -77,6 +77,7 @@ export const clearXSniperHistory = async () => {
 };
 
 export const maybeUpdateXSniperHistoryEvaluations = async (input: {
+  chainId: number;
   tokenAddress: `0x${string}`;
   nowMs: number;
   marketCapUsd?: number;
@@ -92,6 +93,7 @@ export const maybeUpdateXSniperHistoryEvaluations = async (input: {
     for (let i = 0; i < historyList.length; i++) {
       const r = historyList[i];
       if (!r || r.side !== 'buy') continue;
+      if (Number(r.chainId) !== Number(input.chainId)) continue;
       if (String(r.tokenAddress || '').toLowerCase() !== inputTokenAddress) continue;
       if (typeof r.tsMs !== 'number' || r.tsMs <= 0) continue;
       const ageMs = input.nowMs - r.tsMs;

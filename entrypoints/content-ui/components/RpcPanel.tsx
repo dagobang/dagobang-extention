@@ -28,6 +28,8 @@ type RpcNodeProfile = {
   cooldownUntil: number;
   cooldownRemainingMs: number;
   consecutive429: number;
+  total429Count: number;
+  last429At: number;
   businessSuccessCount: number;
   businessFailCount: number;
   probeSuccessCount: number;
@@ -380,7 +382,7 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
     capacity: '学习得到的该节点建议并发容量（用于分流上限）',
     ewma: '指数加权平均延迟，越低越好',
     inflight: '该节点当前正在处理的请求数',
-    rate429: '该节点当前连续限流计数（含 429/配额超限）',
+    rate429: '显示为 连续429/累计429；前者成功后会清零，后者用于反映最近是否持续触发过限流',
     health: '业务健康度 = 业务成功请求 / (业务成功 + 业务失败)',
     sucFail: '业务累计成功次数 / 业务累计失败次数',
     probeSucFail: '探测累计成功次数 / 探测累计失败次数',
@@ -538,12 +540,13 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
                       <div className="grid grid-cols-4 gap-2 text-[10px]">
                         <div title={tips.ewma}><span className="text-zinc-500">EWMA</span> <span className="font-mono text-zinc-300">{profile ? `${profile.ewmaLatencyMs.toFixed(0)}ms` : '-'}</span></div>
                         <div title={tips.inflight}><span className="text-zinc-500">并发中</span> <span className="font-mono text-zinc-300">{profile ? profile.inFlight : '-'}</span></div>
-                        <div title={tips.rate429}><span className="text-zinc-500">429</span> <span className="font-mono text-zinc-300">{profile ? profile.consecutive429 : '-'}</span></div>
+                        <div title={tips.rate429}><span className="text-zinc-500">429</span> <span className="font-mono text-zinc-300">{profile ? `${profile.consecutive429}/${profile.total429Count}` : '-'}</span></div>
                         <div title={tips.health}><span className="text-zinc-500">健康度</span> <span className="font-mono text-zinc-300">{healthRate != null ? `${healthRate}%` : '-'}</span></div>
                         <div title={tips.sucFail}><span className="text-zinc-500">业务成败</span> <span className="font-mono text-zinc-300">{profile ? `${profile.businessSuccessCount}/${profile.businessFailCount}` : '-'}</span></div>
                         <div title={tips.probeSucFail}><span className="text-zinc-500">探测成败</span> <span className="font-mono text-zinc-300">{profile ? `${profile.probeSuccessCount}/${profile.probeFailCount}` : '-'}</span></div>
                         <div title={tips.cooldown}><span className="text-zinc-500">冷却</span> <span className="font-mono text-zinc-300">{profile && profile.cooldownRemainingMs > 0 ? `${Math.ceil(profile.cooldownRemainingMs / 1000)}s` : '-'}</span></div>
                         <div title={tips.lastProbe}><span className="text-zinc-500">最近探测</span> <span className="font-mono text-zinc-300">{profile ? formatAgo(profile.lastProbeAt) : '-'}</span></div>
+                        <div title={tips.rate429}><span className="text-zinc-500">最近429</span> <span className="font-mono text-zinc-300">{profile ? formatAgo(profile.last429At) : '-'}</span></div>
                         <div title={tips.lastCapProbe}><span className="text-zinc-500">容量探测</span> <span className="font-mono text-zinc-300">{profile ? formatAgo(profile.lastCapacityProbeAt) : '-'}</span></div>
                       </div>
                     </div>
@@ -595,12 +598,13 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
                       <div className="grid grid-cols-4 gap-2 text-[10px]">
                         <div title={tips.ewma}><span className="text-zinc-500">EWMA</span> <span className="font-mono text-zinc-300">{profile ? `${profile.ewmaLatencyMs.toFixed(0)}ms` : '-'}</span></div>
                         <div title={tips.inflight}><span className="text-zinc-500">并发中</span> <span className="font-mono text-zinc-300">{profile ? profile.inFlight : '-'}</span></div>
-                        <div title={tips.rate429}><span className="text-zinc-500">429</span> <span className="font-mono text-zinc-300">{profile ? profile.consecutive429 : '-'}</span></div>
+                        <div title={tips.rate429}><span className="text-zinc-500">429</span> <span className="font-mono text-zinc-300">{profile ? `${profile.consecutive429}/${profile.total429Count}` : '-'}</span></div>
                         <div title={tips.health}><span className="text-zinc-500">健康度</span> <span className="font-mono text-zinc-300">{healthRate != null ? `${healthRate}%` : '-'}</span></div>
                         <div title={tips.sucFail}><span className="text-zinc-500">业务成败</span> <span className="font-mono text-zinc-300">{profile ? `${profile.businessSuccessCount}/${profile.businessFailCount}` : '-'}</span></div>
                         <div title={tips.probeSucFail}><span className="text-zinc-500">探测成败</span> <span className="font-mono text-zinc-300">{profile ? `${profile.probeSuccessCount}/${profile.probeFailCount}` : '-'}</span></div>
                         <div title={tips.cooldown}><span className="text-zinc-500">冷却</span> <span className="font-mono text-zinc-300">{profile && profile.cooldownRemainingMs > 0 ? `${Math.ceil(profile.cooldownRemainingMs / 1000)}s` : '-'}</span></div>
                         <div title={tips.lastProbe}><span className="text-zinc-500">最近探测</span> <span className="font-mono text-zinc-300">{profile ? formatAgo(profile.lastProbeAt) : '-'}</span></div>
+                        <div title={tips.rate429}><span className="text-zinc-500">最近429</span> <span className="font-mono text-zinc-300">{profile ? formatAgo(profile.last429At) : '-'}</span></div>
                         <div title={tips.lastCapProbe}><span className="text-zinc-500">容量探测</span> <span className="font-mono text-zinc-300">{profile ? formatAgo(profile.lastCapacityProbeAt) : '-'}</span></div>
                       </div>
                     </div>

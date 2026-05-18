@@ -702,13 +702,13 @@ export type BgRequest =
   | { type: 'wallet:exportPrivateKey'; password: string }
   | { type: 'wallet:exportAccountPrivateKey'; address: `0x${string}`; password: string }
   | { type: 'wallet:exportMnemonic'; password: string }
-  | { type: 'wallet:getEip7702Status'; address: `0x${string}` }
-  | { type: 'wallet:revokeEip7702'; address: `0x${string}` }
-  | { type: 'chain:getBalance'; address: `0x${string}` }
-  | { type: 'token:getMeta'; tokenAddress: `0x${string}` }
-  | { type: 'token:getBalance'; tokenAddress: `0x${string}`; address: `0x${string}` }
-  | { type: 'token:getAllowance'; tokenAddress: `0x${string}`; owner: `0x${string}`; spender: `0x${string}` }
-  | { type: 'token:getPoolPair'; pair: `0x${string}` }
+  | { type: 'wallet:getEip7702Status'; address: `0x${string}`; chainId: number }
+  | { type: 'wallet:revokeEip7702'; address: `0x${string}`; chainId: number }
+  | { type: 'chain:getBalance'; address: `0x${string}`; chainId: number }
+  | { type: 'token:getMeta'; tokenAddress: `0x${string}`; chainId: number }
+  | { type: 'token:getBalance'; tokenAddress: `0x${string}`; address: `0x${string}`; chainId: number }
+  | { type: 'token:getAllowance'; tokenAddress: `0x${string}`; owner: `0x${string}`; spender: `0x${string}`; chainId: number }
+  | { type: 'token:getPoolPair'; pair: `0x${string}`; chainId: number }
   | { type: 'token:getPriceUsd'; chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo | null }
   | { type: 'token:getTokenInfo:fourmeme'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:flap'; chainId: number; tokenAddress: `0x${string}` }
@@ -767,6 +767,7 @@ export type BgRequest =
   | { type: 'tx:unwrapWrapped'; chainId: number; amountWei: string; fromAddress?: `0x${string}` }
   | {
     type: 'tx:transferNative';
+    chainId: number;
     fromAddress: `0x${string}`;
     toAddress: `0x${string}`;
     amountBnb?: string;
@@ -913,6 +914,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
       cooldownUntil: number;
       cooldownRemainingMs: number;
       consecutive429: number;
+      total429Count: number;
+      last429At: number;
       businessSuccessCount: number;
       businessFailCount: number;
       probeSuccessCount: number;

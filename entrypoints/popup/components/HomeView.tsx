@@ -364,7 +364,7 @@ export function HomeView({
       const results = await Promise.all(
         accounts.map(async (acc) => {
           try {
-            const res = await call({ type: 'wallet:getEip7702Status', address: acc.address });
+            const res = await call({ type: 'wallet:getEip7702Status', address: acc.address, chainId });
             return {
               key: get7702Key(acc.address),
               delegated: !!res.delegated,
@@ -415,7 +415,7 @@ export function HomeView({
       const entries = await Promise.all(
         accounts.map(async (acc) => {
           try {
-            const res = await call({ type: 'token:getBalance', tokenAddress: tradeBaseTokenAddress, address: acc.address });
+            const res = await call({ type: 'token:getBalance', tokenAddress: tradeBaseTokenAddress, address: acc.address, chainId });
             return [acc.address.toLowerCase(), res.balanceWei] as const;
           } catch {
             return [acc.address.toLowerCase(), '0'] as const;
@@ -450,6 +450,7 @@ export function HomeView({
               tokenAddress: tradeBaseTokenAddress,
               owner: acc.address,
               spender: routerAddress as `0x${string}`,
+              chainId,
             });
             return [acc.address.toLowerCase(), res.allowanceWei] as const;
           } catch {
@@ -494,7 +495,7 @@ export function HomeView({
     setTransferPassword('');
     setTransferBalanceWei(null);
     withBusy(async () => {
-      const balRes = await call({ type: 'chain:getBalance', address: addr });
+      const balRes = await call({ type: 'chain:getBalance', address: addr, chainId });
       setTransferBalanceWei(balRes.balanceWei);
     });
   };
@@ -761,8 +762,8 @@ export function HomeView({
                               [key]: { ...(prev[key] ?? { loading: false, delegated: true }), revoking: true },
                             }));
                             try {
-                              await call({ type: 'wallet:revokeEip7702', address: acc.address });
-                              const status = await call({ type: 'wallet:getEip7702Status', address: acc.address });
+                              await call({ type: 'wallet:revokeEip7702', address: acc.address, chainId });
+                              const status = await call({ type: 'wallet:getEip7702Status', address: acc.address, chainId });
                               setEip7702ByAddress((prev) => ({
                                 ...prev,
                                 [key]: {
@@ -1061,6 +1062,7 @@ export function HomeView({
                   const to = transferToAddress.trim() as `0x${string}`;
                   await call({
                     type: 'tx:transferNative',
+                    chainId,
                     fromAddress: transferFromAddress,
                     toAddress: to,
                     amountBnb: transferAmountBnb.trim(),

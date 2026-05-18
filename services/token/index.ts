@@ -21,9 +21,14 @@ export class TokenService {
   private static nativeBalanceInFlight = new Map<string, Promise<string>>();
   private static tokenBalanceCache = new Map<string, { ts: number; value: string }>();
   private static tokenBalanceInFlight = new Map<string, Promise<string>>();
+  private static resolveBalanceCacheTtlMs(chainId?: number) {
+    return chainId === ChainId.HYPER ? 3000 : this.balanceCacheTtlMs;
+  }
 
-  static async getMeta(tokenAddress: string) {
+  static async getMeta(tokenAddress: string, chainId: number) {
     return await RpcService.withBalancedReadClient({
+      chainId,
+      caller: 'token.meta',
       run: async (client) => {
         const [symbol, decimals] = await Promise.all([
           client.readContract({ address: tokenAddress as `0x${string}`, abi: erc20Abi, functionName: 'symbol' }),
@@ -34,15 +39,19 @@ export class TokenService {
     });
   }
 
-  static async getBalance(tokenAddress: string, owner: string) {
+  static async getBalance(tokenAddress: string, owner: string, chainId?: number) {
     const now = Date.now();
-    const key = `${owner.toLowerCase()}:${tokenAddress.toLowerCase()}`;
+    const resolvedChainId = typeof chainId === 'number' && Number.isFinite(chainId) ? chainId : undefined;
+    const ttlMs = this.resolveBalanceCacheTtlMs(resolvedChainId);
+    const key = `${resolvedChainId ?? 'default'}:${owner.toLowerCase()}:${tokenAddress.toLowerCase()}`;
     const cached = this.tokenBalanceCache.get(key);
-    if (cached && now - cached.ts < this.balanceCacheTtlMs) return cached.value;
+    if (cached && now - cached.ts < ttlMs) return cached.value;
     const inFlight = this.tokenBalanceInFlight.get(key);
     if (inFlight) return inFlight;
     const p = (async () => {
       const balance = await RpcService.withBalancedReadClient({
+        chainId: resolvedChainId,
+        caller: 'token.erc20Balance',
         run: async (client) => {
           return await client.readContract({
             address: tokenAddress as `0x${string}`,
@@ -62,8 +71,10 @@ export class TokenService {
     return p;
   }
 
-  static async getAllowance(tokenAddress: string, owner: string, spender: string) {
+  static async getAllowance(tokenAddress: string, owner: string, spender: string, chainId: number) {
     const allowance = await RpcService.withBalancedReadClient({
+      chainId,
+      caller: 'token.allowance',
       run: async (client) => {
         return await client.readContract({
           address: tokenAddress as `0x${string}`,
@@ -76,16 +87,20 @@ export class TokenService {
     return allowance.toString();
   }
 
-  static async getNativeBalance(owner: string) {
+  static async getNativeBalance(owner: string, chainId?: number) {
     const now = Date.now();
-    const key = owner.toLowerCase();
+    const resolvedChainId = typeof chainId === 'number' && Number.isFinite(chainId) ? chainId : undefined;
+    const ttlMs = this.resolveBalanceCacheTtlMs(resolvedChainId);
+    const key = `${resolvedChainId ?? 'default'}:${owner.toLowerCase()}`;
     const cached = this.nativeBalanceCache.get(key);
-    if (cached && now - cached.ts < this.balanceCacheTtlMs) return cached.value;
+    if (cached && now - cached.ts < ttlMs) return cached.value;
     const inFlight = this.nativeBalanceInFlight.get(key);
     if (inFlight) return inFlight;
 
     const p = (async () => {
       const balance = await RpcService.withBalancedReadClient({
+        chainId: resolvedChainId,
+        caller: 'token.nativeBalance',
         run: async (client) => {
           return await client.getBalance({ address: owner as `0x${string}` });
         },
@@ -100,14 +115,16 @@ export class TokenService {
     return p;
   }
 
-  static async getPoolPair(pair: string) {
-    const key = pair.toLowerCase();
+  static async getPoolPair(pair: string, chainId: number) {
+    const key = `${chainId}:${pair.toLowerCase()}`;
     const cached = this.poolPairCache.get(key);
     if (cached) {
       return cached;
     }
 
     const [token0, token1] = await RpcService.withBalancedReadClient({
+      chainId,
+      caller: 'token.poolPair',
       run: async (client) => {
         return await Promise.all([
           client.readContract({
@@ -199,7 +216,7 @@ export class TokenService {
       return v;
     };
 
-    const tokenDecimals = tokenInfo?.decimals ?? (await this.getMeta(tokenAddress)).decimals;
+    const tokenDecimals = tokenInfo?.decimals ?? (await this.getMeta(tokenAddress, chainId)).decimals;
     const oneToken = 10n ** BigInt(tokenDecimals);
 
     let priceUsd = 0;

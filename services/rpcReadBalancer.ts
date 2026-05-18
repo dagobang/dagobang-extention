@@ -4,6 +4,8 @@ type NodeState = {
   inFlight: number;
   cooldownUntil: number;
   consecutive429: number;
+  total429Count: number;
+  last429At: number;
   ewmaLatencyMs: number;
   businessSuccessCount: number;
   businessFailCount: number;
@@ -19,6 +21,8 @@ type PersistedNodeState = {
   learnedNodeConcurrency: number;
   businessSuccessCount: number;
   businessFailCount: number;
+  total429Count?: number;
+  last429At?: number;
   probeSuccessCount?: number;
   probeFailCount?: number;
   // backward-compatible fields (old schema)
@@ -106,6 +110,8 @@ export class RpcReadBalancer {
         cooldownUntil: state.cooldownUntil,
         cooldownRemainingMs: Math.max(0, state.cooldownUntil - now),
         consecutive429: state.consecutive429,
+        total429Count: state.total429Count,
+        last429At: state.last429At,
         businessSuccessCount: state.businessSuccessCount,
         businessFailCount: state.businessFailCount,
         probeSuccessCount: state.probeSuccessCount,
@@ -138,6 +144,8 @@ export class RpcReadBalancer {
       state.probeSuccessCount = 0;
       state.probeFailCount = 0;
       state.consecutive429 = 0;
+      state.total429Count = 0;
+      state.last429At = 0;
       state.cooldownUntil = 0;
       state.inFlight = 0;
     }
@@ -168,6 +176,8 @@ export class RpcReadBalancer {
               inFlight: 0,
               cooldownUntil: 0,
               consecutive429: 0,
+              total429Count: Number.isFinite(value.total429Count) ? Number(value.total429Count) : 0,
+              last429At: Number.isFinite(value.last429At) ? Number(value.last429At) : 0,
               ewmaLatencyMs: Number.isFinite(value.ewmaLatencyMs) ? value.ewmaLatencyMs : DEFAULT_EWMA_MS,
               businessSuccessCount: migratedSuccess,
               businessFailCount: migratedFail,
@@ -201,6 +211,8 @@ export class RpcReadBalancer {
           learnedNodeConcurrency: value.learnedNodeConcurrency,
           businessSuccessCount: value.businessSuccessCount,
           businessFailCount: value.businessFailCount,
+          total429Count: value.total429Count,
+          last429At: value.last429At,
           probeSuccessCount: value.probeSuccessCount,
           probeFailCount: value.probeFailCount,
           lastProbeAt: value.lastProbeAt,
@@ -222,6 +234,8 @@ export class RpcReadBalancer {
       inFlight: 0,
       cooldownUntil: 0,
       consecutive429: 0,
+      total429Count: 0,
+      last429At: 0,
       ewmaLatencyMs: DEFAULT_EWMA_MS,
       businessSuccessCount: 0,
       businessFailCount: 0,
@@ -492,6 +506,8 @@ export class RpcReadBalancer {
     else state.probeFailCount += 1;
     if (this.isRateLimitedLike(error)) {
       state.consecutive429 += 1;
+      state.total429Count += 1;
+      state.last429At = Date.now();
       state.cooldownUntil = Date.now() + this.computeCooldownMs(state.consecutive429);
       // Multiplicative decrease on explicit rate-limit signal.
       state.learnedNodeConcurrency = Math.max(MIN_NODE_CONCURRENCY, state.learnedNodeConcurrency * 0.7);
