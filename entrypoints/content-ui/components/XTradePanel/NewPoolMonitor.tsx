@@ -4,6 +4,7 @@ import type { Settings, UnifiedMarketSignalSource } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber } from '@/utils/format';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
+import { pickMaxFiniteNumber } from '@/utils/value';
 import { PLATFORM_OPTIONS, extractLaunchpadPlatform } from '@/constants/launchpad';
 import { XSniperFilterSection } from './XSniperFilterSection';
 
@@ -181,6 +182,10 @@ const mergeTokenRow = (prev: MarketTokenRow | undefined, next: MarketTokenRow): 
     if (key === 'tokenAddress' || key === 'signalId' || key === 'channel' || key === 'receivedAtMs' || key === 'updatedAtMs' || key === 'createdAtMs') continue;
     const value = next[key];
     if (!shouldUseIncomingValue(value)) continue;
+    if (key === 'devMaxBuyPercent') {
+      (merged as any)[key] = pickMaxFiniteNumber(value, prev.devMaxBuyPercent);
+      continue;
+    }
     (merged as any)[key] = value;
   }
   return merged;

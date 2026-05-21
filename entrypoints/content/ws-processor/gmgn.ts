@@ -14,6 +14,7 @@ import {
   isObject,
   toArrayPayload,
 } from '@/utils/gmgnWs';
+import { normalizePercentValue, pickFiniteNumber, pickMaxFiniteNumber, pickMaxPercentValue } from '@/utils/value';
 
 type QuickBuySettings = { quickBuy1Bnb?: string; quickBuy2Bnb?: string };
 
@@ -454,16 +455,6 @@ const pickNonEmptyString = (next: any, prev?: string): string | undefined => {
   return s ? s : prev;
 };
 
-const pickFiniteNumber = (next: any, prev?: number): number | undefined => {
-  return typeof next === 'number' && Number.isFinite(next) ? next : prev;
-};
-
-const normalizePercentValue = (v: number | null | undefined): number | undefined => {
-  if (typeof v !== 'number' || !Number.isFinite(v)) return undefined;
-  if (v >= 0 && v <= 1) return v * 100;
-  return v;
-};
-
 const normalizeTokenKey = (addr: string) => addr.trim().toLowerCase();
 
 const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken[] => {
@@ -528,11 +519,11 @@ const mergeTokenFields = (prev: UnifiedSignalToken, next: Partial<UnifiedSignalT
     smartMoney: pickFiniteNumber((next as any).smartMoney, (prev as any).smartMoney),
     devAddress: pickNonEmptyString(next.devAddress, prev.devAddress),
     devHoldPercent: pickFiniteNumber(next.devHoldPercent, prev.devHoldPercent),
-    devMaxBuyPercent: pickFiniteNumber((next as any).devMaxBuyPercent, (prev as any).devMaxBuyPercent),
+    devMaxBuyPercent: pickMaxPercentValue((next as any).devMaxBuyPercent, (prev as any).devMaxBuyPercent),
     viewerCount: pickFiniteNumber((next as any).viewerCount, (prev as any).viewerCount),
     devCreatedTokenCount: pickFiniteNumber((next as any).devCreatedTokenCount, (prev as any).devCreatedTokenCount),
     devHasSold: typeof next.devHasSold === 'boolean' ? next.devHasSold : prev.devHasSold,
-    devBuyRatio: pickFiniteNumber(next.devBuyRatio, prev.devBuyRatio),
+    devBuyRatio: pickMaxFiniteNumber(next.devBuyRatio, prev.devBuyRatio),
     top10HoldRatio: pickFiniteNumber(next.top10HoldRatio, prev.top10HoldRatio),
     devTokenStatus: pickNonEmptyString(next.devTokenStatus, prev.devTokenStatus),
     createdAtMs: pickFiniteNumber(next.createdAtMs, prev.createdAtMs),
@@ -1131,6 +1122,23 @@ export function initGmgnWsMonitor(options: {
         ...(prevF ?? {}),
         ...(nextF ?? {}),
       };
+    }
+    const prevDevBuyRatio = pickFiniteNumber((prev as any).devBuyRatio ?? (prev as any).d_br, undefined);
+    const nextDevBuyRatio = pickFiniteNumber((next as any).devBuyRatio ?? (next as any).d_br, undefined);
+    const mergedDevBuyRatio = pickMaxFiniteNumber(nextDevBuyRatio, prevDevBuyRatio);
+    if (mergedDevBuyRatio != null) {
+      merged.devBuyRatio = mergedDevBuyRatio;
+      merged.d_br = mergedDevBuyRatio;
+      if (isObject(merged.f)) {
+        (merged.f as Record<string, any>).d_br = pickMaxFiniteNumber((nextF as any)?.d_br, pickFiniteNumber((prevF as any)?.d_br, mergedDevBuyRatio));
+      }
+    }
+    const mergedDevMaxBuyPercent = pickMaxPercentValue(
+      (next as any).devMaxBuyPercent ?? nextDevBuyRatio,
+      pickFiniteNumber((prev as any).devMaxBuyPercent, undefined) ?? normalizePercentValue(prevDevBuyRatio ?? null),
+    );
+    if (mergedDevMaxBuyPercent != null) {
+      merged.devMaxBuyPercent = mergedDevMaxBuyPercent;
     }
     return merged;
   };

@@ -64,6 +64,7 @@ declare global {
   const loadContractAbi: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi').loadContractAbi
   const navigateToUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').navigateToUrl
   const normalizeLocale: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n').normalizeLocale
+  const normalizePercentValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').normalizePercentValue
   const normalizePriceValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').normalizePriceValue
   const parseCurrentUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrl
   const parseCurrentUrlFull: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrlFull
@@ -71,6 +72,9 @@ declare global {
   const parseGweiToWei: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/dexUtils').parseGweiToWei
   const parseNumberLoose: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').parseNumberLoose
   const parsePlatformTokenLink: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parsePlatformTokenLink
+  const pickFiniteNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickFiniteNumber
+  const pickMaxFiniteNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickMaxFiniteNumber
+  const pickMaxPercentValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickMaxPercentValue
   const storage: typeof import('wxt/utils/storage').storage
   const t: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n').t
   const toArrayPayload: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').toArrayPayload

@@ -36,4 +36,5 @@ declare module '#imports' {
   export { parsePlatformTokenLink, navigateToUrl, parseCurrentUrl, parseCurrentUrlFull, SiteInfo } from '../utils/sites';
   export { collectErrorText, classifyBroadcastError, getNonceErrorKindFromText, extractNextNonceHintFromText, isAllowanceLikeText, isInFlightLimitLikeText, BroadcastErrorClass } from '../utils/txErrorClassify';
   export { validateSettings } from '../utils/validate';
+  export { pickFiniteNumber, normalizePercentValue, pickMaxFiniteNumber, pickMaxPercentValue } from '../utils/value';
 }
