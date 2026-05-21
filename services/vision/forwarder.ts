@@ -6,13 +6,15 @@ import { DEFAULT_VISION_BASE, VISION_STATUS_STORAGE_KEY } from '@/services/visio
 const VISION_BASE_STORAGE_KEY = 'dagobang_vision_base_url';
 const MAX_ROWS_PER_SIGNAL = 80;
 const VISION_AGG_WINDOW_MS = 1000;
-const MAX_ROWS_PER_BATCH_PACKET = 200;
+const MAX_ROWS_PER_BATCH_PACKET = 120;
 const MAX_AGG_ROWS_PER_KIND = 4000;
 const WS_FLUSH_INTERVAL_MS = 200;
 const WS_BACKPRESSURE_POLL_MS = 500;
 const WS_RECONNECT_BASE_MS = 1200;
 const WS_MAX_QUEUE = 1000;
 const WS_MAX_BUFFERED_AMOUNT = 512 * 1024;
+const WS_MAX_IN_FLIGHT_PACKETS = 2;
+const WS_ACK_TIMEOUT_MS = 4000;
 const STATUS_FLUSH_INTERVAL_MS = 2000;
 const WS_FAILURE_STREAK_FOR_COOLDOWN = 12;
 const WS_FAILURE_COOLDOWN_MS = 10_000;
@@ -21,6 +23,7 @@ export type VisionForwardStatus = {
   enabled: boolean;
   baseUrl: string;
   lastSendAtMs?: number;
+  lastAckAtMs?: number;
   lastSuccessAtMs?: number;
   lastErrorAtMs?: number;
   lastError?: string;
@@ -30,6 +33,9 @@ export type VisionForwardStatus = {
   droppedPackets?: number;
   droppedAggregateRows?: number;
   backpressureCount?: number;
+  ackTimeoutCount?: number;
+  currentQueueSize?: number;
+  currentInFlightPackets?: number;
 };
 
 type VisionBatchPacket = {
@@ -46,6 +52,12 @@ type VisionAggregateWindow = {
   tokenMetrics: Map<string, any>;
   signalContexts: Map<string, any>;
   bridges: Map<string, any>;
+};
+
+type VisionInFlightPacket = {
+  packet: VisionBatchPacket;
+  sentAtMs: number;
+  timeoutTimer: ReturnType<typeof setTimeout> | null;
 };
 
 const normalizeAddress = (v: unknown): `0x${string}` | null => {
@@ -138,6 +150,7 @@ let statusFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let aggregateWindow: VisionAggregateWindow | null = null;
 let aggregateFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const queue: VisionBatchPacket[] = [];
+const inFlightPackets = new Map<string, VisionInFlightPacket>();
 
 const isWsOpen = (ws: WebSocket | null) => ws?.readyState === WebSocket.OPEN;
 const isWsConnecting = (ws: WebSocket | null) => ws?.readyState === WebSocket.CONNECTING;
@@ -259,6 +272,20 @@ const scheduleVisionStatusFlush = (immediate = false) => {
   }, STATUS_FLUSH_INTERVAL_MS);
 };
 
+const syncRuntimeStatus = async (patch?: Partial<VisionForwardStatus>) => {
+  const cfg = await getVisionConfig();
+  const prev = await getVisionStatusCache();
+  statusCache = {
+    ...prev,
+    enabled: cfg.enabled,
+    baseUrl: cfg.baseUrl,
+    currentQueueSize: queue.length,
+    currentInFlightPackets: inFlightPackets.size,
+    ...patch,
+  };
+  scheduleVisionStatusFlush();
+};
+
 const updateStatus = async (patch: Partial<VisionForwardStatus>, options?: { immediate?: boolean }) => {
   const cfg = await getVisionConfig();
   const prev = await getVisionStatusCache();
@@ -266,6 +293,8 @@ const updateStatus = async (patch: Partial<VisionForwardStatus>, options?: { imm
     ...prev,
     enabled: cfg.enabled,
     baseUrl: cfg.baseUrl,
+    currentQueueSize: queue.length,
+    currentInFlightPackets: inFlightPackets.size,
     ...patch,
   };
   scheduleVisionStatusFlush(options?.immediate === true);
@@ -283,11 +312,14 @@ const bumpStatusCounter = async (
     baseUrl: base.baseUrl,
     successCount: Math.max(0, Number(st.successCount) || 0),
     failCount: Math.max(0, Number(st.failCount) || 0),
+    currentQueueSize: queue.length,
+    currentInFlightPackets: inFlightPackets.size,
     lastPath: base.path,
   };
   if (!statusCache) return;
   if (kind === 'success') {
     statusCache.successCount += 1;
+    statusCache.lastAckAtMs = now;
     statusCache.lastSuccessAtMs = now;
     statusCache.lastError = undefined;
   } else {
@@ -299,7 +331,7 @@ const bumpStatusCounter = async (
 };
 
 const bumpStatusMetric = async (
-  patch: Partial<Pick<VisionForwardStatus, 'droppedPackets' | 'droppedAggregateRows' | 'backpressureCount'>> & { path?: string; error?: string },
+  patch: Partial<Pick<VisionForwardStatus, 'droppedPackets' | 'droppedAggregateRows' | 'backpressureCount' | 'ackTimeoutCount'>> & { path?: string; error?: string },
 ) => {
   const cfg = await getVisionConfig();
   const st = await getVisionStatusCache();
@@ -312,6 +344,9 @@ const bumpStatusMetric = async (
     droppedPackets: Math.max(0, Number(st.droppedPackets) || 0) + Math.max(0, Number(patch.droppedPackets) || 0),
     droppedAggregateRows: Math.max(0, Number(st.droppedAggregateRows) || 0) + Math.max(0, Number(patch.droppedAggregateRows) || 0),
     backpressureCount: Math.max(0, Number(st.backpressureCount) || 0) + Math.max(0, Number(patch.backpressureCount) || 0),
+    ackTimeoutCount: Math.max(0, Number(st.ackTimeoutCount) || 0) + Math.max(0, Number(patch.ackTimeoutCount) || 0),
+    currentQueueSize: queue.length,
+    currentInFlightPackets: inFlightPackets.size,
     ...(patch.path ? { lastPath: patch.path } : {}),
     ...(patch.error ? { lastError: patch.error, lastErrorAtMs: Date.now() } : {}),
   };
@@ -521,6 +556,125 @@ const scheduleReconnect = async () => {
   }, wait);
 };
 
+const clearInFlightPacketTimer = (entry: VisionInFlightPacket | undefined) => {
+  if (!entry?.timeoutTimer) return;
+  clearTimeout(entry.timeoutTimer);
+  entry.timeoutTimer = null;
+};
+
+const clearInFlightPackets = () => {
+  for (const entry of inFlightPackets.values()) {
+    clearInFlightPacketTimer(entry);
+  }
+  inFlightPackets.clear();
+  void syncRuntimeStatus();
+};
+
+const registerInFlightPacket = (ws: WebSocket, packet: VisionBatchPacket) => {
+  const prev = inFlightPackets.get(packet.id);
+  if (prev) {
+    clearInFlightPacketTimer(prev);
+  }
+  const entry: VisionInFlightPacket = {
+    packet,
+    sentAtMs: Date.now(),
+    timeoutTimer: null,
+  };
+  entry.timeoutTimer = setTimeout(() => {
+    const active = inFlightPackets.get(packet.id);
+    if (!active) return;
+    clearInFlightPacketTimer(active);
+    inFlightPackets.delete(packet.id);
+    wsConnected = false;
+    void bumpStatusCounter('fail', {
+      enabled: true,
+      baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
+      path: 'ws:ack_timeout',
+      error: `ack_timeout_${packet.id}`,
+    });
+    void bumpStatusMetric({
+      ackTimeoutCount: 1,
+      path: 'ws:ack_timeout',
+      error: `ack_timeout_${packet.id}`,
+    });
+    void updateStatus({
+      enabled: true,
+      baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
+      lastPath: 'ws:ack_timeout',
+      lastError: `ack_timeout_${packet.id}`,
+    });
+    try {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+    } catch {
+    }
+    void scheduleReconnect();
+    scheduleFlush();
+  }, WS_ACK_TIMEOUT_MS);
+  inFlightPackets.set(packet.id, entry);
+  void syncRuntimeStatus();
+};
+
+const readWSMessageText = async (data: unknown): Promise<string> => {
+  if (typeof data === 'string') return data;
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    return data.text();
+  }
+  if (data instanceof ArrayBuffer) {
+    return new TextDecoder().decode(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new TextDecoder().decode(data);
+  }
+  return String(data ?? '');
+};
+
+const handleWSMessage = async (data: unknown, ws: WebSocket) => {
+  try {
+    const text = await readWSMessageText(data);
+    const payload = JSON.parse(text || '{}');
+    if (payload?.type === 'hello') {
+      await updateStatus({ lastPath: 'ws:hello' });
+      scheduleFlush();
+      return;
+    }
+    if (payload?.type !== 'ack') return;
+    const ackId = typeof payload?.id === 'string' ? String(payload.id) : '';
+    if (ackId) {
+      const entry = inFlightPackets.get(ackId);
+      if (entry) {
+        clearInFlightPacketTimer(entry);
+        inFlightPackets.delete(ackId);
+        await syncRuntimeStatus();
+      }
+    }
+    if (payload?.ok === true) {
+      await bumpStatusCounter('success', {
+        enabled: true,
+        baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
+        path: 'ws:ack',
+      });
+    } else {
+      await bumpStatusCounter('fail', {
+        enabled: true,
+        baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
+        path: 'ws:ack',
+        error: String(payload?.error || 'ack_error'),
+      });
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+      } catch {
+      }
+      await scheduleReconnect();
+    }
+    scheduleFlush();
+  } catch {
+  }
+};
+
 const attachWSListeners = (ws: WebSocket) => {
   ws.onopen = () => {
     wsConnected = true;
@@ -531,12 +685,13 @@ const attachWSListeners = (ws: WebSocket) => {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
-    void updateStatus({ lastPath: 'ws:open', lastSuccessAtMs: Date.now() });
+    void updateStatus({ lastPath: 'ws:open' });
     scheduleFlush();
   };
 
   ws.onclose = () => {
     wsConnected = false;
+    clearInFlightPackets();
     reconnectAttempt += 1;
     wsFailureStreak += 1;
     if (wsFailureStreak >= WS_FAILURE_STREAK_FOR_COOLDOWN) {
@@ -549,6 +704,7 @@ const attachWSListeners = (ws: WebSocket) => {
 
   ws.onerror = () => {
     wsConnected = false;
+    clearInFlightPackets();
     reconnectAttempt += 1;
     wsFailureStreak += 1;
     if (wsFailureStreak >= WS_FAILURE_STREAK_FOR_COOLDOWN) {
@@ -565,26 +721,7 @@ const attachWSListeners = (ws: WebSocket) => {
   };
 
   ws.onmessage = (ev) => {
-    try {
-      const data = JSON.parse(String(ev.data ?? '{}'));
-      if (data?.type === 'ack') {
-        if (data?.ok === true) {
-          void bumpStatusCounter('success', {
-            enabled: true,
-            baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
-            path: 'ws:ack',
-          });
-        } else {
-          void bumpStatusCounter('fail', {
-            enabled: true,
-            baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
-            path: 'ws:ack',
-            error: String(data?.error || 'ack_error'),
-          });
-        }
-      }
-    } catch {
-    }
+    void handleWSMessage(ev.data, ws);
   };
 };
 
@@ -594,7 +731,9 @@ const doEnsureWSConnected = async () => {
     wsConnected = false;
     wsFailureStreak = 0;
     wsCooldownUntilMs = 0;
+    clearInFlightPackets();
     resetAggregateWindow();
+    queue.length = 0;
     try {
       wsClient?.close();
     } catch {
@@ -632,6 +771,7 @@ const doEnsureWSConnected = async () => {
     }
   }
   if (wsClient && wsUrlCached && wsUrlCached !== wsURL) {
+    clearInFlightPackets();
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -690,7 +830,7 @@ const flushQueue = async () => {
     return;
   }
   const ws = wsClient;
-  while (queue.length > 0 && ws.readyState === WebSocket.OPEN) {
+  while (queue.length > 0 && ws.readyState === WebSocket.OPEN && inFlightPackets.size < WS_MAX_IN_FLIGHT_PACKETS) {
     if (ws.bufferedAmount > WS_MAX_BUFFERED_AMOUNT) {
       await bumpStatusMetric({
         backpressureCount: 1,
@@ -710,6 +850,7 @@ const flushQueue = async () => {
     if (!pkt) break;
     try {
       ws.send(JSON.stringify(pkt));
+      registerInFlightPacket(ws, pkt);
       await updateStatus({ enabled: true, baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE, lastSendAtMs: Date.now(), lastPath: 'ws:batch' });
     } catch (e: any) {
       queue.unshift(pkt);
@@ -733,7 +874,7 @@ const flushQueue = async () => {
       break;
     }
   }
-  if (queue.length > 0) scheduleFlush();
+  if (queue.length > 0 && inFlightPackets.size < WS_MAX_IN_FLIGHT_PACKETS) scheduleFlush();
 };
 
 const enqueuePacket = async (packet: VisionBatchPacket) => {
@@ -750,6 +891,7 @@ const enqueuePacket = async (packet: VisionBatchPacket) => {
       error: `queue_packets_dropped_${droppedPackets}`,
     });
   }
+  await syncRuntimeStatus();
   scheduleFlush();
 };
 
