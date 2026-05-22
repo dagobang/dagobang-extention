@@ -3,15 +3,91 @@ import { getChainRuntime } from '@/constants/chains';
 
 export class BloxRouterAPI {
   private static readonly BASE_URL_HTTPS = "https://api.blxrbdn.com";
+  private static readonly PROBE_CACHE_TTL_MS = 30_000;
+  private static probeCache:
+    | { authHeader: string; checkedAt: number; reachable: boolean; httpStatus?: number; message?: string }
+    | null = null;
+
+  private static normalizeAuthHeader(value: unknown): string {
+    return typeof value === "string" ? value.replace(/[\r\n]+/g, "").trim() : "";
+  }
 
   private static async getAuthHeader(): Promise<string> {
     const settings = await SettingsService.get();
-    const value = (settings as any).bloxrouteAuthHeader;
-    const header = typeof value === "string" ? value.replace(/[\r\n]+/g, "").trim() : "";
+    const header = this.normalizeAuthHeader((settings as any).bloxrouteAuthHeader);
     if (!header) {
       throw new Error("Bloxroute auth header not configured");
     }
     return header;
+  }
+
+  static async probeReachability(opts?: { timeoutMs?: number; force?: boolean }): Promise<{
+    reachable: boolean;
+    httpStatus?: number;
+    message?: string;
+    hasAuthHeader: boolean;
+  }> {
+    const settings = await SettingsService.get();
+    const authHeader = this.normalizeAuthHeader((settings as any).bloxrouteAuthHeader);
+    const hasAuthHeader = !!authHeader;
+    if (!hasAuthHeader) {
+      return {
+        reachable: false,
+        hasAuthHeader: false,
+        message: "Bloxroute auth header not configured",
+      };
+    }
+
+    const now = Date.now();
+    if (
+      !opts?.force &&
+      this.probeCache &&
+      this.probeCache.authHeader === authHeader &&
+      now - this.probeCache.checkedAt < this.PROBE_CACHE_TTL_MS
+    ) {
+      return {
+        reachable: this.probeCache.reachable,
+        httpStatus: this.probeCache.httpStatus,
+        message: this.probeCache.message,
+        hasAuthHeader: true,
+      };
+    }
+
+    const timeoutMs = Math.max(200, Number(opts?.timeoutMs ?? 1200));
+    try {
+      const response = (await Promise.race([
+        fetch(this.BASE_URL_HTTPS, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: authHeader,
+          },
+          body: "{}",
+        }),
+        new Promise((_, reject) => {
+          const id = setTimeout(() => {
+            clearTimeout(id);
+            reject(new Error("Bloxroute probe timeout"));
+          }, timeoutMs);
+        }),
+      ])) as Response;
+      this.probeCache = {
+        authHeader,
+        checkedAt: now,
+        reachable: true,
+        httpStatus: response.status,
+      };
+      return { reachable: true, httpStatus: response.status, hasAuthHeader: true };
+    } catch (e: any) {
+      const message = String(e?.message || e || "");
+      this.probeCache = {
+        authHeader,
+        checkedAt: now,
+        reachable: false,
+        message,
+      };
+      return { reachable: false, message, hasAuthHeader: true };
+    }
   }
 
   private static async post(body: any): Promise<any> {
@@ -95,30 +171,7 @@ export class BloxRouterAPI {
   }
 
   static async prewarm(opts?: { timeoutMs?: number }): Promise<void> {
-    const timeoutMs = Math.max(200, Number(opts?.timeoutMs ?? 1500));
-    const settings = await SettingsService.get();
-    const value = (settings as any).bloxrouteAuthHeader;
-    const authHeader = typeof value === "string" ? value.replace(/[\r\n]+/g, "").trim() : "";
-    if (!authHeader) return;
-    try {
-      await Promise.race([
-        fetch(this.BASE_URL_HTTPS, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: authHeader,
-          },
-          body: "{}",
-        }),
-        new Promise((_, reject) => {
-          const id = setTimeout(() => {
-            clearTimeout(id);
-            reject(new Error("bloxroute prewarm timeout"));
-          }, timeoutMs);
-        }),
-      ]);
-    } catch {
-    }
+    await this.probeReachability({ timeoutMs: opts?.timeoutMs }).catch(() => null);
   }
 }
 

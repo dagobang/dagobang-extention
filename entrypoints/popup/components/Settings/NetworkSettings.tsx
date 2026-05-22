@@ -222,7 +222,7 @@ export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: Network
               </label>
             </div>
             <div className="text-[11px] text-zinc-500">
-              优先费模式下将优先走 Bundle 轮次。请确保已配置可用的 BlockRazor Bundle 节点或 bloXroute Auth。
+              优先费模式下若 bloXroute 连通性测试通过，则优先走 bloXroute；否则回退到 BlockRazor/RPC Bundle 路由。
             </div>
             <div className="flex gap-2 pt-2">
               <button

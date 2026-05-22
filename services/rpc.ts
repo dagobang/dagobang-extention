@@ -509,6 +509,14 @@ export class RpcService {
             ? ((chainConfig as any)?.bloxrouteSellEnabled ?? true)
             : true;
       const willUseBloxroute = includeBloxroute && this.bloxroutePrivateTxEnabled && bloxHeader && bloxEnabledBySide;
+      const bloxrouteBundleProbe = bundlePriorityMode && willUseBloxroute
+        ? await BloxRouterAPI.probeReachability({ timeoutMs: 1200 }).catch((e: any) => ({
+            reachable: false,
+            hasAuthHeader: !!bloxHeader,
+            message: String(e?.message || e || ''),
+          }))
+        : null;
+      const canPrioritizeBloxrouteBundle = !!bloxrouteBundleProbe?.reachable;
       if (bundlePriorityMode && bundleSignerContext) {
         const rpcBundlePromises: Array<Promise<BroadcastTxResult>> = [];
         let rpcBundleNonceError: string | null = null;
@@ -565,7 +573,16 @@ export class RpcService {
             })(),
           );
         }
-        if (rpcBundlePromises.length === 0 && !willUseBloxroute) {
+        if (canPrioritizeBloxrouteBundle) {
+          try {
+            return await runBloxBundle();
+          } catch (e: any) {
+            const detail = extractErrText(e);
+            bundleFailures.push(`bloxroute(priority): ${detail}`);
+            console.error('Error broadcasting tx via BloxRoute bundle (priority):', e);
+          }
+        }
+        if (rpcBundlePromises.length === 0 && !canPrioritizeBloxrouteBundle) {
           throw new Error('Priority fee preset is active but no bundle-capable route available. Configure blockrazor/bloxroute bundle route or switch preset to none.');
         }
         if (rpcBundlePromises.length > 0) {
@@ -574,34 +591,18 @@ export class RpcService {
           } catch {
           }
         }
-        if (rpcBundleInFlightError && willUseBloxroute) {
-          try {
-            console.warn('[rpc.bundle.inflight][fallback.bloxroute]', {
-              chainId: targetChainId,
-              txSide,
-              detail: rpcBundleInFlightError,
-            });
-            return await runBloxBundle();
-          } catch (e: any) {
-            const detail = extractErrText(e);
-            bundleFailures.push(`bloxroute(inflight-fallback): ${detail}`);
-            console.error('Error broadcasting tx via BloxRoute bundle (inflight fallback):', e);
-          }
+        if (rpcBundleInFlightError && canPrioritizeBloxrouteBundle) {
+          console.warn('[rpc.bundle.inflight][bloxroute.unavailable-after-priority-failure]', {
+            chainId: targetChainId,
+            txSide,
+            detail: rpcBundleInFlightError,
+          });
         }
         if (rpcBundleDeterministicError) {
           throw new Error(`Bundle deterministic sell failure detected. ${rpcBundleDeterministicError}`);
         }
         if (rpcBundleNonceError) {
           throw new Error(`Bundle nonce mismatch detected. ${rpcBundleNonceError}`);
-        }
-        if (willUseBloxroute) {
-          try {
-            return await runBloxBundle();
-          } catch (e: any) {
-            const detail = extractErrText(e);
-            bundleFailures.push(`bloxroute: ${detail}`);
-            console.error('Error broadcasting tx via BloxRoute bundle:', e);
-          }
         }
         const detail = bundleFailures.length ? ` Details: ${bundleFailures.join(' | ')}` : '';
         throw new Error(`Failed to broadcast transaction via bundle routes.${detail}`);
