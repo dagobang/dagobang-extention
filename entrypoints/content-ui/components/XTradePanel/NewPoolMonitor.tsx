@@ -86,6 +86,7 @@ type MarketTokenRow = {
 };
 
 type GroupSourceFilter = 'all' | 'withTweet' | 'withoutTweet';
+type MonitorViewMode = 'grouped' | 'globalHot';
 
 type MarketTokenGroup = {
   key: string;
@@ -104,9 +105,11 @@ type MarketTokenGroup = {
 
 const MARKET_TOKEN_CACHE_LIMIT = 1200;
 const GROUP_PAGE_SIZE = 20;
+const HOT_PAGE_SIZE = 30;
 const FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_filters_v1';
 const FILTER_OPEN_STORAGE_KEY = 'dagobang_newpool_monitor_filter_open_v1';
 const GROUP_SOURCE_FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_group_source_filter_v1';
+const VIEW_MODE_STORAGE_KEY = 'dagobang_newpool_monitor_view_mode_v1';
 const ROWS_STORAGE_KEY = 'dagobang_newpool_monitor_rows_v1';
 const ALL_PLATFORM_VALUES = PLATFORM_OPTIONS.map((x) => x.value);
 const MCAP_HIGHLIGHT_WINDOW_MS = 6000;
@@ -632,6 +635,230 @@ const formatMetricPercent = (value: number | null | undefined) => {
   return `${value.toFixed(1)}%`;
 };
 
+const compareByMarketCapDesc = (a: MarketTokenRow, b: MarketTokenRow) => {
+  const mcDiff = (b.marketCapUsd ?? 0) - (a.marketCapUsd ?? 0);
+  if (mcDiff !== 0) return mcDiff;
+  const updatedDiff = b.updatedAtMs - a.updatedAtMs;
+  if (updatedDiff !== 0) return updatedDiff;
+  return b.createdAtMs - a.createdAtMs;
+};
+
+const compareByViewerAndMarketCapDesc = (a: MarketTokenRow, b: MarketTokenRow) => {
+  const viewerDiff = (b.viewerCount ?? -1) - (a.viewerCount ?? -1);
+  if (viewerDiff !== 0) return viewerDiff;
+  return compareByMarketCapDesc(a, b);
+};
+
+type TokenRowCardProps = {
+  row: MarketTokenRow;
+  rank: number;
+  listKey: string;
+  resolvedSiteInfo: SiteInfo;
+  tt: (key: string, subs?: Array<string | number>) => string;
+};
+
+function TokenRowCard({
+  row,
+  rank,
+  listKey,
+  resolvedSiteInfo,
+  tt,
+}: TokenRowCardProps) {
+  const shortAddr = `${row.tokenAddress.slice(0, 6)}...${row.tokenAddress.slice(-4)}`;
+  const symbol = row.tokenSymbol?.trim() || '';
+  const tokenName = row.tokenName?.trim() || '';
+  const displayName = symbol || tokenName || shortAddr;
+  const ageText = formatAgeShort(row.createdAtMs);
+  const marketCapHighlightActive =
+    typeof row.marketCapChangedAtMs === 'number' &&
+    Date.now() - row.marketCapChangedAtMs <= MCAP_HIGHLIGHT_WINDOW_MS &&
+    row.marketCapDirection != null;
+  const marketCapValueClassName = (() => {
+    if (row.marketCapUsd == null || row.marketCapUsd <= 0) return 'text-zinc-500';
+    if (row.marketCapUsd >= 50_000) return 'text-amber-300';
+    if (row.marketCapUsd >= 30_000) return 'text-sky-300';
+    if (row.marketCapUsd >= 10_000) return 'text-emerald-300';
+    return 'text-zinc-200';
+  })();
+  const marketCapPrefix = marketCapHighlightActive
+    ? row.marketCapDirection === 'up'
+      ? '▲'
+      : '▼'
+    : '';
+  const marketCapPrefixClassName = marketCapHighlightActive
+    ? row.marketCapDirection === 'up'
+      ? 'text-emerald-300'
+      : 'text-rose-300'
+    : 'text-transparent';
+  const volumeClassName = row.vol24hUsd != null && row.vol24hUsd > 0 ? 'text-zinc-100' : 'text-zinc-500';
+  const top10HoldRatioPct = typeof row.top10HoldRatio === 'number' ? row.top10HoldRatio * 100 : null;
+  const getRatioClassName = (pct: number | null) => {
+    if (pct == null) return 'text-zinc-500';
+    if (pct > 0 && pct < 10) return 'text-emerald-300';
+    if (pct > 10) return 'text-rose-300';
+    return 'text-zinc-400';
+  };
+  const devHoldClassName = getRatioClassName(typeof row.devHoldPercent === 'number' ? row.devHoldPercent : null);
+  const devMaxBuyClassName = getRatioClassName(typeof row.devMaxBuyPercent === 'number' ? row.devMaxBuyPercent : null);
+  const top10RatioClassName = getRatioClassName(top10HoldRatioPct);
+  const holdersClassName = (() => {
+    if (row.holders == null) return 'text-zinc-500';
+    if (row.holders >= 100) return 'text-cyan-200';
+    if (row.holders >= 30) return 'text-sky-300';
+    if (row.holders >= 10) return 'text-sky-200';
+    return 'text-zinc-400';
+  })();
+  const viewersClassName = (() => {
+    if (row.viewerCount == null) return 'text-zinc-500';
+    if (row.viewerCount >= 100) return 'text-violet-200';
+    if (row.viewerCount >= 30) return 'text-fuchsia-300';
+    if (row.viewerCount >= 10) return 'text-violet-300';
+    return 'text-zinc-400';
+  })();
+  const rankCornerClassName = rank === 1
+    ? 'bg-amber-500/90'
+    : rank === 2
+      ? 'bg-zinc-500/90'
+      : rank === 3
+        ? 'bg-orange-600/90'
+        : 'bg-zinc-700/90';
+  const metricItems = [
+    {
+      key: 'devCreated',
+      title: tt('contentUi.xMonitor.tooltip.devCreatedTokenCount'),
+      icon: Coins,
+      value: row.devCreatedTokenCount == null ? '-' : formatCompactNumber(Math.round(row.devCreatedTokenCount)),
+      className: row.devCreatedTokenCount == null ? 'text-zinc-500' : 'text-zinc-300',
+    },
+    {
+      key: 'devHold',
+      title: tt('contentUi.xMonitor.tooltip.devHoldPercent'),
+      icon: ChefHat,
+      value: formatMetricPercent(row.devHoldPercent),
+      className: row.devHoldPercent == null ? 'text-zinc-500' : devHoldClassName,
+    },
+    {
+      key: 'devMaxBuy',
+      title: tt('contentUi.xMonitor.tooltip.devBuyRatio'),
+      icon: Flame,
+      value: formatMetricPercent(row.devMaxBuyPercent),
+      className: row.devMaxBuyPercent == null ? 'text-zinc-500' : devMaxBuyClassName,
+    },
+    {
+      key: 'top10',
+      title: tt('contentUi.xMonitor.tooltip.top10HoldRatio'),
+      icon: UserStar,
+      value: formatMetricPercent(top10HoldRatioPct),
+      className: top10HoldRatioPct == null ? 'text-zinc-500' : top10RatioClassName,
+    },
+    {
+      key: 'kol',
+      title: tt('contentUi.xMonitor.tooltip.kol'),
+      icon: Trophy,
+      value: row.kol == null ? '-' : formatCompactNumber(Math.round(row.kol)),
+      className: row.kol == null ? 'text-zinc-500' : row.kol > 0 ? 'text-amber-200' : 'text-zinc-500',
+    },
+    {
+      key: 'holders',
+      title: tt('contentUi.xMonitor.tooltip.holders'),
+      icon: Users,
+      value: row.holders == null ? '-' : formatCompactNumber(Math.round(row.holders)),
+      className: holdersClassName,
+    },
+    {
+      key: 'viewers',
+      title: tt('contentUi.xMonitor.tooltip.viewerCount'),
+      icon: Eye,
+      value: row.viewerCount == null ? '-' : formatCompactNumber(Math.round(row.viewerCount)),
+      className: viewersClassName,
+    },
+  ] as const;
+
+  return (
+    <button
+      type="button"
+      className="relative grid w-full grid-cols-[52px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1 rounded-md px-1 py-1.5 text-left hover:bg-zinc-900/60"
+      onClick={() => navigateToUrl(parsePlatformTokenLink(resolvedSiteInfo, row.tokenAddress))}
+    >
+      <span
+        className={`pointer-events-none absolute left-0 top-0 h-6 w-6 ${rankCornerClassName}`}
+        style={{ clipPath: 'polygon(0 0, 100% 0, 0 100%)' }}
+      />
+      <span className="pointer-events-none absolute left-[4px] top-[1px] text-[9px] font-bold leading-none text-[#111]">
+        {rank}
+      </span>
+      <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-zinc-800 bg-zinc-950 text-[10px] text-zinc-500">
+        {row.tokenLogo ? (
+          <img
+            src={row.tokenLogo}
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <ImageIcon size={14} />
+        )}
+      </div>
+      <div className="min-w-0 pt-0.5">
+        <div className="grid grid-cols-[minmax(0,1fr)_78px] items-start gap-x-2 gap-y-1">
+          <div className="min-w-0">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1.5 leading-none">
+              <div className="min-w-0 truncate text-[13px] font-semibold text-zinc-100">{displayName}</div>
+              {symbol && tokenName ? (
+                <div className="min-w-0 truncate text-[11px] text-zinc-500">{tokenName}</div>
+              ) : null}
+            </div>
+            <div className={`mt-1 flex items-center text-[10px] ${row.launchpadPlatform ? 'gap-2' : 'gap-1.5'}`}>
+              <span className="min-w-0 truncate font-mono text-[10px] text-zinc-500">{shortAddr}</span>
+              <span className={`inline-flex items-center font-bold text-[12px] leading-none ${typeof row.createdAtMs === 'number' && Date.now() - row.createdAtMs <= 60_000
+                ? 'text-emerald-300'
+                : typeof row.createdAtMs === 'number' && Date.now() - row.createdAtMs <= 5 * 60_000
+                  ? 'text-amber-300'
+                  : 'text-zinc-200'
+                }`}>
+                {ageText}
+              </span>
+              {row.launchpadPlatform ? (
+                <span className={`rounded border px-1 py-0.5 text-[9px] ${getPlatformBadgeClassName(row.launchpadPlatform)}`}>{row.launchpadPlatform}</span>
+              ) : null}
+            </div>
+          </div>
+          <div className="w-[78px] shrink-0 self-start pt-0.5 text-right leading-tight">
+            <div className="flex flex-row items-center justify-end gap-0.5">
+              <span className="mr-1 text-[12px] text-zinc-500">MC </span>
+              <div className="flex items-center justify-end gap-0.5 text-[14px] font-semibold tabular-nums">
+                <span className={marketCapPrefixClassName}>{marketCapPrefix}</span>
+                <span className={marketCapValueClassName}>
+                  ${row.marketCapUsd != null ? formatCompactNumber(Math.round(row.marketCapUsd)) : '-'}
+                </span>
+              </div>
+            </div>
+            <div className={`mt-1 text-[12px] font-medium tabular-nums ${volumeClassName}`}>
+              V ${row.vol24hUsd != null ? formatCompactNumber(Math.round(row.vol24hUsd)) : '-'}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="col-span-2 mt-0.5 grid grid-cols-[repeat(7,max-content)] justify-between gap-x-1 text-[10px] font-medium tracking-tight text-zinc-200">
+        {metricItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <span
+              key={`${listKey}:${row.tokenAddress}:${item.key}`}
+              title={item.title}
+              className={`inline-flex items-center justify-center gap-0.5 whitespace-nowrap tabular-nums ${item.className}`}
+            >
+              <Icon size={12} className="shrink-0" />
+              <span>{item.value}</span>
+            </span>
+          );
+        })}
+      </div>
+    </button>
+  );
+}
+
 export function NewPoolMonitorContent({
   siteInfo,
   active,
@@ -645,8 +872,18 @@ export function NewPoolMonitorContent({
   const tokenMapRef = useRef<Map<string, MarketTokenRow>>(new Map());
   const [tokenIds, setTokenIds] = useState<string[]>([]);
   const [groupPage, setGroupPage] = useState(1);
+  const [globalPage, setGlobalPage] = useState(1);
   const [listHovered, setListHovered] = useState(false);
   const [frozenGroupKeys, setFrozenGroupKeys] = useState<string[] | null>(null);
+  const [frozenGlobalTokenIds, setFrozenGlobalTokenIds] = useState<string[] | null>(null);
+  const [viewMode, setViewMode] = useState<MonitorViewMode>(() => {
+    try {
+      const raw = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+      if (raw === 'grouped' || raw === 'globalHot') return raw;
+    } catch {
+    }
+    return 'grouped';
+  });
   const [filterOpen, setFilterOpen] = useState(() => {
     try {
       return window.localStorage.getItem(FILTER_OPEN_STORAGE_KEY) === '1';
@@ -687,6 +924,13 @@ export function NewPoolMonitorContent({
     } catch {
     }
   }, [groupSourceFilter]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+    } catch {
+    }
+  }, [viewMode]);
 
   useEffect(() => {
     try {
@@ -785,6 +1029,15 @@ export function NewPoolMonitorContent({
 
   const filteredTokens = useMemo(() => tokenList.filter((row) => matchesTokenFilter(row, filterDraft)), [tokenList, filterDraft]);
 
+  const tokensBySource = useMemo(() => {
+    const withTweet = filteredTokens.filter((row) => !!row.tweetId);
+    const withoutTweet = filteredTokens.filter((row) => !row.tweetId);
+    return {
+      withTweet,
+      withoutTweet,
+    };
+  }, [filteredTokens]);
+
   const groups = useMemo<MarketTokenGroup[]>(() => {
     const groupMap = new Map<string, MarketTokenGroup>();
     for (const row of filteredTokens) {
@@ -821,11 +1074,7 @@ export function NewPoolMonitorContent({
       ...group,
       tokens: group.tokens
         .slice()
-        .sort((a, b) => {
-          const mcDiff = (b.marketCapUsd ?? 0) - (a.marketCapUsd ?? 0);
-          if (mcDiff !== 0) return mcDiff;
-          return b.updatedAtMs - a.updatedAtMs;
-        })
+        .sort(compareByMarketCapDesc)
         .slice(0, 3),
     }));
     out.sort((a, b) => {
@@ -840,7 +1089,11 @@ export function NewPoolMonitorContent({
 
   useEffect(() => {
     setGroupPage(1);
-  }, [filterDraft, groupSourceFilter]);
+  }, [filterDraft, groupSourceFilter, viewMode]);
+
+  useEffect(() => {
+    setGlobalPage(1);
+  }, [filterDraft, groupSourceFilter, viewMode]);
 
   const groupsBySource = useMemo(() => {
     const withTweet = groups.filter((group) => group.kind === 'tweet');
@@ -857,6 +1110,12 @@ export function NewPoolMonitorContent({
     return groups;
   }, [groups, groupsBySource, groupSourceFilter]);
 
+  const scopedTokens = useMemo(() => {
+    if (groupSourceFilter === 'withTweet') return tokensBySource.withTweet;
+    if (groupSourceFilter === 'withoutTweet') return tokensBySource.withoutTweet;
+    return filteredTokens;
+  }, [filteredTokens, tokensBySource, groupSourceFilter]);
+
   const groupsForDisplay = useMemo(() => {
     if (!frozenGroupKeys?.length) return scopedGroups;
     const groupMap = new Map(scopedGroups.map((group) => [group.key, group] as const));
@@ -868,6 +1127,23 @@ export function NewPoolMonitorContent({
   const visibleGroups = useMemo(() => groupsForDisplay.slice(0, groupPage * GROUP_PAGE_SIZE), [groupsForDisplay, groupPage]);
   const hasMoreGroups = visibleGroups.length < groupsForDisplay.length;
 
+  const globalHotTokens = useMemo(
+    () => scopedTokens.slice().sort(compareByViewerAndMarketCapDesc),
+    [scopedTokens]
+  );
+  const globalHotTokensForDisplay = useMemo(() => {
+    if (!frozenGlobalTokenIds?.length) return globalHotTokens;
+    const tokenMap = new Map(globalHotTokens.map((row) => [row.tokenAddress, row] as const));
+    return frozenGlobalTokenIds
+      .map((id) => tokenMap.get(id))
+      .filter(Boolean) as MarketTokenRow[];
+  }, [globalHotTokens, frozenGlobalTokenIds]);
+  const visibleGlobalHotTokens = useMemo(
+    () => globalHotTokensForDisplay.slice(0, globalPage * HOT_PAGE_SIZE),
+    [globalHotTokensForDisplay, globalPage]
+  );
+  const hasMoreGlobalHotTokens = visibleGlobalHotTokens.length < globalHotTokensForDisplay.length;
+
   const updateFilterDraft = (patch: Partial<MonitorFilterDraft>) => {
     setFilterDraft((prev) => ({
       ...prev,
@@ -877,12 +1153,19 @@ export function NewPoolMonitorContent({
 
   const handleListMouseEnter = () => {
     setListHovered(true);
-    setFrozenGroupKeys(groupsForDisplay.map((group) => group.key));
+    if (viewMode === 'grouped') {
+      setFrozenGroupKeys(groupsForDisplay.map((group) => group.key));
+      setFrozenGlobalTokenIds(null);
+      return;
+    }
+    setFrozenGlobalTokenIds(globalHotTokensForDisplay.map((row) => row.tokenAddress));
+    setFrozenGroupKeys(null);
   };
 
   const handleListMouseLeave = () => {
     setListHovered(false);
     setFrozenGroupKeys(null);
+    setFrozenGlobalTokenIds(null);
   };
 
   if (!active) return null;
@@ -890,17 +1173,42 @@ export function NewPoolMonitorContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="border-b border-zinc-800/60 px-4 py-2">
-        <div className="flex items-center gap-2 overflow-x-auto">
-          {/* <div
-            className="shrink-0 text-[10px] font-medium tabular-nums text-zinc-500"
-            title="当前显示分组/代币"
-          >
-            {visibleGroups.length}/{filteredTokens.length}
-          </div> */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="inline-flex shrink-0 rounded-xl border border-zinc-800 bg-zinc-950/70 p-1">
+            {([
+              ['grouped', '分组'],
+              ['globalHot', '热榜'],
+            ] as Array<[MonitorViewMode, string]>).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={
+                  viewMode === value
+                    ? 'min-w-[58px] rounded-lg border border-sky-500/50 bg-sky-500/15 px-3 py-1.5 text-[12px] font-medium text-sky-200'
+                    : 'min-w-[58px] rounded-lg border border-transparent px-3 py-1.5 text-[12px] text-zinc-400 hover:text-zinc-200'
+                }
+                onClick={() => setViewMode(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {listHovered ? <div className="text-[10px] text-amber-300">暂停</div> : null}
+            <button
+              type="button"
+              className="rounded-md border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-700"
+              onClick={() => setFilterOpen((v) => !v)}
+            >
+              {filterOpen ? '收起' : '筛选'}
+            </button>
+          </div>
+        </div>
+        <div className="mt-2 flex items-center gap-2 overflow-x-auto">
           {([
-            ['all', `全部 ${groups.length}`],
-            ['withTweet', `有推特 ${groupsBySource.withTweet.length}`],
-            ['withoutTweet', `无推特 ${groupsBySource.withoutTweet.length}`],
+            ['all', `全部 ${viewMode === 'grouped' ? groups.length : filteredTokens.length}`],
+            ['withTweet', `有推特 ${viewMode === 'grouped' ? groupsBySource.withTweet.length : tokensBySource.withTweet.length}`],
+            ['withoutTweet', `无推特 ${viewMode === 'grouped' ? groupsBySource.withoutTweet.length : tokensBySource.withoutTweet.length}`],
           ] as Array<[GroupSourceFilter, string]>).map(([value, label]) => (
             <button
               key={value}
@@ -915,16 +1223,6 @@ export function NewPoolMonitorContent({
               {label}
             </button>
           ))}
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            {listHovered ? <div className="text-[10px] text-amber-300">暂停</div> : null}
-            <button
-              type="button"
-              className="rounded-md border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-700"
-              onClick={() => setFilterOpen((v) => !v)}
-            >
-              {filterOpen ? '收起' : '筛选'}
-            </button>
-          </div>
         </div>
         {filterOpen ? (
           <div className="mt-2">
@@ -947,261 +1245,109 @@ export function NewPoolMonitorContent({
         onMouseEnter={handleListMouseEnter}
         onMouseLeave={handleListMouseLeave}
       >
-        {visibleGroups.length === 0 ? (
-          <div className="px-2 py-8 text-center text-[14px] text-zinc-500">暂无符合条件的新池分组</div>
-        ) : (
-          <div>
-            {visibleGroups.map((group) => (
-              <div key={group.key} className="mt-2 rounded-lg border border-zinc-800/90 bg-zinc-950/30 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] first:mt-0">
-                {group.totalCount > 1 ? (
-                  <div className="mb-1 flex items-center justify-between gap-3 border-b border-zinc-800/80 pb-1">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 text-[12px] text-zinc-300">
-                        <span className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-900/50 px-1.5 py-0.5 text-[10px] text-zinc-500">
-                          {getGroupIcon(group.kind)}
-                          {group.kind === 'tweet' ? '推文' : group.kind === 'website' ? '站点' : group.kind === 'image' ? '同图' : '名称'}
-                        </span>
-                        {group.kind === 'tweet' && group.tweetAuthor ? (
-                          <button
-                            type="button"
-                            className="truncate font-semibold text-sky-300 hover:text-sky-200 hover:underline underline-offset-2"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              window.open(`https://x.com/${group.tweetAuthor}`, '_blank');
-                            }}
-                            title={`@${group.tweetAuthor}`}
-                          >
-                            @{group.tweetAuthor}
-                          </button>
-                        ) : group.kind === 'tweet' && group.tweetId ? (
-                          <span className="truncate font-semibold text-sky-300">Tweet #{group.tweetId.slice(-6)}</span>
-                        ) : (
-                          <span className="truncate font-semibold text-zinc-100">{group.label}</span>
-                        )}
-                        <span className="text-[10px] text-zinc-500">{group.totalCount}</span>
-                      </div>
-                    </div>
-                    {group.tweetUrl || group.website ? (
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800"
-                        onClick={() => window.open(group.tweetUrl || group.website || '', '_blank')}
-                      >
-                        <ExternalLink size={12} />
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                <div className="space-y-0.5">
-                  {group.tokens.map((row, idx) => {
-                    const shortAddr = `${row.tokenAddress.slice(0, 6)}...${row.tokenAddress.slice(-4)}`;
-                    const symbol = row.tokenSymbol?.trim() || '';
-                    const tokenName = row.tokenName?.trim() || '';
-                    const displayName = symbol || tokenName || shortAddr;
-                    const ageText = formatAgeShort(row.createdAtMs);
-                    const marketCapHighlightActive =
-                      typeof row.marketCapChangedAtMs === 'number' &&
-                      Date.now() - row.marketCapChangedAtMs <= MCAP_HIGHLIGHT_WINDOW_MS &&
-                      row.marketCapDirection != null;
-                    const marketCapValueClassName = (() => {
-                      if (row.marketCapUsd == null || row.marketCapUsd <= 0) return 'text-zinc-500';
-                      if (row.marketCapUsd >= 50_000) return 'text-amber-300';
-                      if (row.marketCapUsd >= 30_000) return 'text-sky-300';
-                      if (row.marketCapUsd >= 10_000) return 'text-emerald-300';
-                      return 'text-zinc-200';
-                    })();
-                    const marketCapPrefix = marketCapHighlightActive
-                      ? row.marketCapDirection === 'up'
-                        ? '▲'
-                        : '▼'
-                      : '';
-                    const marketCapPrefixClassName = marketCapHighlightActive
-                      ? row.marketCapDirection === 'up'
-                        ? 'text-emerald-300'
-                        : 'text-rose-300'
-                      : 'text-transparent';
-                    const volumeClassName = row.vol24hUsd != null && row.vol24hUsd > 0 ? 'text-zinc-100' : 'text-zinc-500';
-                    const top10HoldRatioPct = typeof row.top10HoldRatio === 'number' ? row.top10HoldRatio * 100 : null;
-                    const getRatioClassName = (pct: number | null) => {
-                      if (pct == null) return 'text-zinc-500';
-                      if (pct > 0 && pct < 10) return 'text-emerald-300';
-                      if (pct > 10) return 'text-rose-300';
-                      return 'text-zinc-400';
-                    };
-                    const devHoldClassName = getRatioClassName(typeof row.devHoldPercent === 'number' ? row.devHoldPercent : null);
-                    const devMaxBuyClassName = getRatioClassName(typeof row.devMaxBuyPercent === 'number' ? row.devMaxBuyPercent : null);
-                    const top10RatioClassName = getRatioClassName(top10HoldRatioPct);
-                    const holdersClassName = (() => {
-                      if (row.holders == null) return 'text-zinc-500';
-                      if (row.holders >= 100) return 'text-cyan-200';
-                      if (row.holders >= 30) return 'text-sky-300';
-                      if (row.holders >= 10) return 'text-sky-200';
-                      return 'text-zinc-400';
-                    })();
-                    const viewersClassName = (() => {
-                      if (row.viewerCount == null) return 'text-zinc-500';
-                      if (row.viewerCount >= 100) return 'text-violet-200';
-                      if (row.viewerCount >= 30) return 'text-fuchsia-300';
-                      if (row.viewerCount >= 10) return 'text-violet-300';
-                      return 'text-zinc-400';
-                    })();
-                    const rankCornerClassName = idx === 0
-                      ? 'bg-amber-500/90'
-                      : idx === 1
-                        ? 'bg-zinc-500/90'
-                        : 'bg-orange-600/90';
-                    const metricItems = [
-                      {
-                        key: 'devCreated',
-                        title: tt('contentUi.xMonitor.tooltip.devCreatedTokenCount'),
-                        icon: Coins,
-                        value: row.devCreatedTokenCount == null ? '-' : formatCompactNumber(Math.round(row.devCreatedTokenCount)),
-                        className: row.devCreatedTokenCount == null ? 'text-zinc-500' : 'text-zinc-300',
-                      },
-                      {
-                        key: 'devHold',
-                        title: tt('contentUi.xMonitor.tooltip.devHoldPercent'),
-                        icon: ChefHat,
-                        value: formatMetricPercent(row.devHoldPercent),
-                        className: row.devHoldPercent == null ? 'text-zinc-500' : devHoldClassName,
-                      },
-                      {
-                        key: 'devMaxBuy',
-                        title: tt('contentUi.xMonitor.tooltip.devBuyRatio'),
-                        icon: Flame,
-                        value: formatMetricPercent(row.devMaxBuyPercent),
-                        className: row.devMaxBuyPercent == null ? 'text-zinc-500' : devMaxBuyClassName,
-                      },
-                      {
-                        key: 'top10',
-                        title: tt('contentUi.xMonitor.tooltip.top10HoldRatio'),
-                        icon: UserStar,
-                        value: formatMetricPercent(top10HoldRatioPct),
-                        className: top10HoldRatioPct == null ? 'text-zinc-500' : top10RatioClassName,
-                      },
-                      {
-                        key: 'kol',
-                        title: tt('contentUi.xMonitor.tooltip.kol'),
-                        icon: Trophy,
-                        value: row.kol == null ? '-' : formatCompactNumber(Math.round(row.kol)),
-                        className: row.kol == null ? 'text-zinc-500' : row.kol > 0 ? 'text-amber-200' : 'text-zinc-500',
-                      },
-                      {
-                        key: 'holders',
-                        title: tt('contentUi.xMonitor.tooltip.holders'),
-                        icon: Users,
-                        value: row.holders == null ? '-' : formatCompactNumber(Math.round(row.holders)),
-                        className: holdersClassName,
-                      },
-                      {
-                        key: 'viewers',
-                        title: tt('contentUi.xMonitor.tooltip.viewerCount'),
-                        icon: Eye,
-                        value: row.viewerCount == null ? '-' : formatCompactNumber(Math.round(row.viewerCount)),
-                        className: viewersClassName,
-                      },
-                    ] as const;
-                    return (
-                      <button
-                        key={`${group.key}:${row.tokenAddress}`}
-                        type="button"
-                        className="relative grid w-full grid-cols-[52px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1 rounded-md px-1 py-1.5 text-left hover:bg-zinc-900/60"
-                        onClick={() => navigateToUrl(parsePlatformTokenLink(resolvedSiteInfo, row.tokenAddress))}
-                      >
-                        <span
-                          className={`pointer-events-none absolute left-0 top-0 h-6 w-6 ${rankCornerClassName}`}
-                          style={{ clipPath: 'polygon(0 0, 100% 0, 0 100%)' }}
-                        />
-                        <span className="pointer-events-none absolute left-[4px] top-[1px] text-[9px] font-bold leading-none text-[#111]">
-                          {idx + 1}
-                        </span>
-                        <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-zinc-800 bg-zinc-950 text-[10px] text-zinc-500">
-                          {row.tokenLogo ? (
-                            <img
-                              src={row.tokenLogo}
-                              alt=""
-                              className="h-full w-full object-cover"
-                              loading="lazy"
-                              referrerPolicy="no-referrer"
-                            />
+        {viewMode === 'grouped' ? (
+          visibleGroups.length === 0 ? (
+            <div className="px-2 py-8 text-center text-[14px] text-zinc-500">暂无符合条件的新池分组</div>
+          ) : (
+            <div>
+              {visibleGroups.map((group) => (
+                <div key={group.key} className="mt-2 rounded-lg border border-zinc-800/90 bg-zinc-950/30 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] first:mt-0">
+                  {group.totalCount > 1 ? (
+                    <div className="mb-1 flex items-center justify-between gap-3 border-b border-zinc-800/80 pb-1">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-[12px] text-zinc-300">
+                          <span className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-900/50 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                            {getGroupIcon(group.kind)}
+                            {group.kind === 'tweet' ? '推文' : group.kind === 'website' ? '站点' : group.kind === 'image' ? '同图' : '名称'}
+                          </span>
+                          {group.kind === 'tweet' && group.tweetAuthor ? (
+                            <button
+                              type="button"
+                              className="truncate font-semibold text-sky-300 hover:text-sky-200 hover:underline underline-offset-2"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.open(`https://x.com/${group.tweetAuthor}`, '_blank');
+                              }}
+                              title={`@${group.tweetAuthor}`}
+                            >
+                              @{group.tweetAuthor}
+                            </button>
+                          ) : group.kind === 'tweet' && group.tweetId ? (
+                            <span className="truncate font-semibold text-sky-300">Tweet #{group.tweetId.slice(-6)}</span>
                           ) : (
-                            <ImageIcon size={14} />
+                            <span className="truncate font-semibold text-zinc-100">{group.label}</span>
                           )}
+                          <span className="text-[10px] text-zinc-500">{group.totalCount}</span>
                         </div>
-                        <div className="min-w-0 pt-0.5">
-                          <div className="grid grid-cols-[minmax(0,1fr)_78px] items-start gap-x-2 gap-y-1">
-                            <div className="min-w-0">
-                              <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1.5 leading-none">
-                                <div className="min-w-0 truncate text-[13px] font-semibold text-zinc-100">{displayName}</div>
-                                {symbol && tokenName ? (
-                                  <div className="min-w-0 truncate text-[11px] text-zinc-500">{tokenName}</div>
-                                ) : null}
-                              </div>
-                              <div className={`mt-1 flex items-center text-[10px] ${row.launchpadPlatform ? 'gap-2' : 'gap-1.5'}`}>
-                                <span className="min-w-0 truncate font-mono text-[10px] text-zinc-500">{shortAddr}</span>
-                                <span className={`inline-flex items-center font-bold text-[12px] leading-none ${typeof row.createdAtMs === 'number' && Date.now() - row.createdAtMs <= 60_000
-                                  ? 'text-emerald-300'
-                                  : typeof row.createdAtMs === 'number' && Date.now() - row.createdAtMs <= 5 * 60_000
-                                    ? 'text-amber-300'
-                                    : 'text-zinc-200'
-                                  }`}>
-                                  {ageText}
-                                </span>
-                                {row.launchpadPlatform ? (
-                                  <span className={`rounded border px-1 py-0.5 text-[9px] ${getPlatformBadgeClassName(row.launchpadPlatform)}`}>{row.launchpadPlatform}</span>
-                                ) : null}
-                              </div>
-                            </div>
-                            <div className="w-[78px] shrink-0 pt-0.5 text-right leading-tight self-start">
-                              <div className="flex flex-row items-center justify-end gap-0.5">
-                                <span className='text-[12px] text-zinc-500 mr-1'>MC </span>
-                                <div className="flex items-center justify-end gap-0.5 text-[14px] font-semibold tabular-nums">
-                                  <span className={marketCapPrefixClassName}>{marketCapPrefix}</span>
-                                  <span className={marketCapValueClassName}>
-                                    ${row.marketCapUsd != null ? formatCompactNumber(Math.round(row.marketCapUsd)) : '-'}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className={`mt-1 text-[12px] font-medium tabular-nums ${volumeClassName}`}>
-                                V ${row.vol24hUsd != null ? formatCompactNumber(Math.round(row.vol24hUsd)) : '-'}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="col-span-2 mt-0.5 grid grid-cols-[repeat(7,max-content)] justify-between gap-x-1 text-[10px] font-medium tracking-tight text-zinc-200">
-                          {metricItems.map((item) => {
-                            const Icon = item.icon;
-                            return (
-                              <span
-                                key={item.key}
-                                title={item.title}
-                                className={`inline-flex items-center justify-center gap-0.5 whitespace-nowrap tabular-nums ${item.className}`}
-                              >
-                                <Icon size={12} className="shrink-0" />
-                                <span>{item.value}</span>
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </button>
-                    );
-                  })}
+                      </div>
+                      {group.tweetUrl || group.website ? (
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800"
+                          onClick={() => window.open(group.tweetUrl || group.website || '', '_blank')}
+                        >
+                          <ExternalLink size={12} />
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-0.5">
+                    {group.tokens.map((row, idx) => (
+                      <TokenRowCard
+                        key={`${group.key}:${row.tokenAddress}`}
+                        row={row}
+                        rank={idx + 1}
+                        listKey={group.key}
+                        resolvedSiteInfo={resolvedSiteInfo}
+                        tt={tt}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-            {hasMoreGroups ? (
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-[12px] text-zinc-200 hover:bg-zinc-800"
-                  onClick={() => setGroupPage((p) => p + 1)}
-                >
-                  加载更多
-                </button>
-              </div>
-            ) : null}
-          </div>
+              ))}
+              {hasMoreGroups ? (
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-[12px] text-zinc-200 hover:bg-zinc-800"
+                    onClick={() => setGroupPage((p) => p + 1)}
+                  >
+                    加载更多
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )
+        ) : (
+          visibleGlobalHotTokens.length === 0 ? (
+            <div className="px-2 py-8 text-center text-[14px] text-zinc-500">暂无符合条件的新池热度数据</div>
+          ) : (
+            <div className="space-y-1">
+              {visibleGlobalHotTokens.map((row, idx) => (
+                <div key={`global-hot:${row.tokenAddress}`} className="rounded-lg border border-zinc-800/90 bg-zinc-950/30 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                  <TokenRowCard
+                    row={row}
+                    rank={idx + 1}
+                    listKey="global-hot"
+                    resolvedSiteInfo={resolvedSiteInfo}
+                    tt={tt}
+                  />
+                </div>
+              ))}
+              {hasMoreGlobalHotTokens ? (
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-[12px] text-zinc-200 hover:bg-zinc-800"
+                    onClick={() => setGlobalPage((p) => p + 1)}
+                  >
+                    加载更多
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )
         )}
       </div>
     </div>
