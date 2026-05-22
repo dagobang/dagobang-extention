@@ -23,6 +23,7 @@ const CONTEXT_CACHE_MAX = 20_000;
 const BRIDGE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const BRIDGE_CACHE_MAX = 50_000;
 const LOW_FREQUENCY_CACHE_PRUNE_INTERVAL_MS = 60_000;
+const MARKET_CONTEXT_RECHECK_INTERVAL_MS = 30_000;
 
 export type VisionForwardStatus = {
   enabled: boolean;
@@ -235,6 +236,16 @@ const getVisionConfig = async () => {
   return cfgLoadPromise;
 };
 
+const getVisionConfigSnapshot = (): VisionRuntimeConfig => {
+  initVisionConfigWatcher();
+  if (!cfgCache && !cfgLoadPromise) {
+    cfgLoadPromise = refreshVisionConfig().finally(() => {
+      cfgLoadPromise = null;
+    });
+  }
+  return cfgCache ?? { enabled: true, baseUrl: DEFAULT_VISION_BASE };
+};
+
 const loadVisionStatusFromStorage = async (): Promise<VisionForwardStatus> => {
   const cfg = await getVisionConfig();
   try {
@@ -295,9 +306,14 @@ const scheduleVisionStatusFlush = (immediate = false) => {
   }, STATUS_FLUSH_INTERVAL_MS);
 };
 
-const syncRuntimeStatus = async (patch?: Partial<VisionForwardStatus>) => {
-  const cfg = await getVisionConfig();
-  const prev = await getVisionStatusCache();
+const syncRuntimeStatus = (patch?: Partial<VisionForwardStatus>) => {
+  const cfg = getVisionConfigSnapshot();
+  const prev = statusCache ?? {
+    enabled: cfg.enabled,
+    baseUrl: cfg.baseUrl,
+    successCount: 0,
+    failCount: 0,
+  };
   statusCache = {
     ...prev,
     enabled: cfg.enabled,
@@ -323,11 +339,16 @@ const updateStatus = async (patch: Partial<VisionForwardStatus>, options?: { imm
   scheduleVisionStatusFlush(options?.immediate === true);
 };
 
-const bumpStatusCounter = async (
+const bumpStatusCounter = (
   kind: 'success' | 'fail',
   base: { enabled: boolean; baseUrl: string; path: string; error?: string },
 ) => {
-  const st = await getVisionStatusCache();
+  const st = statusCache ?? {
+    enabled: base.enabled,
+    baseUrl: base.baseUrl,
+    successCount: 0,
+    failCount: 0,
+  };
   const now = Date.now();
   statusCache = {
     ...st,
@@ -353,11 +374,16 @@ const bumpStatusCounter = async (
   scheduleVisionStatusFlush();
 };
 
-const bumpStatusMetric = async (
+const bumpStatusMetric = (
   patch: Partial<Pick<VisionForwardStatus, 'droppedPackets' | 'droppedAggregateRows' | 'backpressureCount' | 'ackTimeoutCount'>> & { path?: string; error?: string },
 ) => {
-  const cfg = await getVisionConfig();
-  const st = await getVisionStatusCache();
+  const cfg = getVisionConfigSnapshot();
+  const st = statusCache ?? {
+    enabled: cfg.enabled,
+    baseUrl: cfg.baseUrl,
+    successCount: 0,
+    failCount: 0,
+  };
   statusCache = {
     ...st,
     enabled: cfg.enabled,
@@ -432,11 +458,6 @@ const getMetricRowKey = (row: any) => [
   normalizeAggregateTokenAddress(row?.tokenAddress),
 ].join('|');
 
-const getSignalRowKey = (row: any) => [
-  String(row?.signalId ?? row?.eventId ?? row?.tweetId ?? 'unknown'),
-  normalizeAggregateTokenAddress(row?.tokenAddress),
-].join('|');
-
 const pruneTimedCache = <T>(map: Map<string, T>, nowMs: number, ttlMs: number, maxEntries: number, getTouchedAtMs: (value: T) => number) => {
   for (const [key, value] of map) {
     if (nowMs - getTouchedAtMs(value) > ttlMs) {
@@ -457,6 +478,14 @@ const touchLowFrequencyCaches = (nowMs: number) => {
   pruneTimedCache(bridgeSeenCache, nowMs, BRIDGE_CACHE_TTL_MS, BRIDGE_CACHE_MAX, (value) => value);
 };
 
+const shouldRecheckMarketContext = (contextKey: string, nowMs: number) => {
+  const prev = contextSnapshotCache.get(contextKey);
+  if (!prev) return true;
+  if (nowMs - prev.lastTouchedMs >= MARKET_CONTEXT_RECHECK_INTERVAL_MS) return true;
+  prev.lastTouchedMs = nowMs;
+  return false;
+};
+
 const fingerprintPart = (value: unknown) => {
   if (value == null) return '';
   if (typeof value === 'string') return value;
@@ -473,9 +502,6 @@ const buildContextFingerprint = (row: any) => [
   fingerprintPart(row.sourceType),
   fingerprintPart(row.sourceSite),
   fingerprintPart(row.sourceChannel),
-  fingerprintPart(row.tweetId),
-  fingerprintPart(row.tweetType),
-  fingerprintPart(row.userName),
   fingerprintPart(row.devAddress),
   fingerprintPart(row.devMaxBuyPercent),
   fingerprintPart(row.devHasSold),
@@ -496,76 +522,36 @@ const getBridgeCacheKey = (row: any) => [
   String(row?.signalId ?? ''),
 ].join('|');
 
-const buildContextAndBridgeDeltaRows = (input: {
-  signal: UnifiedTwitterSignal | UnifiedMarketSignal;
-  sourceType: 'twitter' | 'market_ws';
-}) => {
-  const signal = input.signal as any;
-  const stableSignalRef = getStableSignalIdentity(signal);
-  const signalId = stableSignalRef || stableSignalId(signal);
-  const contexts: any[] = [];
-  const bridges: any[] = [];
-  const nowMs = Date.now();
-  touchLowFrequencyCaches(nowMs);
-  for (const t of safeSliceTokens(signal.tokens)) {
-    const addr = normalizeAddress((t as any).tokenAddress);
-    if (!addr) continue;
-    const updatedAtMs = normalizeEpochMs((t as any).updatedAtMs ?? signal.receivedAtMs ?? signal.ts ?? nowMs);
-    const contextRow = {
-      contextId: '',
-      updatedAtMs,
-      chain: resolveChain((t as any).chain, signal.chain, signal.site, signal.channel),
-      tokenAddress: addr,
-      tokenSymbol: typeof (t as any).tokenSymbol === 'string' ? String((t as any).tokenSymbol) : undefined,
-      tokenName: typeof (t as any).tokenName === 'string' ? String((t as any).tokenName) : undefined,
-      launchpadPlatform: typeof (t as any).launchpadPlatform === 'string' ? String((t as any).launchpadPlatform) : undefined,
-      createdAtMs: toInt((t as any).createdAtMs),
-      sourceType: input.sourceType,
-      sourceSite: String(signal.site ?? 'unknown'),
-      sourceChannel: String(signal.channel ?? 'unknown'),
-      signalId: stableSignalRef || undefined,
-      eventId: typeof signal.eventId === 'string' ? String(signal.eventId) : undefined,
-      tweetId: typeof signal.tweetId === 'string' ? String(signal.tweetId) : undefined,
-      tweetType: typeof signal.tweetType === 'string' ? String(signal.tweetType) : undefined,
-      userScreen: typeof signal.userScreen === 'string' ? String(signal.userScreen) : undefined,
-      userName: typeof signal.userName === 'string' ? String(signal.userName) : undefined,
-      userFollowers: toInt(signal.userFollowers),
-      signalReceivedAtMs: toInt(signal.receivedAtMs),
-      devAddress: normalizeAddress((t as any).devAddress) ?? undefined,
-      devMaxBuyPercent: toNum((t as any).devMaxBuyPercent),
-      devHasSold: typeof (t as any).devHasSold === 'boolean' ? (t as any).devHasSold : undefined,
-      devCreatedTokenCount: toInt((t as any).devCreatedTokenCount),
-    };
-    const contextKey = getContextCacheKey(contextRow);
-    const fingerprint = buildContextFingerprint(contextRow);
-    const prev = contextSnapshotCache.get(contextKey);
-    if (!prev || prev.fingerprint !== fingerprint) {
-      contextRow.contextId = `${contextKey}:${updatedAtMs}`;
-      contexts.push(contextRow);
-      contextSnapshotCache.set(contextKey, { fingerprint, lastTouchedMs: updatedAtMs });
-    } else {
-      prev.lastTouchedMs = updatedAtMs;
-    }
-    if (!stableSignalRef) continue;
-    const bridgeRow = {
-      linkedAtMs: normalizeEpochMs(signal.receivedAtMs ?? signal.ts ?? nowMs),
-      chain: contextRow.chain,
-      tokenAddress: addr,
-      signalId,
-      eventId: typeof signal.eventId === 'string' ? String(signal.eventId) : undefined,
-      tweetId: typeof signal.tweetId === 'string' ? String(signal.tweetId) : undefined,
-      sourceSite: String(signal.site ?? 'unknown'),
-      sourceChannel: String(signal.channel ?? 'unknown'),
-    };
-    const bridgeKey = getBridgeCacheKey(bridgeRow);
-    if (!bridgeSeenCache.has(bridgeKey)) {
-      bridges.push(bridgeRow);
-      bridgeSeenCache.set(bridgeKey, bridgeRow.linkedAtMs);
-    } else {
-      bridgeSeenCache.set(bridgeKey, bridgeRow.linkedAtMs);
+const shouldStageContextForToken = (signal: any, token: any) => {
+  return typeof token?.tokenSymbol === 'string'
+    || typeof token?.tokenName === 'string'
+    || typeof token?.launchpadPlatform === 'string'
+    || toInt(token?.createdAtMs) != null
+    || normalizeAddress(token?.devAddress) != null
+    || toNum(token?.devMaxBuyPercent) != null
+    || typeof token?.devHasSold === 'boolean'
+    || toInt(token?.devCreatedTokenCount) != null
+    || typeof signal?.userName === 'string'
+    || typeof signal?.userScreen === 'string'
+    || typeof signal?.tweetId === 'string'
+    || typeof signal?.eventId === 'string';
+};
+
+const upsertAggregateRow = (
+  map: Map<string, any>,
+  key: string,
+  row: any,
+  droppedCounter: { count: number },
+) => {
+  if (!key) return;
+  if (!map.has(key) && map.size >= MAX_AGG_ROWS_PER_KIND) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey) {
+      map.delete(oldestKey);
+      droppedCounter.count += 1;
     }
   }
-  return { contexts, bridges };
+  map.set(key, mergeVisionRow(map.get(key), row));
 };
 
 const clearAggregateFlushTimer = () => {
@@ -586,11 +572,11 @@ const scheduleAggregateFlush = () => {
     aggregateFlushTimer = null;
     const activeWindowStartMs = aggregateWindow?.windowStartMs;
     if (activeWindowStartMs == null) return;
-    void flushAggregateWindow(activeWindowStartMs);
+    flushAggregateWindow(activeWindowStartMs);
   }, delay);
 };
 
-const enqueueAggregatedWindow = async (windowState: VisionAggregateWindow) => {
+const enqueueAggregatedWindow = (windowState: VisionAggregateWindow) => {
   const tokenMetrics = Array.from(windowState.tokenMetrics.values());
   const signalContexts = Array.from(windowState.signalContexts.values());
   const bridges = Array.from(windowState.bridges.values());
@@ -602,7 +588,7 @@ const enqueueAggregatedWindow = async (windowState: VisionAggregateWindow) => {
   if (maxChunks <= 0) return;
   for (let i = 0; i < maxChunks; i += 1) {
     const start = i * MAX_ROWS_PER_BATCH_PACKET;
-    await enqueuePacket({
+    enqueuePacket({
       type: 'batch',
       id: `agg:${windowState.windowStartMs}:${i}`,
       sentAtMs: Date.now(),
@@ -613,16 +599,16 @@ const enqueueAggregatedWindow = async (windowState: VisionAggregateWindow) => {
   }
 };
 
-const flushAggregateWindow = async (expectedWindowStartMs?: number) => {
+const flushAggregateWindow = (expectedWindowStartMs?: number) => {
   const current = aggregateWindow;
   if (!current) return;
   if (expectedWindowStartMs != null && current.windowStartMs !== expectedWindowStartMs) return;
   clearAggregateFlushTimer();
   aggregateWindow = null;
-  await enqueueAggregatedWindow(current);
+  enqueueAggregatedWindow(current);
 };
 
-const getActiveAggregateWindow = async (nowMs: number) => {
+const getActiveAggregateWindow = (nowMs: number) => {
   const nextWindowStartMs = getAggregateWindowStartMs(nowMs);
   if (!aggregateWindow) {
     aggregateWindow = createAggregateWindow(nextWindowStartMs);
@@ -634,60 +620,114 @@ const getActiveAggregateWindow = async (nowMs: number) => {
     aggregateWindow = createAggregateWindow(nextWindowStartMs);
     clearAggregateFlushTimer();
     scheduleAggregateFlush();
-    await enqueueAggregatedWindow(prev);
+    enqueueAggregatedWindow(prev);
   }
   return aggregateWindow;
 };
 
-const aggregateRowsIntoWindow = async (input: {
-  tokenMetrics?: any[];
-  signalContexts?: any[];
-  bridges?: any[];
+const stageSignalIntoWindow = (input: {
+  signal: UnifiedTwitterSignal | UnifiedMarketSignal;
+  sourceType: 'twitter' | 'market_ws';
 }) => {
   const nowMs = Date.now();
-  const windowState = await getActiveAggregateWindow(nowMs);
-  let droppedAggregateRows = 0;
-  for (const row of input.tokenMetrics ?? []) {
-    const key = getMetricRowKey(row);
-    if (!key) continue;
-    if (!windowState.tokenMetrics.has(key) && windowState.tokenMetrics.size >= MAX_AGG_ROWS_PER_KIND) {
-      const oldestKey = windowState.tokenMetrics.keys().next().value;
-      if (oldestKey) {
-        windowState.tokenMetrics.delete(oldestKey);
-        droppedAggregateRows += 1;
+  const signal = input.signal as any;
+  const windowState = getActiveAggregateWindow(nowMs);
+  const droppedCounter = { count: 0 };
+  const stableSignalRef = getStableSignalIdentity(signal);
+  const bridgeSignalId = stableSignalRef || stableSignalId(signal);
+  touchLowFrequencyCaches(nowMs);
+
+  for (const t of safeSliceTokens(signal.tokens)) {
+    const addr = normalizeAddress((t as any)?.tokenAddress);
+    if (!addr) continue;
+    const metricRow = {
+      tsMs: normalizeEpochMs((t as any).updatedAtMs ?? signal.receivedAtMs ?? signal.ts ?? nowMs),
+      chain: resolveChain((t as any).chain, signal.chain, signal.site, signal.channel),
+      tokenAddress: addr,
+      tokenSymbol: typeof (t as any).tokenSymbol === 'string' ? String((t as any).tokenSymbol) : undefined,
+      launchpadPlatform: typeof (t as any).launchpadPlatform === 'string' ? String((t as any).launchpadPlatform) : undefined,
+      marketCapUsd: toNum((t as any).marketCapUsd),
+      holders: toInt((t as any).holders),
+      kol: toInt((t as any).kol),
+      smartMoney: toInt((t as any).smartMoney),
+      vol24hUsd: toNum((t as any).vol24hUsd),
+      netBuy24hUsd: toNum((t as any).netBuy24hUsd),
+      buyTx24h: toInt((t as any).buyTx24h),
+      sellTx24h: toInt((t as any).sellTx24h),
+      viewerCount: toInt((t as any).viewerCount),
+      devHoldPercent: toNum((t as any).devHoldPercent),
+      sourceSite: String(signal.site ?? 'unknown'),
+      sourceChannel: String(signal.channel ?? 'unknown'),
+    };
+    upsertAggregateRow(windowState.tokenMetrics, getMetricRowKey(metricRow), metricRow, droppedCounter);
+
+    if (shouldStageContextForToken(signal, t)) {
+      const updatedAtMs = normalizeEpochMs((t as any).updatedAtMs ?? signal.receivedAtMs ?? signal.ts ?? nowMs);
+      const contextRow = {
+        contextId: '',
+        updatedAtMs,
+        chain: metricRow.chain,
+        tokenAddress: addr,
+        tokenSymbol: metricRow.tokenSymbol,
+        tokenName: typeof (t as any).tokenName === 'string' ? String((t as any).tokenName) : undefined,
+        launchpadPlatform: metricRow.launchpadPlatform,
+        createdAtMs: toInt((t as any).createdAtMs),
+        sourceType: input.sourceType,
+        sourceSite: String(signal.site ?? 'unknown'),
+        sourceChannel: String(signal.channel ?? 'unknown'),
+        signalId: stableSignalRef || undefined,
+        eventId: typeof signal.eventId === 'string' ? String(signal.eventId) : undefined,
+        tweetId: typeof signal.tweetId === 'string' ? String(signal.tweetId) : undefined,
+        tweetType: typeof signal.tweetType === 'string' ? String(signal.tweetType) : undefined,
+        userScreen: typeof signal.userScreen === 'string' ? String(signal.userScreen) : undefined,
+        userName: typeof signal.userName === 'string' ? String(signal.userName) : undefined,
+        userFollowers: toInt(signal.userFollowers),
+        signalReceivedAtMs: toInt(signal.receivedAtMs),
+        devAddress: normalizeAddress((t as any).devAddress) ?? undefined,
+        devMaxBuyPercent: toNum((t as any).devMaxBuyPercent),
+        devHasSold: typeof (t as any).devHasSold === 'boolean' ? (t as any).devHasSold : undefined,
+        devCreatedTokenCount: toInt((t as any).devCreatedTokenCount),
+      };
+      const contextKey = getContextCacheKey(contextRow);
+    const shouldCheckContext = input.sourceType !== 'market_ws' || shouldRecheckMarketContext(contextKey, nowMs);
+    if (shouldCheckContext) {
+      const fingerprint = buildContextFingerprint(contextRow);
+      const prevContext = contextSnapshotCache.get(contextKey);
+      if (!prevContext || prevContext.fingerprint !== fingerprint) {
+        contextRow.contextId = `${contextKey}:${updatedAtMs}`;
+        upsertAggregateRow(windowState.signalContexts, contextKey, contextRow, droppedCounter);
+        contextSnapshotCache.set(contextKey, { fingerprint, lastTouchedMs: updatedAtMs });
+      } else {
+        prevContext.lastTouchedMs = updatedAtMs;
+      }
       }
     }
-    windowState.tokenMetrics.set(key, mergeVisionRow(windowState.tokenMetrics.get(key), row));
-  }
-  for (const row of input.signalContexts ?? []) {
-    const key = getSignalRowKey(row);
-    if (!key) continue;
-    if (!windowState.signalContexts.has(key) && windowState.signalContexts.size >= MAX_AGG_ROWS_PER_KIND) {
-      const oldestKey = windowState.signalContexts.keys().next().value;
-      if (oldestKey) {
-        windowState.signalContexts.delete(oldestKey);
-        droppedAggregateRows += 1;
-      }
+
+    if (!stableSignalRef) continue;
+    const bridgeRow = {
+      linkedAtMs: normalizeEpochMs(signal.receivedAtMs ?? signal.ts ?? nowMs),
+      chain: metricRow.chain,
+      tokenAddress: addr,
+      signalId: bridgeSignalId,
+      eventId: typeof signal.eventId === 'string' ? String(signal.eventId) : undefined,
+      tweetId: typeof signal.tweetId === 'string' ? String(signal.tweetId) : undefined,
+      sourceSite: String(signal.site ?? 'unknown'),
+      sourceChannel: String(signal.channel ?? 'unknown'),
+    };
+    const bridgeKey = getBridgeCacheKey(bridgeRow);
+    if (!bridgeSeenCache.has(bridgeKey)) {
+      upsertAggregateRow(windowState.bridges, bridgeKey, bridgeRow, droppedCounter);
+      bridgeSeenCache.set(bridgeKey, bridgeRow.linkedAtMs);
+    } else {
+      bridgeSeenCache.set(bridgeKey, bridgeRow.linkedAtMs);
     }
-    windowState.signalContexts.set(key, mergeVisionRow(windowState.signalContexts.get(key), row));
   }
-  for (const row of input.bridges ?? []) {
-    const key = getSignalRowKey(row);
-    if (!key) continue;
-    if (!windowState.bridges.has(key) && windowState.bridges.size >= MAX_AGG_ROWS_PER_KIND) {
-      const oldestKey = windowState.bridges.keys().next().value;
-      if (oldestKey) {
-        windowState.bridges.delete(oldestKey);
-        droppedAggregateRows += 1;
-      }
-    }
-    windowState.bridges.set(key, mergeVisionRow(windowState.bridges.get(key), row));
-  }
-  if (droppedAggregateRows > 0) {
-    await bumpStatusMetric({
-      droppedAggregateRows,
+
+  if (droppedCounter.count > 0) {
+    void bumpStatusMetric({
+      droppedAggregateRows: droppedCounter.count,
       path: 'ws:aggregate_cap',
-      error: `aggregate_rows_dropped_${droppedAggregateRows}`,
+      error: `aggregate_rows_dropped_${droppedCounter.count}`,
     });
   }
   scheduleAggregateFlush();
@@ -721,7 +761,7 @@ const clearInFlightPackets = () => {
     clearInFlightPacketTimer(entry);
   }
   inFlightPackets.clear();
-  void syncRuntimeStatus();
+  syncRuntimeStatus();
 };
 
 const registerInFlightPacket = (ws: WebSocket, packet: VisionBatchPacket) => {
@@ -767,7 +807,7 @@ const registerInFlightPacket = (ws: WebSocket, packet: VisionBatchPacket) => {
     scheduleFlush();
   }, WS_ACK_TIMEOUT_MS);
   inFlightPackets.set(packet.id, entry);
-  void syncRuntimeStatus();
+  syncRuntimeStatus();
 };
 
 const readWSMessageText = async (data: unknown): Promise<string> => {
@@ -800,17 +840,17 @@ const handleWSMessage = async (data: unknown, ws: WebSocket) => {
       if (entry) {
         clearInFlightPacketTimer(entry);
         inFlightPackets.delete(ackId);
-        await syncRuntimeStatus();
+          syncRuntimeStatus();
       }
     }
     if (payload?.ok === true) {
-      await bumpStatusCounter('success', {
+      bumpStatusCounter('success', {
         enabled: true,
         baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
         path: 'ws:ack',
       });
     } else {
-      await bumpStatusCounter('fail', {
+      bumpStatusCounter('fail', {
         enabled: true,
         baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
         path: 'ws:ack',
@@ -865,7 +905,7 @@ const attachWSListeners = (ws: WebSocket) => {
       wsCooldownUntilMs = Date.now() + WS_FAILURE_COOLDOWN_MS;
       wsFailureStreak = 0;
     }
-    void bumpStatusCounter('fail', {
+    bumpStatusCounter('fail', {
       enabled: true,
       baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
       path: 'ws:error',
@@ -959,7 +999,7 @@ const doEnsureWSConnected = async () => {
       wsCooldownUntilMs = Date.now() + WS_FAILURE_COOLDOWN_MS;
       wsFailureStreak = 0;
     }
-    await bumpStatusCounter('fail', {
+    bumpStatusCounter('fail', {
       enabled: true,
       baseUrl: cfg.baseUrl,
       path: 'ws:connect',
@@ -986,7 +1026,7 @@ const flushQueue = async () => {
   const ws = wsClient;
   while (queue.length > 0 && ws.readyState === WebSocket.OPEN && inFlightPackets.size < WS_MAX_IN_FLIGHT_PACKETS) {
     if (ws.bufferedAmount > WS_MAX_BUFFERED_AMOUNT) {
-      await bumpStatusMetric({
+      bumpStatusMetric({
         backpressureCount: 1,
         path: 'ws:backpressure',
         error: `ws_buffered_${ws.bufferedAmount}`,
@@ -1005,7 +1045,7 @@ const flushQueue = async () => {
     try {
       ws.send(JSON.stringify(pkt));
       registerInFlightPacket(ws, pkt);
-      await updateStatus({ enabled: true, baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE, lastSendAtMs: Date.now(), lastPath: 'ws:batch' });
+      syncRuntimeStatus({ enabled: true, baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE, lastSendAtMs: Date.now(), lastPath: 'ws:batch' });
     } catch (e: any) {
       queue.unshift(pkt);
       wsConnected = false;
@@ -1014,7 +1054,7 @@ const flushQueue = async () => {
         wsCooldownUntilMs = Date.now() + WS_FAILURE_COOLDOWN_MS;
         wsFailureStreak = 0;
       }
-      await bumpStatusCounter('fail', {
+      bumpStatusCounter('fail', {
         enabled: true,
         baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE,
         path: 'ws:send',
@@ -1031,7 +1071,7 @@ const flushQueue = async () => {
   if (queue.length > 0 && inFlightPackets.size < WS_MAX_IN_FLIGHT_PACKETS) scheduleFlush();
 };
 
-const enqueuePacket = async (packet: VisionBatchPacket) => {
+const enqueuePacket = (packet: VisionBatchPacket) => {
   queue.push(packet);
   let droppedPackets = 0;
   while (queue.length > WS_MAX_QUEUE) {
@@ -1039,89 +1079,32 @@ const enqueuePacket = async (packet: VisionBatchPacket) => {
     droppedPackets += 1;
   }
   if (droppedPackets > 0) {
-    await bumpStatusMetric({
+    void bumpStatusMetric({
       droppedPackets,
       path: 'ws:queue_trim',
       error: `queue_packets_dropped_${droppedPackets}`,
     });
   }
-  await syncRuntimeStatus();
+  syncRuntimeStatus();
   scheduleFlush();
 };
 
-const buildMetricsRows = (input: {
-  site?: string;
-  channel?: string;
-  chain?: string;
-  tokens?: UnifiedSignalToken[];
-  signalTs?: number;
-}) => {
-  const rows: any[] = [];
-  for (const t of safeSliceTokens(input.tokens)) {
-    const addr = normalizeAddress((t as any)?.tokenAddress);
-    if (!addr) continue;
-    rows.push({
-      tsMs: normalizeEpochMs((t as any).updatedAtMs ?? input.signalTs ?? Date.now()),
-      chain: resolveChain((t as any).chain, input.chain, input.site, input.channel),
-      tokenAddress: addr,
-      tokenSymbol: typeof (t as any).tokenSymbol === 'string' ? String((t as any).tokenSymbol) : undefined,
-      launchpadPlatform: typeof (t as any).launchpadPlatform === 'string' ? String((t as any).launchpadPlatform) : undefined,
-      marketCapUsd: toNum((t as any).marketCapUsd),
-      holders: toInt((t as any).holders),
-      kol: toInt((t as any).kol),
-      smartMoney: toInt((t as any).smartMoney),
-      vol24hUsd: toNum((t as any).vol24hUsd),
-      netBuy24hUsd: toNum((t as any).netBuy24hUsd),
-      buyTx24h: toInt((t as any).buyTx24h),
-      sellTx24h: toInt((t as any).sellTx24h),
-      viewerCount: toInt((t as any).viewerCount),
-      devHoldPercent: toNum((t as any).devHoldPercent),
-      sourceSite: String(input.site ?? 'unknown'),
-      sourceChannel: String(input.channel ?? 'unknown'),
-    });
-  }
-  return rows;
-};
-
 export const forwardTwitterSignalToVision = async (signal: UnifiedTwitterSignal) => {
-  const cfg = await getVisionConfig();
+  const cfg = getVisionConfigSnapshot();
   if (!cfg.enabled) {
     resetAggregateWindow();
-    await updateStatus({ enabled: false, baseUrl: cfg.baseUrl, lastPath: 'ws:disabled' });
+    void updateStatus({ enabled: false, baseUrl: cfg.baseUrl, lastPath: 'ws:disabled' });
     return;
   }
-  const metrics = buildMetricsRows({
-    site: signal.site,
-    channel: signal.channel,
-    tokens: signal.tokens,
-    signalTs: signal.receivedAtMs || signal.ts,
-  });
-  const { contexts, bridges } = buildContextAndBridgeDeltaRows({ signal, sourceType: 'twitter' });
-  await aggregateRowsIntoWindow({
-    tokenMetrics: metrics,
-    signalContexts: contexts,
-    bridges,
-  });
+  stageSignalIntoWindow({ signal, sourceType: 'twitter' });
 };
 
 export const forwardMarketSignalToVision = async (signal: UnifiedMarketSignal) => {
-  const cfg = await getVisionConfig();
+  const cfg = getVisionConfigSnapshot();
   if (!cfg.enabled) {
     resetAggregateWindow();
-    await updateStatus({ enabled: false, baseUrl: cfg.baseUrl, lastPath: 'ws:disabled' });
+    void updateStatus({ enabled: false, baseUrl: cfg.baseUrl, lastPath: 'ws:disabled' });
     return;
   }
-  const metrics = buildMetricsRows({
-    site: signal.site,
-    channel: signal.channel,
-    chain: signal.chain,
-    tokens: signal.tokens,
-    signalTs: signal.receivedAtMs || signal.ts,
-  });
-  const { contexts, bridges } = buildContextAndBridgeDeltaRows({ signal, sourceType: 'market_ws' });
-  await aggregateRowsIntoWindow({
-    tokenMetrics: metrics,
-    signalContexts: contexts,
-    bridges,
-  });
+  stageSignalIntoWindow({ signal, sourceType: 'market_ws' });
 };
