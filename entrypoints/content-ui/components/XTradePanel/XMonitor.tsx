@@ -635,7 +635,6 @@ const normalizeSignalTokensForDisplay = (signal: UnifiedTwitterSignal): UnifiedS
       devMaxBuyPercent: (t as any).devMaxBuyPercent,
       viewerCount: (t as any).viewerCount,
       devCreatedTokenCount: (t as any).devCreatedTokenCount,
-      devBuyRatio: t.devBuyRatio,
       top10HoldRatio: t.top10HoldRatio,
       devTokenStatus: t.devTokenStatus,
       createdAtMs: normalizeEpochMs(t.createdAtMs) ?? 0,
@@ -1669,9 +1668,7 @@ export function XMonitorContent({
                         const devMaxBuyPercent =
                           typeof (token as any).devMaxBuyPercent === 'number' && Number.isFinite((token as any).devMaxBuyPercent)
                             ? Number((token as any).devMaxBuyPercent)
-                            : typeof token.devBuyRatio === 'number'
-                              ? token.devBuyRatio * 100
-                              : null;
+                            : null;
                         const viewerCount = typeof (token as any).viewerCount === 'number' && Number.isFinite((token as any).viewerCount)
                           ? Number((token as any).viewerCount)
                           : null;
@@ -1809,7 +1806,7 @@ export function XMonitorContent({
                               </div>
                             </div>
                             <div className="mt-1 flex items-center justify-end gap-3 text-[11px] text-zinc-500">
-                              <span className={`inline-flex items-center gap-1 ${devMaxBuyClassName}`} title={tt('contentUi.xMonitor.tooltip.devBuyRatio')}>
+                              <span className={`inline-flex items-center gap-1 ${devMaxBuyClassName}`} title={tt('contentUi.xMonitor.tooltip.devMaxBuyPercent')}>
                                 <Flame size={12} />
                                 {devMaxBuyPercent == null ? '-' : (devMaxBuyPercent < 0.0001 ? '0%' : `${devMaxBuyPercent.toFixed(2)}%`)}
                               </span>

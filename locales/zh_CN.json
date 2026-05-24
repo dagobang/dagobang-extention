@@ -277,7 +277,7 @@
         "leader": "龙1"
       },
         "tooltip": {
-          "devBuyRatio": "Dev最大买入占比",
+          "devMaxBuyPercent": "Dev最大买入占比",
           "devHoldPercent": "Dev持仓占比",
           "marketCapRank": "市值排名",
           "viewerCount": "浏览人数",

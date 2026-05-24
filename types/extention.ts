@@ -560,7 +560,6 @@ export type UnifiedSignalToken = {
   viewerCount?: number;
   devCreatedTokenCount?: number;
   devHasSold?: boolean;
-  devBuyRatio?: number;
   top10HoldRatio?: number;
   devTokenStatus?: string;
   createdAtMs?: number;

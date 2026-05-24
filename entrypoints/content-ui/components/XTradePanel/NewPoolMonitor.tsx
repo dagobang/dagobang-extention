@@ -414,8 +414,8 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
   const { tweetAuthor, tweetId, tweetUrl } = extractTweetRef(tokenData);
   const { website, websiteHost } = extractWebsiteRef(tokenData);
   const tokenLogo = extractImageRef(tokenData) ?? pickString(tokenData?.tokenLogo, tokenData?.logo, tokenData?.f?.l, tokenData?.l);
-  const devHoldPercentRaw = toFiniteNumber(tokenData?.devHoldPercent ?? tokenData?.devBuyRatio ?? tokenData?.d_br);
-  const devMaxBuyPercentRaw = toFiniteNumber(tokenData?.devMaxBuyPercent ?? tokenData?.devBuyRatio ?? tokenData?.d_br);
+  const devHoldPercentRaw = toFiniteNumber(tokenData?.devHoldPercent ?? tokenData?.d_br);
+  const devMaxBuyPercentRaw = toFiniteNumber(tokenData?.devMaxBuyPercent ?? tokenData?.d_br);
   return {
     tokenAddress,
     signalId: `${detail.source}:${detail.channel}:${tokenAddress}`,
@@ -739,7 +739,7 @@ function TokenRowCard({
     },
     {
       key: 'devMaxBuy',
-      title: tt('contentUi.xMonitor.tooltip.devBuyRatio'),
+      title: tt('contentUi.xMonitor.tooltip.devMaxBuyPercent'),
       icon: Flame,
       value: formatMetricPercent(row.devMaxBuyPercent),
       className: row.devMaxBuyPercent == null ? 'text-zinc-500' : devMaxBuyClassName,

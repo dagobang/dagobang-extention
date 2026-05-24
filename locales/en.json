@@ -277,7 +277,7 @@
         "leader": "Leader #1"
       },
       "tooltip": {
-        "devBuyRatio": "Dev max buy %",
+        "devMaxBuyPercent": "Dev max buy %",
         "devHoldPercent": "Dev hold %",
         "marketCapRank": "Market cap rank",
         "viewerCount": "Viewers",
