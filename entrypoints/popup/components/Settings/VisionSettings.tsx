@@ -1,24 +1,8 @@
 import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
 import type { SettingsDraftProps } from './types';
-import { DEFAULT_VISION_BASE, VISION_DIAG_STORAGE_KEY, VISION_STATUS_STORAGE_KEY, WS_MONITOR_DIAG_STORAGE_KEY } from '@/services/vision/constants';
+import { DEFAULT_VISION_BASE, VISION_STATUS_STORAGE_KEY } from '@/services/vision/constants';
 import type { VisionForwardStatus } from '@/services/vision/forwarder';
-
-type PersistedDiagSnapshot = {
-  tsMs?: number;
-  reason?: string;
-  hostname?: string;
-  queueSize?: number;
-  inFlightPackets?: number;
-  wsConnected?: boolean;
-  packetCount?: number;
-  signalCount?: number;
-  signalProbeAvgCallMs?: number;
-  signalProbeMaxCallMs?: number;
-  tokenSnapshotCount?: number;
-  lastPath?: string;
-  lastError?: string;
-};
 
 export function VisionSettings({ settingsDraft, setSettingsDraft, tt, busy }: SettingsDraftProps) {
   const reportCfg = settingsDraft.visionReport ?? {
@@ -26,8 +10,6 @@ export function VisionSettings({ settingsDraft, setSettingsDraft, tt, busy }: Se
     baseUrl: DEFAULT_VISION_BASE,
   };
   const [status, setStatus] = useState<VisionForwardStatus | null>(null);
-  const [visionDiag, setVisionDiag] = useState<PersistedDiagSnapshot | null>(null);
-  const [wsDiag, setWsDiag] = useState<PersistedDiagSnapshot | null>(null);
   const effectiveBaseUrl = (status?.baseUrl || reportCfg.baseUrl || DEFAULT_VISION_BASE).trim() || DEFAULT_VISION_BASE;
   const effectiveWsUrl = toWsIngestUrl(effectiveBaseUrl);
 
@@ -35,25 +17,9 @@ export function VisionSettings({ settingsDraft, setSettingsDraft, tt, busy }: Se
     let alive = true;
     const load = async () => {
       try {
-        const res = await browser.storage.local.get([
-          VISION_STATUS_STORAGE_KEY,
-          VISION_DIAG_STORAGE_KEY,
-          WS_MONITOR_DIAG_STORAGE_KEY,
-        ]);
+        const res = await browser.storage.local.get(VISION_STATUS_STORAGE_KEY);
         const next = ((res as any)?.[VISION_STATUS_STORAGE_KEY] as VisionForwardStatus | undefined) ?? null;
-        const visionDiagPayload = (res as any)?.[VISION_DIAG_STORAGE_KEY] as { snapshots?: PersistedDiagSnapshot[] } | undefined;
-        const wsDiagPayload = (res as any)?.[WS_MONITOR_DIAG_STORAGE_KEY] as { snapshots?: PersistedDiagSnapshot[] } | undefined;
-        const nextVisionDiag = Array.isArray(visionDiagPayload?.snapshots) && visionDiagPayload!.snapshots.length > 0
-          ? visionDiagPayload!.snapshots[visionDiagPayload!.snapshots.length - 1]
-          : null;
-        const nextWsDiag = Array.isArray(wsDiagPayload?.snapshots) && wsDiagPayload!.snapshots.length > 0
-          ? wsDiagPayload!.snapshots[wsDiagPayload!.snapshots.length - 1]
-          : null;
-        if (alive) {
-          setStatus(next);
-          setVisionDiag(nextVisionDiag);
-          setWsDiag(nextWsDiag);
-        }
+        if (alive) setStatus(next);
       } catch {
       }
     };
@@ -126,27 +92,6 @@ export function VisionSettings({ settingsDraft, setSettingsDraft, tt, busy }: Se
           <div className="pt-2 text-[11px] text-zinc-500">{tt('popup.settings.visionStatusProtectionHint')}</div>
         </div>
       </div>
-
-      <div className="space-y-2 pt-4 border-t border-zinc-800">
-        <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Crash Diagnostics</div>
-        <div className="rounded-md border border-zinc-800 bg-zinc-900 p-3 text-[12px] text-zinc-300 space-y-2">
-          <div className="text-zinc-400">Background Vision Snapshot</div>
-          <div>Time: {visionDiag?.tsMs ? new Date(visionDiag.tsMs).toLocaleString() : '-'}</div>
-          <div>Reason: {visionDiag?.reason || '-'}</div>
-          <div>Queue/InFlight: {visionDiag?.queueSize ?? 0} / {visionDiag?.inFlightPackets ?? 0}</div>
-          <div>WS Connected: {typeof visionDiag?.wsConnected === 'boolean' ? (visionDiag.wsConnected ? 'yes' : 'no') : '-'}</div>
-          <div>Last Path: {visionDiag?.lastPath || '-'}</div>
-          <div>Last Error: {visionDiag?.lastError || '-'}</div>
-          <div className="pt-2 text-zinc-400">GMGN Monitor Snapshot</div>
-          <div>Time: {wsDiag?.tsMs ? new Date(wsDiag.tsMs).toLocaleString() : '-'}</div>
-          <div>Reason: {wsDiag?.reason || '-'}</div>
-          <div>Host: {wsDiag?.hostname || '-'}</div>
-          <div>WS Connected: {typeof wsDiag?.wsConnected === 'boolean' ? (wsDiag.wsConnected ? 'yes' : 'no') : '-'}</div>
-          <div>Packets/Signals: {wsDiag?.packetCount ?? 0} / {wsDiag?.signalCount ?? 0}</div>
-          <div>Probe Avg/Max Call Ms: {formatNum(wsDiag?.signalProbeAvgCallMs)} / {formatNum(wsDiag?.signalProbeMaxCallMs)}</div>
-          <div>Token Snapshots: {wsDiag?.tokenSnapshotCount ?? 0}</div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -168,9 +113,4 @@ function toWsIngestUrl(base: string): string {
   const normalized = raw.replace(/\/+$/, '');
   if (/^wss?:\/\//i.test(normalized)) return `${normalized}/ingest/ws`;
   return `ws://${normalized.replace(/^\/+/, '')}/ingest/ws`;
-}
-
-function formatNum(value: unknown): string {
-  const n = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(n) ? n.toFixed(1) : '-';
 }

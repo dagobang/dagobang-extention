@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import type { UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { SETTINGS_STORAGE_KEY } from '@/services/storage';
-import { DEFAULT_VISION_BASE, VISION_DIAG_STORAGE_KEY, VISION_STATUS_STORAGE_KEY } from '@/services/vision/constants';
+import { DEFAULT_VISION_BASE, VISION_STATUS_STORAGE_KEY } from '@/services/vision/constants';
 
 const VISION_BASE_STORAGE_KEY = 'dagobang_vision_base_url';
 const MAX_ROWS_PER_SIGNAL = 80;
@@ -27,8 +27,6 @@ const MARKET_CONTEXT_RECHECK_INTERVAL_MS = 30_000;
 const MARKET_SIGNAL_RATE_LIMIT_TOKEN_UPDATE_MS = 3000;
 const MARKET_SIGNAL_RATE_LIMIT_STAGE_MS = 1200;
 const MARKET_SIGNAL_RATE_LIMIT_CACHE_MAX = 20_000;
-const VISION_DIAG_FLUSH_INTERVAL_MS = 15_000;
-const VISION_DIAG_MAX_SNAPSHOTS = 40;
 
 export type VisionForwardStatus = {
   enabled: boolean;
@@ -47,29 +45,6 @@ export type VisionForwardStatus = {
   ackTimeoutCount?: number;
   currentQueueSize?: number;
   currentInFlightPackets?: number;
-};
-
-type VisionDiagSnapshot = {
-  sessionId: string;
-  tsMs: number;
-  reason: string;
-  wsConnected: boolean;
-  queueSize: number;
-  inFlightPackets: number;
-  aggregateTokenRows: number;
-  aggregateContextRows: number;
-  aggregateBridgeRows: number;
-  contextCacheSize: number;
-  bridgeCacheSize: number;
-  marketRateLimitCacheSize: number;
-  reconnectAttempt: number;
-  failureStreak: number;
-  lastPath?: string;
-  lastError?: string;
-  droppedPackets?: number;
-  droppedAggregateRows?: number;
-  backpressureCount?: number;
-  ackTimeoutCount?: number;
 };
 
 type VisionBatchPacket = {
@@ -198,8 +173,6 @@ let statusLoadPromise: Promise<VisionForwardStatus> | null = null;
 let statusFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let aggregateWindow: VisionAggregateWindow | null = null;
 let aggregateFlushTimer: ReturnType<typeof setTimeout> | null = null;
-let visionDiagFlushTimer: ReturnType<typeof setTimeout> | null = null;
-let visionDiagPersistChain: Promise<void> = Promise.resolve();
 const queue: VisionBatchPacket[] = [];
 let queueHead = 0;
 const inFlightPackets = new Map<string, VisionInFlightPacket>();
@@ -207,7 +180,6 @@ const contextSnapshotCache = new Map<string, VisionContextCacheEntry>();
 const bridgeSeenCache = new Map<string, number>();
 const marketSignalLastStagedAt = new Map<string, number>();
 let lowFrequencyCacheLastPrunedAtMs = 0;
-const visionDiagSessionId = `vision:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
 
 const isWsOpen = (ws: WebSocket | null) => ws?.readyState === WebSocket.OPEN;
 const isWsConnecting = (ws: WebSocket | null) => ws?.readyState === WebSocket.CONNECTING;
@@ -252,70 +224,6 @@ const requeuePacketAtFront = (packet: VisionBatchPacket) => {
 const clearQueue = () => {
   queue.length = 0;
   queueHead = 0;
-};
-
-const buildVisionDiagSnapshot = (reason: string): VisionDiagSnapshot => {
-  const st = statusCache ?? undefined;
-  return {
-    sessionId: visionDiagSessionId,
-    tsMs: Date.now(),
-    reason,
-    wsConnected,
-    queueSize: getQueueSize(),
-    inFlightPackets: inFlightPackets.size,
-    aggregateTokenRows: aggregateWindow?.tokenMetrics.size ?? 0,
-    aggregateContextRows: aggregateWindow?.signalContexts.size ?? 0,
-    aggregateBridgeRows: aggregateWindow?.bridges.size ?? 0,
-    contextCacheSize: contextSnapshotCache.size,
-    bridgeCacheSize: bridgeSeenCache.size,
-    marketRateLimitCacheSize: marketSignalLastStagedAt.size,
-    reconnectAttempt,
-    failureStreak: wsFailureStreak,
-    lastPath: st?.lastPath,
-    lastError: st?.lastError,
-    droppedPackets: st?.droppedPackets,
-    droppedAggregateRows: st?.droppedAggregateRows,
-    backpressureCount: st?.backpressureCount,
-    ackTimeoutCount: st?.ackTimeoutCount,
-  };
-};
-
-const persistVisionDiag = (reason: string) => {
-  const snapshot = buildVisionDiagSnapshot(reason);
-  visionDiagPersistChain = visionDiagPersistChain
-    .catch(() => { })
-    .then(async () => {
-      try {
-        const res = await browser.storage.local.get(VISION_DIAG_STORAGE_KEY);
-        const prev = (res as any)?.[VISION_DIAG_STORAGE_KEY] as { snapshots?: VisionDiagSnapshot[] } | undefined;
-        const nextSnapshots = Array.isArray(prev?.snapshots) ? prev!.snapshots.slice(-VISION_DIAG_MAX_SNAPSHOTS + 1) : [];
-        nextSnapshots.push(snapshot);
-        await browser.storage.local.set({
-          [VISION_DIAG_STORAGE_KEY]: {
-            updatedAtMs: snapshot.tsMs,
-            lastSessionId: visionDiagSessionId,
-            snapshots: nextSnapshots,
-          },
-        });
-      } catch {
-      }
-    });
-};
-
-const scheduleVisionDiagPersist = (reason: string, immediate = false) => {
-  if (immediate) {
-    if (visionDiagFlushTimer) {
-      clearTimeout(visionDiagFlushTimer);
-      visionDiagFlushTimer = null;
-    }
-    persistVisionDiag(reason);
-    return;
-  }
-  if (visionDiagFlushTimer) return;
-  visionDiagFlushTimer = setTimeout(() => {
-    visionDiagFlushTimer = null;
-    persistVisionDiag(reason);
-  }, VISION_DIAG_FLUSH_INTERVAL_MS);
 };
 
 const parseVisionConfig = (raw: any): VisionRuntimeConfig => {
@@ -433,7 +341,6 @@ const scheduleVisionStatusFlush = (immediate = false) => {
       statusFlushTimer = null;
     }
     void flushVisionStatus();
-    scheduleVisionDiagPersist('status_immediate', true);
     return;
   }
   if (statusFlushTimer) return;
@@ -441,7 +348,6 @@ const scheduleVisionStatusFlush = (immediate = false) => {
     statusFlushTimer = null;
     void flushVisionStatus();
   }, STATUS_FLUSH_INTERVAL_MS);
-  scheduleVisionDiagPersist('status');
 };
 
 const syncRuntimeStatus = (patch?: Partial<VisionForwardStatus>) => {
@@ -510,7 +416,6 @@ const bumpStatusCounter = (
     statusCache.lastError = base.error || 'forward_failed';
   }
   scheduleVisionStatusFlush();
-  if (kind === 'fail') scheduleVisionDiagPersist('fail', true);
 };
 
 const bumpStatusMetric = (
@@ -539,7 +444,6 @@ const bumpStatusMetric = (
     ...(patch.error ? { lastError: patch.error, lastErrorAtMs: Date.now() } : {}),
   };
   scheduleVisionStatusFlush();
-  if (patch.error) scheduleVisionDiagPersist('metric_error', true);
 };
 
 const makeWSUrl = (baseUrl: string) => {
