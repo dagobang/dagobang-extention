@@ -70,6 +70,17 @@ function normalizeAddr(addr: string): `0x${string}` | null {
   return trimmed as `0x${string}`;
 }
 
+function getTokenInfoWarmFingerprint(tokenInfo: TokenInfo | null | undefined): string {
+  if (!tokenInfo) return '';
+  return [
+    String(tokenInfo.launchpad_platform || '').toLowerCase(),
+    String(tokenInfo.launchpad_status ?? ''),
+    String(tokenInfo.pool_pair || '').toLowerCase(),
+    String(tokenInfo.dex_type || '').toLowerCase(),
+    String(tokenInfo.quote_token_address || '').toLowerCase(),
+  ].join('|');
+}
+
 function resolveTradeBaseTokenAddress(settings: Settings | null | undefined, chainIdOverride?: number): `0x${string}` {
   const chainId = chainIdOverride ?? settings?.chainId ?? 56;
   const runtime = getChainRuntime(chainId);
@@ -885,9 +896,7 @@ export default function App() {
     if (!settings) return;
     if (!tokenAddressNormalized) return;
     if (!tokenInfo) return;
-    const isTurbo = settings.chains[chainId]?.executionMode === 'turbo';
-    if (!isTurbo) return;
-    const key = `${chainId}:${address.toLowerCase()}:${tokenAddressNormalized.toLowerCase()}`;
+    const key = `${chainId}:${address.toLowerCase()}:${tokenAddressNormalized.toLowerCase()}:${getTokenInfoWarmFingerprint(tokenInfo)}`;
     if (prewarmedTurboRef.current.has(key)) return;
     prewarmedTurboRef.current.add(key);
     void call({

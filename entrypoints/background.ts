@@ -972,6 +972,8 @@ export default defineBackground(() => {
                   const refreshedNonce = await TradeService.refreshNonce({
                     chainId: msg.input.chainId,
                     fromAddress: msg.input.fromAddress,
+                    txSide: 'buy',
+                    error: e,
                   });
                   console.info('[nonce.repair][buy.submit.retry]', {
                     chainId: msg.input.chainId,
@@ -1157,6 +1159,8 @@ export default defineBackground(() => {
                   const refreshedNonce = await TradeService.refreshNonce({
                     chainId: msg.input.chainId,
                     fromAddress: msg.input.fromAddress,
+                    txSide: 'sell',
+                    error: e,
                   });
                   console.info('[nonce.repair][sell.submit.retry]', {
                     chainId: msg.input.chainId,
@@ -1428,6 +1432,8 @@ export default defineBackground(() => {
                   const refreshedNonce = await TradeService.refreshNonce({
                     chainId: tracked.input.chainId,
                     fromAddress: tracked.input.fromAddress,
+                    txSide: 'buy',
+                    error: reasonText,
                   });
                   console.info('[nonce.repair][buy.receipt.retry]', {
                     chainId: tracked.input.chainId,

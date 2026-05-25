@@ -27,7 +27,7 @@ import {
 } from './tradeHyper';
 import { formatBroadcastProvider } from '@/utils/format';
 import { getDexPoolPrefer, parseGweiToWei } from '@/utils/dexUtils';
-import { classifyBroadcastError, collectErrorText, isAllowanceLikeText, isInFlightLimitLikeText } from '@/utils/txErrorClassify';
+import { classifyBroadcastError, collectErrorText, getNonceErrorKindFromText, isAllowanceLikeText, isInFlightLimitLikeText } from '@/utils/txErrorClassify';
 import { tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { getNativeSymbol } from '@/constants/chains';
 import { getChainRuntime } from '@/constants/chains/runtime';
@@ -43,9 +43,47 @@ export class TradeService {
   private static readonly fastApproveRetryPollMs = 200;
   private static readonly quoteBestExactInCache = new Map<string, { ts: number; value: { amountOut: bigint; swapType: number; fee?: number; poolAddress: string } }>();
   private static readonly quoteBestExactInInFlight = new Map<string, Promise<{ amountOut: bigint; swapType: number; fee?: number; poolAddress: string }>>();
+  private static readonly turboPrewarmInFlight = new Map<string, Promise<void>>();
 
   private static makeApproveKey(chainId: number, owner: string, token: string, spender: string) {
     return `${chainId}:${owner.toLowerCase()}:${token.toLowerCase()}:${spender.toLowerCase()}`;
+  }
+
+  private static getTurboWarmFingerprint(tokenInfo: TokenInfo) {
+    return [
+      String(tokenInfo.launchpad_platform || '').toLowerCase(),
+      String(tokenInfo.launchpad_status ?? ''),
+      String(tokenInfo.pool_pair || '').toLowerCase(),
+      String(tokenInfo.dex_type || '').toLowerCase(),
+      String(tokenInfo.quote_token_address || '').toLowerCase(),
+    ].join('|');
+  }
+
+  private static makeTurboWarmKey(input: {
+    chainId: number;
+    owner: `0x${string}`;
+    tokenAddress: Address;
+    tokenInfo: TokenInfo;
+  }) {
+    return [
+      input.chainId,
+      input.owner.toLowerCase(),
+      input.tokenAddress.toLowerCase(),
+      this.getTurboWarmFingerprint(input.tokenInfo),
+    ].join(':');
+  }
+
+  private static async awaitTurboPrewarmIfInFlight(input: {
+    chainId: number;
+    owner: `0x${string}`;
+    tokenAddress: Address;
+    tokenInfo: TokenInfo;
+  }) {
+    const key = this.makeTurboWarmKey(input);
+    const task = this.turboPrewarmInFlight.get(key);
+    if (!task) return false;
+    await task;
+    return true;
   }
 
   private static async approveMaxForSpenderIfNeeded(input: {
@@ -112,83 +150,152 @@ export class TradeService {
 
   static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo; fromAddress?: `0x${string}` }) {
     const settings = await SettingsService.get();
-    const chainSettings = settings.chains[input.chainId];
-    const executionMode = chainSettings?.executionMode ?? 'default';
-    if (executionMode !== 'turbo') return;
+    const consoleLogsEnabled = settings.ui?.consoleLogsEnabled === true;
+    const startedAt = Date.now();
     const tokenInfo = input.tokenInfo;
     if (!tokenInfo) return;
 
     const client = await RpcService.getClient(input.chainId);
     const account = await WalletService.getSigner(input.fromAddress);
-    await prewarmNonce(client, input.chainId, account.address);
-
-    const token = input.tokenAddress;
-    const bridgeToken = getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
-    const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
-    const dexPrefer = getDexPoolPrefer(tokenInfo.dex_type);
-    const tokenPrefer = dexPrefer === 'v2' || dexPrefer === 'v3' ? dexPrefer : (bridgePrefer ?? 'v2');
-
-    const defaultBridgeV3Fee = getDefaultBridgeV3Fee(input.chainId);
-    const bridgeOpts = bridgePrefer === 'v2'
-      ? { prefer: 'v2' as const }
-      : bridgePrefer === 'v3'
-        ? { v3Fee: defaultBridgeV3Fee, prefer: 'v3' as const }
-        : { v3Fee: defaultBridgeV3Fee };
-
-    const amountIn = 0n;
-    const warmTasks: Array<Promise<unknown>> = [];
-
-    if (tokenInfo.pool_pair && tokenPrefer === 'v2') {
-      warmTasks.push(resolveDexExactIn(input.chainId, ZERO_ADDRESS, token, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v2' }, true, false));
-      warmTasks.push(resolveDexExactIn(input.chainId, token, ZERO_ADDRESS, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v2' }, true, false));
+    const warmKey = this.makeTurboWarmKey({
+      chainId: input.chainId,
+      owner: account.address,
+      tokenAddress: input.tokenAddress,
+      tokenInfo,
+    });
+    const existing = this.turboPrewarmInFlight.get(warmKey);
+    if (existing) {
+      if (consoleLogsEnabled) {
+        console.info('[trade.buy.prewarm.reuse]', {
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          fromAddress: account.address,
+          warmKey,
+        });
+      }
+      await existing;
+      return;
     }
 
-    if (tokenInfo.pool_pair && tokenPrefer === 'v3') {
-      warmTasks.push(
-        resolveDexExactIn(
+    const task = (async () => {
+      await prewarmNonce(client, input.chainId, account.address);
+
+      const token = input.tokenAddress;
+      const bridgeToken = getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
+      const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
+      const dexPrefer = getDexPoolPrefer(tokenInfo.dex_type);
+      const tokenPrefer = dexPrefer === 'v2' || dexPrefer === 'v3' ? dexPrefer : (bridgePrefer ?? 'v2');
+
+      const amountIn = 0n;
+      const warmTasks: Array<Promise<unknown>> = [];
+
+      if (tokenInfo.pool_pair && tokenPrefer === 'v2') {
+        warmTasks.push(resolveDexExactIn(input.chainId, ZERO_ADDRESS, token, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v2' }, true, false));
+        warmTasks.push(resolveDexExactIn(input.chainId, token, ZERO_ADDRESS, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v2' }, true, false));
+      }
+
+      if (tokenInfo.pool_pair && tokenPrefer === 'v3') {
+        warmTasks.push(
+          resolveDexExactIn(
+            input.chainId,
+            ZERO_ADDRESS,
+            token,
+            amountIn,
+            { poolPair: tokenInfo.pool_pair, prefer: 'v3' },
+            true,
+            false
+          )
+        );
+        warmTasks.push(
+          resolveDexExactIn(
+            input.chainId,
+            token,
+            ZERO_ADDRESS,
+            amountIn,
+            { poolPair: tokenInfo.pool_pair, prefer: 'v3' },
+            true,
+            false
+          )
+        );
+      }
+
+      if (bridgeToken) {
+        warmTasks.push(resolveBridgeHopExactIn(
           input.chainId,
           ZERO_ADDRESS,
-          token,
+          bridgeToken,
           amountIn,
-          { poolPair: tokenInfo.pool_pair, prefer: 'v3' },
+          bridgePrefer,
           true,
-          false
-        )
-      );
-      warmTasks.push(
-        resolveDexExactIn(
+          false,
+        ));
+        warmTasks.push(resolveBridgeHopExactIn(
           input.chainId,
-          token,
+          bridgeToken,
           ZERO_ADDRESS,
           amountIn,
-          { poolPair: tokenInfo.pool_pair, prefer: 'v3' },
+          bridgePrefer,
           true,
-          false
-        )
-      );
-    }
+          false,
+        ));
+      }
 
-    if (bridgeToken && bridgePrefer !== 'v2') {
-      warmTasks.push(resolveDexExactIn(input.chainId, ZERO_ADDRESS, bridgeToken, amountIn, bridgeOpts, true, false));
-      warmTasks.push(resolveDexExactIn(input.chainId, bridgeToken, ZERO_ADDRESS, amountIn, bridgeOpts, true, false));
-    }
+      if (bridgeToken && tokenInfo.pool_pair && tokenPrefer === 'v3') {
+        warmTasks.push(resolveDexExactIn(input.chainId, token, bridgeToken, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v3' }, true, false));
+        warmTasks.push(resolveDexExactIn(input.chainId, bridgeToken, token, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v3' }, true, false));
+      }
 
-    if (bridgeToken && tokenInfo.pool_pair && tokenPrefer === 'v3') {
-      warmTasks.push(resolveDexExactIn(input.chainId, token, bridgeToken, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v3' }, true, false));
-      warmTasks.push(resolveDexExactIn(input.chainId, bridgeToken, token, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v3' }, true, false));
-    }
+      await Promise.allSettled(warmTasks);
+      const elapsedMs = Date.now() - startedAt;
+      if (consoleLogsEnabled || elapsedMs >= 600) {
+        console.info('[trade.buy.prewarm]', {
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          fromAddress: account.address,
+          warmTaskCount: warmTasks.length,
+          hasBridgeToken: !!bridgeToken,
+          tokenPrefer,
+          elapsedMs,
+          warmKey,
+        });
+      }
+    })().finally(() => {
+      const current = this.turboPrewarmInFlight.get(warmKey);
+      if (current === task) this.turboPrewarmInFlight.delete(warmKey);
+    });
 
-    await Promise.allSettled(warmTasks);
+    this.turboPrewarmInFlight.set(warmKey, task);
+    await task;
   }
 
-  static async refreshNonce(input: { chainId: number; fromAddress?: `0x${string}` }): Promise<number> {
+  static async refreshNonce(input: {
+    chainId: number;
+    fromAddress?: `0x${string}`;
+    txSide?: 'buy' | 'sell';
+    error?: any;
+  }): Promise<number> {
     const client = await RpcService.getClient(input.chainId);
     const account = await WalletService.getSigner(input.fromAddress);
-    const nextNonce = await prewarmNonce(client, input.chainId, account.address, { force: true });
+    const errorText = typeof input.error === 'string'
+      ? input.error.toLowerCase()
+      : collectErrorText(input.error, true);
+    const nonceKind = getNonceErrorKindFromText(errorText);
+    const prefer = nonceKind === 'too_high' ? 'min' : 'max';
+    const scope = nonceKind === 'too_high' ? 'protected' : 'both';
+    const nextNonce = await prewarmNonce(client, input.chainId, account.address, {
+      force: true,
+      txSide: input.txSide,
+      prefer,
+      scope,
+    });
     console.info('[nonce.refresh]', {
       chainId: input.chainId,
       address: account.address,
       nextNonce,
+      txSide: input.txSide,
+      nonceKind,
+      prefer,
+      scope,
     });
     return nextNonce;
   }
@@ -411,6 +518,21 @@ export class TradeService {
     const baseFee = input.poolFee ?? 2500;
     const executionMode = input.executionModeOverride ?? settings.chains[input.chainId]?.executionMode ?? 'default';
     const isTurbo = executionMode === 'turbo';
+    if (isTurbo) {
+      const reusedPrewarm = await this.awaitTurboPrewarmIfInFlight({
+        chainId: input.chainId,
+        owner: account.address,
+        tokenAddress: input.tokenAddress as Address,
+        tokenInfo,
+      });
+      if (reusedPrewarm) {
+        console.info('[trade.buy.prewarm.awaited]', {
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          fromAddress: account.address,
+        });
+      }
+    }
     const chainSettings = settings.chains[input.chainId];
     const gasPriceMode = chainSettings.gasPriceMode ?? 'fixed';
     const gasPreset = input.gasPreset ?? chainSettings.buyGasPreset ?? chainSettings.gasPreset;
@@ -420,7 +542,8 @@ export class TradeService {
       : getGasPriceWei(chainSettings, gasPreset, 'buy');
     const gasPriceWei = configuredGasPriceWei;
 
-    const perfEnabled = isTurbo;
+    const consoleLogsEnabled = settings.ui?.consoleLogsEnabled === true;
+    const perfEnabled = isTurbo || consoleLogsEnabled;
     const perfStart = perfEnabled ? Date.now() : 0;
     const perfSteps: Array<{ label: string; ms: number }> = [];
     const timeStep = async <T>(label: string, fn: () => Promise<T>) => {
@@ -710,11 +833,17 @@ export class TradeService {
     });
     if (perfEnabled) {
       const totalMs = Date.now() - perfStart;
-      console.log('[trade.buy.turbo] timing ms', {
-        total: totalMs, steps: perfSteps,
-        broadcastProvider: formatBroadcastProvider(broadcastVia, broadcastUrl, isBundle),
-        txHash,
-      });
+      if (consoleLogsEnabled || isTurbo || totalMs >= 800) {
+        console.log('[trade.buy.timing]', {
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          total: totalMs,
+          steps: perfSteps,
+          broadcastProvider: formatBroadcastProvider(broadcastVia, broadcastUrl, isBundle),
+          txHash,
+          mode: executionMode,
+        });
+      }
     }
     return { txHash, tokenMinOutWei: minOut.toString(), broadcastVia, broadcastUrl, isBundle };
   }
@@ -794,7 +923,12 @@ export class TradeService {
           reason: 'nonce',
         });
         await opts?.onRetry?.({ side: 'buy', attempt: attempt + 1, reason: 'nonce' });
-        await this.refreshNonce({ chainId: input.chainId, fromAddress: input.fromAddress });
+        await this.refreshNonce({
+          chainId: input.chainId,
+          fromAddress: input.fromAddress,
+          txSide: 'buy',
+          error: e,
+        });
       }
     }
     console.warn('[trade.buy.auto][final.failed]', {
@@ -909,7 +1043,12 @@ export class TradeService {
         }
         if (!nonceLike && !allowanceRepaired && !this.isAllowanceLikeError(e)) break;
         console.log('[trade.sell.auto][nonce.refresh]', { flowId, attempt: attemptNo, allowanceRepaired, nonceLike });
-        await this.refreshNonce({ chainId: input.chainId, fromAddress: input.fromAddress });
+        await this.refreshNonce({
+          chainId: input.chainId,
+          fromAddress: input.fromAddress,
+          txSide: 'sell',
+          error: e,
+        });
       }
     }
     console.warn('[trade.sell.auto][final.failed]', {

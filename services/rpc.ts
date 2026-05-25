@@ -179,8 +179,10 @@ export class RpcService {
     hash: `0x${string}`,
     opts?: { chainId?: number; txSide?: BroadcastTxSide; timeoutMs?: number }
   ): Promise<any> {
+    const startedAt = Date.now();
     const timeoutMs = Math.max(5_000, Number(opts?.timeoutMs ?? 20_000));
     const settings = await SettingsService.get();
+    const consoleLogsEnabled = settings.ui?.consoleLogsEnabled === true;
     const chainId = opts?.chainId ?? settings.chainId;
     const chainConfig = settings.chains[chainId];
     const urls = this.mergeRpcUrlsForReceipt(chainConfig, opts?.txSide);
@@ -191,22 +193,59 @@ export class RpcService {
 
     const tasks = urls.map(async (url) => {
       const client = this.getClientForUrl(url, chainId) as any;
-      return await client.waitForTransactionReceipt({ hash, timeout: timeoutMs });
+      const receipt = await client.waitForTransactionReceipt({ hash, timeout: timeoutMs });
+      return { receipt, url };
     });
 
     try {
-      return await Promise.any(tasks);
+      const winner = await Promise.any(tasks);
+      const elapsedMs = Date.now() - startedAt;
+      if (consoleLogsEnabled || elapsedMs >= 1200) {
+        console.info('[tx.receipt.wait.success]', {
+          chainId,
+          txSide: opts?.txSide,
+          txHash: hash,
+          elapsedMs,
+          url: winner.url,
+          source: 'wait',
+          status: winner.receipt?.status,
+        });
+      }
+      return winner.receipt;
     } catch {
       // One last direct receipt probe across all routes in case polling timeout was hit right before inclusion.
       const probes = await Promise.allSettled(
         urls.map(async (url) => {
           const client = this.getClientForUrl(url, chainId) as any;
-          return await client.getTransactionReceipt({ hash });
+          const receipt = await client.getTransactionReceipt({ hash });
+          return { receipt, url };
         }),
       );
       for (const item of probes) {
-        if (item.status === 'fulfilled' && item.value) return item.value;
+        if (item.status === 'fulfilled' && item.value) {
+          const elapsedMs = Date.now() - startedAt;
+          if (consoleLogsEnabled || elapsedMs >= 1200) {
+            console.info('[tx.receipt.wait.success]', {
+              chainId,
+              txSide: opts?.txSide,
+              txHash: hash,
+              elapsedMs,
+              url: item.value.url,
+              source: 'probe',
+              status: item.value.receipt?.status,
+            });
+          }
+          return item.value.receipt;
+        }
       }
+      console.warn('[tx.receipt.wait.timeout]', {
+        chainId,
+        txSide: opts?.txSide,
+        txHash: hash,
+        elapsedMs: Date.now() - startedAt,
+        timeoutMs,
+        urlCount: urls.length,
+      });
       throw new Error(`Transaction receipt wait timeout after ${timeoutMs}ms`);
     }
   }

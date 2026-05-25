@@ -215,7 +215,7 @@ export async function prewarmNonce(
   client: any,
   chainId: number,
   address: `0x${string}`,
-  opts?: { force?: boolean }
+  opts?: { force?: boolean; txSide?: 'buy' | 'sell'; prefer?: 'min' | 'max'; scope?: 'protected' | 'public' | 'both' }
 ): Promise<number> {
   const key = `${chainId}:${address.toLowerCase()}`;
   const release = await acquireNonceLock(key);
@@ -232,15 +232,49 @@ export async function prewarmNonce(
     let nextNonce = pendingNonce;
     if (opts?.force) {
       try {
-        const observed = await RpcService.getObservedPendingNonce({
+        const prefer = opts?.prefer ?? 'max';
+        const scope = opts?.scope ?? 'both';
+        let observed = await RpcService.getObservedPendingNonce({
           chainId,
           address,
-          prefer: 'max',
-          scope: 'both',
+          txSide: opts?.txSide,
+          prefer,
+          scope,
         });
-        if (observed != null && observed > nextNonce) {
-          nextNonce = observed;
+        if (observed == null && scope === 'protected') {
+          console.info('[nonce.prewarm.observe.fallback]', {
+            chainId,
+            address,
+            txSide: opts?.txSide,
+            prefer,
+            fromScope: scope,
+            toScope: 'both',
+          });
+          observed = await RpcService.getObservedPendingNonce({
+            chainId,
+            address,
+            txSide: opts?.txSide,
+            prefer,
+            scope: 'both',
+          });
         }
+        if (observed != null) {
+          if (prefer === 'min') {
+            nextNonce = observed;
+          } else if (observed > nextNonce) {
+            nextNonce = observed;
+          }
+        }
+        console.info('[nonce.prewarm.observe]', {
+          chainId,
+          address,
+          txSide: opts?.txSide,
+          prefer,
+          scope,
+          pendingNonce,
+          observedNonce: observed,
+          nextNonce,
+        });
       } catch {
       }
     }
@@ -460,14 +494,42 @@ export async function sendTransaction(
       const toErrMsg = (err: any) => String(err?.shortMessage || err?.message || err || 'unknown error');
       const attemptObserved = async (prefer: 'min' | 'max', scope: 'protected' | 'both') => {
         const start = Date.now();
-        const observedNonce = await RpcService.getObservedPendingNonce({
+        let effectiveScope: 'protected' | 'both' = scope;
+        let observedNonce = await RpcService.getObservedPendingNonce({
           chainId,
           address: account.address,
           txSide: opts?.txSide,
           prefer,
           scope,
         });
+        if (observedNonce == null && scope === 'protected') {
+          console.info('[nonce.recovery.observe.fallback]', {
+            chainId,
+            address: account.address,
+            txSide: opts?.txSide,
+            prefer,
+            fromScope: scope,
+            toScope: 'both',
+          });
+          effectiveScope = 'both';
+          observedNonce = await RpcService.getObservedPendingNonce({
+            chainId,
+            address: account.address,
+            txSide: opts?.txSide,
+            prefer,
+            scope: 'both',
+          });
+        }
         trace?.('observeNonce', Date.now() - start);
+        console.info('[nonce.recovery.observe]', {
+          chainId,
+          address: account.address,
+          txSide: opts?.txSide,
+          prefer,
+          scope: effectiveScope,
+          observedNonce,
+          elapsedMs: Date.now() - start,
+        });
         if (observedNonce == null) {
           retryTrace.push(`observe:scope=${scope},prefer=${prefer},nonce=null`);
           return null;
@@ -478,10 +540,23 @@ export async function sendTransaction(
 
       let lastErr: any = err;
       const firstKind = getNonceErrorKind(err);
+      console.warn('[nonce.recovery.start]', {
+        chainId,
+        address: account.address,
+        txSide: opts?.txSide,
+        firstKind,
+        message: toErrMsg(err),
+      });
       retryTrace.push(`firstErrorKind=${firstKind},msg=${toErrMsg(err)}`);
       const hintedFromFirst = extractNextNonceHint(err);
       if (hintedFromFirst != null) {
         try {
+          console.info('[nonce.recovery.hint.first]', {
+            chainId,
+            address: account.address,
+            txSide: opts?.txSide,
+            hintedNonce: hintedFromFirst,
+          });
           retryTrace.push(`hint:firstNonce=${hintedFromFirst}`);
           return await signAndBroadcast(hintedFromFirst, 'hint:first:');
         } catch (ex) {
@@ -504,6 +579,13 @@ export async function sendTransaction(
         const start = Date.now();
         const retryNonce = await reserveNonce(client, chainId, account.address);
         trace?.('reserveNonceRetry', Date.now() - start);
+        console.info('[nonce.recovery.reserve]', {
+          chainId,
+          address: account.address,
+          txSide: opts?.txSide,
+          retryNonce,
+          elapsedMs: Date.now() - start,
+        });
         retryTrace.push(`retry:reservedNonce=${retryNonce}`);
         return await signAndBroadcast(retryNonce, 'retry:');
       } catch (e2) {
@@ -514,6 +596,12 @@ export async function sendTransaction(
       const hintedNonce = extractNextNonceHint(lastErr);
       if (hintedNonce != null) {
         try {
+          console.info('[nonce.recovery.hint]', {
+            chainId,
+            address: account.address,
+            txSide: opts?.txSide,
+            hintedNonce,
+          });
           retryTrace.push(`hint:nonce=${hintedNonce}`);
           return await signAndBroadcast(hintedNonce, 'hint:');
         } catch (ex) {
@@ -534,6 +622,13 @@ export async function sendTransaction(
       }
 
       clearNonceState(chainId, account.address);
+      console.error('[nonce.recovery.failed]', {
+        chainId,
+        address: account.address,
+        txSide: opts?.txSide,
+        attempts: retryTrace,
+        last: toErrMsg(lastErr),
+      });
       throw new Error(`Auto nonce recovery failed. attempts=${retryTrace.join(' | ')} ; last=${toErrMsg(lastErr)}`);
     }
 

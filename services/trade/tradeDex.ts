@@ -318,7 +318,7 @@ async function getBestDexExactIn(chainId: number, tokenIn: Address, tokenOut: Ad
 
   if (v3Out > 0n && v3Out >= v2Out) {
     const usedFee = fee ?? opts?.v3Fee;
-    const pool = usedFee !== undefined ? await getFirstV3Pool(chainId, quoteTokenIn, quoteTokenOut, usedFee) : null;
+    const pool = usedFee !== undefined ? await getFirstV3PoolCached(chainId, quoteTokenIn, quoteTokenOut, usedFee) : null;
     return { amountOut: v3Out, swapType: SwapType.V3_EXACT_IN, fee: usedFee, poolAddress: (pool ?? (ZERO_ADDRESS as Address)) };
   }
   if (v2Out > 0n && v2.pair) {
@@ -326,7 +326,7 @@ async function getBestDexExactIn(chainId: number, tokenIn: Address, tokenOut: Ad
   }
   if (v3Out > 0n) {
     const usedFee = fee ?? opts?.v3Fee;
-    const pool = usedFee !== undefined ? await getFirstV3Pool(chainId, quoteTokenIn, quoteTokenOut, usedFee) : null;
+    const pool = usedFee !== undefined ? await getFirstV3PoolCached(chainId, quoteTokenIn, quoteTokenOut, usedFee) : null;
     return { amountOut: v3Out, swapType: SwapType.V3_EXACT_IN, fee: usedFee, poolAddress: (pool ?? (ZERO_ADDRESS as Address)) };
   }
 
