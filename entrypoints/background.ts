@@ -47,6 +47,9 @@ export default defineBackground(() => {
     return { delegated: true, delegateAddress, code: normalized };
   };
   let stateChangeSeq = 0;
+  const scheduleVisionForward = (task: Promise<unknown>) => {
+    void task.catch(() => { });
+  };
 
   browser.action.onClicked.addListener(async (tab) => {
     try {
@@ -1478,7 +1481,7 @@ export default defineBackground(() => {
               (TokenSniperTrade as any).handleTwitterSignal(signal),
             ];
             if (settings?.ui?.visionReportEnabled === true) {
-              tasks.push(forwardTwitterSignalToVision(signal));
+              scheduleVisionForward(forwardTwitterSignalToVision(signal));
             }
             await Promise.all(tasks);
             return { ok: true };
@@ -1492,7 +1495,7 @@ export default defineBackground(() => {
               tasks.push((NewCoinSniperTrade as any).handleMarketSignal(signal));
             }
             if (settings?.ui?.visionReportEnabled === true) {
-              tasks.push(forwardMarketSignalToVision(signal));
+              scheduleVisionForward(forwardMarketSignalToVision(signal));
             }
             if (tasks.length > 0) {
               await Promise.all(tasks);

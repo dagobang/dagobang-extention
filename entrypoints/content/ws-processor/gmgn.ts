@@ -1,5 +1,7 @@
+import { browser } from 'wxt/browser';
 import type { BgRequest, BgResponse, Settings, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLaunchpadPlatform } from '@/constants/launchpad';
+import { WS_MONITOR_DIAG_STORAGE_KEY } from '@/services/vision/constants';
 import {
   asAddress,
   extractFirstFromObject,
@@ -448,6 +450,12 @@ type TokenSnapshot = {
   receivedAtMs: number;
 };
 
+const TOKEN_SNAPSHOT_TTL_MS = 60 * 60 * 1000;
+const VISION_ONLY_MARKET_FORWARD_TOKEN_UPDATE_MIN_INTERVAL_MS = 3000;
+const VISION_ONLY_MARKET_FORWARD_STAGE_MIN_INTERVAL_MS = 1200;
+const WS_MONITOR_DIAG_FLUSH_INTERVAL_MS = 15_000;
+const WS_MONITOR_DIAG_MAX_SNAPSHOTS = 40;
+
 const pickNonEmptyString = (next: any, prev?: string): string | undefined => {
   const s = typeof next === 'string' ? next.trim() : '';
   return s ? s : prev;
@@ -890,6 +898,26 @@ export function initGmgnWsMonitor(options: {
     callTotalMs: number;
     callMaxMs: number;
   };
+  type WsMonitorDiagSnapshot = {
+    sessionId: string;
+    tsMs: number;
+    reason: string;
+    hostname: string;
+    wsConnected: boolean;
+    lastPacketAt: number;
+    lastSignalAt: number;
+    latencyMs: number | null;
+    packetCount: number;
+    signalCount: number;
+    logCount: number;
+    tokenSnapshotCount: number;
+    pendingTwitterChannels: number;
+    pendingMarketChannels: number;
+    signalProbeReceived: number;
+    signalProbeFlushed: number;
+    signalProbeAvgCallMs: number;
+    signalProbeMaxCallMs: number;
+  };
   const cached = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
   if (cached) (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = cached;
   refreshUnifiedTwitterCache();
@@ -902,6 +930,10 @@ export function initGmgnWsMonitor(options: {
   const pendingMarketForwardByChannel = new Map<string, Map<string, UnifiedMarketSignal>>();
   const marketForwardTimerByChannel = new Map<string, number>();
   const marketForwardQueueByChannel = new Map<string, Promise<void>>();
+  const marketForwardLastSentAtByKey = new Map<string, number>();
+  const wsMonitorDiagSessionId = `gmgn:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  let wsMonitorDiagFlushTimer: number | null = null;
+  let wsMonitorDiagPersistChain: Promise<void> = Promise.resolve();
   const createSignalForwardProbeWindow = (now: number): SignalForwardProbeWindow => ({
     windowStartAt: now,
     received: 0,
@@ -915,6 +947,67 @@ export function initGmgnWsMonitor(options: {
     callMaxMs: 0,
   });
   let signalForwardProbeWindow = createSignalForwardProbeWindow(Date.now());
+
+  const buildWsMonitorDiagSnapshot = (reason: string): WsMonitorDiagSnapshot => ({
+    sessionId: wsMonitorDiagSessionId,
+    tsMs: Date.now(),
+    reason,
+    hostname: window.location.hostname,
+    wsConnected: wsStatus.connected,
+    lastPacketAt: wsStatus.lastPacketAt,
+    lastSignalAt: wsStatus.lastSignalAt,
+    latencyMs: wsStatus.latencyMs,
+    packetCount: wsStatus.packetCount,
+    signalCount: wsStatus.signalCount,
+    logCount: wsStatus.logs.length,
+    tokenSnapshotCount: tokenByAddress.size,
+    pendingTwitterChannels: pendingForwardByChannel.size,
+    pendingMarketChannels: pendingMarketForwardByChannel.size,
+    signalProbeReceived: signalForwardProbeWindow.received,
+    signalProbeFlushed: signalForwardProbeWindow.flushedSignals,
+    signalProbeAvgCallMs: signalForwardProbeWindow.callOk + signalForwardProbeWindow.callFail > 0
+      ? signalForwardProbeWindow.callTotalMs / (signalForwardProbeWindow.callOk + signalForwardProbeWindow.callFail)
+      : 0,
+    signalProbeMaxCallMs: signalForwardProbeWindow.callMaxMs,
+  });
+
+  const persistWsMonitorDiag = (reason: string) => {
+    const snapshot = buildWsMonitorDiagSnapshot(reason);
+    wsMonitorDiagPersistChain = wsMonitorDiagPersistChain
+      .catch(() => { })
+      .then(async () => {
+        try {
+          const res = await browser.storage.local.get(WS_MONITOR_DIAG_STORAGE_KEY);
+          const prev = (res as any)?.[WS_MONITOR_DIAG_STORAGE_KEY] as { snapshots?: WsMonitorDiagSnapshot[] } | undefined;
+          const nextSnapshots = Array.isArray(prev?.snapshots) ? prev!.snapshots.slice(-WS_MONITOR_DIAG_MAX_SNAPSHOTS + 1) : [];
+          nextSnapshots.push(snapshot);
+          await browser.storage.local.set({
+            [WS_MONITOR_DIAG_STORAGE_KEY]: {
+              updatedAtMs: snapshot.tsMs,
+              lastSessionId: wsMonitorDiagSessionId,
+              snapshots: nextSnapshots,
+            },
+          });
+        } catch {
+        }
+      });
+  };
+
+  const scheduleWsMonitorDiagPersist = (reason: string, immediate = false) => {
+    if (immediate) {
+      if (wsMonitorDiagFlushTimer != null) {
+        window.clearTimeout(wsMonitorDiagFlushTimer);
+        wsMonitorDiagFlushTimer = null;
+      }
+      persistWsMonitorDiag(reason);
+      return;
+    }
+    if (wsMonitorDiagFlushTimer != null) return;
+    wsMonitorDiagFlushTimer = window.setTimeout(() => {
+      wsMonitorDiagFlushTimer = null;
+      persistWsMonitorDiag(reason);
+    }, WS_MONITOR_DIAG_FLUSH_INTERVAL_MS);
+  };
 
   const resolveSignalForwardDedupeMode = (): SignalForwardDedupeMode => {
     const settingsRaw = ((window as any).__DAGOBANG_SETTINGS__ ?? null) as any;
@@ -954,6 +1047,7 @@ export function initGmgnWsMonitor(options: {
     };
     (window as any).__DAGOBANG_SIGNAL_FORWARD_PROBE__ = output;
     window.postMessage({ type: 'DAGOBANG_SIGNAL_FORWARD_PROBE', payload: output }, '*');
+    scheduleWsMonitorDiagPersist('signal_probe');
     signalForwardProbeWindow = createSignalForwardProbeWindow(now);
   };
 
@@ -966,6 +1060,31 @@ export function initGmgnWsMonitor(options: {
       return SIGNAL_FORWARD_FAST_WINDOW_MS;
     }
     return SIGNAL_FORWARD_WINDOW_MS;
+  };
+
+  const shouldDropVisionOnlyMarketSignal = (signal: UnifiedMarketSignal) => {
+    const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
+    if (settings?.ui?.visionReportEnabled !== true || settings?.ui?.newCoinSniperEnabled === true) return false;
+    const firstAddr = Array.isArray(signal.tokens)
+      ? signal.tokens
+        .map((t) => (typeof t?.tokenAddress === 'string' ? t.tokenAddress.trim().toLowerCase() : ''))
+        .find(Boolean) ?? ''
+      : '';
+    if (!firstAddr) return false;
+    const now = Date.now();
+    const minIntervalMs = signal.source === 'token_update'
+      ? VISION_ONLY_MARKET_FORWARD_TOKEN_UPDATE_MIN_INTERVAL_MS
+      : VISION_ONLY_MARKET_FORWARD_STAGE_MIN_INTERVAL_MS;
+    const key = `${signal.channel}:${signal.source}:${firstAddr}`;
+    const prevAt = marketForwardLastSentAtByKey.get(key) ?? 0;
+    if (now - prevAt < minIntervalMs) return true;
+    marketForwardLastSentAtByKey.set(key, now);
+    for (const [sentKey, sentAt] of marketForwardLastSentAtByKey) {
+      if (now - sentAt > TOKEN_SNAPSHOT_TTL_MS) {
+        marketForwardLastSentAtByKey.delete(sentKey);
+      }
+    }
+    return false;
   };
 
   const getSignalForwardKey = (signal: UnifiedTwitterSignal, dedupeMode: SignalForwardDedupeMode): string => {
@@ -1010,7 +1129,17 @@ export function initGmgnWsMonitor(options: {
           else signalForwardProbeWindow.callFail += 1;
         }
       })
-      .catch(() => { });
+      .catch(() => { })
+      .finally(() => {
+        if ((pendingForwardByChannel.get(channel)?.size ?? 0) > 0 && !forwardTimerByChannel.has(channel)) {
+          const timer = window.setTimeout(() => {
+            forwardTimerByChannel.delete(channel);
+            flushForwardChannel(channel);
+            flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
+          }, 0);
+          forwardTimerByChannel.set(channel, timer);
+        }
+      });
     forwardQueueByChannel.set(channel, nextQueue);
   };
 
@@ -1029,13 +1158,13 @@ export function initGmgnWsMonitor(options: {
     else signalForwardProbeWindow.enqueued += 1;
     map.set(key, signal);
     flushSignalForwardProbe(now, dedupeMode);
-    if (forwardTimerByChannel.has(normalizedChannel)) return;
     const windowMs = resolveSignalForwardWindowMs(normalizedChannel);
     if (windowMs <= 0) {
       flushForwardChannel(normalizedChannel);
       flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
       return;
     }
+    if (forwardTimerByChannel.has(normalizedChannel)) return;
     const timer = window.setTimeout(() => {
       forwardTimerByChannel.delete(normalizedChannel);
       flushForwardChannel(normalizedChannel);
@@ -1066,11 +1195,21 @@ export function initGmgnWsMonitor(options: {
           await options.call({ type: 'market:signal', payload: signal }).catch(() => { });
         }
       })
-      .catch(() => { });
+      .catch(() => { })
+      .finally(() => {
+        if ((pendingMarketForwardByChannel.get(channel)?.size ?? 0) > 0 && !marketForwardTimerByChannel.has(channel)) {
+          const timer = window.setTimeout(() => {
+            marketForwardTimerByChannel.delete(channel);
+            flushMarketForwardChannel(channel);
+          }, 0);
+          marketForwardTimerByChannel.set(channel, timer);
+        }
+      });
     marketForwardQueueByChannel.set(channel, nextQueue);
   };
 
   const enqueueMarketSignalForward = (channel: string, signal: UnifiedMarketSignal) => {
+    if (shouldDropVisionOnlyMarketSignal(signal)) return;
     const normalizedChannel = channel || 'market_monitor';
     let map = pendingMarketForwardByChannel.get(normalizedChannel);
     if (!map) {
@@ -1228,6 +1367,7 @@ export function initGmgnWsMonitor(options: {
     const payload = { ...wsStatus, connected };
     (window as any).__DAGOBANG_WS_STATUS__ = payload;
     window.dispatchEvent(new CustomEvent('dagobang-ws-status', { detail: payload }));
+    scheduleWsMonitorDiagPersist('ws_status');
   };
 
   const statusTimer = window.setInterval(() => emitStatus(), 5000);
@@ -1546,6 +1686,7 @@ export function initGmgnWsMonitor(options: {
       createdAtMs: typeof tokenData?.createdAtMs === 'number' ? tokenData.createdAtMs : prev?.createdAtMs,
       receivedAtMs,
     };
+    if (prev) tokenByAddress.delete(addr);
     tokenByAddress.set(addr, next);
     const cache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
     const list = Array.isArray(cache?.list) ? (cache.list as UnifiedTwitterSignal[]).slice() : [];
@@ -1830,6 +1971,7 @@ export function initGmgnWsMonitor(options: {
       pendingUnifiedTwitterCacheTimer = null;
     }
     flushUnifiedTwitterCachePersist();
+    scheduleWsMonitorDiagPersist('pagehide', true);
   };
   window.addEventListener('pagehide', onPageHide);
   window.addEventListener('beforeunload', onPageHide);

@@ -1,29 +1,34 @@
 import { browser } from 'wxt/browser';
 import type { UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { SETTINGS_STORAGE_KEY } from '@/services/storage';
-import { DEFAULT_VISION_BASE, VISION_STATUS_STORAGE_KEY } from '@/services/vision/constants';
+import { DEFAULT_VISION_BASE, VISION_DIAG_STORAGE_KEY, VISION_STATUS_STORAGE_KEY } from '@/services/vision/constants';
 
 const VISION_BASE_STORAGE_KEY = 'dagobang_vision_base_url';
 const MAX_ROWS_PER_SIGNAL = 80;
 const VISION_AGG_WINDOW_MS = 1000;
 const MAX_ROWS_PER_BATCH_PACKET = 120;
-const MAX_AGG_ROWS_PER_KIND = 4000;
+const MAX_AGG_ROWS_PER_KIND = 1500;
 const WS_FLUSH_INTERVAL_MS = 200;
 const WS_BACKPRESSURE_POLL_MS = 500;
 const WS_RECONNECT_BASE_MS = 1200;
-const WS_MAX_QUEUE = 1000;
+const WS_MAX_QUEUE = 120;
 const WS_MAX_BUFFERED_AMOUNT = 512 * 1024;
 const WS_MAX_IN_FLIGHT_PACKETS = 2;
 const WS_ACK_TIMEOUT_MS = 4000;
 const STATUS_FLUSH_INTERVAL_MS = 2000;
 const WS_FAILURE_STREAK_FOR_COOLDOWN = 12;
 const WS_FAILURE_COOLDOWN_MS = 10_000;
-const CONTEXT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const CONTEXT_CACHE_MAX = 20_000;
-const BRIDGE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const BRIDGE_CACHE_MAX = 50_000;
+const CONTEXT_CACHE_TTL_MS = 60 * 60 * 1000;
+const CONTEXT_CACHE_MAX = 5_000;
+const BRIDGE_CACHE_TTL_MS = 60 * 60 * 1000;
+const BRIDGE_CACHE_MAX = 15_000;
 const LOW_FREQUENCY_CACHE_PRUNE_INTERVAL_MS = 60_000;
 const MARKET_CONTEXT_RECHECK_INTERVAL_MS = 30_000;
+const MARKET_SIGNAL_RATE_LIMIT_TOKEN_UPDATE_MS = 3000;
+const MARKET_SIGNAL_RATE_LIMIT_STAGE_MS = 1200;
+const MARKET_SIGNAL_RATE_LIMIT_CACHE_MAX = 20_000;
+const VISION_DIAG_FLUSH_INTERVAL_MS = 15_000;
+const VISION_DIAG_MAX_SNAPSHOTS = 40;
 
 export type VisionForwardStatus = {
   enabled: boolean;
@@ -42,6 +47,29 @@ export type VisionForwardStatus = {
   ackTimeoutCount?: number;
   currentQueueSize?: number;
   currentInFlightPackets?: number;
+};
+
+type VisionDiagSnapshot = {
+  sessionId: string;
+  tsMs: number;
+  reason: string;
+  wsConnected: boolean;
+  queueSize: number;
+  inFlightPackets: number;
+  aggregateTokenRows: number;
+  aggregateContextRows: number;
+  aggregateBridgeRows: number;
+  contextCacheSize: number;
+  bridgeCacheSize: number;
+  marketRateLimitCacheSize: number;
+  reconnectAttempt: number;
+  failureStreak: number;
+  lastPath?: string;
+  lastError?: string;
+  droppedPackets?: number;
+  droppedAggregateRows?: number;
+  backpressureCount?: number;
+  ackTimeoutCount?: number;
 };
 
 type VisionBatchPacket = {
@@ -170,17 +198,125 @@ let statusLoadPromise: Promise<VisionForwardStatus> | null = null;
 let statusFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let aggregateWindow: VisionAggregateWindow | null = null;
 let aggregateFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let visionDiagFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let visionDiagPersistChain: Promise<void> = Promise.resolve();
 const queue: VisionBatchPacket[] = [];
+let queueHead = 0;
 const inFlightPackets = new Map<string, VisionInFlightPacket>();
 const contextSnapshotCache = new Map<string, VisionContextCacheEntry>();
 const bridgeSeenCache = new Map<string, number>();
+const marketSignalLastStagedAt = new Map<string, number>();
 let lowFrequencyCacheLastPrunedAtMs = 0;
+const visionDiagSessionId = `vision:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
 
 const isWsOpen = (ws: WebSocket | null) => ws?.readyState === WebSocket.OPEN;
 const isWsConnecting = (ws: WebSocket | null) => ws?.readyState === WebSocket.CONNECTING;
 const isWsCoolingDown = () => wsCooldownUntilMs > Date.now();
 const getWsCooldownRemainingMs = () => Math.max(0, wsCooldownUntilMs - Date.now());
 const getAggregateWindowStartMs = (atMs: number) => Math.floor(atMs / VISION_AGG_WINDOW_MS) * VISION_AGG_WINDOW_MS;
+const getQueueSize = () => Math.max(0, queue.length - queueHead);
+
+const compactQueueIfNeeded = () => {
+  if (queueHead <= 0) return;
+  if (queueHead < 64 && queueHead * 2 < queue.length) return;
+  queue.splice(0, queueHead);
+  queueHead = 0;
+};
+
+const shiftQueuePacket = () => {
+  if (queueHead >= queue.length) {
+    queue.length = 0;
+    queueHead = 0;
+    return undefined;
+  }
+  const packet = queue[queueHead];
+  queue[queueHead] = undefined as any;
+  queueHead += 1;
+  compactQueueIfNeeded();
+  return packet;
+};
+
+const pushQueuePacket = (packet: VisionBatchPacket) => {
+  queue.push(packet);
+};
+
+const requeuePacketAtFront = (packet: VisionBatchPacket) => {
+  if (queueHead > 0) {
+    queueHead -= 1;
+    queue[queueHead] = packet;
+    return;
+  }
+  queue.unshift(packet);
+};
+
+const clearQueue = () => {
+  queue.length = 0;
+  queueHead = 0;
+};
+
+const buildVisionDiagSnapshot = (reason: string): VisionDiagSnapshot => {
+  const st = statusCache ?? undefined;
+  return {
+    sessionId: visionDiagSessionId,
+    tsMs: Date.now(),
+    reason,
+    wsConnected,
+    queueSize: getQueueSize(),
+    inFlightPackets: inFlightPackets.size,
+    aggregateTokenRows: aggregateWindow?.tokenMetrics.size ?? 0,
+    aggregateContextRows: aggregateWindow?.signalContexts.size ?? 0,
+    aggregateBridgeRows: aggregateWindow?.bridges.size ?? 0,
+    contextCacheSize: contextSnapshotCache.size,
+    bridgeCacheSize: bridgeSeenCache.size,
+    marketRateLimitCacheSize: marketSignalLastStagedAt.size,
+    reconnectAttempt,
+    failureStreak: wsFailureStreak,
+    lastPath: st?.lastPath,
+    lastError: st?.lastError,
+    droppedPackets: st?.droppedPackets,
+    droppedAggregateRows: st?.droppedAggregateRows,
+    backpressureCount: st?.backpressureCount,
+    ackTimeoutCount: st?.ackTimeoutCount,
+  };
+};
+
+const persistVisionDiag = (reason: string) => {
+  const snapshot = buildVisionDiagSnapshot(reason);
+  visionDiagPersistChain = visionDiagPersistChain
+    .catch(() => { })
+    .then(async () => {
+      try {
+        const res = await browser.storage.local.get(VISION_DIAG_STORAGE_KEY);
+        const prev = (res as any)?.[VISION_DIAG_STORAGE_KEY] as { snapshots?: VisionDiagSnapshot[] } | undefined;
+        const nextSnapshots = Array.isArray(prev?.snapshots) ? prev!.snapshots.slice(-VISION_DIAG_MAX_SNAPSHOTS + 1) : [];
+        nextSnapshots.push(snapshot);
+        await browser.storage.local.set({
+          [VISION_DIAG_STORAGE_KEY]: {
+            updatedAtMs: snapshot.tsMs,
+            lastSessionId: visionDiagSessionId,
+            snapshots: nextSnapshots,
+          },
+        });
+      } catch {
+      }
+    });
+};
+
+const scheduleVisionDiagPersist = (reason: string, immediate = false) => {
+  if (immediate) {
+    if (visionDiagFlushTimer) {
+      clearTimeout(visionDiagFlushTimer);
+      visionDiagFlushTimer = null;
+    }
+    persistVisionDiag(reason);
+    return;
+  }
+  if (visionDiagFlushTimer) return;
+  visionDiagFlushTimer = setTimeout(() => {
+    visionDiagFlushTimer = null;
+    persistVisionDiag(reason);
+  }, VISION_DIAG_FLUSH_INTERVAL_MS);
+};
 
 const parseVisionConfig = (raw: any): VisionRuntimeConfig => {
   const settings = (raw as any)?.[SETTINGS_STORAGE_KEY] ?? {};
@@ -297,6 +433,7 @@ const scheduleVisionStatusFlush = (immediate = false) => {
       statusFlushTimer = null;
     }
     void flushVisionStatus();
+    scheduleVisionDiagPersist('status_immediate', true);
     return;
   }
   if (statusFlushTimer) return;
@@ -304,6 +441,7 @@ const scheduleVisionStatusFlush = (immediate = false) => {
     statusFlushTimer = null;
     void flushVisionStatus();
   }, STATUS_FLUSH_INTERVAL_MS);
+  scheduleVisionDiagPersist('status');
 };
 
 const syncRuntimeStatus = (patch?: Partial<VisionForwardStatus>) => {
@@ -318,7 +456,7 @@ const syncRuntimeStatus = (patch?: Partial<VisionForwardStatus>) => {
     ...prev,
     enabled: cfg.enabled,
     baseUrl: cfg.baseUrl,
-    currentQueueSize: queue.length,
+    currentQueueSize: getQueueSize(),
     currentInFlightPackets: inFlightPackets.size,
     ...patch,
   };
@@ -332,7 +470,7 @@ const updateStatus = async (patch: Partial<VisionForwardStatus>, options?: { imm
     ...prev,
     enabled: cfg.enabled,
     baseUrl: cfg.baseUrl,
-    currentQueueSize: queue.length,
+    currentQueueSize: getQueueSize(),
     currentInFlightPackets: inFlightPackets.size,
     ...patch,
   };
@@ -356,7 +494,7 @@ const bumpStatusCounter = (
     baseUrl: base.baseUrl,
     successCount: Math.max(0, Number(st.successCount) || 0),
     failCount: Math.max(0, Number(st.failCount) || 0),
-    currentQueueSize: queue.length,
+    currentQueueSize: getQueueSize(),
     currentInFlightPackets: inFlightPackets.size,
     lastPath: base.path,
   };
@@ -372,6 +510,7 @@ const bumpStatusCounter = (
     statusCache.lastError = base.error || 'forward_failed';
   }
   scheduleVisionStatusFlush();
+  if (kind === 'fail') scheduleVisionDiagPersist('fail', true);
 };
 
 const bumpStatusMetric = (
@@ -394,12 +533,13 @@ const bumpStatusMetric = (
     droppedAggregateRows: Math.max(0, Number(st.droppedAggregateRows) || 0) + Math.max(0, Number(patch.droppedAggregateRows) || 0),
     backpressureCount: Math.max(0, Number(st.backpressureCount) || 0) + Math.max(0, Number(patch.backpressureCount) || 0),
     ackTimeoutCount: Math.max(0, Number(st.ackTimeoutCount) || 0) + Math.max(0, Number(patch.ackTimeoutCount) || 0),
-    currentQueueSize: queue.length,
+    currentQueueSize: getQueueSize(),
     currentInFlightPackets: inFlightPackets.size,
     ...(patch.path ? { lastPath: patch.path } : {}),
     ...(patch.error ? { lastError: patch.error, lastErrorAtMs: Date.now() } : {}),
   };
   scheduleVisionStatusFlush();
+  if (patch.error) scheduleVisionDiagPersist('metric_error', true);
 };
 
 const makeWSUrl = (baseUrl: string) => {
@@ -476,6 +616,25 @@ const touchLowFrequencyCaches = (nowMs: number) => {
   lowFrequencyCacheLastPrunedAtMs = nowMs;
   pruneTimedCache(contextSnapshotCache, nowMs, CONTEXT_CACHE_TTL_MS, CONTEXT_CACHE_MAX, (value) => value.lastTouchedMs);
   pruneTimedCache(bridgeSeenCache, nowMs, BRIDGE_CACHE_TTL_MS, BRIDGE_CACHE_MAX, (value) => value);
+  pruneTimedCache(marketSignalLastStagedAt, nowMs, BRIDGE_CACHE_TTL_MS, MARKET_SIGNAL_RATE_LIMIT_CACHE_MAX, (value) => value);
+};
+
+const shouldStageMarketSignalToken = (signal: UnifiedMarketSignal, tokenAddress: string, nowMs: number) => {
+  const source = typeof signal.source === 'string' ? signal.source : '';
+  const minIntervalMs = source === 'token_update'
+    ? MARKET_SIGNAL_RATE_LIMIT_TOKEN_UPDATE_MS
+    : MARKET_SIGNAL_RATE_LIMIT_STAGE_MS;
+  const key = [
+    String(signal.site ?? 'unknown'),
+    String(signal.channel ?? 'unknown'),
+    source,
+    String(signal.chain ?? ''),
+    tokenAddress,
+  ].join('|');
+  const prevAt = marketSignalLastStagedAt.get(key) ?? 0;
+  if (nowMs - prevAt < minIntervalMs) return false;
+  marketSignalLastStagedAt.set(key, nowMs);
+  return true;
 };
 
 const shouldRecheckMarketContext = (contextKey: string, nowMs: number) => {
@@ -577,24 +736,30 @@ const scheduleAggregateFlush = () => {
 };
 
 const enqueueAggregatedWindow = (windowState: VisionAggregateWindow) => {
-  const tokenMetrics = Array.from(windowState.tokenMetrics.values());
-  const signalContexts = Array.from(windowState.signalContexts.values());
-  const bridges = Array.from(windowState.bridges.values());
-  const maxChunks = Math.max(
-    Math.ceil(tokenMetrics.length / MAX_ROWS_PER_BATCH_PACKET),
-    Math.ceil(signalContexts.length / MAX_ROWS_PER_BATCH_PACKET),
-    Math.ceil(bridges.length / MAX_ROWS_PER_BATCH_PACKET),
-  );
-  if (maxChunks <= 0) return;
-  for (let i = 0; i < maxChunks; i += 1) {
-    const start = i * MAX_ROWS_PER_BATCH_PACKET;
+  const takeChunk = (iterator: IterableIterator<any>) => {
+    const chunk: any[] = [];
+    while (chunk.length < MAX_ROWS_PER_BATCH_PACKET) {
+      const next = iterator.next();
+      if (next.done) break;
+      chunk.push(next.value);
+    }
+    return chunk;
+  };
+  const tokenIter = windowState.tokenMetrics.values();
+  const contextIter = windowState.signalContexts.values();
+  const bridgeIter = windowState.bridges.values();
+  for (let i = 0; ; i += 1) {
+    const tokenMetrics = takeChunk(tokenIter);
+    const signalContexts = takeChunk(contextIter);
+    const bridges = takeChunk(bridgeIter);
+    if (!tokenMetrics.length && !signalContexts.length && !bridges.length) break;
     enqueuePacket({
       type: 'batch',
       id: `agg:${windowState.windowStartMs}:${i}`,
       sentAtMs: Date.now(),
-      tokenMetrics: tokenMetrics.slice(start, start + MAX_ROWS_PER_BATCH_PACKET),
-      signalContexts: signalContexts.slice(start, start + MAX_ROWS_PER_BATCH_PACKET),
-      bridges: bridges.slice(start, start + MAX_ROWS_PER_BATCH_PACKET),
+      tokenMetrics,
+      signalContexts,
+      bridges,
     });
   }
 };
@@ -640,6 +805,9 @@ const stageSignalIntoWindow = (input: {
   for (const t of safeSliceTokens(signal.tokens)) {
     const addr = normalizeAddress((t as any)?.tokenAddress);
     if (!addr) continue;
+    if (input.sourceType === 'market_ws' && !shouldStageMarketSignalToken(signal as UnifiedMarketSignal, addr, nowMs)) {
+      continue;
+    }
     const metricRow = {
       tsMs: normalizeEpochMs((t as any).updatedAtMs ?? signal.receivedAtMs ?? signal.ts ?? nowMs),
       chain: resolveChain((t as any).chain, signal.chain, signal.site, signal.channel),
@@ -927,7 +1095,7 @@ const doEnsureWSConnected = async () => {
     wsCooldownUntilMs = 0;
     clearInFlightPackets();
     resetAggregateWindow();
-    queue.length = 0;
+    clearQueue();
     try {
       wsClient?.close();
     } catch {
@@ -1024,7 +1192,7 @@ const flushQueue = async () => {
     return;
   }
   const ws = wsClient;
-  while (queue.length > 0 && ws.readyState === WebSocket.OPEN && inFlightPackets.size < WS_MAX_IN_FLIGHT_PACKETS) {
+  while (getQueueSize() > 0 && ws.readyState === WebSocket.OPEN && inFlightPackets.size < WS_MAX_IN_FLIGHT_PACKETS) {
     if (ws.bufferedAmount > WS_MAX_BUFFERED_AMOUNT) {
       bumpStatusMetric({
         backpressureCount: 1,
@@ -1040,14 +1208,14 @@ const flushQueue = async () => {
       scheduleFlush(WS_BACKPRESSURE_POLL_MS);
       break;
     }
-    const pkt = queue.shift();
+    const pkt = shiftQueuePacket();
     if (!pkt) break;
     try {
       ws.send(JSON.stringify(pkt));
       registerInFlightPacket(ws, pkt);
       syncRuntimeStatus({ enabled: true, baseUrl: cfgCache?.baseUrl || DEFAULT_VISION_BASE, lastSendAtMs: Date.now(), lastPath: 'ws:batch' });
     } catch (e: any) {
-      queue.unshift(pkt);
+      requeuePacketAtFront(pkt);
       wsConnected = false;
       wsFailureStreak += 1;
       if (wsFailureStreak >= WS_FAILURE_STREAK_FOR_COOLDOWN) {
@@ -1068,14 +1236,14 @@ const flushQueue = async () => {
       break;
     }
   }
-  if (queue.length > 0 && inFlightPackets.size < WS_MAX_IN_FLIGHT_PACKETS) scheduleFlush();
+  if (getQueueSize() > 0 && inFlightPackets.size < WS_MAX_IN_FLIGHT_PACKETS) scheduleFlush();
 };
 
 const enqueuePacket = (packet: VisionBatchPacket) => {
-  queue.push(packet);
+  pushQueuePacket(packet);
   let droppedPackets = 0;
-  while (queue.length > WS_MAX_QUEUE) {
-    queue.shift();
+  while (getQueueSize() > WS_MAX_QUEUE) {
+    shiftQueuePacket();
     droppedPackets += 1;
   }
   if (droppedPackets > 0) {
