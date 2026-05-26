@@ -299,6 +299,7 @@ export type TradeSuccessSoundPreset = (typeof TRADE_SUCCESS_SOUND_PRESETS)[numbe
 export type SwitchSettings = {
   showToolbar: boolean;
   limitTradePanelOnlyOnTokenPage?: boolean;
+  quickBuyEnabled?: boolean;
   quickCookingEnabled?: boolean;
   newPoolMonitorEnabled?: boolean;
   newCoinSniperEnabled?: boolean;

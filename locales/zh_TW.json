@@ -126,6 +126,7 @@
       "autoLockSeconds": "自動鎖定（秒）",
       "showToolbar": "顯示工具列懸浮窗",
       "limitTradePanelOnlyOnTokenPage": "僅代幣頁面顯示掛單面板",
+      "quickBuy": "列表快捷買入",
       "quickCooking": "快捷 Cooking",
       "newPoolMonitor": "新池監控",
       "newCoinSniper": "新幣狙擊",

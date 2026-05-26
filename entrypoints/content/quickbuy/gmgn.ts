@@ -4,7 +4,13 @@ export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
   const CARD_SELECTOR = 'div[href*="/token/0x"]';
   const CONTAINER_CLASS = 'dagobang-quickbuy-container';
   const COOKING_BADGE_CLASS = 'dagobang-quickcooking-corner';
+  const isQuickBuyEnabled = () => (window as any).__DAGOBANG_SETTINGS__?.ui?.quickBuyEnabled === true;
   const isQuickCookingEnabled = () => (window as any).__DAGOBANG_SETTINGS__?.ui?.quickCookingEnabled === true;
+
+  if (!isQuickBuyEnabled() && !isQuickCookingEnabled()) {
+    return () => {
+    };
+  }
 
   const getCardTokenMeta = (card: HTMLElement) => {
     const href = card.getAttribute('href') || '';
@@ -131,21 +137,23 @@ export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
       }
 
       if (!existingContainer) {
-        const container = document.createElement('div');
-        container.className =
-          `${CONTAINER_CLASS} absolute flex right-14px gap-4px items-center z-20 overflow-visible flex-shrink-0 font-medium pointer-events-none h-full min-w-[30%] !right-0 !bottom-0 pr-1 !w-[auto] min-w-[40%]`;
-        container.style.bottom = '10px';
+        if (isQuickBuyEnabled()) {
+          const container = document.createElement('div');
+          container.className =
+            `${CONTAINER_CLASS} absolute flex right-14px gap-4px items-center z-20 overflow-visible flex-shrink-0 font-medium pointer-events-none h-full min-w-[30%] !right-0 !bottom-0 pr-1 !w-[auto] min-w-[40%]`;
+          container.style.bottom = '10px';
 
-        const inner = document.createElement('div');
-        inner.className = 'flex w-full h-full justify-end items-end gap-[4px] pointer-events-auto';
+          const inner = document.createElement('div');
+          inner.className = 'flex w-full h-full justify-end items-end gap-[4px] pointer-events-auto';
 
-        const quick1 = (window as any).__DAGOBANG_SETTINGS__?.quickBuy1Bnb;
-        const quick2 = (window as any).__DAGOBANG_SETTINGS__?.quickBuy2Bnb;
-        if (Number(quick1) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick1));
-        if (Number(quick2) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick2));
+          const quick1 = (window as any).__DAGOBANG_SETTINGS__?.quickBuy1Bnb;
+          const quick2 = (window as any).__DAGOBANG_SETTINGS__?.quickBuy2Bnb;
+          if (Number(quick1) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick1));
+          if (Number(quick2) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick2));
 
-        container.appendChild(inner);
-        card.appendChild(container);
+          container.appendChild(inner);
+          card.appendChild(container);
+        }
       }
 
       if (!isQuickCookingEnabled()) {

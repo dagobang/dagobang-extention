@@ -186,6 +186,9 @@ export function validateSettings(input: Settings): Settings | null {
   const limitTradePanelOnlyOnTokenPage = typeof (input as any)?.ui?.limitTradePanelOnlyOnTokenPage === 'boolean'
     ? (input as any).ui.limitTradePanelOnlyOnTokenPage
     : ((defaults as any)?.ui?.limitTradePanelOnlyOnTokenPage ?? false);
+  const quickBuyEnabled = typeof (input as any)?.ui?.quickBuyEnabled === 'boolean'
+    ? (input as any).ui.quickBuyEnabled
+    : ((defaults as any)?.ui?.quickBuyEnabled ?? false);
   const quickCookingEnabled = typeof (input as any)?.ui?.quickCookingEnabled === 'boolean'
     ? (input as any).ui.quickCookingEnabled
     : ((defaults as any)?.ui?.quickCookingEnabled ?? false);
@@ -817,6 +820,7 @@ export function validateSettings(input: Settings): Settings | null {
     ui: {
       showToolbar,
       limitTradePanelOnlyOnTokenPage,
+      quickBuyEnabled,
       quickCookingEnabled,
       newPoolMonitorEnabled,
       newCoinSniperEnabled,

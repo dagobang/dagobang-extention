@@ -126,6 +126,7 @@
       "autoLockSeconds": "Auto Lock (s)",
       "showToolbar": "Show toolbar",
       "limitTradePanelOnlyOnTokenPage": "Show limit panel only on token pages",
+      "quickBuy": "Quick Buy",
       "quickCooking": "Quick Cooking",
       "newPoolMonitor": "New Pool Monitor",
       "newCoinSniper": "New Coin Sniper",

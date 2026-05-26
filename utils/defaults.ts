@@ -461,6 +461,7 @@ export function defaultSettings(): Settings {
     ui: {
       showToolbar: true,
       limitTradePanelOnlyOnTokenPage: false,
+      quickBuyEnabled: false,
       quickCookingEnabled: false,
       newPoolMonitorEnabled: false,
       newCoinSniperEnabled: false,
