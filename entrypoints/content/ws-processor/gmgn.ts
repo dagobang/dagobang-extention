@@ -42,6 +42,9 @@ type TwitterTranslationPatch = {
   updatedAtMs: number;
 };
 
+const WS_STATUS_EMIT_MIN_INTERVAL_MS = 1000;
+const WS_PACKET_LOG_SAMPLE_MS = 1000;
+
 const buildTranslatedText = (item: any): string | undefined => {
   const main = typeof item?.c === 'string' ? item.c : isObject(item?.c) && typeof item.c.t === 'string' ? item.c.t : undefined;
   const article = typeof item?.sat === 'string' ? item.sat : undefined;
@@ -60,6 +63,8 @@ const buildTranslatedSourceText = (item: any): string | undefined => {
   };
   return source(item);
 };
+
+const SIGNAL_FORWARD_PROBE_ENABLED_KEY = 'dagobang_signal_forward_probe_enabled_v1';
 
 const extractTranslationPatch = (payload: any, now: number): TwitterTranslationPatch | null => {
   if (!isObject(payload)) return null;
@@ -917,6 +922,14 @@ export function initGmgnWsMonitor(options: {
   });
   let signalForwardProbeWindow = createSignalForwardProbeWindow(Date.now());
 
+  const isSignalForwardProbeEnabled = (): boolean => {
+    try {
+      return window.localStorage.getItem(SIGNAL_FORWARD_PROBE_ENABLED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  };
+
   const resolveSignalForwardDedupeMode = (): SignalForwardDedupeMode => {
     const settingsRaw = ((window as any).__DAGOBANG_SETTINGS__ ?? null) as any;
     const settingsMode = typeof settingsRaw?.autoTrade?.signalForwardDedupeMode === 'string'
@@ -953,8 +966,10 @@ export function initGmgnWsMonitor(options: {
         ? signalForwardProbeWindow.callTotalMs / (signalForwardProbeWindow.callOk + signalForwardProbeWindow.callFail)
         : 0,
     };
-    (window as any).__DAGOBANG_SIGNAL_FORWARD_PROBE__ = output;
-    window.postMessage({ type: 'DAGOBANG_SIGNAL_FORWARD_PROBE', payload: output }, '*');
+    if (isSignalForwardProbeEnabled()) {
+      (window as any).__DAGOBANG_SIGNAL_FORWARD_PROBE__ = output;
+      window.postMessage({ type: 'DAGOBANG_SIGNAL_FORWARD_PROBE', payload: output }, '*');
+    }
     signalForwardProbeWindow = createSignalForwardProbeWindow(now);
   };
 
@@ -1237,20 +1252,49 @@ export function initGmgnWsMonitor(options: {
     logs: [],
   };
 
+  let lastPacketLogAt = 0;
+  let lastStatusEmitAt = 0;
+  let pendingStatusEmitTimer: number | null = null;
+
   const pushLog = (type: 'packet' | 'signal' | 'error', message: string) => {
-    const next = wsStatus.logs.concat({ ts: Date.now(), type, message }).slice(-50);
+    const now = Date.now();
+    if (type === 'packet' && now - lastPacketLogAt < WS_PACKET_LOG_SAMPLE_MS) return;
+    if (type === 'packet') lastPacketLogAt = now;
+    const next = wsStatus.logs.slice();
+    next.push({ ts: now, type, message });
+    if (next.length > 50) {
+      next.splice(0, next.length - 50);
+    }
     wsStatus = { ...wsStatus, logs: next };
   };
 
-  const emitStatus = () => {
-    const now = Date.now();
+  const dispatchStatus = () => {
+    lastStatusEmitAt = Date.now();
+    const now = lastStatusEmitAt;
     const connected = wsStatus.lastPacketAt > 0 && now - wsStatus.lastPacketAt < 15000;
     const payload = { ...wsStatus, connected };
     (window as any).__DAGOBANG_WS_STATUS__ = payload;
     window.dispatchEvent(new CustomEvent('dagobang-ws-status', { detail: payload }));
   };
 
-  const statusTimer = window.setInterval(() => emitStatus(), 5000);
+  const emitStatus = (force = false) => {
+    const now = Date.now();
+    if (force || now - lastStatusEmitAt >= WS_STATUS_EMIT_MIN_INTERVAL_MS) {
+      if (pendingStatusEmitTimer != null) {
+        window.clearTimeout(pendingStatusEmitTimer);
+        pendingStatusEmitTimer = null;
+      }
+      dispatchStatus();
+      return;
+    }
+    if (pendingStatusEmitTimer != null) return;
+    pendingStatusEmitTimer = window.setTimeout(() => {
+      pendingStatusEmitTimer = null;
+      dispatchStatus();
+    }, WS_STATUS_EMIT_MIN_INTERVAL_MS - (now - lastStatusEmitAt));
+  };
+
+  const statusTimer = window.setInterval(() => emitStatus(true), 5000);
 
   const computeLatencyMs = (payload: any, packetTs: number, now: number) => {
     const serverTs = extractTimestampMs(payload);
@@ -1338,7 +1382,6 @@ export function initGmgnWsMonitor(options: {
         }
         wsStatus = { ...wsStatus, lastSignalAt: now, signalCount: wsStatus.signalCount + 1 };
         pushLog('signal', `${summarizeTokensForLog(merged)}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
-        emitStatus();
         if (shouldForwardTwitterSignal(merged)) {
           enqueueSignalForward(channel, merged);
         }
@@ -1364,7 +1407,6 @@ export function initGmgnWsMonitor(options: {
             signalCount: wsStatus.signalCount + 1,
           };
           pushLog('signal', `delete${delSignal.tweetId ? ` #${delSignal.tweetId}` : ''}`);
-          emitStatus();
         }
         continue;
       }
@@ -1402,7 +1444,6 @@ export function initGmgnWsMonitor(options: {
         signalCount: wsStatus.signalCount + 1,
       };
       pushLog('signal', `${summarizeTokensForLog(signal)}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
-      emitStatus();
       if (shouldForwardTwitterSignal(signal)) {
         enqueueSignalForward(channel, signal);
       }
@@ -1681,8 +1722,8 @@ export function initGmgnWsMonitor(options: {
         signalCount: wsStatus.signalCount + 1,
       };
       pushLog('signal', `new > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${item.chain ? ` ${item.chain}` : ''}`);
-      emitStatus();
     }
+    emitStatus();
   };
 
   const handleNewPoolInfoChannel = (data: any, channel: string, payload: any, now: number) => {
@@ -1720,9 +1761,9 @@ export function initGmgnWsMonitor(options: {
           chain: chain ? String(chain) : undefined,
           receivedAtMs: now,
         });
-        emitStatus();
       }
     }
+    emitStatus();
   };
 
   const handleTrenchesUpdateChannel = (data: any, channel: string, payload: any, now: number) => {
@@ -1804,8 +1845,8 @@ export function initGmgnWsMonitor(options: {
         chain: tokenData.chain ? String(tokenData.chain) : undefined,
         receivedAtMs: now,
       });
-      emitStatus();
     }
+    emitStatus();
   };
 
   const handleOtherChannel = (_data: any, _channel: string, _payload: any, _now: number) => {
@@ -1861,6 +1902,10 @@ export function initGmgnWsMonitor(options: {
     emitStatus,
     dispose: () => {
       window.clearInterval(statusTimer);
+      if (pendingStatusEmitTimer != null) {
+        window.clearTimeout(pendingStatusEmitTimer);
+        pendingStatusEmitTimer = null;
+      }
       for (const timer of forwardTimerByChannel.values()) {
         window.clearTimeout(timer);
       }
