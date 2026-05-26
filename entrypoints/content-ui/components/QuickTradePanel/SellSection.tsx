@@ -117,7 +117,7 @@ export function SellSection({
   const priorityValue = priorityPresets[priorityPreset] ?? '0';
   const priorityPresetLabel = t(`contentUi.priorityFee.${priorityPreset}`, locale);
   const nativeSymbol = getNativeSymbol(settings?.chainId ?? ChainId.BNB);
-  const showPriorityFee = settings?.chainId !== ChainId.HYPER;
+  const showPriorityFee = settings?.chainId !== ChainId.HYPER && (chainSettings?.submitChannel ?? 'protectRpcs') !== 'protectRpcs';
   const activePreviewPct = (() => {
     const raw = String(sellPresets[activePreviewIndex] ?? '').replace(/,/g, '').trim();
     const value = Number(raw);
@@ -242,7 +242,7 @@ export function SellSection({
             <div
               className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
               title={`${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityValue} ${nativeSymbol}`}
-              onClick={onTogglePriorityFeePreset}
+              onClick={showPriorityFee ? onTogglePriorityFeePreset : undefined}
             >
               <span className="text-[10px] font-semibold">PF</span>
               <span className="whitespace-nowrap">{priorityPresetLabel}</span>

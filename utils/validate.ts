@@ -171,6 +171,7 @@ export function validateSettings(input: Settings): Settings | null {
     ? (input as any).quickBuy2Bnb.trim() || defaults.quickBuy2Bnb || '0.1'
     : defaults.quickBuy2Bnb || '0.1';
   const allowedTradeBaseTokens = ['BNB', 'WBNB', 'USDT', 'USDC'] as const;
+  const allowedSubmitChannels = ['blox', 'blockrazor', 'protectRpcs'] as const;
   const inputTradeBaseToken = typeof (input as any).tradeBaseToken === 'string'
     ? String((input as any).tradeBaseToken).trim().toUpperCase()
     : '';
@@ -336,11 +337,15 @@ export function validateSettings(input: Settings): Settings | null {
         const tradeBaseToken = allowedTradeBaseTokens.includes(chainTradeBaseTokenInput as any)
           ? (chainTradeBaseTokenInput as 'BNB' | 'WBNB' | 'USDT' | 'USDC')
           : ((cDef as any).tradeBaseToken ?? legacyTradeBaseToken ?? 'BNB');
+        const submitChannel = allowedSubmitChannels.includes((cInput as any).submitChannel)
+          ? (cInput as any).submitChannel
+          : ((allowedSubmitChannels.includes((cDef as any).submitChannel) ? (cDef as any).submitChannel : 'protectRpcs') as (typeof allowedSubmitChannels)[number]);
         chains[cid] = {
           rpcUrls: (cInput.rpcUrls || []).map((x) => x.trim()).filter(Boolean),
           protectedRpcUrls,
           protectedRpcUrlsBuy,
           protectedRpcUrlsSell,
+          submitChannel,
           tradeBaseToken,
           antiMev: !!cInput.antiMev && protectedRpcUrls.length > 0,
           gasPreset: ['slow', 'standard', 'fast', 'turbo'].includes(cInput.gasPreset) ? cInput.gasPreset : cDef.gasPreset,

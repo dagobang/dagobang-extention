@@ -3,6 +3,7 @@ import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "./token";
 export type GasPreset = 'slow' | 'standard' | 'fast' | 'turbo';
 export type PriorityFeePreset = 'none' | 'slow' | 'standard' | 'fast';
 export type TradeBaseToken = 'BNB' | 'WBNB' | 'USDT' | 'USDC';
+export type SubmitChannel = 'blox' | 'blockrazor' | 'protectRpcs';
 
 export type ExecutionMode = 'default' | 'turbo';
 export type GasPriceMode = 'fixed' | 'dynamic';
@@ -29,6 +30,7 @@ export type ChainSettings = {
   protectedRpcUrls: string[];
   protectedRpcUrlsBuy?: string[];
   protectedRpcUrlsSell?: string[];
+  submitChannel?: SubmitChannel;
   tradeBaseToken?: TradeBaseToken;
   antiMev: boolean;
   gasPreset: GasPreset;
@@ -417,6 +419,7 @@ export type TxBuyInput = {
   gasPriceGwei?: string;
   priorityFeeNative?: string;
   priorityFeeBnb?: string;
+  submitChannel?: SubmitChannel;
   deadlineSeconds?: number;
   tokenInfo?: TokenInfo;
 };
@@ -435,6 +438,7 @@ export type TxSellInput = {
   gasPreset?: GasPreset;
   priorityFeeNative?: string;
   priorityFeeBnb?: string;
+  submitChannel?: SubmitChannel;
   deadlineSeconds?: number;
   tokenInfo?: TokenInfo;
 };
@@ -758,7 +762,7 @@ export type BgRequest =
   | { type: 'tx:buyWithReceiptAuto'; input: TxBuyInput }
   | { type: 'tx:sell'; input: TxSellInput }
   | { type: 'tx:sellWithReceiptAuto'; input: TxSellInput }
-  | { type: 'tx:approve'; chainId: number; tokenAddress: `0x${string}`; spender: `0x${string}`; amountWei: string; fromAddress?: `0x${string}` }
+  | { type: 'tx:approve'; chainId: number; tokenAddress: `0x${string}`; spender: `0x${string}`; amountWei: string; fromAddress?: `0x${string}`; submitChannel?: SubmitChannel }
   | { type: 'tx:wrapNative'; chainId: number; amountWei: string; fromAddress?: `0x${string}` }
   | { type: 'tx:unwrapWrapped'; chainId: number; amountWei: string; fromAddress?: `0x${string}` }
   | {
@@ -771,7 +775,7 @@ export type BgRequest =
     password: string;
   }
   | { type: 'tx:waitForReceipt'; hash: `0x${string}`; chainId: number }
-  | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo; fromAddress?: `0x${string}` }
+  | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo; fromAddress?: `0x${string}`; submitChannel?: SubmitChannel }
   | { type: 'tx:checkSellAllowanceInsufficient'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo; fromAddress?: `0x${string}` }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
   | { type: 'telegram:test' }

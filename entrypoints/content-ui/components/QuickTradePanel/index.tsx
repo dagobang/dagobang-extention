@@ -1,5 +1,5 @@
 import { useState, type PointerEvent as ReactPointerEvent } from 'react';
-import type { Account, Settings } from '@/types/extention';
+import type { Account, Settings, SubmitChannel } from '@/types/extention';
 import type { SiteInfo } from '@/utils/sites';
 import type { Locale } from '@/utils/i18n';
 import { Header } from './Header';
@@ -8,6 +8,13 @@ import { SellSection } from './SellSection';
 import { Overlays } from './Overlays';
 import { Logo } from '@/components/Logo';
 import { WalletSelectorDropdown } from '@/entrypoints/content-ui/components/WalletSelector';
+
+type SubmitChannelStatusView = {
+  channel: SubmitChannel;
+  configured: boolean;
+  available: boolean;
+  reason: string;
+};
 
 type QuickTradePanelProps = {
   minimized: boolean;
@@ -41,6 +48,11 @@ type QuickTradePanelProps = {
   isUnlocked: boolean;
   onBuy: (amountStr: string, presetIndex: number) => void;
   settings: Settings | null;
+  submitChannel: SubmitChannel;
+  submitChannelStatuses: SubmitChannelStatusView[];
+  onSelectSubmitChannel: (channel: SubmitChannel) => void;
+  prewarmIndicatorState?: 'hidden' | 'warming' | 'done';
+  prewarmIndicatorTitle?: string;
   dynamicGasBasePriceWei: bigint | null;
   onToggleMode: () => void;
   onToggleBuyGas: () => void;
@@ -122,6 +134,11 @@ export function QuickTradePanel({
   isUnlocked,
   onBuy,
   settings,
+  submitChannel,
+  submitChannelStatuses,
+  onSelectSubmitChannel,
+  prewarmIndicatorState,
+  prewarmIndicatorTitle,
   dynamicGasBasePriceWei,
   onToggleMode,
   onToggleBuyGas,
@@ -277,6 +294,11 @@ export function QuickTradePanel({
             onToggleGmgn={onToggleGmgnBuy}
             advancedAutoSell={advancedAutoSell}
             onUpdateAdvancedAutoSell={onUpdateAdvancedAutoSell}
+            submitChannel={submitChannel}
+            submitChannelStatuses={submitChannelStatuses}
+            onSelectSubmitChannel={onSelectSubmitChannel}
+            prewarmIndicatorState={prewarmIndicatorState}
+            prewarmIndicatorTitle={prewarmIndicatorTitle}
           />
 
           <div className="h-px bg-zinc-800 mx-3"></div>

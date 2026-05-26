@@ -35,6 +35,7 @@ const BSC_MAINNET: ChainSettings = {
   ],
   protectedRpcUrlsSell: [
   ],
+  submitChannel: 'blockrazor',
   tradeBaseToken: 'BNB',
   antiMev: true,
   gasPreset: 'standard',
@@ -73,6 +74,7 @@ const ETH_MAINNET: ChainSettings = {
   protectedRpcUrls: [],
   protectedRpcUrlsBuy: [],
   protectedRpcUrlsSell: [],
+  submitChannel: 'protectRpcs',
   tradeBaseToken: 'BNB',
   antiMev: false,
   gasPreset: 'standard',
@@ -111,6 +113,7 @@ const HYPER_MAINNET: ChainSettings = {
   protectedRpcUrls: ['https://hyperliquid.drpc.org',],
   protectedRpcUrlsBuy: [],
   protectedRpcUrlsSell: [],
+  submitChannel: 'protectRpcs',
   tradeBaseToken: 'BNB',
   antiMev: false,
   gasPreset: 'standard',

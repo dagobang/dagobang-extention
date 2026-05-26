@@ -6,6 +6,7 @@ import { isAllowanceLikeText } from '@/utils/txErrorClassify';
 import { isInFlightLimitLikeText } from '@/utils/txErrorClassify';
 import { getChainRuntime } from '@/constants/chains';
 import { RpcReadBalancer } from './rpcReadBalancer';
+import type { SubmitChannel } from '@/types/extention';
 
 export type BroadcastTxVia = 'bloxroute' | 'rpc';
 export type BroadcastTxResult = {
@@ -20,6 +21,7 @@ export type BroadcastTxSide = 'buy' | 'sell';
 export type BroadcastTxOptions = {
   txSide?: BroadcastTxSide;
   priorityFeeBnbOverride?: string;
+  submitChannel?: SubmitChannel;
   signerContext?: {
     account: any;
     chainId: number;
@@ -101,6 +103,35 @@ export class RpcService {
     return null;
   }
 
+  private static isBlockrazorUrl(url: string): boolean {
+    try {
+      return new URL(url).hostname.toLowerCase().includes('blockrazor');
+    } catch {
+      return url.toLowerCase().includes('blockrazor');
+    }
+  }
+
+  private static resolveSubmitChannel(chainConfig: any, requested?: SubmitChannel): SubmitChannel {
+    if (requested === 'blox' || requested === 'blockrazor' || requested === 'protectRpcs') return requested;
+    const raw = chainConfig?.submitChannel;
+    if (raw === 'blox' || raw === 'blockrazor' || raw === 'protectRpcs') return raw;
+    return 'protectRpcs';
+  }
+
+  private static filterObservedUrlsBySubmitChannel(urls: string[], submitChannel: SubmitChannel): string[] {
+    const normalized = this.normalizeUrls(urls);
+    if (submitChannel === 'blockrazor') return normalized.filter((url) => this.isBlockrazorUrl(url));
+    if (submitChannel === 'protectRpcs') return normalized.filter((url) => !this.isBlockrazorUrl(url));
+    return normalized;
+  }
+
+  private static getSubmitProtectedUrls(chainConfig: any, txSide: BroadcastTxSide | undefined, submitChannel: SubmitChannel): string[] {
+    if (submitChannel === 'blox') return [];
+    const candidates = this.getProtectedUrlsForSide(chainConfig, txSide);
+    const filtered = this.filterObservedUrlsBySubmitChannel(candidates, submitChannel);
+    return filtered.length > 0 ? [filtered[0]] : [];
+  }
+
   private static getProtectedUrlsForSide(chainConfig: any, txSide?: BroadcastTxSide): string[] {
     const groups = this.getRpcUrlGroups(chainConfig);
     const sideUrls = txSide === 'buy' ? groups.protectedBuy : txSide === 'sell' ? groups.protectedSell : [];
@@ -149,6 +180,7 @@ export class RpcService {
     chainId: number;
     address: `0x${string}`;
     txSide?: BroadcastTxSide;
+    submitChannel?: SubmitChannel;
     prefer?: 'min' | 'max';
     scope?: 'protected' | 'public' | 'both';
   }): Promise<number | null> {
@@ -156,9 +188,17 @@ export class RpcService {
     const chainConfig = settings.chains[input.chainId];
     if (!chainConfig) return null;
     const urls = this.getUrlsByScope(chainConfig, input.txSide, input.scope ?? 'both', { includeAllProtectedWhenNoSide: true });
-    if (urls.length === 0) return null;
+    const submitChannel = this.resolveSubmitChannel(chainConfig, input.submitChannel);
+    const observedUrls = (input.scope ?? 'both') === 'public'
+      ? urls
+      : [
+          ...this.filterObservedUrlsBySubmitChannel(urls.filter((url) => !chainConfig?.rpcUrls?.includes?.(url)), submitChannel),
+          ...urls.filter((url) => (chainConfig?.rpcUrls ?? []).includes(url)),
+        ];
+    const finalUrls = this.normalizeUrls(observedUrls);
+    if (finalUrls.length === 0) return null;
     const values = await Promise.allSettled(
-      urls.map(async (url) => {
+      finalUrls.map(async (url) => {
         const client = this.getClientForUrl(url, input.chainId);
         return await client.getTransactionCount({ address: input.address, blockTag: 'pending' });
       }),
@@ -171,6 +211,16 @@ export class RpcService {
       nonces.push(Math.floor(nonce));
     }
     if (!nonces.length) return null;
+    console.info('[rpc.nonce.observe]', {
+      chainId: input.chainId,
+      address: input.address,
+      txSide: input.txSide,
+      submitChannel,
+      scope: input.scope ?? 'both',
+      prefer: input.prefer ?? 'max',
+      urls: finalUrls,
+      nonces,
+    });
     if (input.prefer === 'min') return Math.min(...nonces);
     return Math.max(...nonces);
   }
@@ -310,6 +360,19 @@ export class RpcService {
     };
 
     return client;
+  }
+
+  static async getSubmitChannelClient(
+    chainId: number,
+    submitChannel?: SubmitChannel,
+    txSide?: BroadcastTxSide,
+  ): Promise<PublicClient> {
+    const settings = await SettingsService.get();
+    const chainConfig = settings.chains[chainId];
+    const resolvedChannel = this.resolveSubmitChannel(chainConfig, submitChannel);
+    const submitUrls = this.getSubmitProtectedUrls(chainConfig, txSide, resolvedChannel);
+    if (submitUrls.length > 0) return this.getClientForUrl(submitUrls[0], chainId);
+    return await this.getClient(chainId);
   }
 
   static async withBalancedReadClient<T>(input: {
@@ -501,6 +564,7 @@ export class RpcService {
     const chainConfig = settings.chains[targetChainId];
     const runtime = getChainRuntime(targetChainId);
     const txSide = opts?.txSide;
+    const submitChannel = this.resolveSubmitChannel(chainConfig, opts?.submitChannel);
     const bundleSignerContext = opts?.signerContext;
     const priorityFeeBnb =
       txSide
@@ -513,11 +577,27 @@ export class RpcService {
       priorityFeeWei = 0n;
     }
     const bundlePriorityMode = !!txSide && priorityFeeWei > 0n;
-
-    const protectedUrls = this.getProtectedUrlsForSide(chainConfig, txSide);
-    if (protectedUrls.length === 0 && !settings.bloxrouteAuthHeader) {
-      throw new Error('No protected RPC URLs configured (required for broadcasting transactions)');
+    if (submitChannel === 'protectRpcs' && bundlePriorityMode) {
+      throw new Error('protectRpcs does not support priority fee bundle mode. Switch channel to blox or blockrazor, or disable priority fee.');
     }
+
+    const protectedUrls = this.getSubmitProtectedUrls(chainConfig, txSide, submitChannel);
+    const includeBloxroute = submitChannel === 'blox';
+    if (includeBloxroute) {
+      if (!(settings.bloxrouteAuthHeader ?? '').trim()) {
+        throw new Error('Blox auth header not configured');
+      }
+    } else if (protectedUrls.length === 0) {
+      throw new Error(`No protected RPC URL configured for submit channel "${submitChannel}"`);
+    }
+    console.info('[rpc.broadcast.route]', {
+      chainId: targetChainId,
+      txSide,
+      submitChannel,
+      bundlePriorityMode,
+      protectedUrls,
+      includeBloxroute,
+    });
 
     const tryBroadcast = async (urls: string[], includeBloxroute: boolean) => {
       const bundleFailures: string[] = [];
@@ -614,7 +694,17 @@ export class RpcService {
         }
         if (canPrioritizeBloxrouteBundle) {
           try {
-            return await runBloxBundle();
+            const result = await runBloxBundle();
+            console.info('[rpc.broadcast.success]', {
+              chainId: targetChainId,
+              txSide,
+              submitChannel,
+              via: result.via,
+              rpcUrl: result.rpcUrl,
+              isBundle: result.isBundle,
+              mode: 'bundle',
+            });
+            return result;
           } catch (e: any) {
             const detail = extractErrText(e);
             bundleFailures.push(`bloxroute(priority): ${detail}`);
@@ -626,7 +716,17 @@ export class RpcService {
         }
         if (rpcBundlePromises.length > 0) {
           try {
-            return await Promise.any(rpcBundlePromises);
+            const result = await Promise.any(rpcBundlePromises);
+            console.info('[rpc.broadcast.success]', {
+              chainId: targetChainId,
+              txSide,
+              submitChannel,
+              via: result.via,
+              rpcUrl: result.rpcUrl,
+              isBundle: result.isBundle,
+              mode: 'bundle',
+            });
+            return result;
           } catch {
           }
         }
@@ -684,7 +784,17 @@ export class RpcService {
       }
       if (txSide === 'sell') {
         try {
-          return await Promise.any(rpcRawPromises);
+          const result = await Promise.any(rpcRawPromises);
+          console.info('[rpc.broadcast.success]', {
+            chainId: targetChainId,
+            txSide,
+            submitChannel,
+            via: result.via,
+            rpcUrl: result.rpcUrl,
+            isBundle: result.isBundle,
+            mode: 'raw',
+          });
+          return result;
         } catch {
           if (rawInFlightError && willUseBloxroute) {
             try {
@@ -693,7 +803,17 @@ export class RpcService {
                 txSide,
                 detail: rawInFlightError,
               });
-              return await runBloxRaw();
+              const result = await runBloxRaw();
+              console.info('[rpc.broadcast.success]', {
+                chainId: targetChainId,
+                txSide,
+                submitChannel,
+                via: result.via,
+                rpcUrl: result.rpcUrl,
+                isBundle: result.isBundle,
+                mode: 'raw',
+              });
+              return result;
             } catch (e: any) {
               const detail = extractErrText(e);
               rawFailures.push(`bloxroute(inflight-fallback): ${detail}`);
@@ -705,7 +825,17 @@ export class RpcService {
           }
           if (willUseBloxroute) {
             try {
-              return await runBloxRaw();
+              const result = await runBloxRaw();
+              console.info('[rpc.broadcast.success]', {
+                chainId: targetChainId,
+                txSide,
+                submitChannel,
+                via: result.via,
+                rpcUrl: result.rpcUrl,
+                isBundle: result.isBundle,
+                mode: 'raw',
+              });
+              return result;
             } catch (e: any) {
               const detail = extractErrText(e);
               rawFailures.push(`bloxroute: ${detail}`);
@@ -732,7 +862,17 @@ export class RpcService {
         );
       }
       try {
-        return await Promise.any(rawPromises);
+        const result = await Promise.any(rawPromises);
+        console.info('[rpc.broadcast.success]', {
+          chainId: targetChainId,
+          txSide,
+          submitChannel,
+          via: result.via,
+          rpcUrl: result.rpcUrl,
+          isBundle: result.isBundle,
+          mode: 'raw',
+        });
+        return result;
       } catch {
         if (rawInFlightError && willUseBloxroute) {
           try {
@@ -741,7 +881,17 @@ export class RpcService {
               txSide,
               detail: rawInFlightError,
             });
-            return await runBloxRaw();
+            const result = await runBloxRaw();
+            console.info('[rpc.broadcast.success]', {
+              chainId: targetChainId,
+              txSide,
+              submitChannel,
+              via: result.via,
+              rpcUrl: result.rpcUrl,
+              isBundle: result.isBundle,
+              mode: 'raw',
+            });
+            return result;
           } catch (e: any) {
             const detail = extractErrText(e);
             rawFailures.push(`bloxroute(inflight-fallback): ${detail}`);
@@ -753,6 +903,6 @@ export class RpcService {
       }
     };
 
-    return await tryBroadcast(protectedUrls, true);
+    return await tryBroadcast(protectedUrls, includeBloxroute);
   }
 }

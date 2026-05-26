@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { SatelliteDish } from 'lucide-react';
 import { formatUnits, parseUnits, zeroAddress } from 'viem';
-import type { Account, BgGetStateResponse, Settings, TradeSuccessSoundPreset } from '@/types/extention';
+import type { Account, BgGetStateResponse, Settings, SubmitChannel, TradeSuccessSoundPreset } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatBroadcastProvider, formatPriceValue } from '@/utils/format';
@@ -81,6 +81,35 @@ function getTokenInfoWarmFingerprint(tokenInfo: TokenInfo | null | undefined): s
     String(tokenInfo.dex_type || '').toLowerCase(),
     String(tokenInfo.quote_token_address || '').toLowerCase(),
   ].join('|');
+}
+
+type SubmitChannelStatusView = {
+  channel: SubmitChannel;
+  configured: boolean;
+  available: boolean;
+  reason: string;
+};
+
+function isBlockrazorProtectedUrl(raw: string): boolean {
+  try {
+    return new URL(raw).hostname.toLowerCase().includes('blockrazor');
+  } catch {
+    return raw.toLowerCase().includes('blockrazor');
+  }
+}
+
+function collectSubmitChannelUrls(settings: Settings | null | undefined, chainId: number) {
+  const chain = settings?.chains?.[chainId];
+  const allProtected = [
+    ...(chain?.protectedRpcUrls ?? []),
+    ...(((chain as any)?.protectedRpcUrlsBuy ?? []) as string[]),
+    ...(((chain as any)?.protectedRpcUrlsSell ?? []) as string[]),
+  ]
+    .map((url) => String(url || '').trim())
+    .filter(Boolean);
+  const blockrazorUrls = Array.from(new Set(allProtected.filter((url) => isBlockrazorProtectedUrl(url))));
+  const protectUrls = Array.from(new Set(allProtected.filter((url) => !isBlockrazorProtectedUrl(url))));
+  return { blockrazorUrls, protectUrls };
 }
 
 function resolveTradeBaseTokenAddress(settings: Settings | null | undefined, chainIdOverride?: number): `0x${string}` {
@@ -285,10 +314,82 @@ export default function App() {
     () => (settings ? { ...settings, chainId } : null),
     [settings, chainId]
   );
+  const [bloxProbeState, setBloxProbeState] = useState<{
+    checked: boolean;
+    loading: boolean;
+    reachable: boolean;
+    message?: string;
+  }>({ checked: false, loading: false, reachable: false });
+  const [rpcPrewarmState, setRpcPrewarmState] = useState<'idle' | 'warming' | 'done'>('idle');
+  const [turboPrewarmState, setTurboPrewarmState] = useState<'idle' | 'warming' | 'done'>('idle');
+  const submitChannel = (effectiveChainSettings?.submitChannel ?? 'protectRpcs') as SubmitChannel;
+  const submitChannelStatuses = useMemo<SubmitChannelStatusView[]>(() => {
+    const authHeader = String(settings?.bloxrouteAuthHeader ?? '').trim();
+    const { blockrazorUrls, protectUrls } = collectSubmitChannelUrls(settings, chainId);
+    const bloxStatus: SubmitChannelStatusView = {
+      channel: 'blox',
+      configured: !!authHeader,
+      available: !!authHeader && bloxProbeState.reachable,
+      reason: !authHeader
+        ? '未配置'
+        : (bloxProbeState.loading
+          ? '检测中'
+          : (bloxProbeState.reachable
+            ? '已就绪'
+            : (bloxProbeState.checked ? (bloxProbeState.message || '连接异常') : '待检测'))),
+    };
+    const blockrazorReady = blockrazorUrls.length > 0;
+    const protectReady = protectUrls.length > 0;
+    const blockrazorStatus: SubmitChannelStatusView = {
+      channel: 'blockrazor',
+      configured: blockrazorReady,
+      available: blockrazorReady,
+      reason: blockrazorReady ? '已就绪' : '未配置',
+    };
+    const protectStatus: SubmitChannelStatusView = {
+      channel: 'protectRpcs',
+      configured: protectReady,
+      available: protectReady,
+      reason: protectReady ? '已就绪' : '未配置',
+    };
+    return [bloxStatus, blockrazorStatus, protectStatus];
+  }, [settings, chainId, bloxProbeState]);
   const selectedTradeWallets = useMemo(
     () => resolveSelectedTradeWallets(state?.wallet, settings),
     [state?.wallet, settings]
   );
+
+  useEffect(() => {
+    const authHeader = String(settings?.bloxrouteAuthHeader ?? '').trim();
+    if (!authHeader) {
+      setBloxProbeState({ checked: true, loading: false, reachable: false, message: '未配置' });
+      return;
+    }
+    let cancelled = false;
+    setBloxProbeState((prev) => ({ checked: prev.checked, loading: true, reachable: prev.reachable, message: prev.message }));
+    void call({ type: 'bloxroute:probe', authHeader } as const)
+      .then((res) => {
+        if (cancelled) return;
+        setBloxProbeState({
+          checked: true,
+          loading: false,
+          reachable: res.ok && res.status === 'reachable',
+          message: res.ok && res.status === 'reachable' ? undefined : (res.message || '连接异常'),
+        });
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        setBloxProbeState({
+          checked: true,
+          loading: false,
+          reachable: false,
+          message: String(error?.message || error || '连接异常'),
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings?.bloxrouteAuthHeader]);
   const multiWalletBuyMode: 'uniform' | 'child_custom' = settings?.multiWalletBuyMode === 'child_custom' ? 'child_custom' : 'uniform';
   const childWalletBuyPresetAmountsNative: Record<string, string[]> = settings?.childWalletBuyPresetAmountsNative ?? {};
   const childPresetActiveWalletCounts = useMemo<[number, number, number, number]>(() => {
@@ -921,7 +1022,10 @@ export default function App() {
   useEffect(() => {
     if (!settings) return;
     const chain = settings.chains[chainId];
-    if (!chain) return;
+    if (!chain) {
+      setRpcPrewarmState('idle');
+      return;
+    }
     const key = [
       chainId,
       ...(chain.rpcUrls ?? []),
@@ -929,28 +1033,82 @@ export default function App() {
       ...(((chain as any).protectedRpcUrlsBuy ?? []) as string[]),
       ...(((chain as any).protectedRpcUrlsSell ?? []) as string[]),
     ].join('|');
-    if (prewarmedRpcRef.current.has(key)) return;
+    if (prewarmedRpcRef.current.has(key)) {
+      setRpcPrewarmState('done');
+      return;
+    }
+    let cancelled = false;
+    setRpcPrewarmState('warming');
     prewarmedRpcRef.current.add(key);
     void call({
       type: 'rpc:prewarm',
       input: { timeoutMs: 1500 },
-    } as const).catch(() => { });
+    } as const)
+      .catch(() => { })
+      .finally(() => {
+        if (!cancelled) setRpcPrewarmState('done');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [settings, chainId]);
 
   useEffect(() => {
-    if (!isUnlocked) return;
-    if (!address) return;
-    if (!settings) return;
-    if (!tokenAddressNormalized) return;
-    if (!tokenInfo) return;
+    if (!tokenAddressNormalized) {
+      setTurboPrewarmState('idle');
+      return;
+    }
+    if (!isUnlocked || !address || !settings) {
+      setTurboPrewarmState('warming');
+      return;
+    }
+    if (!tokenInfo) {
+      setTurboPrewarmState('warming');
+      return;
+    }
     const key = `${chainId}:${address.toLowerCase()}:${tokenAddressNormalized.toLowerCase()}:${getTokenInfoWarmFingerprint(tokenInfo)}`;
-    if (prewarmedTurboRef.current.has(key)) return;
+    if (prewarmedTurboRef.current.has(key)) {
+      setTurboPrewarmState('done');
+      return;
+    }
+    let cancelled = false;
+    setTurboPrewarmState('warming');
     prewarmedTurboRef.current.add(key);
     void call({
       type: 'trade:prewarmTurbo',
-      input: { chainId, tokenAddress: tokenAddressNormalized, tokenInfo: tokenInfo ?? undefined },
-    } as const).catch(() => { });
-  }, [isUnlocked, address, settings, tokenAddressNormalized, tokenInfo, chainId]);
+      input: { chainId, tokenAddress: tokenAddressNormalized, tokenInfo: tokenInfo ?? undefined, submitChannel },
+    } as const)
+      .catch(() => { })
+      .finally(() => {
+        if (!cancelled) setTurboPrewarmState('done');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isUnlocked, address, settings, tokenAddressNormalized, tokenInfo, chainId, submitChannel]);
+
+  const shouldShowPrewarmIndicator = !!tokenAddressNormalized;
+  const prewarmIndicatorState = useMemo<'hidden' | 'warming' | 'done'>(() => {
+    if (!shouldShowPrewarmIndicator) return 'hidden';
+    const turboExpected = !!isUnlocked && !!address;
+    if (rpcPrewarmState === 'warming') return 'warming';
+    if (turboExpected && turboPrewarmState !== 'done') return 'warming';
+    return 'done';
+  }, [shouldShowPrewarmIndicator, isUnlocked, address, rpcPrewarmState, turboPrewarmState]);
+  const prewarmIndicatorTitle = useMemo(() => {
+    if (!shouldShowPrewarmIndicator) return undefined;
+    if (prewarmIndicatorState === 'warming') {
+      const parts: string[] = [];
+      if (rpcPrewarmState === 'warming') parts.push('RPC');
+      if (!!isUnlocked && !!address && turboPrewarmState !== 'done') {
+        parts.push(tokenInfo ? '交易路由' : '代币信息');
+      }
+      return parts.length
+        ? `预热中：正在查询${parts.join('和')}`
+        : '预热中：正在初始化交易预热';
+    }
+    return '预热完成：当前代币详情页已完成预热';
+  }, [shouldShowPrewarmIndicator, prewarmIndicatorState, rpcPrewarmState, turboPrewarmState, isUnlocked, address, tokenInfo]);
 
   const formattedNativeBalance = useMemo(
     () => formatTokenAmountForDisplay(tradeBaseBalanceWei, tradeBaseTokenMeta.decimals),
@@ -1897,6 +2055,7 @@ export default function App() {
     if (!settings) return undefined;
     const chainSettings = effectiveChainSettings;
     if (!chainSettings) return undefined;
+    if ((chainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs') return '0';
     const selectedPreset = side === 'buy'
       ? ((chainSettings.buyPriorityFeePreset ?? 'standard') as PriorityFeePreset)
       : ((chainSettings.sellPriorityFeePreset ?? 'standard') as PriorityFeePreset);
@@ -2046,6 +2205,7 @@ export default function App() {
               nativeAmountWei: amountWei.toString(),
               baseTokenAddress: tradeBaseTokenAddress,
               fromAddress: walletAddress,
+              submitChannel,
               priorityFeeNative: resolvePriorityFee('buy'),
               tokenInfo: tokenInfo ?? undefined,
             } as const;
@@ -2088,6 +2248,7 @@ export default function App() {
                 tokenAddress: tokenAddressNormalized,
                 tokenInfo: tokenInfo,
                 fromAddress: walletAddress,
+                submitChannel,
               } as const)
             )
           ).catch(() => { });
@@ -2237,6 +2398,7 @@ export default function App() {
               sellPercentBps: isTurbo ? percentBps : undefined,
               expectedTokenInWei: isTurbo ? (pendingBuyTokenMinOutWei ?? undefined) : undefined,
               fromAddress: walletAddress,
+              submitChannel,
               priorityFeeNative: resolvePriorityFee('sell'),
               tokenInfo: tokenInfo ?? undefined
             } as const;
@@ -2342,6 +2504,7 @@ export default function App() {
             tokenAddress: tokenAddressNormalized,
             tokenInfo,
             fromAddress: walletAddress,
+            submitChannel,
           } as const)
         )
       );
@@ -2431,6 +2594,7 @@ export default function App() {
     if (!settings) return;
     const currentChainSettings = effectiveChainSettings;
     if (!currentChainSettings) return;
+    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs') return;
     const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).buyPriorityFeePreset)
       ? (currentChainSettings as any).buyPriorityFeePreset as PriorityFeePreset
       : 'standard';
@@ -2454,6 +2618,7 @@ export default function App() {
     if (!settings) return;
     const currentChainSettings = effectiveChainSettings;
     if (!currentChainSettings) return;
+    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs') return;
     const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).sellPriorityFeePreset)
       ? (currentChainSettings as any).sellPriorityFeePreset as PriorityFeePreset
       : 'standard';
@@ -2491,6 +2656,28 @@ export default function App() {
         },
       },
     }).then(() => refreshAll());
+  };
+
+  const handleSelectSubmitChannel = (next: SubmitChannel) => {
+    if (!settings) return;
+    const currentChainSettings = effectiveChainSettings;
+    if (!currentChainSettings) return;
+    const target = submitChannelStatuses.find((item) => item.channel === next);
+    if (!target?.available) return;
+    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === next) return;
+    void call({
+      type: 'settings:set',
+      settings: {
+        ...settings,
+        chains: {
+          ...settings.chains,
+          [chainId]: {
+            ...currentChainSettings,
+            submitChannel: next,
+          },
+        },
+      },
+    } as const).then(() => refreshAll());
   };
 
   const handleEditToggle = () => {
@@ -2788,6 +2975,11 @@ export default function App() {
               isUnlocked={isUnlocked}
               onBuy={handleBuy}
               settings={effectiveScopedSettings}
+              submitChannel={submitChannel}
+              submitChannelStatuses={submitChannelStatuses}
+              onSelectSubmitChannel={handleSelectSubmitChannel}
+              prewarmIndicatorState={prewarmIndicatorState}
+              prewarmIndicatorTitle={prewarmIndicatorTitle}
               dynamicGasBasePriceWei={dynamicGasBasePriceWei}
               onToggleMode={handleToggleMode}
               onToggleBuyGas={handleToggleBuyGas}

@@ -2,12 +2,20 @@ import { useState } from 'react';
 import { Zap, Fuel, Sliders } from 'lucide-react';
 import { ChainId } from '@/constants/chains/chainId';
 import { getNativeSymbol } from '@/constants/chains/runtime';
-import type { AdvancedAutoSellConfig, Settings } from '@/types/extention';
+import type { AdvancedAutoSellConfig, Settings, SubmitChannel } from '@/types/extention';
 import { SymbolCoinIcon } from '@/components/Coins';
 import { formatPriceValue } from '@/utils/format';
 import { t, type Locale } from '@/utils/i18n';
 import { AutoSell } from './AutoSell';
 import { getDynamicGasPreview } from './useDynamicGasPreview';
+import { ChannelSwitcher } from './ChannelSwitcher';
+
+type SubmitChannelStatusView = {
+  channel: SubmitChannel;
+  configured: boolean;
+  available: boolean;
+  reason: string;
+};
 
 type BuySectionProps = {
   formattedNativeBalance: string;
@@ -41,6 +49,11 @@ type BuySectionProps = {
   onToggleGmgn: () => void;
   advancedAutoSell: AdvancedAutoSellConfig | null;
   onUpdateAdvancedAutoSell: (next: AdvancedAutoSellConfig) => void;
+  submitChannel: SubmitChannel;
+  submitChannelStatuses: SubmitChannelStatusView[];
+  onSelectSubmitChannel: (channel: SubmitChannel) => void;
+  prewarmIndicatorState?: 'hidden' | 'warming' | 'done';
+  prewarmIndicatorTitle?: string;
 };
 
 export function BuySection({
@@ -75,6 +88,11 @@ export function BuySection({
   onToggleGmgn,
   advancedAutoSell,
   onUpdateAdvancedAutoSell,
+  submitChannel,
+  submitChannelStatuses,
+  onSelectSubmitChannel,
+  prewarmIndicatorState,
+  prewarmIndicatorTitle,
 }: BuySectionProps) {
   const [activePreviewIndex, setActivePreviewIndex] = useState(0);
   const buyPresets = isEditing && draftPresets ? draftPresets : (settings?.chains[settings.chainId]?.buyPresets || ['0.01', '0.2', '0.5', '1.0']);
@@ -123,7 +141,7 @@ export function BuySection({
   const priorityValue = priorityPresets[priorityPreset] ?? '0';
   const priorityPresetLabel = t(`contentUi.priorityFee.${priorityPreset}`, locale);
   const nativeSymbol = getNativeSymbol(settings?.chainId ?? ChainId.BNB);
-  const showPriorityFee = settings?.chainId !== ChainId.HYPER;
+  const showPriorityFee = settings?.chainId !== ChainId.HYPER && (chainSettings?.submitChannel ?? 'protectRpcs') !== 'protectRpcs';
   const isHypeBaseSymbol = baseSymbol === 'HYPE' || baseSymbol === 'WHYPE';
 
   const canEditAdvanced = !!settings && !!isUnlocked && !isEditing;
@@ -157,6 +175,15 @@ export function BuySection({
       <div className={`mb-2 flex items-center justify-between ${isAltfunLayout ? 'text-[13px]' : 'text-xs'}`}>
         <div className="flex items-center gap-2">
           <span className={`font-bold text-zinc-200 ${isAltfunLayout ? 'text-[15px]' : 'text-sm'}`}>{t('contentUi.section.buy', locale)}</span>
+          <ChannelSwitcher
+            submitChannel={submitChannel}
+            submitChannelStatuses={submitChannelStatuses}
+            onSelectSubmitChannel={onSelectSubmitChannel}
+            prewarmIndicatorState={prewarmIndicatorState}
+            prewarmIndicatorTitle={prewarmIndicatorTitle}
+            inline
+            menuPlacement="down"
+          />
           {gmgnVisible && (
             <label className="flex items-center gap-1 cursor-pointer select-none">
               <input
@@ -262,7 +289,7 @@ export function BuySection({
             <div
               className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
               title={`${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityValue} ${nativeSymbol}`}
-              onClick={onTogglePriorityFeePreset}
+              onClick={showPriorityFee ? onTogglePriorityFeePreset : undefined}
             >
               <span className="text-[10px] font-semibold">PF</span>
               <span className="whitespace-nowrap">{priorityPresetLabel}</span>

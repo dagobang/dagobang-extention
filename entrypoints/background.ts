@@ -15,7 +15,7 @@ import { createXSniperTrade } from '@/services/xSniper/xSniperTrade';
 import { createTokenSniperTrade } from '@/services/tokenSniper/tokenSniperTrade';
 import { createNewCoinSniperTrade } from '@/services/newCoinSniper/newCoinSniperTrade';
 import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/limitOrders/executor';
-import type { BgRequest, LimitOrderScanStatus } from '@/types/extention';
+import type { BgRequest, LimitOrderScanStatus, SubmitChannel, TxSellInput } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenAltfunService } from '@/services/token/altfun';
@@ -46,6 +46,12 @@ export default defineBackground(() => {
     return { delegated: true, delegateAddress, code: normalized };
   };
   let stateChangeSeq = 0;
+  const resolveTradeSubmitChannel = async (chainId: number, preferred?: SubmitChannel): Promise<SubmitChannel> => {
+    if (preferred === 'blox' || preferred === 'blockrazor' || preferred === 'protectRpcs') return preferred;
+    const settings = await SettingsService.get();
+    const raw = settings?.chains?.[chainId]?.submitChannel;
+    return raw === 'blox' || raw === 'blockrazor' || raw === 'protectRpcs' ? raw : 'protectRpcs';
+  };
   browser.action.onClicked.addListener(async (tab) => {
     try {
       const api = (globalThis as any).chrome?.sidePanel;
@@ -922,6 +928,10 @@ export default defineBackground(() => {
 
           case 'tx:buy': {
             RpcReadBalancer.noteTradeActivity();
+            const input = {
+              ...msg.input,
+              submitChannel: await resolveTradeSubmitChannel(msg.input.chainId, msg.input.submitChannel),
+            } as TxBuyInput;
             const isNonceLikeError = (err: any) => {
               const msg = collectErrorText(err, true);
               return classifyBroadcastError(msg) === 'nonce' || msg.includes('nonce');
@@ -952,7 +962,7 @@ export default defineBackground(() => {
               return { ok: true, ...rsp };
             };
             try {
-              const rsp = await TradeService.buy(msg.input);
+              const rsp = await TradeService.buy(input);
               return await returnBuySuccess(rsp);
             } catch (e: any) {
               let lastErr: any = e;
@@ -968,6 +978,7 @@ export default defineBackground(() => {
                     chainId: msg.input.chainId,
                     fromAddress: msg.input.fromAddress,
                     txSide: 'buy',
+                    submitChannel: input.submitChannel,
                     error: e,
                   });
                   console.info('[nonce.repair][buy.submit.retry]', {
@@ -975,7 +986,7 @@ export default defineBackground(() => {
                     token: msg.input.tokenAddress,
                     refreshedNonce,
                   });
-                  const rsp = await TradeService.buy(msg.input, { forceRefreshHyperState: true });
+                  const rsp = await TradeService.buy(input, { forceRefreshHyperState: true });
                   console.info('[nonce.repair][buy.submit.retry.success]', {
                     chainId: msg.input.chainId,
                     token: msg.input.tokenAddress,
@@ -1001,6 +1012,10 @@ export default defineBackground(() => {
 
           case 'tx:buyWithReceiptAuto': {
             RpcReadBalancer.noteTradeActivity();
+            const input = {
+              ...msg.input,
+              submitChannel: await resolveTradeSubmitChannel(msg.input.chainId, msg.input.submitChannel),
+            } as TxBuyInput;
             const startedAt = Date.now();
             let submittedTxHash: `0x${string}` | null = null;
             let submittedElapsedMs: number | undefined;
@@ -1014,7 +1029,7 @@ export default defineBackground(() => {
             const returnBuySuccess = async (rsp: any) => {
               const txHash = (rsp as any)?.txHash as `0x${string}` | undefined;
               if (txHash) {
-                buyInputByTxHash.set(txHash, { input: msg.input, receiptRetried: false });
+                buyInputByTxHash.set(txHash, { input, receiptRetried: false });
               }
               await broadcastTradeSuccess(
                 {
@@ -1041,7 +1056,7 @@ export default defineBackground(() => {
               };
             };
             try {
-              const rsp = await TradeService.buyWithReceiptAndNonceRecovery(msg.input, {
+              const rsp = await TradeService.buyWithReceiptAndNonceRecovery(input, {
                 maxRetry: 1,
                 timeoutMs: 5_000,
                 onSubmitted: async (ctx) => {
@@ -1116,12 +1131,16 @@ export default defineBackground(() => {
 
           case 'tx:sell': {
             RpcReadBalancer.noteTradeActivity();
+            const input = {
+              ...msg.input,
+              submitChannel: await resolveTradeSubmitChannel(msg.input.chainId, msg.input.submitChannel),
+            } as TxSellInput;
             const isNonceLikeError = (err: any) => {
               const msg = collectErrorText(err, true);
               return classifyBroadcastError(msg) === 'nonce' || msg.includes('nonce');
             };
             try {
-              const rsp = await TradeService.sell(msg.input);
+              const rsp = await TradeService.sell(input);
               broadcastTradeSuccess(
                 {
                   type: 'bg:tradeSuccess',
@@ -1155,6 +1174,7 @@ export default defineBackground(() => {
                     chainId: msg.input.chainId,
                     fromAddress: msg.input.fromAddress,
                     txSide: 'sell',
+                    submitChannel: input.submitChannel,
                     error: e,
                   });
                   console.info('[nonce.repair][sell.submit.retry]', {
@@ -1162,7 +1182,7 @@ export default defineBackground(() => {
                     token: msg.input.tokenAddress,
                     refreshedNonce,
                   });
-                  const rsp = await TradeService.sell(msg.input, { forceRefreshHyperState: true });
+                  const rsp = await TradeService.sell(input, { forceRefreshHyperState: true });
                   console.info('[nonce.repair][sell.submit.retry.success]', {
                     chainId: msg.input.chainId,
                     token: msg.input.tokenAddress,
@@ -1206,13 +1226,17 @@ export default defineBackground(() => {
 
           case 'tx:sellWithReceiptAuto': {
             RpcReadBalancer.noteTradeActivity();
+            const input = {
+              ...msg.input,
+              submitChannel: await resolveTradeSubmitChannel(msg.input.chainId, msg.input.submitChannel),
+            } as TxSellInput;
             const flowId = `bg-sell-auto:${msg.input.chainId}:${msg.input.tokenAddress.toLowerCase()}:${Date.now().toString(36)}`;
             const start = Date.now();
             let submittedTxHash: `0x${string}` | null = null;
             let submittedElapsedMs: number | undefined;
             console.log('[bg.sell.auto][start]', { flowId, chainId: msg.input.chainId, token: msg.input.tokenAddress });
             try {
-              const rsp = await TradeService.sellWithReceiptAndAutoRecovery(msg.input, {
+              const rsp = await TradeService.sellWithReceiptAndAutoRecovery(input, {
                 maxRetry: 1,
                 timeoutMs: 8_000,
                 onSubmitted: async (ctx) => {
@@ -1310,7 +1334,8 @@ export default defineBackground(() => {
           }
 
           case 'tx:approve': {
-            const txHash = await TradeService.approve(msg.chainId, msg.tokenAddress, msg.spender, msg.amountWei, msg.fromAddress);
+            const submitChannel = await resolveTradeSubmitChannel(msg.chainId, msg.submitChannel);
+            const txHash = await TradeService.approve(msg.chainId, msg.tokenAddress, msg.spender, msg.amountWei, msg.fromAddress, submitChannel);
             broadcastStateChange();
             return { ok: true, txHash };
           }
@@ -1328,8 +1353,10 @@ export default defineBackground(() => {
           }
 
           case 'tx:approveMaxForSellIfNeeded': {
+            const submitChannel = await resolveTradeSubmitChannel(msg.chainId, msg.submitChannel);
             const txHash = await TradeService.approveMaxForSellIfNeeded(msg.chainId, msg.tokenAddress, msg.tokenInfo, {
               fromAddress: msg.fromAddress,
+              submitChannel,
             });
             broadcastStateChange();
             return txHash ? { ok: true, txHash } : { ok: true };

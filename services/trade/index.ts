@@ -93,6 +93,7 @@ export class TradeService {
     spender: string;
     maxUint256: bigint;
     client: any;
+    submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs';
   }): Promise<`0x${string}` | null> {
     const allowance = await input.client.readContract({
       address: input.tokenAddress as `0x${string}`,
@@ -106,7 +107,14 @@ export class TradeService {
     const inFlight = this.approveInFlightByKey.get(key);
     if (inFlight) return await inFlight;
 
-    const task = (async () => await this.approve(input.chainId, input.tokenAddress, input.spender, input.maxUint256.toString(), input.owner))();
+    const task = (async () => await this.approve(
+      input.chainId,
+      input.tokenAddress,
+      input.spender,
+      input.maxUint256.toString(),
+      input.owner,
+      input.submitChannel,
+    ))();
     this.approveInFlightByKey.set(key, task);
     try {
       return await task;
@@ -148,7 +156,7 @@ export class TradeService {
     return resolved;
   }
 
-  static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo; fromAddress?: `0x${string}` }) {
+  static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo; fromAddress?: `0x${string}`; submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs' }) {
     const settings = await SettingsService.get();
     const consoleLogsEnabled = settings.ui?.consoleLogsEnabled === true;
     const startedAt = Date.now();
@@ -178,7 +186,7 @@ export class TradeService {
     }
 
     const task = (async () => {
-      await prewarmNonce(client, input.chainId, account.address);
+      await prewarmNonce(client, input.chainId, account.address, { submitChannel: input.submitChannel });
 
       const token = input.tokenAddress;
       const bridgeToken = getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
@@ -272,9 +280,10 @@ export class TradeService {
     chainId: number;
     fromAddress?: `0x${string}`;
     txSide?: 'buy' | 'sell';
+    submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs';
     error?: any;
   }): Promise<number> {
-    const client = await RpcService.getClient(input.chainId);
+    const client = await RpcService.getSubmitChannelClient(input.chainId, input.submitChannel, input.txSide);
     const account = await WalletService.getSigner(input.fromAddress);
     const errorText = typeof input.error === 'string'
       ? input.error.toLowerCase()
@@ -285,6 +294,7 @@ export class TradeService {
     const nextNonce = await prewarmNonce(client, input.chainId, account.address, {
       force: true,
       txSide: input.txSide,
+      submitChannel: input.submitChannel,
       prefer,
       scope,
     });
@@ -797,6 +807,7 @@ export class TradeService {
       gasLimit: 900000n,
       trace,
       txSide: 'buy' as const,
+      submitChannel: input.submitChannel,
       priorityFeeBnbOverride: this.resolvePriorityFeeNative(input),
       feeMode: gasPriceMode,
       gasPreset,
@@ -927,6 +938,7 @@ export class TradeService {
           chainId: input.chainId,
           fromAddress: input.fromAddress,
           txSide: 'buy',
+          submitChannel: input.submitChannel,
           error: e,
         });
       }
@@ -1047,6 +1059,7 @@ export class TradeService {
           chainId: input.chainId,
           fromAddress: input.fromAddress,
           txSide: 'sell',
+          submitChannel: input.submitChannel,
           error: e,
         });
       }
@@ -1063,7 +1076,7 @@ export class TradeService {
     chainId: number,
     tokenAddress: string,
     tokenInfo: TokenInfo,
-    opts?: { extraSpenders?: string[]; fromAddress?: `0x${string}` }
+    opts?: { extraSpenders?: string[]; fromAddress?: `0x${string}`; submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs' }
   ) {
     const routerAddress = DeployAddress[chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
@@ -1096,6 +1109,7 @@ export class TradeService {
         spender,
         maxUint256,
         client,
+        submitChannel: opts?.submitChannel,
       });
       if (txHash) lastTxHash = txHash;
     }
@@ -1109,6 +1123,7 @@ export class TradeService {
         spender: routerAddress,
         maxUint256,
         client,
+        submitChannel: opts?.submitChannel,
       });
       if (txHash) lastTxHash = txHash;
     }
@@ -1490,6 +1505,7 @@ export class TradeService {
         gasLimit: 900000n,
         trace,
         txSide: 'sell' as const,
+        submitChannel: input.submitChannel,
         priorityFeeBnbOverride: this.resolvePriorityFeeNative(input),
         feeMode: gasPriceMode,
         gasPreset,
@@ -1563,6 +1579,7 @@ export class TradeService {
         if (!allowanceCheck.insufficient) throw e;
         const approveTx = await this.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo, {
           extraSpenders: allowanceExtraSpenders,
+          submitChannel: input.submitChannel,
         });
         if (approveTx) {
           console.log('[trade.sell.retry.approve]', { chainId: input.chainId, token: input.tokenAddress, approveTx });
@@ -1596,7 +1613,8 @@ export class TradeService {
     tokenAddress: string,
     spender: string,
     amountWei: string,
-    fromAddress?: `0x${string}`
+    fromAddress?: `0x${string}`,
+    submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs',
   ) {
     const settings = await SettingsService.get();
     const account = await WalletService.getSigner(fromAddress);
@@ -1626,7 +1644,7 @@ export class TradeService {
       0n,
       gasPriceWei,
       chainId,
-      { skipEstimateGas: true, gasLimit: 900000n, feeMode: gasPriceMode, gasPreset }
+      { skipEstimateGas: true, gasLimit: 900000n, feeMode: gasPriceMode, gasPreset, submitChannel }
     );
     return txHash;
   }
@@ -1697,7 +1715,7 @@ export class TradeService {
     value: bigint,
     gasPriceWei: bigint,
     chainId: number,
-    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
+    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs'; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
   ) {
     return await sendTransaction(client, account, to, data, value, gasPriceWei, chainId, opts);
   }
