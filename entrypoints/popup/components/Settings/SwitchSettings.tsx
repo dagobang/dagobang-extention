@@ -8,7 +8,6 @@ export function SwitchSettings({ settingsDraft, setSettingsDraft, tt }: SwitchSe
   const quickCookingEnabled = settingsDraft.ui?.quickCookingEnabled ?? false;
   const newPoolMonitorEnabled = settingsDraft.ui?.newPoolMonitorEnabled ?? false;
   const newCoinSniperEnabled = settingsDraft.ui?.newCoinSniperEnabled ?? false;
-  const visionReportEnabled = settingsDraft.ui?.visionReportEnabled ?? false;
   const consoleLogsEnabled = settingsDraft.ui?.consoleLogsEnabled ?? false;
 
   const updateUi = (patch: Partial<NonNullable<typeof settingsDraft.ui>>) =>
@@ -20,7 +19,6 @@ export function SwitchSettings({ settingsDraft, setSettingsDraft, tt }: SwitchSe
         quickCookingEnabled: s.ui?.quickCookingEnabled ?? false,
         newPoolMonitorEnabled: s.ui?.newPoolMonitorEnabled ?? false,
         newCoinSniperEnabled: s.ui?.newCoinSniperEnabled ?? false,
-        visionReportEnabled: s.ui?.visionReportEnabled ?? false,
         consoleLogsEnabled: s.ui?.consoleLogsEnabled ?? false,
         ...patch,
       },
@@ -73,15 +71,6 @@ export function SwitchSettings({ settingsDraft, setSettingsDraft, tt }: SwitchSe
             type="checkbox"
             checked={newCoinSniperEnabled}
             onChange={(e) => updateUi({ newCoinSniperEnabled: e.target.checked })}
-          />
-        </label>
-
-        <label className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
-          <div className="text-[14px] text-zinc-300">{tt('popup.settings.visionReport')}</div>
-          <input
-            type="checkbox"
-            checked={visionReportEnabled}
-            onChange={(e) => updateUi({ visionReportEnabled: e.target.checked })}
           />
         </label>
 

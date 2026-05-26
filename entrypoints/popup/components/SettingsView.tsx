@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { call } from '@/utils/messaging';
 import type { Settings } from '@/types/extention';
@@ -13,7 +13,6 @@ import { Notification } from './Settings/Notification';
 import { TelegramSettings } from './Settings/TelegramSettings';
 import { SecuritySettings } from './Settings/SecuritySettings';
 import { SwitchSettings } from './Settings/SwitchSettings';
-import { VisionSettings } from './Settings/VisionSettings';
 import type { SettingsSectionId } from './Settings/types';
 
 type SettingsViewProps = {
@@ -66,13 +65,6 @@ export function SettingsView({
   const validated = validateSettings(settingsDraft);
   const protectedRpcUrlsValidated = validated?.chains?.[chainId]?.protectedRpcUrls ?? [];
   const saveDisabled = section === 'network' && protectedRpcUrlsValidated.length === 0 && !settingsDraft.bloxrouteAuthHeader;
-  const visionReportVisible = settingsDraft.ui?.visionReportEnabled ?? false;
-
-  useEffect(() => {
-    if (section === 'vision' && !visionReportVisible) {
-      setSection('root');
-    }
-  }, [section, visionReportVisible]);
 
   const titleBySection: Record<SettingsSectionId, string> = {
     root: tt('popup.settings.title'),
@@ -83,7 +75,6 @@ export function SettingsView({
     telegram: tt('popup.settings.telegram'),
     security: tt('popup.settings.security'),
     ui: tt('popup.settings.ui'),
-    vision: tt('popup.settings.visionReport'),
   };
 
   return (
@@ -108,7 +99,6 @@ export function SettingsView({
           <SettingsHome
             tt={tt}
             busy={busy}
-            visionReportVisible={visionReportVisible}
             onOpenSection={(next) => setSection(next)}
           />
         )}
@@ -117,9 +107,6 @@ export function SettingsView({
         {section === 'gas' && <GasSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'notification' && <Notification settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'telegram' && <TelegramSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
-        {section === 'vision' && visionReportVisible && (
-          <VisionSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />
-        )}
         {section === 'ui' && <SwitchSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'security' && <SecuritySettings tt={tt} busy={busy} withBusy={withBusy} onBackup={onBackup} onRefresh={onRefresh} />}
 

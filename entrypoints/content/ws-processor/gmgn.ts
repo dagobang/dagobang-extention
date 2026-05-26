@@ -258,7 +258,7 @@ const isNewPoolMonitorEnabled = (): boolean => {
 
 const shouldForwardMarketSignal = (): boolean => {
   const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
-  return settings?.ui?.newCoinSniperEnabled === true || settings?.ui?.visionReportEnabled === true;
+  return settings?.ui?.newCoinSniperEnabled === true;
 };
 
 const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';

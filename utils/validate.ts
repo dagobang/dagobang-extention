@@ -195,9 +195,6 @@ export function validateSettings(input: Settings): Settings | null {
   const newCoinSniperEnabled = typeof (input as any)?.ui?.newCoinSniperEnabled === 'boolean'
     ? (input as any).ui.newCoinSniperEnabled
     : ((defaults as any)?.ui?.newCoinSniperEnabled ?? false);
-  const visionReportMenuEnabled = typeof (input as any)?.ui?.visionReportEnabled === 'boolean'
-    ? (input as any).ui.visionReportEnabled
-    : ((defaults as any)?.ui?.visionReportEnabled ?? false);
   const consoleLogsEnabled = typeof (input as any)?.ui?.consoleLogsEnabled === 'boolean'
     ? (input as any).ui.consoleLogsEnabled
     : ((defaults as any)?.ui?.consoleLogsEnabled ?? false);
@@ -437,16 +434,6 @@ export function validateSettings(input: Settings): Settings | null {
   const telegramNotifyQuickTrade = typeof inputTelegram?.notifyQuickTrade === 'boolean'
     ? inputTelegram.notifyQuickTrade
     : (defaultTelegram?.notifyQuickTrade ?? true);
-  const inputVisionReport = (input as any).visionReport as any;
-  const defaultVisionReport = (defaults as any).visionReport as any;
-  const visionReportEnabled = typeof inputVisionReport?.enabled === 'boolean'
-    ? inputVisionReport.enabled
-    : (defaultVisionReport?.enabled ?? true);
-  const visionReportBaseUrlRaw = typeof inputVisionReport?.baseUrl === 'string'
-    ? inputVisionReport.baseUrl.trim()
-    : (typeof defaultVisionReport?.baseUrl === 'string' ? defaultVisionReport.baseUrl.trim() : 'http://127.0.0.1:18081');
-  const visionReportBaseUrl = visionReportBaseUrlRaw || 'http://127.0.0.1:18081';
-
   const inputAutoTrade = (input as any).autoTrade as Partial<AutoTradeConfig> | undefined;
   const defaultAutoTrade = defaults.autoTrade;
   const wsMonitorEnabled = typeof (inputAutoTrade as any)?.wsMonitorEnabled === 'boolean'
@@ -834,7 +821,6 @@ export function validateSettings(input: Settings): Settings | null {
       newPoolMonitorEnabled,
       newCoinSniperEnabled,
       consoleLogsEnabled,
-      visionReportEnabled: visionReportMenuEnabled,
     },
     telegram: {
       enabled: telegramEnabled,
@@ -849,10 +835,6 @@ export function validateSettings(input: Settings): Settings | null {
       notifyTradeRetrying: telegramNotifyTradeRetrying,
       notifyLimitOrder: telegramNotifyLimitOrder,
       notifyQuickTrade: telegramNotifyQuickTrade,
-    },
-    visionReport: {
-      enabled: visionReportEnabled,
-      baseUrl: visionReportBaseUrl,
     },
     tradeSuccessSoundEnabled,
     tradeSuccessSoundPresetBuy,

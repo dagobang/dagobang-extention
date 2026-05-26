@@ -31,7 +31,6 @@ import { createTelegramNotifier } from '@/services/telegram/notifier';
 import { createTelegramController } from '@/services/telegram/controller';
 import { getChainRuntime } from '@/constants/chains';
 import { RpcReadBalancer } from '@/services/rpcReadBalancer';
-import { forwardMarketSignalToVision, forwardTwitterSignalToVision } from '@/services/vision/forwarder';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
@@ -47,10 +46,6 @@ export default defineBackground(() => {
     return { delegated: true, delegateAddress, code: normalized };
   };
   let stateChangeSeq = 0;
-  const scheduleVisionForward = (task: Promise<unknown>) => {
-    void task.catch(() => { });
-  };
-
   browser.action.onClicked.addListener(async (tab) => {
     try {
       const api = (globalThis as any).chrome?.sidePanel;
@@ -1481,27 +1476,19 @@ export default defineBackground(() => {
 
           case 'twitter:signal': {
             const signal = msg.payload as any;
-            const settings = await SettingsService.get();
             const tasks: Array<Promise<unknown>> = [
               (AutoTrade as any).handleTwitterSignal(signal),
               (TokenSniperTrade as any).handleTwitterSignal(signal),
             ];
-            if (settings?.ui?.visionReportEnabled === true) {
-              scheduleVisionForward(forwardTwitterSignalToVision(signal));
-            }
             await Promise.all(tasks);
             return { ok: true };
           }
 
           case 'market:signal': {
             const signal = msg.payload as any;
-            const settings = await SettingsService.get();
             const tasks: Array<Promise<unknown>> = [];
-            if (settings?.ui?.newCoinSniperEnabled === true) {
+            if ((await SettingsService.get())?.ui?.newCoinSniperEnabled === true) {
               tasks.push((NewCoinSniperTrade as any).handleMarketSignal(signal));
-            }
-            if (settings?.ui?.visionReportEnabled === true) {
-              scheduleVisionForward(forwardMarketSignalToVision(signal));
             }
             if (tasks.length > 0) {
               await Promise.all(tasks);

@@ -464,7 +464,6 @@ export function defaultSettings(): Settings {
       quickCookingEnabled: false,
       newPoolMonitorEnabled: false,
       newCoinSniperEnabled: false,
-      visionReportEnabled: false,
       consoleLogsEnabled: false,
     },
     telegram: {
@@ -480,10 +479,6 @@ export function defaultSettings(): Settings {
       notifyTradeRetrying: true,
       notifyLimitOrder: true,
       notifyQuickTrade: true,
-    },
-    visionReport: {
-      enabled: true,
-      baseUrl: 'http://127.0.0.1:18081',
     },
     autoTrade: DEFAULT_AUTOTRADE,
     advancedAutoSell: DEFAULT_ADVANCED_AUTO_SELL,

@@ -302,7 +302,6 @@ export type SwitchSettings = {
   quickCookingEnabled?: boolean;
   newPoolMonitorEnabled?: boolean;
   newCoinSniperEnabled?: boolean;
-  visionReportEnabled?: boolean;
   consoleLogsEnabled?: boolean;
 };
 
@@ -326,11 +325,6 @@ export type TelegramPollStatus = {
   running: boolean;
   lastPollAtMs: number | null;
   lastError?: string | null;
-};
-
-export type VisionReportSettings = {
-  enabled: boolean;
-  baseUrl: string;
 };
 
 export type Settings = {
@@ -360,7 +354,6 @@ export type Settings = {
   tokenBalancePollIntervalMs?: number;
   ui?: SwitchSettings;
   telegram?: TelegramSettings;
-  visionReport?: VisionReportSettings;
   autoTrade: AutoTradeConfig;
   advancedAutoSell: AdvancedAutoSellConfig;
 };
