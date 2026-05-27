@@ -100,7 +100,9 @@ interface GmgnTokenLinkResponse {
 }
 
 export interface GmgnTokenHolding {
+  chain_wallet?: string;
   token_address: string;
+  wallet_address?: string;
   symbol?: string;
   token_symbol?: string;
   balance: string;
@@ -111,9 +113,27 @@ export interface GmgnTokenHolding {
   realized_profit?: string;
   total_profit_pnl?: string | null;
   unrealized_profit_pnl?: string | null;
+  accu_amount?: string;
   accu_cost?: string;
+  bought_cost?: string;
+  sold_income?: string;
   history_bought_cost?: string;
+  history_sold_income?: string;
+  history_realized_profit?: string;
   history_bought_amount?: string;
+  token_basic_stats?: {
+    chain?: string;
+    address?: string;
+    name?: string;
+    symbol?: string;
+    decimals?: number;
+    logo?: string;
+    liquidity?: number | string;
+    total_supply?: string;
+    launchpad?: string;
+    launchpad_platform?: string;
+    [key: string]: any;
+  };
   token?: {
     token_address?: string;
     symbol?: string;
@@ -148,6 +168,15 @@ interface WalletBalancesResponse {
   message: string;
   data: {
     balances: WalletBalance[];
+  };
+}
+
+interface TdWalletsHoldingResponse {
+  code: number;
+  reason: string;
+  message: string;
+  data?: {
+    holdings?: any[];
   };
 }
 
@@ -539,6 +568,39 @@ export class GmgnAPI {
 
     const urlParams = new URLSearchParams(defaultParams);
     return `${baseUrl}${endpoint}?${urlParams.toString()}`;
+  }
+
+  private static async buildApiUrlWithArrayParams(
+    endpoint: string,
+    params: Record<string, string | number | boolean | undefined>,
+    arrayParams: Record<string, string[]>,
+    baseUrl: string = this.BASE_URL
+  ): Promise<string> {
+    const storageParams = await this.getStorageParams();
+    const defaultParams: Record<string, string> = {
+      web_from_source: 'one_click_submit',
+      device_id: storageParams.device_id || '',
+      fp_did: storageParams.fp_did || '',
+      client_id: 'gmgn_web_20260110-9749-5a2a7f8',
+      from_app: 'gmgn',
+      app_ver: '20260110-9749-5a2a7f8',
+      tz_name: 'Asia/Shanghai',
+      tz_offset: '28800',
+      app_lang: 'en-US',
+      os: 'web',
+    };
+    const search = new URLSearchParams(defaultParams);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      search.set(key, String(value));
+    });
+    Object.entries(arrayParams).forEach(([key, values]) => {
+      values.forEach((value) => {
+        if (!value) return;
+        search.append(key, value);
+      });
+    });
+    return `${baseUrl}${endpoint}?${search.toString()}`;
   }
 
   private static async resolveGasGwei(side: 'buy' | 'sell', overrideGasGwei?: string): Promise<string> {
@@ -1207,6 +1269,7 @@ export class GmgnAPI {
                 unrealized_profit_pnl: item?.unrealized_profit_pnl ?? null,
                 accu_cost: String(item?.accu_cost ?? ''),
                 history_bought_cost: String(item?.history_bought_cost ?? ''),
+                history_sold_income: String(item?.history_sold_income ?? ''),
                 history_bought_amount: String(item?.history_bought_amount ?? ''),
                 token: item?.token,
               } as GmgnTokenHolding;
@@ -1309,6 +1372,72 @@ export class GmgnAPI {
       return undefined;
     } catch (error) {
       console.error('Failed to fetch wallet balance:', error);
+      throw error;
+    }
+  }
+
+  public static async getWalletsHolding(chain: string, tokenAddress: string, walletAddresses: string[]): Promise<GmgnTokenHolding[]> {
+    const normalizedWallets = walletAddresses
+      .map((item) => String(item || '').trim().toLowerCase())
+      .filter(Boolean);
+    if (!chain || !tokenAddress || normalizedWallets.length <= 0) return [];
+
+    const endpoint = '/wallets/holding';
+    const url = await this.buildApiUrlWithArrayParams(
+      endpoint,
+      {
+        worker: '0',
+        chain: chain.toLowerCase(),
+        token_address: tokenAddress.toLowerCase(),
+      },
+      { wallet_addresses: normalizedWallets },
+      this.HOLDINGS_BASE_URL
+    );
+    const headers = await this.getHeaders();
+
+    try {
+      const response = await this.makeRequest(url, {
+        method: 'GET',
+        headers
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json() as TdWalletsHoldingResponse;
+      const holdings = Array.isArray(result.data?.holdings) ? result.data!.holdings! : [];
+      return holdings
+        .map((item) => {
+          const tokenAddr = String(item?.token_address || '').toLowerCase();
+          if (!tokenAddr) return null;
+          return {
+            chain_wallet: String(item?.chain_wallet || ''),
+            token_address: tokenAddr,
+            wallet_address: String(item?.wallet_address || '').toLowerCase(),
+            symbol: String(item?.token_basic_stats?.symbol || ''),
+            token_symbol: String(item?.token_basic_stats?.symbol || ''),
+            balance: String(item?.balance ?? '0'),
+            price: String(item?.price ?? ''),
+            usd_value: String(item?.usd_value ?? ''),
+            total_profit: String(item?.total_profit ?? ''),
+            unrealized_profit: String(item?.unrealized_profit ?? ''),
+            realized_profit: String(item?.realized_profit ?? ''),
+            total_profit_pnl: item?.total_profit_pnl ?? null,
+            unrealized_profit_pnl: item?.unrealized_profit_pnl ?? null,
+            accu_amount: String(item?.accu_amount ?? ''),
+            accu_cost: String(item?.accu_cost ?? ''),
+            bought_cost: String(item?.bought_cost ?? ''),
+            sold_income: String(item?.sold_income ?? ''),
+            history_bought_cost: String(item?.history_bought_cost ?? ''),
+            history_sold_income: String(item?.history_sold_income ?? ''),
+            history_realized_profit: String(item?.history_realized_profit ?? ''),
+            history_bought_amount: String(item?.history_bought_amount ?? ''),
+            token_basic_stats: item?.token_basic_stats,
+          } as GmgnTokenHolding;
+        })
+        .filter(Boolean) as GmgnTokenHolding[];
+    } catch (error) {
+      console.error('Failed to fetch wallets holding:', error);
       throw error;
     }
   }

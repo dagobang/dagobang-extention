@@ -6,6 +6,7 @@ import { Header } from './Header';
 import { BuySection } from './BuySection';
 import { SellSection } from './SellSection';
 import { Overlays } from './Overlays';
+import { FooterStats, type FooterHoldingStats } from './FooterStats';
 import { Logo } from '@/components/Logo';
 import { WalletSelectorDropdown } from '@/entrypoints/content-ui/components/WalletSelector';
 
@@ -99,6 +100,7 @@ type QuickTradePanelProps = {
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
   nativeSymbol: string;
+  holdingStats?: FooterHoldingStats | null;
   onOpenWalletSelector?: () => void;
 };
 
@@ -185,6 +187,7 @@ export function QuickTradePanel({
   walletTokenBalancesWei,
   tokenDecimals,
   nativeSymbol,
+  holdingStats,
   onOpenWalletSelector,
 }: QuickTradePanelProps) {
   const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
@@ -301,39 +304,49 @@ export function QuickTradePanel({
             prewarmIndicatorTitle={prewarmIndicatorTitle}
           />
 
-          <div className="h-px bg-zinc-800 mx-3"></div>
+          <div className="mx-3 h-px bg-zinc-800/80" />
 
-          <SellSection
-            formattedTokenBalance={formattedTokenBalance}
-            tokenBalanceAmount={tokenBalanceAmount}
-            tokenSymbol={tokenSymbol}
-            baseSymbol={tradeBaseSymbol}
-            baseTokenPriceUsd={tradeBasePriceUsd}
-            quotedUsdValues={sellPreviewQuotedUsd}
-            quotedBaseAmounts={sellPreviewQuotedBaseAmounts}
-            tokenPriceUsd={tokenPriceUsd}
-            previewRouteLabel={sellPreviewRoute}
-            isAltfunLayout={siteInfo.platform === 'altfun'}
-            busy={busy}
-            isUnlocked={isUnlocked}
-            onSell={onSell}
-            settings={settings}
-            dynamicGasBasePriceWei={dynamicGasBasePriceWei}
-            onToggleMode={onToggleMode}
-            onToggleGas={onToggleSellGas}
-            onTogglePriorityFeePreset={onToggleSellPriorityFeePreset}
-            onToggleSlippage={onToggleSlippage}
-            onApprove={onApprove}
-            isEditing={isEditing}
-            onUpdatePreset={onUpdateSellPreset}
-            draftPresets={draftSellPresets}
-            locale={locale}
-            showHotkeys={showSellHotkeys}
-            hotkeyLabels={['A', 'S', 'D', 'F'] as [string, string, string, string]}
-            gmgnVisible={false}
-            gmgnEnabled={gmgnSellEnabled}
-            onToggleGmgn={onToggleGmgnSell}
-          />
+          <div className="pt-0.5">
+            <SellSection
+              formattedTokenBalance={formattedTokenBalance}
+              tokenBalanceAmount={tokenBalanceAmount}
+              tokenSymbol={tokenSymbol}
+              baseSymbol={tradeBaseSymbol}
+              baseTokenPriceUsd={tradeBasePriceUsd}
+              quotedUsdValues={sellPreviewQuotedUsd}
+              quotedBaseAmounts={sellPreviewQuotedBaseAmounts}
+              tokenPriceUsd={tokenPriceUsd}
+              previewRouteLabel={sellPreviewRoute}
+              isAltfunLayout={siteInfo.platform === 'altfun'}
+              busy={busy}
+              isUnlocked={isUnlocked}
+              onSell={onSell}
+              settings={settings}
+              dynamicGasBasePriceWei={dynamicGasBasePriceWei}
+              onToggleMode={onToggleMode}
+              onToggleGas={onToggleSellGas}
+              onTogglePriorityFeePreset={onToggleSellPriorityFeePreset}
+              onToggleSlippage={onToggleSlippage}
+              onApprove={onApprove}
+              isEditing={isEditing}
+              onUpdatePreset={onUpdateSellPreset}
+              draftPresets={draftSellPresets}
+              locale={locale}
+              showHotkeys={showSellHotkeys}
+              hotkeyLabels={['A', 'S', 'D', 'F'] as [string, string, string, string]}
+              gmgnVisible={false}
+              gmgnEnabled={gmgnSellEnabled}
+              onToggleGmgn={onToggleGmgnSell}
+            />
+          </div>
+
+          {siteInfo.platform === 'gmgn' && (
+            <div className="border-t border-zinc-800/80 bg-zinc-950/10">
+              <FooterStats
+                holdingStats={holdingStats}
+              />
+            </div>
+          )}
 
           <Overlays
             siteInfo={siteInfo}

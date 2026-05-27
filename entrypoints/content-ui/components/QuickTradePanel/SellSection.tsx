@@ -202,19 +202,19 @@ export function SellSection({
       </div>
 
       <div
-        className={`mb-2 rounded-md border border-zinc-800/80 bg-zinc-950/65 text-zinc-400 ${isAltfunLayout ? 'px-3 py-1.5 text-[12px]' : 'px-2.5 py-1 text-[11px]'}`}
+        className={`mb-2 border-y border-rose-500/10 bg-rose-500/[0.04] text-zinc-400 ${isAltfunLayout ? 'px-3 py-1.5 text-[12px]' : 'px-2.5 py-1 text-[11px]'}`}
         title={previewRouteLabel || undefined}
       >
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 truncate">
-            <span className="text-zinc-300">
+            <span className="text-zinc-200">
               {activePreviewPct != null ? `${formatAmount(activePreviewPct)}% ${tokenSymbol || t('contentUi.common.token', locale)}` : '--'}
             </span>
             <span className="ml-1 text-zinc-500">
               ≈ {formatUsd(activePreviewUsd)}
             </span>
           </div>
-          <div className="min-w-0 truncate text-right text-rose-300/90">
+          <div className="min-w-0 truncate text-right text-rose-300/85">
             ≈ {formatAmount(activePreviewBaseAmount)} {baseSymbol}
           </div>
         </div>

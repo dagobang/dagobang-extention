@@ -9,7 +9,7 @@ import { formatBroadcastProvider, formatPriceValue } from '@/utils/format';
 import { parseCurrentUrl, parseCurrentUrlFull, type SiteInfo } from '@/utils/sites';
 import { call } from '@/utils/messaging';
 import { TokenAPI } from '@/hooks/TokenAPI';
-import GmgnAPI from '@/hooks/GmgnAPI';
+import GmgnAPI, { type GmgnTokenHolding } from '@/hooks/GmgnAPI';
 import { getChainIdByName, getNativeSymbol } from '@/constants/chains';
 import { getChainRuntime } from '@/constants/chains/runtime';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
@@ -35,6 +35,19 @@ import { useDynamicGasPreview } from './components/QuickTradePanel/useDynamicGas
 
 type NewPoolMonitorDisplayMode = 'floating' | 'tab';
 type XTradeTab = 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper' | 'xnewpoolmonitor';
+type GmgnHoldingStats = {
+  balanceUsd: number | null;
+  currentBuyUsd: number | null;
+  currentSellUsd: number | null;
+  currentProfitUsd: number | null;
+  currentProfitPnl: number | null;
+  totalBuyUsd: number | null;
+  totalSellUsd: number | null;
+  totalProfitUsd: number | null;
+  totalProfitPnl: number | null;
+  walletsCount: number;
+  updatedAt: number;
+};
 
 const XTRADE_ACTIVE_TAB_STORAGE_KEY = 'dagobang_xtrade_active_tab';
 
@@ -81,6 +94,68 @@ function getTokenInfoWarmFingerprint(tokenInfo: TokenInfo | null | undefined): s
     String(tokenInfo.dex_type || '').toLowerCase(),
     String(tokenInfo.quote_token_address || '').toLowerCase(),
   ].join('|');
+}
+
+function parseGmgnUsdValue(value: unknown): number {
+  const num = Number(value ?? 0);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function parseGmgnNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function resolveHoldingBalanceUsd(detail: GmgnTokenHolding): number {
+  const direct = parseGmgnNullableNumber(detail.usd_value);
+  if (direct != null) return direct;
+  const balance = parseGmgnNullableNumber(detail.balance) ?? 0;
+  const price = parseGmgnNullableNumber(detail.price) ?? 0;
+  return balance * price;
+}
+
+function aggregateGmgnHoldings(details: Array<GmgnTokenHolding | null | undefined>): GmgnHoldingStats | null {
+  const available = details.filter((item): item is GmgnTokenHolding => !!item);
+  if (available.length <= 0) return null;
+
+  const sums = available.reduce((acc, detail) => {
+    const balanceUsd = resolveHoldingBalanceUsd(detail);
+    const currentBuyUsd = parseGmgnUsdValue(detail.accu_cost);
+    const currentSellUsd = parseGmgnUsdValue(detail.sold_income);
+    const realizedProfit = parseGmgnNullableNumber(detail.realized_profit);
+    const currentProfitUsd = parseGmgnNullableNumber(detail.unrealized_profit)
+      ?? ((realizedProfit ?? 0) + balanceUsd - currentBuyUsd);
+    const totalBuyUsd = parseGmgnUsdValue(detail.history_bought_cost);
+    const totalSellUsd = parseGmgnUsdValue(detail.history_sold_income);
+    const totalProfitUsd = parseGmgnNullableNumber(detail.total_profit)
+      ?? ((parseGmgnNullableNumber(detail.history_realized_profit) ?? 0) + balanceUsd - currentBuyUsd);
+
+    acc.balanceUsd += balanceUsd;
+    acc.currentBuyUsd += currentBuyUsd;
+    acc.currentSellUsd += currentSellUsd;
+    acc.currentProfitUsd += currentProfitUsd;
+    acc.totalBuyUsd += totalBuyUsd;
+    acc.totalSellUsd += totalSellUsd;
+    acc.totalProfitUsd += totalProfitUsd;
+    return acc;
+  }, {
+    balanceUsd: 0,
+    currentBuyUsd: 0,
+    currentSellUsd: 0,
+    currentProfitUsd: 0,
+    totalBuyUsd: 0,
+    totalSellUsd: 0,
+    totalProfitUsd: 0,
+  });
+
+  return {
+    ...sums,
+    currentProfitPnl: sums.currentBuyUsd > 0 ? sums.currentProfitUsd / sums.currentBuyUsd : null,
+    totalProfitPnl: sums.totalBuyUsd > 0 ? sums.totalProfitUsd / sums.totalBuyUsd : null,
+    walletsCount: available.length,
+    updatedAt: Date.now(),
+  };
 }
 
 type SubmitChannelStatusView = {
@@ -237,6 +312,8 @@ export default function App() {
   const [sellPreviewQuotedBaseAmounts, setSellPreviewQuotedBaseAmounts] = useState<Array<number | null>>([null, null, null, null]);
   const [marketCapDisplay, setMarketCapDisplay] = useState<string | null>(null);
   const [liquidityDisplay, setLiquidityDisplay] = useState<string | null>(null);
+  const [gmgnHoldingStats, setGmgnHoldingStats] = useState<GmgnHoldingStats | null>(null);
+  const [gmgnHoldingPollingEnabled, setGmgnHoldingPollingEnabled] = useState(false);
   const [pendingQuickBuy, setPendingQuickBuy] = useState<{ tokenAddress: string; amount: string } | null>(null);
   const [cookingSiteInfoOverride, setCookingSiteInfoOverride] = useState<SiteInfo | null>(null);
   const [cookingTokenInfoOverride, setCookingTokenInfoOverride] = useState<TokenInfo | null>(null);
@@ -259,6 +336,7 @@ export default function App() {
   const prewarmedRpcRef = useRef<Set<string>>(new Set());
   const fastPollingRef = useRef<any>(null);
   const tokenRefreshSeqRef = useRef(0);
+  const gmgnHoldingRefreshSeqRef = useRef(0);
   const bgStateChangedSeqRef = useRef(0);
   const bgStateChangedHandledAtRef = useRef(0);
   const bgStateChangedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -357,6 +435,15 @@ export default function App() {
   const selectedTradeWallets = useMemo(
     () => resolveSelectedTradeWallets(state?.wallet, settings),
     [state?.wallet, settings]
+  );
+  const gmgnHoldingWallets = useMemo(() => {
+    if (selectedTradeWallets.length > 0) return selectedTradeWallets;
+    const fallback = normalizeAddr(String(address || ''));
+    return fallback ? [fallback] : [];
+  }, [selectedTradeWallets, address]);
+  const gmgnHoldingWalletsKey = useMemo(
+    () => gmgnHoldingWallets.map((item) => item.toLowerCase()).sort().join(','),
+    [gmgnHoldingWallets]
   );
 
   useEffect(() => {
@@ -1566,6 +1653,32 @@ export default function App() {
     }
   }
 
+  async function refreshGmgnHoldingStats(force = false, source = 'unknown') {
+    const seq = ++gmgnHoldingRefreshSeqRef.current;
+    if (document.hidden && !force) return;
+    if (siteInfo?.platform !== 'gmgn' || !tokenAddressNormalized || gmgnHoldingWallets.length <= 0) {
+      setGmgnHoldingStats(null);
+      setGmgnHoldingPollingEnabled(false);
+      return;
+    }
+
+    try {
+      const holdings = await GmgnAPI.getWalletsHolding(siteInfo.chain, tokenAddressNormalized, gmgnHoldingWallets);
+      if (seq !== gmgnHoldingRefreshSeqRef.current) return;
+      const nextStats = aggregateGmgnHoldings(holdings);
+      setGmgnHoldingStats(nextStats);
+      setGmgnHoldingPollingEnabled(holdings.some((item) => (parseGmgnNullableNumber(item.balance) ?? 0) > 0));
+    } catch (e: any) {
+      if (seq !== gmgnHoldingRefreshSeqRef.current) return;
+      console.warn('[quickTrade.gmgnHolding.refresh.failed]', {
+        source,
+        error: String(e?.message || e || ''),
+      });
+      setGmgnHoldingStats(null);
+      setGmgnHoldingPollingEnabled(false);
+    }
+  }
+
   useEffect(() => {
     const timer = window.setInterval(() => {
       emitStateChangeProbe();
@@ -1577,6 +1690,30 @@ export default function App() {
     if (!siteInfo || !shouldKeepTokenWarm) return;
     void refreshToken(true, false, 'tokenConsumers:visible');
   }, [siteInfo, shouldKeepTokenWarm]);
+
+  useEffect(() => {
+    if (siteInfo?.platform !== 'gmgn' || !tokenAddressNormalized || gmgnHoldingWallets.length <= 0) {
+      setGmgnHoldingStats(null);
+      setGmgnHoldingPollingEnabled(false);
+      return;
+    }
+    void refreshGmgnHoldingStats(true, 'gmgnHolding:init');
+  }, [siteInfo?.platform, siteInfo?.chain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
+
+  useEffect(() => {
+    if (!gmgnHoldingPollingEnabled) return;
+    if (siteInfo?.platform !== 'gmgn' || !tokenAddressNormalized || gmgnHoldingWallets.length <= 0) return;
+    const timer = setInterval(() => {
+      void refreshGmgnHoldingStats(false, 'interval:gmgnHolding');
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [gmgnHoldingPollingEnabled, siteInfo?.platform, siteInfo?.chain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
+
+  useEffect(() => {
+    if (!txHash) return;
+    if (siteInfo?.platform !== 'gmgn' || !tokenAddressNormalized || gmgnHoldingWallets.length <= 0) return;
+    void refreshGmgnHoldingStats(true, 'txHash');
+  }, [txHash, siteInfo?.platform, siteInfo?.chain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
 
   useEffect(() => {
     if (!siteInfo) return;
@@ -2965,6 +3102,7 @@ export default function App() {
               walletTokenBalancesWei={walletTokenBalancesWei}
               tokenDecimals={tokenDecimals}
               nativeSymbol={nativeSymbol}
+              holdingStats={gmgnHoldingStats}
               onOpenWalletSelector={handleWalletSelectorOpen}
               formattedNativeBalance={formattedNativeBalance}
               tradeBaseSymbol={tradeBaseTokenSymbol}
