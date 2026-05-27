@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Zap, Fuel, Sliders } from 'lucide-react';
+import { Zap, Fuel, Sliders, Settings2 } from 'lucide-react';
 import { ChainId } from '@/constants/chains/chainId';
 import { getNativeSymbol } from '@/constants/chains/runtime';
-import type { AdvancedAutoSellConfig, Settings, SubmitChannel } from '@/types/extention';
+import type { AdvancedAutoSellConfig, QuickBuyPresetOverride, Settings, SubmitChannel } from '@/types/extention';
 import { SymbolCoinIcon } from '@/components/Coins';
 import { formatPriceValue } from '@/utils/format';
 import { t, type Locale } from '@/utils/i18n';
@@ -39,6 +39,11 @@ type BuySectionProps = {
   isEditing: boolean;
   onUpdatePreset: (index: number, val: string) => void;
   draftPresets?: string[];
+  quickBuyAdvancedEnabled: boolean;
+  quickBuyPresetOverrides: QuickBuyPresetOverride[];
+  onToggleQuickBuyAdvanced: () => void;
+  onToggleQuickBuyPresetGas: (presetIndex: number) => void;
+  onToggleQuickBuyPresetPriorityFee: (presetIndex: number) => void;
   locale: Locale;
   showHotkeys?: boolean;
   hotkeyLabels?: [string, string, string, string];
@@ -78,6 +83,11 @@ export function BuySection({
   isEditing,
   onUpdatePreset,
   draftPresets,
+  quickBuyAdvancedEnabled,
+  quickBuyPresetOverrides,
+  onToggleQuickBuyAdvanced,
+  onToggleQuickBuyPresetGas,
+  onToggleQuickBuyPresetPriorityFee,
   locale,
   showHotkeys,
   hotkeyLabels,
@@ -111,9 +121,6 @@ export function BuySection({
   const chainSettings = settings?.chains[settings.chainId];
   const gasPreset = chainSettings?.buyGasPreset ?? chainSettings?.gasPreset ?? 'standard';
   const defaultGasGwei = { slow: '0.06', standard: '0.12', fast: '1', turbo: '5' } as const;
-  const gasValue =
-    (chainSettings?.buyGasGwei && chainSettings.buyGasGwei[gasPreset]) ||
-    defaultGasGwei[gasPreset as keyof typeof defaultGasGwei];
   const isDynamicGas = chainSettings?.gasPriceMode === 'dynamic';
   const dynamicMultiplierMap: Record<string, string> = {
     slow: '1.0x',
@@ -125,10 +132,6 @@ export function BuySection({
   const gasLabel = isDynamicGas
     ? `${t(`popup.settings.gas.${gasPreset}`, locale)} ${dynamicMultiplierLabel}`
     : t(`popup.settings.gas.${gasPreset}`, locale);
-  const dynamicGasPreview = getDynamicGasPreview(dynamicGasBasePriceWei, gasPreset);
-  const gasTitle = isDynamicGas
-    ? `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} (Dynamic)\n当前 gasPrice: ${dynamicGasPreview.baseGasPriceGweiText} Gwei\n倍率后 gasPrice: ${dynamicGasPreview.multipliedGasPriceGweiText} Gwei`
-    : `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} ${gasValue} gwei`;
   const priorityPresets = chainSettings?.buyPriorityFeePresets ?? {
     none: '0',
     slow: '0.000025',
@@ -138,11 +141,31 @@ export function BuySection({
   const priorityPreset = (['none', 'slow', 'standard', 'fast'] as const).includes((chainSettings as any)?.buyPriorityFeePreset)
     ? (chainSettings as any).buyPriorityFeePreset as 'none' | 'slow' | 'standard' | 'fast'
     : 'standard';
-  const priorityValue = priorityPresets[priorityPreset] ?? '0';
   const priorityPresetLabel = t(`contentUi.priorityFee.${priorityPreset}`, locale);
   const nativeSymbol = getNativeSymbol(settings?.chainId ?? ChainId.BNB);
   const showPriorityFee = settings?.chainId !== ChainId.HYPER && (chainSettings?.submitChannel ?? 'protectRpcs') !== 'protectRpcs';
   const isHypeBaseSymbol = baseSymbol === 'HYPE' || baseSymbol === 'WHYPE';
+  const activePresetOverride = quickBuyAdvancedEnabled ? quickBuyPresetOverrides[activePreviewIndex] ?? {} : {};
+  const displayGasPreset = activePresetOverride.gasPreset ?? gasPreset;
+  const displayDynamicMultiplierLabel = dynamicMultiplierMap[displayGasPreset] ?? '1.0x';
+  const displayGasLabel = isDynamicGas
+    ? `${t(`popup.settings.gas.${displayGasPreset}`, locale)} ${displayDynamicMultiplierLabel}`
+    : t(`popup.settings.gas.${displayGasPreset}`, locale);
+  const activeHasGasOverride = quickBuyAdvancedEnabled && !!activePresetOverride.gasPreset;
+  const activeHasPriorityOverride = quickBuyAdvancedEnabled && !!activePresetOverride.priorityFeePreset;
+  const globalDynamicGasPreview = getDynamicGasPreview(dynamicGasBasePriceWei, gasPreset);
+  const gasTitle = isDynamicGas
+    ? `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} (Dynamic)\n当前 gasPrice: ${globalDynamicGasPreview.baseGasPriceGweiText} Gwei\n倍率后 gasPrice: ${globalDynamicGasPreview.multipliedGasPriceGweiText} Gwei`
+    : `${t('contentUi.slippage.toggleGas', locale)}: ${gasLabel} ${defaultGasGwei[gasPreset as keyof typeof defaultGasGwei]} gwei`;
+  const mainGasTitle = activeHasGasOverride
+    ? `${gasTitle}\n当前按钮覆盖: ${displayGasLabel}`
+    : gasTitle;
+  const displayPriorityPreset = activePresetOverride.priorityFeePreset ?? priorityPreset;
+  const displayPriorityValue = priorityPresets[displayPriorityPreset] ?? '0';
+  const displayPriorityPresetLabel = t(`contentUi.priorityFee.${displayPriorityPreset}`, locale);
+  const mainPriorityTitle = activeHasPriorityOverride
+    ? `${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityPresets[priorityPreset] ?? '0'} ${nativeSymbol}\n当前按钮覆盖: ${displayPriorityPresetLabel} ${displayPriorityValue} ${nativeSymbol}`
+    : `${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityPresets[priorityPreset] ?? '0'} ${nativeSymbol}`;
 
   const canEditAdvanced = !!settings && !!isUnlocked && !isEditing;
   const activePreviewAmount = (() => {
@@ -223,33 +246,112 @@ export function BuySection({
               onChange={(e) => onUpdatePreset(idx, e.target.value)}
             />
           ) : (
-            <button
-              key={idx}
-              disabled={busy || !isUnlocked}
-              onClick={() => onBuy(amt, idx)}
-              onMouseEnter={() => setActivePreviewIndex(idx)}
-              onFocus={() => setActivePreviewIndex(idx)}
-              className={`relative rounded border border-emerald-500/30 bg-emerald-500/10 text-center font-medium text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isAltfunLayout ? 'py-2 text-[13px]' : 'py-1.5 text-xs'}`}
-              title={childPresetTooltipTexts?.[idx]}
-            >
-              {!!childPresetActiveWalletCounts?.[idx] && childPresetActiveWalletCounts[idx] > 0 && (
-                <span className="absolute left-1 top-0.5 rounded-full bg-emerald-400/20 px-1 text-[10px] leading-3 text-emerald-300">
-                  {childPresetActiveWalletCounts[idx]}
-                </span>
-              )}
-              {showHotkeys && hotkeyLabels?.[idx] && (
-                <span className="absolute right-1 top-0.5 text-[12px] font-semibold text-zinc-300">
-                  {hotkeyLabels[idx]}
-                </span>
-              )}
-              {amt}
-            </button>
+            (() => {
+              const override = quickBuyPresetOverrides[idx] ?? {};
+              const hasGasOverride = quickBuyAdvancedEnabled && !!override.gasPreset;
+              const hasPriorityOverride = quickBuyAdvancedEnabled && !!override.priorityFeePreset;
+              const hasAdvancedOverride = hasGasOverride || hasPriorityOverride;
+              const overrideTitle = hasAdvancedOverride
+                ? [
+                    '高级配置',
+                    hasGasOverride ? `Gas: ${t(`popup.settings.gas.${override.gasPreset!}`, locale)}` : '',
+                    hasPriorityOverride ? `PF: ${t(`contentUi.priorityFee.${override.priorityFeePreset!}`, locale)}` : '',
+                  ].filter(Boolean).join('\n')
+                : '';
+              const buttonTitle = [childPresetTooltipTexts?.[idx], overrideTitle].filter(Boolean).join('\n');
+              return (
+                <button
+                  key={idx}
+                  disabled={busy || !isUnlocked}
+                  onClick={() => onBuy(amt, idx)}
+                  onMouseEnter={() => setActivePreviewIndex(idx)}
+                  onFocus={() => setActivePreviewIndex(idx)}
+                  className={`relative rounded border border-emerald-500/30 bg-emerald-500/10 text-center font-medium text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isAltfunLayout ? 'py-2 text-[13px]' : 'py-1.5 text-xs'}`}
+                  title={buttonTitle || undefined}
+                >
+                  {!!childPresetActiveWalletCounts?.[idx] && childPresetActiveWalletCounts[idx] > 0 && (
+                    <span className="absolute left-1 top-0.5 rounded-full bg-emerald-400/20 px-1 text-[10px] leading-3 text-emerald-300">
+                      {childPresetActiveWalletCounts[idx]}
+                    </span>
+                  )}
+                  {showHotkeys && hotkeyLabels?.[idx] && (
+                    <span className={`absolute top-0.5 text-[12px] font-semibold text-zinc-300 ${hasAdvancedOverride ? 'right-5' : 'right-1'}`}>
+                      {hotkeyLabels[idx]}
+                    </span>
+                  )}
+                  {hasAdvancedOverride && (
+                    <span
+                      className="absolute right-1 top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-zinc-800/80 text-zinc-400"
+                      title={overrideTitle}
+                    >
+                      <Settings2 size={9} />
+                    </span>
+                  )}
+                  {amt}
+                </button>
+              );
+            })()
           )
         ))}
       </div>
 
+      {isEditing && (
+        <div className="mb-2 space-y-2 rounded-md border border-zinc-800/70 bg-zinc-950/35 px-2.5 py-2">
+          <button
+            type="button"
+            className={`inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
+              quickBuyAdvancedEnabled
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                : 'border-zinc-700 bg-zinc-900/70 text-zinc-400'
+            }`}
+            onClick={onToggleQuickBuyAdvanced}
+          >
+            <span>快捷高级</span>
+            <span>{quickBuyAdvancedEnabled ? '开' : '关'}</span>
+          </button>
+
+          {quickBuyAdvancedEnabled && (
+            <div className="grid grid-cols-4 gap-2">
+              {buyPresets.map((_, idx) => {
+                const override = quickBuyPresetOverrides[idx] ?? {};
+                const overrideGasPreset = override.gasPreset;
+                const overridePriorityPreset = override.priorityFeePreset;
+                const gasText = overrideGasPreset ? t(`popup.settings.gas.${overrideGasPreset}`, locale) : '默认';
+                const priorityText = overridePriorityPreset ? t(`contentUi.priorityFee.${overridePriorityPreset}`, locale) : '默认';
+                return (
+                  <div key={`adv-${idx}`} className="rounded border border-zinc-800/80 bg-zinc-900/50 p-1.5 text-[10px]">
+                    <div className="mb-1 text-center font-semibold text-zinc-500">{['Q', 'W', 'E', 'R'][idx]}</div>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between rounded px-1 py-0.5 text-zinc-300 hover:bg-zinc-800/70"
+                      onClick={() => onToggleQuickBuyPresetGas(idx)}
+                      title="点击切换该按钮 Gas"
+                    >
+                      <span className="text-zinc-500">Gas</span>
+                      <span className="truncate text-emerald-300">{gasText}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`mt-1 flex w-full items-center justify-between rounded px-1 py-0.5 hover:bg-zinc-800/70 ${showPriorityFee ? 'text-zinc-300' : 'text-zinc-600'}`}
+                      onClick={() => {
+                        if (!showPriorityFee) return;
+                        onToggleQuickBuyPresetPriorityFee(idx);
+                      }}
+                      title={showPriorityFee ? '点击切换该按钮贿赂费' : '当前渠道不支持贿赂费'}
+                    >
+                      <span className="text-zinc-500">PF</span>
+                      <span className={`truncate ${showPriorityFee ? 'text-emerald-300' : 'text-zinc-600'}`}>{showPriorityFee ? priorityText : '-'}</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       <div
-        className={`mb-2 border-y border-emerald-500/10 bg-emerald-500/[0.04] text-zinc-400 ${isAltfunLayout ? 'px-3 py-1.5 text-[12px]' : 'px-2.5 py-1 text-[11px]'}`}
+        className={`mb-2 border-emerald-500/10 bg-emerald-500/[0.04] text-zinc-400 ${isAltfunLayout ? 'px-3 py-1.5 text-[12px]' : 'px-2.5 py-1 text-[11px]'}`}
         title={previewRouteLabel || undefined}
       >
         <div className="flex items-center justify-between gap-3">
@@ -279,7 +381,7 @@ export function BuySection({
           </div>
           <div
             className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-            title={gasTitle}
+            title={mainGasTitle}
             onClick={onToggleGas}
           >
             <Fuel size={10} />
@@ -288,7 +390,7 @@ export function BuySection({
           {showPriorityFee ? (
             <div
               className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-              title={`${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityValue} ${nativeSymbol}`}
+              title={mainPriorityTitle}
               onClick={showPriorityFee ? onTogglePriorityFeePreset : undefined}
             >
               <span className="text-[10px] font-semibold">PF</span>

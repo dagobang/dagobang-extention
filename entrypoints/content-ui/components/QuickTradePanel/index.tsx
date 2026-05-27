@@ -1,5 +1,5 @@
 import { useState, type PointerEvent as ReactPointerEvent } from 'react';
-import type { Account, Settings, SubmitChannel } from '@/types/extention';
+import type { Account, QuickBuyPresetOverride, Settings, SubmitChannel } from '@/types/extention';
 import type { SiteInfo } from '@/utils/sites';
 import type { Locale } from '@/utils/i18n';
 import { Header } from './Header';
@@ -63,6 +63,11 @@ type QuickTradePanelProps = {
   onToggleSlippage: () => void;
   onUpdateBuyPreset: (idx: number, value: string) => void;
   draftBuyPresets: string[];
+  quickBuyAdvancedEnabled: boolean;
+  quickBuyPresetOverrides: QuickBuyPresetOverride[];
+  onToggleQuickBuyAdvanced: () => void;
+  onToggleQuickBuyPresetGas: (presetIndex: number) => void;
+  onToggleQuickBuyPresetPriorityFee: (presetIndex: number) => void;
   onUpdateSellPreset: (idx: number, value: string) => void;
   draftSellPresets: string[];
   locale: Locale;
@@ -150,6 +155,11 @@ export function QuickTradePanel({
   onToggleSlippage,
   onUpdateBuyPreset,
   draftBuyPresets,
+  quickBuyAdvancedEnabled,
+  quickBuyPresetOverrides,
+  onToggleQuickBuyAdvanced,
+  onToggleQuickBuyPresetGas,
+  onToggleQuickBuyPresetPriorityFee,
   onUpdateSellPreset,
   draftSellPresets,
   locale,
@@ -287,6 +297,11 @@ export function QuickTradePanel({
             isEditing={isEditing}
             onUpdatePreset={onUpdateBuyPreset}
             draftPresets={draftBuyPresets}
+            quickBuyAdvancedEnabled={quickBuyAdvancedEnabled}
+            quickBuyPresetOverrides={quickBuyPresetOverrides}
+            onToggleQuickBuyAdvanced={onToggleQuickBuyAdvanced}
+            onToggleQuickBuyPresetGas={onToggleQuickBuyPresetGas}
+            onToggleQuickBuyPresetPriorityFee={onToggleQuickBuyPresetPriorityFee}
             locale={locale}
             showHotkeys={showBuyHotkeys}
             hotkeyLabels={['Q', 'W', 'E', 'R'] as [string, string, string, string]}

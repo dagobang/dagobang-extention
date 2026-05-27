@@ -25,6 +25,11 @@ export type PriorityFeePresetConfig = {
   fast: string;
 };
 
+export type QuickBuyPresetOverride = {
+  gasPreset?: GasPreset;
+  priorityFeePreset?: PriorityFeePreset;
+};
+
 export type ChainSettings = {
   rpcUrls: string[];
   protectedRpcUrls: string[];
@@ -49,6 +54,8 @@ export type ChainSettings = {
   sellPriorityFeePreset?: PriorityFeePreset;
   buyPriorityFeePresets?: PriorityFeePresetConfig;
   sellPriorityFeePresets?: PriorityFeePresetConfig;
+  quickBuyAdvancedEnabled?: boolean;
+  quickBuyPresetOverrides?: QuickBuyPresetOverride[];
   bloxrouteBuyEnabled?: boolean;
   bloxrouteSellEnabled?: boolean;
 };

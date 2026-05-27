@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { SatelliteDish } from 'lucide-react';
 import { formatUnits, parseUnits, zeroAddress } from 'viem';
-import type { Account, BgGetStateResponse, Settings, SubmitChannel, TradeSuccessSoundPreset } from '@/types/extention';
+import type { Account, BgGetStateResponse, QuickBuyPresetOverride, Settings, SubmitChannel, TradeSuccessSoundPreset } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatBroadcastProvider, formatPriceValue } from '@/utils/format';
@@ -76,6 +76,7 @@ const DEFAULT_PRIORITY_FEE_PRESET_VALUES = {
   standard: '0.00004',
   fast: '0.0001',
 } as const;
+const DEFAULT_QUICK_BUY_PRESET_OVERRIDES: QuickBuyPresetOverride[] = [{}, {}, {}, {}];
 const STATE_CHANGE_PROBE_ENABLED_KEY = 'dagobang_state_change_probe_enabled_v1';
 const STATE_CHANGE_PROBE_LOG_INTERVAL_MS = 30_000;
 
@@ -83,6 +84,20 @@ function normalizeAddr(addr: string): `0x${string}` | null {
   const trimmed = typeof addr === 'string' ? addr.trim() : '';
   if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return null;
   return trimmed as `0x${string}`;
+}
+
+function normalizeQuickBuyPresetOverrides(raw: QuickBuyPresetOverride[] | null | undefined): QuickBuyPresetOverride[] {
+  return Array.from({ length: 4 }, (_, index) => {
+    const item = raw?.[index];
+    const gasPreset = item?.gasPreset;
+    const priorityFeePreset = item?.priorityFeePreset;
+    return {
+      gasPreset: gasPreset === 'slow' || gasPreset === 'standard' || gasPreset === 'fast' || gasPreset === 'turbo' ? gasPreset : undefined,
+      priorityFeePreset: priorityFeePreset === 'none' || priorityFeePreset === 'slow' || priorityFeePreset === 'standard' || priorityFeePreset === 'fast'
+        ? priorityFeePreset
+        : undefined,
+    };
+  });
 }
 
 function getTokenInfoWarmFingerprint(tokenInfo: TokenInfo | null | undefined): string {
@@ -303,6 +318,8 @@ export default function App() {
   const [isEditing, setIsEditing] = useState(false);
   const [draftBuyPresets, setDraftBuyPresets] = useState<string[]>([]);
   const [draftSellPresets, setDraftSellPresets] = useState<string[]>([]);
+  const [draftQuickBuyAdvancedEnabled, setDraftQuickBuyAdvancedEnabled] = useState(false);
+  const [draftQuickBuyPresetOverrides, setDraftQuickBuyPresetOverrides] = useState<QuickBuyPresetOverride[]>(DEFAULT_QUICK_BUY_PRESET_OVERRIDES);
   const [tokenStat, setTokenStat] = useState<TokenStat | null>(null);
   const [tokenPriceUsd, setTokenPriceUsd] = useState<number | null>(null);
   const [tradeBasePriceUsd, setTradeBasePriceUsd] = useState<number | null>(null);
@@ -864,6 +881,8 @@ export default function App() {
       const quickBuyChainId = getChainIdByName(site.chain) || 56;
       setDraftBuyPresets(settings.chains[quickBuyChainId]?.buyPresets || ['0.01', '0.2', '0.5', '1.0']);
       setDraftSellPresets(settings.chains[quickBuyChainId]?.sellPresets || ['10', '25', '50', '100']);
+      setDraftQuickBuyAdvancedEnabled(!!settings.chains[quickBuyChainId]?.quickBuyAdvancedEnabled);
+      setDraftQuickBuyPresetOverrides(normalizeQuickBuyPresetOverrides(settings.chains[quickBuyChainId]?.quickBuyPresetOverrides));
       setPendingQuickBuy({ tokenAddress: addr.toLowerCase(), amount });
     };
     window.addEventListener('dagobang-quickbuy' as any, handler as any);
@@ -2188,20 +2207,40 @@ export default function App() {
     }, 500);
   };
 
-  const resolvePriorityFee = (side: 'buy' | 'sell') => {
+  const resolvePriorityFee = (side: 'buy' | 'sell', overridePreset?: PriorityFeePreset) => {
     if (!settings) return undefined;
     const chainSettings = effectiveChainSettings;
     if (!chainSettings) return undefined;
     if ((chainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs') return '0';
-    const selectedPreset = side === 'buy'
+    const selectedPreset = overridePreset ?? (side === 'buy'
       ? ((chainSettings.buyPriorityFeePreset ?? 'standard') as PriorityFeePreset)
-      : ((chainSettings.sellPriorityFeePreset ?? 'standard') as PriorityFeePreset);
+      : ((chainSettings.sellPriorityFeePreset ?? 'standard') as PriorityFeePreset));
     const presetValues = side === 'buy'
       ? (chainSettings.buyPriorityFeePresets ?? DEFAULT_PRIORITY_FEE_PRESET_VALUES)
       : (chainSettings.sellPriorityFeePresets ?? DEFAULT_PRIORITY_FEE_PRESET_VALUES);
     const value = presetValues[selectedPreset] ?? DEFAULT_PRIORITY_FEE_PRESET_VALUES[selectedPreset];
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized || '0';
+  };
+
+  const resolveQuickBuyOverride = (presetIndex: number) => {
+    const chainSettings = effectiveChainSettings;
+    if (!chainSettings) return {};
+    if (!Number.isInteger(presetIndex) || presetIndex < 0 || presetIndex > 3) return {};
+    if (!chainSettings.quickBuyAdvancedEnabled) return {};
+    return chainSettings.quickBuyPresetOverrides?.[presetIndex] ?? {};
+  };
+
+  const resolveBuyGasPresetForPreset = (presetIndex: number) => {
+    const chainSettings = effectiveChainSettings;
+    const override = resolveQuickBuyOverride(presetIndex);
+    return override.gasPreset ?? chainSettings?.buyGasPreset ?? chainSettings?.gasPreset ?? 'standard';
+  };
+
+  const resolveBuyPriorityFeePresetForPreset = (presetIndex: number) => {
+    const chainSettings = effectiveChainSettings;
+    const override = resolveQuickBuyOverride(presetIndex);
+    return override.priorityFeePreset ?? ((chainSettings?.buyPriorityFeePreset ?? 'standard') as PriorityFeePreset);
   };
 
   const tradingLoadingIcon = (
@@ -2332,6 +2371,8 @@ export default function App() {
       const flowToastId = getTradeToastId('buy', tokenAddressNormalized);
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
       let buyLoadingClosed = false;
+      const buyGasPreset = hasValidPresetIndex ? resolveBuyGasPresetForPreset(presetIndex) : (effectiveChainSettings?.buyGasPreset ?? effectiveChainSettings?.gasPreset ?? 'standard');
+      const buyPriorityFeePreset = hasValidPresetIndex ? resolveBuyPriorityFeePresetForPreset(presetIndex) : ((effectiveChainSettings?.buyPriorityFeePreset ?? 'standard') as PriorityFeePreset);
 
       const mainTrade = (async () => {
         const results = await Promise.allSettled(
@@ -2343,7 +2384,8 @@ export default function App() {
               baseTokenAddress: tradeBaseTokenAddress,
               fromAddress: walletAddress,
               submitChannel,
-              priorityFeeNative: resolvePriorityFee('buy'),
+              priorityFeeNative: resolvePriorityFee('buy', buyPriorityFeePreset),
+              gasPreset: buyGasPreset,
               tokenInfo: tokenInfo ?? undefined,
             } as const;
             const res = await call({
@@ -2823,6 +2865,8 @@ export default function App() {
       if (settings) {
         setDraftBuyPresets(settings.chains[chainId]?.buyPresets || ['0.01', '0.2', '0.5', '1.0']);
         setDraftSellPresets(settings.chains[chainId]?.sellPresets || ['10', '25', '50', '100']);
+        setDraftQuickBuyAdvancedEnabled(!!settings.chains[chainId]?.quickBuyAdvancedEnabled);
+        setDraftQuickBuyPresetOverrides(normalizeQuickBuyPresetOverrides(settings.chains[chainId]?.quickBuyPresetOverrides));
       }
       setIsEditing(true);
     } else {
@@ -2840,6 +2884,8 @@ export default function App() {
                 ...currentChainSettings,
                 buyPresets: draftBuyPresets,
                 sellPresets: draftSellPresets,
+                quickBuyAdvancedEnabled: draftQuickBuyAdvancedEnabled,
+                quickBuyPresetOverrides: normalizeQuickBuyPresetOverrides(draftQuickBuyPresetOverrides),
               },
             },
           },
@@ -2859,6 +2905,40 @@ export default function App() {
     const newPresets = [...draftSellPresets];
     newPresets[index] = val;
     setDraftSellPresets(newPresets);
+  };
+
+  const handleToggleQuickBuyAdvanced = () => {
+    setDraftQuickBuyAdvancedEnabled((prev) => !prev);
+  };
+
+  const handleToggleQuickBuyPresetGas = (presetIndex: number) => {
+    if (!Number.isInteger(presetIndex) || presetIndex < 0 || presetIndex > 3) return;
+    const presets: Array<QuickBuyPresetOverride['gasPreset']> = [undefined, 'slow', 'standard', 'fast', 'turbo'];
+    setDraftQuickBuyPresetOverrides((prev) => {
+      const next = normalizeQuickBuyPresetOverrides(prev);
+      const current = next[presetIndex]?.gasPreset;
+      const currentIndex = presets.findIndex((item) => item === current);
+      next[presetIndex] = {
+        ...next[presetIndex],
+        gasPreset: presets[(currentIndex + 1 + presets.length) % presets.length],
+      };
+      return next;
+    });
+  };
+
+  const handleToggleQuickBuyPresetPriorityFee = (presetIndex: number) => {
+    if (!Number.isInteger(presetIndex) || presetIndex < 0 || presetIndex > 3) return;
+    const presets: Array<QuickBuyPresetOverride['priorityFeePreset']> = [undefined, 'none', 'slow', 'standard', 'fast'];
+    setDraftQuickBuyPresetOverrides((prev) => {
+      const next = normalizeQuickBuyPresetOverrides(prev);
+      const current = next[presetIndex]?.priorityFeePreset;
+      const currentIndex = presets.findIndex((item) => item === current);
+      next[presetIndex] = {
+        ...next[presetIndex],
+        priorityFeePreset: presets[(currentIndex + 1 + presets.length) % presets.length],
+      };
+      return next;
+    });
   };
 
   const handleUpdateAdvancedAutoSell = (next: Settings['advancedAutoSell']) => {
@@ -3127,6 +3207,11 @@ export default function App() {
               onToggleSlippage={handleToggleSlippage}
               onUpdateBuyPreset={handleUpdateBuyPreset}
               draftBuyPresets={draftBuyPresets}
+              quickBuyAdvancedEnabled={isEditing ? draftQuickBuyAdvancedEnabled : !!effectiveChainSettings?.quickBuyAdvancedEnabled}
+              quickBuyPresetOverrides={isEditing ? draftQuickBuyPresetOverrides : normalizeQuickBuyPresetOverrides(effectiveChainSettings?.quickBuyPresetOverrides)}
+              onToggleQuickBuyAdvanced={handleToggleQuickBuyAdvanced}
+              onToggleQuickBuyPresetGas={handleToggleQuickBuyPresetGas}
+              onToggleQuickBuyPresetPriorityFee={handleToggleQuickBuyPresetPriorityFee}
               onUpdateSellPreset={handleUpdateSellPreset}
               draftSellPresets={draftSellPresets}
               locale={locale}

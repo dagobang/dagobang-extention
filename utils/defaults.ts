@@ -15,6 +15,8 @@ const DEFAULT_PRIORITY_FEE_PRESETS = {
   fast: '0.0001',
 } as const;
 
+const DEFAULT_QUICK_BUY_PRESET_OVERRIDES = [{}, {}, {}, {}];
+
 const BSC_MAINNET: ChainSettings = {
   rpcUrls: [
     'https://0.48.club',
@@ -54,6 +56,8 @@ const BSC_MAINNET: ChainSettings = {
   sellPriorityFeePreset: 'standard',
   buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
   sellPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  quickBuyAdvancedEnabled: false,
+  quickBuyPresetOverrides: DEFAULT_QUICK_BUY_PRESET_OVERRIDES,
   bloxrouteBuyEnabled: true,
   bloxrouteSellEnabled: true,
 };
@@ -93,6 +97,8 @@ const ETH_MAINNET: ChainSettings = {
   sellPriorityFeePreset: 'standard',
   buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
   sellPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  quickBuyAdvancedEnabled: false,
+  quickBuyPresetOverrides: DEFAULT_QUICK_BUY_PRESET_OVERRIDES,
   bloxrouteBuyEnabled: true,
   bloxrouteSellEnabled: true,
 };
@@ -132,6 +138,8 @@ const HYPER_MAINNET: ChainSettings = {
   sellPriorityFeePreset: 'standard',
   buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
   sellPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  quickBuyAdvancedEnabled: false,
+  quickBuyPresetOverrides: DEFAULT_QUICK_BUY_PRESET_OVERRIDES,
   bloxrouteBuyEnabled: false,
   bloxrouteSellEnabled: false,
 };

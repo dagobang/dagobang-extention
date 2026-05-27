@@ -202,7 +202,7 @@ export function SellSection({
       </div>
 
       <div
-        className={`mb-2 border-y border-rose-500/10 bg-rose-500/[0.04] text-zinc-400 ${isAltfunLayout ? 'px-3 py-1.5 text-[12px]' : 'px-2.5 py-1 text-[11px]'}`}
+        className={`mb-2 border-rose-500/10 bg-rose-500/[0.04] text-zinc-400 ${isAltfunLayout ? 'px-3 py-1.5 text-[12px]' : 'px-2.5 py-1 text-[11px]'}`}
         title={previewRouteLabel || undefined}
       >
         <div className="flex items-center justify-between gap-3">

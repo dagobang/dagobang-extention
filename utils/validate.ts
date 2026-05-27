@@ -234,6 +234,15 @@ export function validateSettings(input: Settings): Settings | null {
         const allowedGasPresets = ['slow', 'standard', 'fast', 'turbo'] as const;
         const allowedGasPriceModes = ['fixed', 'dynamic'] as const;
         const allowedPriorityFeePresets = ['none', 'slow', 'standard', 'fast'] as const;
+        const normalizeQuickBuyPresetOverrides = (raw: any, fallback: any[] = []) => {
+          const source = Array.isArray(raw) ? raw : fallback;
+          return Array.from({ length: 4 }, (_, index) => {
+            const item = source[index] ?? fallback[index] ?? {};
+            const gasPreset = allowedGasPresets.includes(item?.gasPreset) ? item.gasPreset : undefined;
+            const priorityFeePreset = allowedPriorityFeePresets.includes(item?.priorityFeePreset) ? item.priorityFeePreset : undefined;
+            return { gasPreset, priorityFeePreset };
+          });
+        };
         const buyGasGwei = {
           slow: typeof inputBuyGas?.slow === 'string' && inputBuyGas.slow.trim() ? inputBuyGas.slow.trim() : cDef.buyGasGwei.slow,
           standard: typeof inputBuyGas?.standard === 'string' && inputBuyGas.standard.trim() ? inputBuyGas.standard.trim() : cDef.buyGasGwei.standard,
@@ -340,6 +349,13 @@ export function validateSettings(input: Settings): Settings | null {
         const submitChannel = allowedSubmitChannels.includes((cInput as any).submitChannel)
           ? (cInput as any).submitChannel
           : ((allowedSubmitChannels.includes((cDef as any).submitChannel) ? (cDef as any).submitChannel : 'protectRpcs') as (typeof allowedSubmitChannels)[number]);
+        const quickBuyAdvancedEnabled = typeof (cInput as any).quickBuyAdvancedEnabled === 'boolean'
+          ? (cInput as any).quickBuyAdvancedEnabled
+          : !!(cDef as any).quickBuyAdvancedEnabled;
+        const quickBuyPresetOverrides = normalizeQuickBuyPresetOverrides(
+          (cInput as any).quickBuyPresetOverrides,
+          normalizeQuickBuyPresetOverrides((cDef as any).quickBuyPresetOverrides),
+        );
         chains[cid] = {
           rpcUrls: (cInput.rpcUrls || []).map((x) => x.trim()).filter(Boolean),
           protectedRpcUrls,
@@ -364,6 +380,8 @@ export function validateSettings(input: Settings): Settings | null {
           sellPriorityFeePreset,
           buyPriorityFeePresets,
           sellPriorityFeePresets,
+          quickBuyAdvancedEnabled,
+          quickBuyPresetOverrides,
           bloxrouteBuyEnabled,
           bloxrouteSellEnabled,
         };
