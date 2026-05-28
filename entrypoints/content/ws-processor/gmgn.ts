@@ -65,6 +65,19 @@ const buildTranslatedSourceText = (item: any): string | undefined => {
 };
 
 const SIGNAL_FORWARD_PROBE_ENABLED_KEY = 'dagobang_signal_forward_probe_enabled_v1';
+const SIGNAL_CHAIN_PROBE_WINDOW_MS = 10_000;
+const SNAPSHOT_UI_BATCH_WINDOW_MS = 1_000;
+
+const bumpProbeCount = (record: Record<string, number>, key: string, delta = 1) => {
+  const normalized = key || 'unknown';
+  record[normalized] = (record[normalized] ?? 0) + delta;
+};
+
+const recordProbeMax = (record: Record<string, number>, key: string, value: number) => {
+  const normalized = key || 'unknown';
+  const prev = record[normalized] ?? 0;
+  if (value > prev) record[normalized] = value;
+};
 
 const extractTranslationPatch = (payload: any, now: number): TwitterTranslationPatch | null => {
   if (!isObject(payload)) return null;
@@ -675,6 +688,35 @@ const snapshotToUnifiedToken = (snapshot: TokenSnapshot, now: number): UnifiedSi
   updatedAtMs: now,
 });
 
+const hasStrategyContextForToken = (signal: UnifiedTwitterSignal, tokenAddress: string): boolean => {
+  const normalized = normalizeTokenKey(tokenAddress);
+  if (!normalized) return false;
+  const token = normalizeSignalTokens(signal).find((item) => normalizeTokenKey(item.tokenAddress) === normalized);
+  if (!token) return false;
+  const numericFields = [
+    token.marketCapUsd,
+    token.liquidityUsd,
+    token.holders,
+    token.kol,
+    token.vol24hUsd,
+    token.netBuy24hUsd,
+    token.buyTx24h,
+    token.sellTx24h,
+    token.smartMoney,
+    token.devHoldPercent,
+    token.devMaxBuyPercent,
+    token.viewerCount,
+    token.devCreatedTokenCount,
+    token.top10HoldRatio,
+  ];
+  if (numericFields.some((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)) return true;
+  if (typeof token.launchpadPlatform === 'string' && token.launchpadPlatform.trim()) return true;
+  if (typeof token.devAddress === 'string' && token.devAddress.trim()) return true;
+  if (typeof token.devTokenStatus === 'string' && token.devTokenStatus.trim()) return true;
+  if (token.devHasSold === true) return true;
+  return false;
+};
+
 const convertToUnifiedSignal = (channel: string, item: any, receivedAtMs: number): UnifiedTwitterSignal | null => {
   if (!item || typeof item !== 'object') return null;
   const extractedAtMs = extractTimestampMs(item);
@@ -882,7 +924,6 @@ export function initGmgnWsMonitor(options: {
   const SIGNAL_FORWARD_WINDOW_MS = 20;
   const MARKET_SIGNAL_FORWARD_WINDOW_MS = 20;
   const SIGNAL_FORWARD_FAST_WINDOW_MS = 0;
-  const SIGNAL_FORWARD_PROBE_WINDOW_MS = 200;
   type SignalForwardDedupeMode = 'strict' | 'balanced' | 'aggressive';
   type SignalForwardProbeWindow = {
     windowStartAt: number;
@@ -895,6 +936,17 @@ export function initGmgnWsMonitor(options: {
     callFail: number;
     callTotalMs: number;
     callMaxMs: number;
+    packetsByChannel: Record<string, number>;
+    processorTotalMsByChannel: Record<string, number>;
+    processorMaxMsByChannel: Record<string, number>;
+    twitterSignalsBySource: Record<string, number>;
+    marketSignalsBySource: Record<string, number>;
+    maxPendingForwardSize: number;
+    maxForwardQueueDepth: number;
+    forwardBackpressureEvents: number;
+    maxPendingMarketForwardSize: number;
+    maxMarketQueueDepth: number;
+    marketBackpressureEvents: number;
   };
   const cached = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
   if (cached) (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ = cached;
@@ -902,6 +954,8 @@ export function initGmgnWsMonitor(options: {
   const translationsByEventId = new Map<string, TwitterTranslationPatch>();
   const signalsByEventId = new Map<string, { signal: UnifiedTwitterSignal; updatedAtMs: number }>();
   const tokenByAddress = new Map<string, TokenSnapshot>();
+  const pendingSnapshotUiSignals = new Map<string, UnifiedTwitterSignal>();
+  let snapshotUiFlushTimer: number | null = null;
   const pendingForwardByChannel = new Map<string, Map<string, UnifiedTwitterSignal>>();
   const forwardTimerByChannel = new Map<string, number>();
   const forwardQueueByChannel = new Map<string, Promise<void>>();
@@ -919,8 +973,21 @@ export function initGmgnWsMonitor(options: {
     callFail: 0,
     callTotalMs: 0,
     callMaxMs: 0,
+    packetsByChannel: {},
+    processorTotalMsByChannel: {},
+    processorMaxMsByChannel: {},
+    twitterSignalsBySource: {},
+    marketSignalsBySource: {},
+    maxPendingForwardSize: 0,
+    maxForwardQueueDepth: 0,
+    forwardBackpressureEvents: 0,
+    maxPendingMarketForwardSize: 0,
+    maxMarketQueueDepth: 0,
+    marketBackpressureEvents: 0,
   });
   let signalForwardProbeWindow = createSignalForwardProbeWindow(Date.now());
+  const forwardQueueDepthByChannel = new Map<string, number>();
+  const marketForwardQueueDepthByChannel = new Map<string, number>();
 
   const isSignalForwardProbeEnabled = (): boolean => {
     try {
@@ -951,7 +1018,7 @@ export function initGmgnWsMonitor(options: {
 
   const flushSignalForwardProbe = (now: number, dedupeMode: SignalForwardDedupeMode) => {
     const durationMs = now - signalForwardProbeWindow.windowStartAt;
-    if (durationMs < SIGNAL_FORWARD_PROBE_WINDOW_MS) return;
+    if (durationMs < SIGNAL_CHAIN_PROBE_WINDOW_MS) return;
     const output = {
       ...signalForwardProbeWindow,
       durationMs,
@@ -968,9 +1035,41 @@ export function initGmgnWsMonitor(options: {
     };
     if (isSignalForwardProbeEnabled()) {
       (window as any).__DAGOBANG_SIGNAL_FORWARD_PROBE__ = output;
+      console.info('[signal-forward-probe]', output);
       window.postMessage({ type: 'DAGOBANG_SIGNAL_FORWARD_PROBE', payload: output }, '*');
     }
     signalForwardProbeWindow = createSignalForwardProbeWindow(now);
+  };
+
+  const noteProcessorProbe = (channel: string, elapsedMs: number) => {
+    if (!isSignalForwardProbeEnabled()) return;
+    bumpProbeCount(signalForwardProbeWindow.packetsByChannel, channel);
+    bumpProbeCount(signalForwardProbeWindow.processorTotalMsByChannel, channel, elapsedMs);
+    recordProbeMax(signalForwardProbeWindow.processorMaxMsByChannel, channel, elapsedMs);
+  };
+
+  const flushSnapshotUiSignals = () => {
+    if (snapshotUiFlushTimer != null) {
+      window.clearTimeout(snapshotUiFlushTimer);
+      snapshotUiFlushTimer = null;
+    }
+    if (!pendingSnapshotUiSignals.size || !isWsMonitorEnabled()) {
+      pendingSnapshotUiSignals.clear();
+      return;
+    }
+    const batch = Array.from(pendingSnapshotUiSignals.values());
+    pendingSnapshotUiSignals.clear();
+    for (const signal of batch) {
+      window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: signal }));
+    }
+  };
+
+  const scheduleSnapshotUiSignal = (signal: UnifiedTwitterSignal) => {
+    pendingSnapshotUiSignals.set(signal.id, signal);
+    if (snapshotUiFlushTimer != null) return;
+    snapshotUiFlushTimer = window.setTimeout(() => {
+      flushSnapshotUiSignals();
+    }, SNAPSHOT_UI_BATCH_WINDOW_MS);
   };
 
   const resolveSignalForwardWindowMs = (channel: string): number => {
@@ -1010,7 +1109,15 @@ export function initGmgnWsMonitor(options: {
     pendingForwardByChannel.delete(channel);
     signalForwardProbeWindow.flushes += 1;
     signalForwardProbeWindow.flushedSignals += batch.length;
+    if (batch.length > signalForwardProbeWindow.maxPendingForwardSize) {
+      signalForwardProbeWindow.maxPendingForwardSize = batch.length;
+    }
     const prevQueue = forwardQueueByChannel.get(channel) ?? Promise.resolve();
+    const nextDepth = (forwardQueueDepthByChannel.get(channel) ?? 0) + 1;
+    forwardQueueDepthByChannel.set(channel, nextDepth);
+    if (nextDepth > signalForwardProbeWindow.maxForwardQueueDepth) {
+      signalForwardProbeWindow.maxForwardQueueDepth = nextDepth;
+    }
     const nextQueue = prevQueue
       .then(async () => {
         for (const signal of batch) {
@@ -1028,6 +1135,9 @@ export function initGmgnWsMonitor(options: {
       })
       .catch(() => { })
       .finally(() => {
+        const depth = Math.max(0, (forwardQueueDepthByChannel.get(channel) ?? 1) - 1);
+        if (depth > 0) forwardQueueDepthByChannel.set(channel, depth);
+        else forwardQueueDepthByChannel.delete(channel);
         if ((pendingForwardByChannel.get(channel)?.size ?? 0) > 0 && !forwardTimerByChannel.has(channel)) {
           const timer = window.setTimeout(() => {
             forwardTimerByChannel.delete(channel);
@@ -1040,7 +1150,7 @@ export function initGmgnWsMonitor(options: {
     forwardQueueByChannel.set(channel, nextQueue);
   };
 
-  const enqueueSignalForward = (channel: string, signal: UnifiedTwitterSignal) => {
+  const enqueueSignalForward = (channel: string, signal: UnifiedTwitterSignal, source = 'twitter_channel') => {
     const dedupeMode = resolveSignalForwardDedupeMode();
     const now = Date.now();
     const normalizedChannel = channel || 'twitter_monitor_basic';
@@ -1051,9 +1161,16 @@ export function initGmgnWsMonitor(options: {
     }
     const key = getSignalForwardKey(signal, dedupeMode);
     signalForwardProbeWindow.received += 1;
+    bumpProbeCount(signalForwardProbeWindow.twitterSignalsBySource, source);
     if (map.has(key)) signalForwardProbeWindow.dedupeOverwrite += 1;
     else signalForwardProbeWindow.enqueued += 1;
     map.set(key, signal);
+    if (map.size > signalForwardProbeWindow.maxPendingForwardSize) {
+      signalForwardProbeWindow.maxPendingForwardSize = map.size;
+    }
+    if ((forwardQueueDepthByChannel.get(normalizedChannel) ?? 0) > 0) {
+      signalForwardProbeWindow.forwardBackpressureEvents += 1;
+    }
     flushSignalForwardProbe(now, dedupeMode);
     const windowMs = resolveSignalForwardWindowMs(normalizedChannel);
     if (windowMs <= 0) {
@@ -1085,7 +1202,15 @@ export function initGmgnWsMonitor(options: {
     if (!map || !map.size) return;
     const batch = Array.from(map.values());
     pendingMarketForwardByChannel.delete(channel);
+    if (batch.length > signalForwardProbeWindow.maxPendingMarketForwardSize) {
+      signalForwardProbeWindow.maxPendingMarketForwardSize = batch.length;
+    }
     const prevQueue = marketForwardQueueByChannel.get(channel) ?? Promise.resolve();
+    const nextDepth = (marketForwardQueueDepthByChannel.get(channel) ?? 0) + 1;
+    marketForwardQueueDepthByChannel.set(channel, nextDepth);
+    if (nextDepth > signalForwardProbeWindow.maxMarketQueueDepth) {
+      signalForwardProbeWindow.maxMarketQueueDepth = nextDepth;
+    }
     const nextQueue = prevQueue
       .then(async () => {
         for (const signal of batch) {
@@ -1094,6 +1219,9 @@ export function initGmgnWsMonitor(options: {
       })
       .catch(() => { })
       .finally(() => {
+        const depth = Math.max(0, (marketForwardQueueDepthByChannel.get(channel) ?? 1) - 1);
+        if (depth > 0) marketForwardQueueDepthByChannel.set(channel, depth);
+        else marketForwardQueueDepthByChannel.delete(channel);
         if ((pendingMarketForwardByChannel.get(channel)?.size ?? 0) > 0 && !marketForwardTimerByChannel.has(channel)) {
           const timer = window.setTimeout(() => {
             marketForwardTimerByChannel.delete(channel);
@@ -1113,6 +1241,13 @@ export function initGmgnWsMonitor(options: {
       pendingMarketForwardByChannel.set(normalizedChannel, map);
     }
     map.set(getMarketForwardKey(signal), signal);
+    bumpProbeCount(signalForwardProbeWindow.marketSignalsBySource, signal.source || normalizedChannel);
+    if (map.size > signalForwardProbeWindow.maxPendingMarketForwardSize) {
+      signalForwardProbeWindow.maxPendingMarketForwardSize = map.size;
+    }
+    if ((marketForwardQueueDepthByChannel.get(normalizedChannel) ?? 0) > 0) {
+      signalForwardProbeWindow.marketBackpressureEvents += 1;
+    }
     if (marketForwardTimerByChannel.has(normalizedChannel)) return;
     const timer = window.setTimeout(() => {
       marketForwardTimerByChannel.delete(normalizedChannel);
@@ -1383,7 +1518,7 @@ export function initGmgnWsMonitor(options: {
         wsStatus = { ...wsStatus, lastSignalAt: now, signalCount: wsStatus.signalCount + 1 };
         pushLog('signal', `${summarizeTokensForLog(merged)}${merged.tweetId ? ` #${merged.tweetId}` : ''} (translated)`);
         if (shouldForwardTwitterSignal(merged)) {
-          enqueueSignalForward(channel, merged);
+          enqueueSignalForward(channel, merged, 'twitter_translation_merge');
         }
         continue;
       }
@@ -1445,7 +1580,7 @@ export function initGmgnWsMonitor(options: {
       };
       pushLog('signal', `${summarizeTokensForLog(signal)}${signal.tweetId ? ` #${signal.tweetId}` : ''}`);
       if (shouldForwardTwitterSignal(signal)) {
-        enqueueSignalForward(channel, signal);
+        enqueueSignalForward(channel, signal, 'twitter_channel');
       }
     }
     emitStatus();
@@ -1613,29 +1748,35 @@ export function initGmgnWsMonitor(options: {
     const list = Array.isArray(cache?.list) ? (cache.list as UnifiedTwitterSignal[]).slice() : [];
     if (!list.length) return;
     let changed = false;
+    const strategyBootstrapSignals: UnifiedTwitterSignal[] = [];
+    const uiOnlySignals: UnifiedTwitterSignal[] = [];
     const updated = list.map((s) => {
       if (!s) return s;
       const has =
         Array.isArray((s as any).tokens) &&
         (s as any).tokens.some((t: any) => t && typeof t.tokenAddress === 'string' && normalizeTokenKey(t.tokenAddress) === addr);
       if (!has) return s;
+      const hadStrategyContext = hasStrategyContextForToken(s, addr);
       const merged = applySnapshotToSignal(s, next, receivedAtMs);
       if (!merged.changed) return s;
       changed = true;
-      return { ...merged.signal, ts: Date.now() };
+      const nextSignal = { ...merged.signal, ts: Date.now() };
+      const hasStrategyContext = hasStrategyContextForToken(nextSignal, addr);
+      if (!hadStrategyContext && hasStrategyContext) strategyBootstrapSignals.push(nextSignal);
+      else uiOnlySignals.push(nextSignal);
+      return nextSignal;
     });
     if (!changed) return;
     saveUnifiedTwitterCache(updated);
-    for (const s of updated) {
-      if (!s) continue;
-      const has =
-        Array.isArray((s as any).tokens) &&
-        (s as any).tokens.some((t: any) => t && typeof t.tokenAddress === 'string' && normalizeTokenKey(t.tokenAddress) === addr);
-      if (!has) continue;
-      if (isWsMonitorEnabled()) {
-        window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-        if (shouldForwardTwitterSignal(s)) enqueueSignalForward('twitter_monitor_token', s);
+    if (!isWsMonitorEnabled()) return;
+    for (const signal of strategyBootstrapSignals) {
+      window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: signal }));
+      if (shouldForwardTwitterSignal(signal)) {
+        enqueueSignalForward('twitter_monitor_token', signal, 'token_snapshot_strategy_bootstrap');
       }
+    }
+    for (const signal of uiOnlySignals) {
+      scheduleSnapshotUiSignal(signal);
     }
   };
 
@@ -1667,6 +1808,8 @@ export function initGmgnWsMonitor(options: {
     if (!list.length) return;
 
     let changed = false;
+    const strategyBootstrapSignals: UnifiedTwitterSignal[] = [];
+    const uiOnlySignals: UnifiedTwitterSignal[] = [];
     const updated = list.map((s) => {
       if (!s) return s;
       const hit =
@@ -1674,26 +1817,34 @@ export function initGmgnWsMonitor(options: {
         (s.quotedTweetId && (mx.includes(s.quotedTweetId) || ids.includes(s.quotedTweetId)));
       if (!hit) return s;
 
+      const hadTokenLinked = normalizeSignalTokens(s).some((token) => normalizeTokenKey(token.tokenAddress) === addr);
+      const hadStrategyContext = hasStrategyContextForToken(s, addr);
       const merged = applySnapshotToSignal(s, snap, now);
       if (!merged.changed) return s;
       changed = true;
       const nextOut = { ...merged.signal, ts: now };
       if (nextOut.eventId) signalsByEventId.set(nextOut.eventId, { signal: nextOut, updatedAtMs: now });
+      const hasTokenLinked = normalizeSignalTokens(nextOut).some((token) => normalizeTokenKey(token.tokenAddress) === addr);
+      const hasStrategyContext = hasStrategyContextForToken(nextOut, addr);
+      if ((!hadTokenLinked && hasTokenLinked) || (!hadStrategyContext && hasStrategyContext)) {
+        strategyBootstrapSignals.push(nextOut);
+      } else {
+        uiOnlySignals.push(nextOut);
+      }
       return nextOut;
     });
 
     if (!changed) return;
     saveUnifiedTwitterCache(updated);
-    for (const s of updated) {
-      if (!s) continue;
-      const hit =
-        (s.tweetId && (mx.includes(s.tweetId) || ids.includes(s.tweetId))) ||
-        (s.quotedTweetId && (mx.includes(s.quotedTweetId) || ids.includes(s.quotedTweetId)));
-      if (!hit) continue;
-      if (isWsMonitorEnabled()) {
-        window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: s }));
-        if (shouldForwardTwitterSignal(s)) enqueueSignalForward('twitter_monitor_token', s);
+    if (!isWsMonitorEnabled()) return;
+    for (const signal of strategyBootstrapSignals) {
+      window.dispatchEvent(new CustomEvent('dagobang-twitter-signal', { detail: signal }));
+      if (shouldForwardTwitterSignal(signal)) {
+        enqueueSignalForward('twitter_monitor_token', signal, 'mx_relink_first_link');
       }
+    }
+    for (const signal of uiOnlySignals) {
+      scheduleSnapshotUiSignal(signal);
     }
   };
 
@@ -1882,11 +2033,17 @@ export function initGmgnWsMonitor(options: {
     const payload = data.payload ?? data;
     const now = Date.now();
     const processor = CHANNEL_PROCESSORS[channel] ?? handleOtherChannel;
+    const shouldProbe = isSignalForwardProbeEnabled();
+    const startedAt = shouldProbe ? performance.now() : 0;
     processor(data, channel, payload, now);
+    if (shouldProbe) {
+      noteProcessorProbe(channel, performance.now() - startedAt);
+    }
   };
 
   window.addEventListener('message', onMessage);
   const onPageHide = () => {
+    flushSnapshotUiSignals();
     if (pendingUnifiedTwitterCacheTimer != null) {
       window.clearTimeout(pendingUnifiedTwitterCacheTimer);
       pendingUnifiedTwitterCacheTimer = null;
@@ -1920,6 +2077,7 @@ export function initGmgnWsMonitor(options: {
       for (const channel of pendingMarketForwardByChannel.keys()) {
         flushMarketForwardChannel(channel);
       }
+      flushSnapshotUiSignals();
       flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
       flushNewPoolMonitorUi();
       window.removeEventListener('message', onMessage);

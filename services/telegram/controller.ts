@@ -1684,6 +1684,7 @@ export function createTelegramController(deps: {
 
   return {
     start: () => telegramPoller.start(),
+    stop: () => telegramPoller.stop(),
     getStatus: async () => {
       const cfg = await getTelegramConfigFromSettings();
       const s = telegramPoller.getStatus();

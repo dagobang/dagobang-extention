@@ -77,8 +77,6 @@ const DEFAULT_PRIORITY_FEE_PRESET_VALUES = {
   fast: '0.0001',
 } as const;
 const DEFAULT_QUICK_BUY_PRESET_OVERRIDES: QuickBuyPresetOverride[] = [{}, {}, {}, {}];
-const STATE_CHANGE_PROBE_ENABLED_KEY = 'dagobang_state_change_probe_enabled_v1';
-const STATE_CHANGE_PROBE_LOG_INTERVAL_MS = 30_000;
 
 function normalizeAddr(addr: string): `0x${string}` | null {
   const trimmed = typeof addr === 'string' ? addr.trim() : '';
@@ -354,18 +352,10 @@ export default function App() {
   const fastPollingRef = useRef<any>(null);
   const tokenRefreshSeqRef = useRef(0);
   const gmgnHoldingRefreshSeqRef = useRef(0);
+  const gmgnHoldingPollingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bgStateChangedSeqRef = useRef(0);
   const bgStateChangedHandledAtRef = useRef(0);
   const bgStateChangedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stateChangeProbeRef = useRef({
-    startedAtMs: Date.now(),
-    bgStateChangedReceived: 0,
-    refreshAllCalls: 0,
-    refreshAllBySource: {} as Record<string, number>,
-    refreshTokenCalls: 0,
-    refreshTokenBySource: {} as Record<string, number>,
-    loadStateCalls: 0,
-  });
   const cookingTokenInfoReqSeqRef = useRef(0);
   const deleteSoundPlayedAtRef = useRef<Record<string, number>>({});
   const autoTradeOrderSoundPlayedAtRef = useRef<Record<string, number>>({});
@@ -531,42 +521,6 @@ export default function App() {
     return /^0x[a-fA-F0-9]{40}$/.test(t) ? (t as `0x${string}`) : null;
   }, [siteInfo]);
   const consoleLogsEnabled = settings?.ui?.consoleLogsEnabled === true;
-  const isStateChangeProbeEnabled = () => {
-    try {
-      return window.localStorage.getItem(STATE_CHANGE_PROBE_ENABLED_KEY) === '1';
-    } catch {
-      return false;
-    }
-  };
-  const noteStateChangeProbe = (event: 'bgStateChangedReceived' | 'refreshAll' | 'refreshToken' | 'loadState', source?: string) => {
-    if (!isStateChangeProbeEnabled()) return;
-    const probe = stateChangeProbeRef.current;
-    if (event === 'bgStateChangedReceived') {
-      probe.bgStateChangedReceived += 1;
-      return;
-    }
-    if (event === 'loadState') {
-      probe.loadStateCalls += 1;
-      return;
-    }
-    if (event === 'refreshAll') {
-      probe.refreshAllCalls += 1;
-      if (source) probe.refreshAllBySource[source] = (probe.refreshAllBySource[source] ?? 0) + 1;
-      return;
-    }
-    probe.refreshTokenCalls += 1;
-    if (source) probe.refreshTokenBySource[source] = (probe.refreshTokenBySource[source] ?? 0) + 1;
-  };
-  const emitStateChangeProbe = () => {
-    if (!isStateChangeProbeEnabled()) return;
-    const snapshot = {
-      source: 'content-ui',
-      nowMs: Date.now(),
-      ...stateChangeProbeRef.current,
-    };
-    (window as any).__DAGOBANG_STATE_CHANGE_PROBE__ = snapshot;
-    console.info('[state-change-probe]', snapshot);
-  };
   const shouldDebugHyperReads = consoleLogsEnabled && (chainId === 999 || siteInfo?.platform === 'altfun');
   const logUiDebug = (event: string, payload: Record<string, unknown>) => {
     if (!consoleLogsEnabled) return;
@@ -1438,7 +1392,6 @@ export default function App() {
   };
 
   async function loadState() {
-    noteStateChangeProbe('loadState');
     const res = await call({ type: 'bg:getState' });
     setState(res);
     setError(null);
@@ -1504,7 +1457,6 @@ export default function App() {
   }
 
   async function refreshAll(queryAllWallets = false, source = 'unknown') {
-    noteStateChangeProbe('refreshAll', source);
     if (document.hidden) return;
     if (!siteInfo) return;
     const startedAt = Date.now();
@@ -1544,7 +1496,6 @@ export default function App() {
 
   const lastTokenRefresh = useRef(0);
   async function refreshToken(force = false, queryAllWallets = false, source = 'unknown') {
-    noteStateChangeProbe('refreshToken', source);
     const seq = tokenRefreshSeqRef.current;
     if (document.hidden && !force) return;
     if (!tokenAddressNormalized || !siteInfo) {
@@ -1698,12 +1649,12 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      emitStateChangeProbe();
-    }, STATE_CHANGE_PROBE_LOG_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, []);
+  const clearGmgnHoldingPollingTimer = () => {
+    if (gmgnHoldingPollingTimerRef.current) {
+      clearTimeout(gmgnHoldingPollingTimerRef.current);
+      gmgnHoldingPollingTimerRef.current = null;
+    }
+  };
 
   useEffect(() => {
     if (!siteInfo || !shouldKeepTokenWarm) return;
@@ -1712,6 +1663,7 @@ export default function App() {
 
   useEffect(() => {
     if (siteInfo?.platform !== 'gmgn' || !tokenAddressNormalized || gmgnHoldingWallets.length <= 0) {
+      clearGmgnHoldingPollingTimer();
       setGmgnHoldingStats(null);
       setGmgnHoldingPollingEnabled(false);
       return;
@@ -1720,12 +1672,25 @@ export default function App() {
   }, [siteInfo?.platform, siteInfo?.chain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
 
   useEffect(() => {
+    clearGmgnHoldingPollingTimer();
     if (!gmgnHoldingPollingEnabled) return;
     if (siteInfo?.platform !== 'gmgn' || !tokenAddressNormalized || gmgnHoldingWallets.length <= 0) return;
-    const timer = setInterval(() => {
-      void refreshGmgnHoldingStats(false, 'interval:gmgnHolding');
-    }, 2000);
-    return () => clearInterval(timer);
+    let cancelled = false;
+    const scheduleNext = () => {
+      if (cancelled) return;
+      clearGmgnHoldingPollingTimer();
+      gmgnHoldingPollingTimerRef.current = setTimeout(async () => {
+        gmgnHoldingPollingTimerRef.current = null;
+        if (cancelled) return;
+        await refreshGmgnHoldingStats(false, 'interval:gmgnHolding');
+        if (!cancelled && gmgnHoldingPollingEnabled) scheduleNext();
+      }, 1000);
+    };
+    scheduleNext();
+    return () => {
+      cancelled = true;
+      clearGmgnHoldingPollingTimer();
+    };
   }, [gmgnHoldingPollingEnabled, siteInfo?.platform, siteInfo?.chain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
 
   useEffect(() => {
@@ -1843,7 +1808,6 @@ export default function App() {
         })();
       }
       if (message.type === 'bg:stateChanged') {
-        noteStateChangeProbe('bgStateChangedReceived');
         const seq = bgStateChangedSeqRef.current + 1;
         bgStateChangedSeqRef.current = seq;
         const sentAtMs = Number(message?.ts ?? 0) || null;

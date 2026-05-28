@@ -36,6 +36,7 @@ export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
   const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
   const EIP7702_DELEGATION_PREFIX = '0xef0100';
+  const STATE_CHANGE_BROADCAST_DEBOUNCE_MS = 250;
   const parseEip7702Delegation = (code: string | null | undefined): { delegated: boolean; delegateAddress?: `0x${string}`; code: `0x${string}` } => {
     const normalized = (typeof code === 'string' && code.startsWith('0x') ? code.toLowerCase() : '0x') as `0x${string}`;
     if (!normalized.startsWith(EIP7702_DELEGATION_PREFIX) || normalized.length < 2 + 6 + 40) {
@@ -46,6 +47,9 @@ export default defineBackground(() => {
     return { delegated: true, delegateAddress, code: normalized };
   };
   let stateChangeSeq = 0;
+  let stateChangeBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingStateChangeResolvers: Array<() => void> = [];
+  let pendingStateChangeRejectors: Array<(error: unknown) => void> = [];
   const resolveTradeSubmitChannel = async (chainId: number, preferred?: SubmitChannel): Promise<SubmitChannel> => {
     if (preferred === 'blox' || preferred === 'blockrazor' || preferred === 'protectRpcs') return preferred;
     const settings = await SettingsService.get();
@@ -78,10 +82,30 @@ export default defineBackground(() => {
   };
 
   const broadcastStateChange = async () => {
-    stateChangeSeq += 1;
-    const payload = { type: 'bg:stateChanged', seq: stateChangeSeq, ts: Date.now() };
-    console.log('[background.broadcastStateChange]', payload);
-    await broadcastToTabs(payload);
+    return await new Promise<void>((resolve, reject) => {
+      pendingStateChangeResolvers.push(resolve);
+      pendingStateChangeRejectors.push(reject);
+      if (stateChangeBroadcastTimer) {
+        clearTimeout(stateChangeBroadcastTimer);
+      }
+      stateChangeBroadcastTimer = setTimeout(() => {
+        stateChangeBroadcastTimer = null;
+        stateChangeSeq += 1;
+        const payload = { type: 'bg:stateChanged', seq: stateChangeSeq, ts: Date.now() };
+        const resolvers = pendingStateChangeResolvers;
+        const rejectors = pendingStateChangeRejectors;
+        pendingStateChangeResolvers = [];
+        pendingStateChangeRejectors = [];
+        console.log('[background.broadcastStateChange]', payload);
+        void broadcastToTabs(payload)
+          .then(() => {
+            for (const done of resolvers) done();
+          })
+          .catch((error) => {
+            for (const fail of rejectors) fail(error);
+          });
+      }, STATE_CHANGE_BROADCAST_DEBOUNCE_MS);
+    });
   };
 
   const requestGmgnHoldingsFromContent = async (chain: string, walletAddress: string): Promise<any[]> => {
@@ -215,7 +239,24 @@ export default defineBackground(() => {
     fetchGmgnHoldings: requestGmgnHoldingsFromContent,
     fetchGmgnHoldingDetail: requestGmgnHoldingDetailFromContent,
   });
-  telegramController.start();
+  let telegramControllerRunning = false;
+  const syncTelegramController = async (settingsOverride?: any) => {
+    try {
+      const settings = settingsOverride ?? await SettingsService.get();
+      const shouldRun = settings?.telegram?.enabled === true;
+      if (shouldRun && !telegramControllerRunning) {
+        telegramController.start();
+        telegramControllerRunning = true;
+        return;
+      }
+      if (!shouldRun && telegramControllerRunning) {
+        telegramController.stop();
+        telegramControllerRunning = false;
+      }
+    } catch {
+    }
+  };
+  void syncTelegramController();
 
   let limitOrderScanner: ReturnType<typeof createLimitOrderScanner> | null = null;
   const limitOrderExecutor = createLimitOrderExecutor({
@@ -327,7 +368,6 @@ export default defineBackground(() => {
             const status = await WalletService.getStatus();
             const settings = await SettingsService.get();
             const ttl = status.expiresAt ? Math.floor((status.expiresAt - Date.now()) / 1000) : null;
-
             return {
               wallet: {
                 hasEncrypted: status.hasWallet,
@@ -366,6 +406,7 @@ export default defineBackground(() => {
 
           case 'settings:set':
             await SettingsService.update(msg.settings);
+            await syncTelegramController();
             limitOrderScanner?.setIntervalMsFromValue((msg.settings as any).limitOrderScanIntervalMs);
             try {
               const chainId = Number((msg.settings as any)?.chainId);
@@ -1379,18 +1420,22 @@ export default defineBackground(() => {
           }
 
           case 'telegram:test': {
+            await syncTelegramController();
             return await telegramController.test();
           }
 
           case 'telegram:getStatus': {
+            await syncTelegramController();
             return { ok: true, ...(await telegramController.getStatus()) };
           }
 
           case 'telegram:quickBuy': {
+            await syncTelegramController();
             return await telegramController.runQuickBuy(msg.tokenAddress, msg.amountBnb);
           }
 
           case 'telegram:quickSell': {
+            await syncTelegramController();
             return await telegramController.runQuickSell(msg.tokenAddress, msg.sellPercent);
           }
 

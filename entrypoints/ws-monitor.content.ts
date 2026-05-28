@@ -3,8 +3,7 @@ import { initWsMonitorForSite } from './content/ws-processor';
 import { browser } from 'wxt/browser';
 import type { BgGetStateResponse } from '@/types/extention';
 
-const STATE_CHANGE_PROBE_ENABLED_KEY = 'dagobang_state_change_probe_enabled_v1';
-const STATE_CHANGE_PROBE_LOG_INTERVAL_MS = 30_000;
+const STATE_CHANGE_REFRESH_DEBOUNCE_MS = 300;
 
 export default defineContentScript({
   matches: ['*://gmgn.ai/*', '*://*.gmgn.ai/*', '*://axiom.trade/*', '*://*.axiom.trade/*', '*://web3.binance.com/*',
@@ -16,41 +15,9 @@ export default defineContentScript({
   async main() {
     const hostname = window.location.hostname;
     let wsMonitor: ReturnType<typeof initWsMonitorForSite> | null = null;
-    const isStateChangeProbeEnabled = () => {
-      try {
-        return window.localStorage.getItem(STATE_CHANGE_PROBE_ENABLED_KEY) === '1';
-      } catch {
-        return false;
-      }
-    };
-    const stateChangeProbe = {
-      startedAtMs: Date.now(),
-      bgStateChangedReceived: 0,
-      bgGetStateCalls: 0,
-      applyStateCalls: 0,
-    };
-    const noteStateChangeProbe = (event: 'bgStateChangedReceived' | 'bgGetState' | 'applyState') => {
-      if (!isStateChangeProbeEnabled()) return;
-      if (event === 'bgStateChangedReceived') {
-        stateChangeProbe.bgStateChangedReceived += 1;
-        return;
-      }
-      if (event === 'bgGetState') {
-        stateChangeProbe.bgGetStateCalls += 1;
-        return;
-      }
-      stateChangeProbe.applyStateCalls += 1;
-    };
-    const emitStateChangeProbe = () => {
-      if (!isStateChangeProbeEnabled()) return;
-      const snapshot = {
-        source: 'ws-monitor',
-        nowMs: Date.now(),
-        ...stateChangeProbe,
-      };
-      (window as any).__DAGOBANG_STATE_CHANGE_PROBE_WS_MONITOR__ = snapshot;
-      console.info('[state-change-probe]', snapshot);
-    };
+    let stateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let stateRefreshInFlight: Promise<void> | null = null;
+    let stateRefreshQueued = false;
 
     const setWsEnabledFlag = (enabled: boolean) => {
       try {
@@ -74,7 +41,6 @@ export default defineContentScript({
     };
 
     const applyState = async (state: BgGetStateResponse) => {
-      noteStateChangeProbe('applyState');
       (window as any).__DAGOBANG_SETTINGS__ = state.settings;
       const wsEnabled = state.settings?.autoTrade?.wsMonitorEnabled !== false;
       setWsEnabledFlag(wsEnabled);
@@ -95,10 +61,38 @@ export default defineContentScript({
       wsMonitor.emitStatus();
     };
 
+    const refreshStateFromBackground = async () => {
+      if (stateRefreshInFlight) {
+        stateRefreshQueued = true;
+        return await stateRefreshInFlight;
+      }
+      stateRefreshInFlight = (async () => {
+        const next = await call({ type: 'bg:getState' } as const);
+        await applyState(next);
+      })().finally(() => {
+        stateRefreshInFlight = null;
+        if (stateRefreshQueued) {
+          stateRefreshQueued = false;
+          if (stateRefreshTimer) clearTimeout(stateRefreshTimer);
+          stateRefreshTimer = setTimeout(() => {
+            stateRefreshTimer = null;
+            void refreshStateFromBackground();
+          }, 0);
+        }
+      });
+      return await stateRefreshInFlight;
+    };
+
+    const scheduleStateRefresh = () => {
+      if (stateRefreshTimer) clearTimeout(stateRefreshTimer);
+      stateRefreshTimer = setTimeout(() => {
+        stateRefreshTimer = null;
+        void refreshStateFromBackground();
+      }, STATE_CHANGE_REFRESH_DEBOUNCE_MS);
+    };
+
     try {
-      noteStateChangeProbe('bgGetState');
-      const state = await call({ type: 'bg:getState' } as const);
-      await applyState(state);
+      await refreshStateFromBackground();
     } catch {
       setWsEnabledFlag(true);
       wsMonitor = initWsMonitorForSite({ hostname, call });
@@ -107,22 +101,14 @@ export default defineContentScript({
 
     const listener = (message: any) => {
       if (!message || message.type !== 'bg:stateChanged') return;
-      noteStateChangeProbe('bgStateChangedReceived');
-      void (async () => {
-        try {
-          noteStateChangeProbe('bgGetState');
-          const next = await call({ type: 'bg:getState' } as const);
-          await applyState(next);
-        } catch {
-        }
-      })();
+      scheduleStateRefresh();
     };
-    const probeTimer = window.setInterval(() => {
-      emitStateChangeProbe();
-    }, STATE_CHANGE_PROBE_LOG_INTERVAL_MS);
     browser.runtime.onMessage.addListener(listener);
     window.addEventListener('unload', () => {
-      clearInterval(probeTimer);
+      if (stateRefreshTimer) {
+        clearTimeout(stateRefreshTimer);
+        stateRefreshTimer = null;
+      }
       browser.runtime.onMessage.removeListener(listener);
     });
   },
