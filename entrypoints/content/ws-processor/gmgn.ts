@@ -1,4 +1,4 @@
-import type { BgRequest, BgResponse, Settings, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
+import type { BgRequest, BgResponse, NewPoolMonitorUiDetail, Settings, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLaunchpadPlatform } from '@/constants/launchpad';
 import {
   asAddress,
@@ -1200,22 +1200,7 @@ export function initGmgnWsMonitor(options: {
     marketForwardTimerByChannel.set(normalizedChannel, timer);
   };
 
-  type NewPoolMonitorUiDetail = {
-    source: UnifiedMarketSignal['source'];
-    channel: string;
-    tokenData: any;
-    receivedAtMs: number;
-  };
-  const NEWPOOL_MONITOR_UI_CACHE_LIMIT = 800;
   const NEWPOOL_MONITOR_UI_FLUSH_MS = 80;
-  const isNewPoolMonitorUiActive = () => {
-    try {
-      return (window as any).__DAGOBANG_NEWPOOL_MONITOR_ACTIVE__ === true;
-    } catch {
-      return false;
-    }
-  };
-  const newPoolMonitorUiCache = new Map<string, NewPoolMonitorUiDetail>();
   const pendingNewPoolMonitorUi = new Map<string, NewPoolMonitorUiDetail>();
   let newPoolMonitorUiTimer: number | null = null;
   const mergeNewPoolMonitorTokenData = (prev: any, next: any): any => {
@@ -1254,46 +1239,27 @@ export function initGmgnWsMonitor(options: {
       window.clearTimeout(newPoolMonitorUiTimer);
       newPoolMonitorUiTimer = null;
     }
-    if (!pendingNewPoolMonitorUi.size || !isNewPoolMonitorUiActive()) {
-      pendingNewPoolMonitorUi.clear();
-      return;
-    }
+    if (!pendingNewPoolMonitorUi.size) return;
     const items = Array.from(pendingNewPoolMonitorUi.values());
     pendingNewPoolMonitorUi.clear();
-    window.dispatchEvent(new CustomEvent('dagobang-newpool-monitor-batch', { detail: { items } }));
+    void options.call({ type: 'newpool:upsertBatch', payload: { items } }).catch(() => { });
   };
   const pushNewPoolMonitorUiDetail = (detail: NewPoolMonitorUiDetail) => {
     if (!isNewPoolMonitorEnabled()) return;
     const addr = typeof detail.tokenData?.tokenAddress === 'string' ? detail.tokenData.tokenAddress.trim().toLowerCase() : '';
     const key = addr || `${detail.source}:${detail.channel}:${detail.receivedAtMs}`;
-    const prev = newPoolMonitorUiCache.get(key);
+    const prev = pendingNewPoolMonitorUi.get(key);
     const mergedDetail: NewPoolMonitorUiDetail = prev ? {
       source: resolvePreferredMarketSignalSource(prev.source, detail.source),
       channel: detail.channel || prev.channel,
       tokenData: mergeNewPoolMonitorTokenData(prev.tokenData, detail.tokenData),
       receivedAtMs: Math.max(prev.receivedAtMs, detail.receivedAtMs),
     } : detail;
-    if (newPoolMonitorUiCache.has(key)) newPoolMonitorUiCache.delete(key);
-    newPoolMonitorUiCache.set(key, mergedDetail);
-    while (newPoolMonitorUiCache.size > NEWPOOL_MONITOR_UI_CACHE_LIMIT) {
-      const oldestKey = newPoolMonitorUiCache.keys().next().value;
-      if (!oldestKey) break;
-      newPoolMonitorUiCache.delete(oldestKey);
-    }
-    if (!isNewPoolMonitorUiActive()) return;
     pendingNewPoolMonitorUi.set(key, mergedDetail);
     if (newPoolMonitorUiTimer == null) {
       newPoolMonitorUiTimer = window.setTimeout(() => flushNewPoolMonitorUi(), NEWPOOL_MONITOR_UI_FLUSH_MS);
     }
   };
-  const emitNewPoolMonitorSnapshot = () => {
-    const items = Array.from(newPoolMonitorUiCache.values());
-    window.dispatchEvent(new CustomEvent('dagobang-newpool-monitor-snapshot', { detail: { items } }));
-  };
-  const onRequestNewPoolMonitorSnapshot = () => {
-    emitNewPoolMonitorSnapshot();
-  };
-  window.addEventListener('dagobang-newpool-monitor-request-snapshot', onRequestNewPoolMonitorSnapshot as EventListener);
 
   const emitMarketSignal = (input: {
     source: UnifiedMarketSignal['source'];
@@ -2007,7 +1973,6 @@ export function initGmgnWsMonitor(options: {
       flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
       flushNewPoolMonitorUi();
       window.removeEventListener('message', onMessage);
-      window.removeEventListener('dagobang-newpool-monitor-request-snapshot', onRequestNewPoolMonitorSnapshot as EventListener);
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('beforeunload', onPageHide);
       onPageHide();

@@ -16,7 +16,7 @@ import { createXSniperTrade } from '@/services/xSniper/xSniperTrade';
 import { createTokenSniperTrade } from '@/services/tokenSniper/tokenSniperTrade';
 import { createNewCoinSniperTrade } from '@/services/newCoinSniper/newCoinSniperTrade';
 import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/limitOrders/executor';
-import type { BgRequest, LimitOrderScanStatus, SubmitChannel, TxSellInput } from '@/types/extention';
+import type { BgRequest, LimitOrderScanStatus, NewPoolMonitorUiDetail, SubmitChannel, TxSellInput, UnifiedMarketSignalSource } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenAltfunService } from '@/services/token/altfun';
@@ -38,6 +38,8 @@ export default defineBackground(() => {
   const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
   const EIP7702_DELEGATION_PREFIX = '0xef0100';
   const STATE_CHANGE_BROADCAST_DEBOUNCE_MS = 250;
+  const NEWPOOL_MONITOR_CACHE_LIMIT = 800;
+  const NEWPOOL_MONITOR_BROADCAST_MS = 80;
   const parseEip7702Delegation = (code: string | null | undefined): { delegated: boolean; delegateAddress?: `0x${string}`; code: `0x${string}` } => {
     const normalized = (typeof code === 'string' && code.startsWith('0x') ? code.toLowerCase() : '0x') as `0x${string}`;
     if (!normalized.startsWith(EIP7702_DELEGATION_PREFIX) || normalized.length < 2 + 6 + 40) {
@@ -51,6 +53,109 @@ export default defineBackground(() => {
   let stateChangeBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingStateChangeResolvers: Array<() => void> = [];
   let pendingStateChangeRejectors: Array<(error: unknown) => void> = [];
+  const newPoolMonitorStore = new Map<string, NewPoolMonitorUiDetail>();
+  const pendingNewPoolMonitorBroadcast = new Map<string, NewPoolMonitorUiDetail>();
+  let newPoolMonitorBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+  const resolvePreferredMarketSignalSource = (
+    prev: UnifiedMarketSignalSource,
+    next: UnifiedMarketSignalSource,
+  ): UnifiedMarketSignalSource => {
+    const rank: Record<UnifiedMarketSignalSource, number> = {
+      token_update: 0,
+      near_complete: 1,
+      complete: 2,
+      new_pool: 3,
+    };
+    return (rank[next] ?? 0) >= (rank[prev] ?? 0) ? next : prev;
+  };
+  const isObject = (input: unknown): input is Record<string, any> => !!input && typeof input === 'object' && !Array.isArray(input);
+  const pickFiniteNumber = (input: unknown): number | undefined => {
+    const num = typeof input === 'number' ? input : Number(input);
+    return Number.isFinite(num) ? num : undefined;
+  };
+  const normalizePercentValue = (input: unknown): number | undefined => {
+    const num = pickFiniteNumber(input);
+    if (num == null) return undefined;
+    if (num >= 0 && num <= 1) return num * 100;
+    return num;
+  };
+  const pickMaxPercentValue = (next: unknown, prev: unknown): number | undefined => {
+    const nextPercent = normalizePercentValue(next);
+    const prevPercent = normalizePercentValue(prev);
+    if (nextPercent == null) return prevPercent;
+    if (prevPercent == null) return nextPercent;
+    return Math.max(nextPercent, prevPercent);
+  };
+  const mergeNewPoolMonitorTokenData = (prev: any, next: any): any => {
+    if (!isObject(prev)) return isObject(next) ? { ...(next as any) } : next;
+    if (!isObject(next)) return { ...(prev as any) };
+    const merged: Record<string, any> = { ...(prev as any), ...(next as any) };
+    const prevF = isObject((prev as any).f) ? (prev as any).f : null;
+    const nextF = isObject((next as any).f) ? (next as any).f : null;
+    if (prevF || nextF) {
+      merged.f = {
+        ...(prevF ?? {}),
+        ...(nextF ?? {}),
+      };
+    }
+    const prevDevBuyRatio = pickFiniteNumber((prev as any).d_br);
+    const nextDevBuyRatio = pickFiniteNumber((next as any).d_br);
+    const mergedDevBuyRatio = nextDevBuyRatio ?? prevDevBuyRatio;
+    if (mergedDevBuyRatio != null) {
+      merged.devHoldPercent = normalizePercentValue(mergedDevBuyRatio);
+      merged.d_br = mergedDevBuyRatio;
+      if (isObject(merged.f)) {
+        (merged.f as Record<string, any>).d_br = pickFiniteNumber((nextF as any)?.d_br) ?? pickFiniteNumber((prevF as any)?.d_br) ?? mergedDevBuyRatio;
+      }
+    }
+    const mergedDevMaxBuyPercent = pickMaxPercentValue(
+      nextDevBuyRatio,
+      pickFiniteNumber((prev as any).devMaxBuyPercent) ?? normalizePercentValue(prevDevBuyRatio ?? null),
+    );
+    if (mergedDevMaxBuyPercent != null) {
+      merged.devMaxBuyPercent = mergedDevMaxBuyPercent;
+    }
+    return merged;
+  };
+  const getNewPoolMonitorKey = (detail: NewPoolMonitorUiDetail) => {
+    const addr = typeof detail?.tokenData?.tokenAddress === 'string' ? detail.tokenData.tokenAddress.trim().toLowerCase() : '';
+    return addr || `${detail.source}:${detail.channel}:${detail.receivedAtMs}`;
+  };
+  const mergeNewPoolMonitorDetail = (prev: NewPoolMonitorUiDetail | undefined, next: NewPoolMonitorUiDetail): NewPoolMonitorUiDetail => {
+    if (!prev) return next;
+    return {
+      source: resolvePreferredMarketSignalSource(prev.source, next.source),
+      channel: next.channel || prev.channel,
+      tokenData: mergeNewPoolMonitorTokenData(prev.tokenData, next.tokenData),
+      receivedAtMs: Math.max(prev.receivedAtMs, next.receivedAtMs),
+    };
+  };
+  const scheduleNewPoolMonitorBroadcast = () => {
+    if (newPoolMonitorBroadcastTimer != null) return;
+    newPoolMonitorBroadcastTimer = setTimeout(() => {
+      newPoolMonitorBroadcastTimer = null;
+      const items = Array.from(pendingNewPoolMonitorBroadcast.values());
+      pendingNewPoolMonitorBroadcast.clear();
+      if (!items.length) return;
+      void broadcastToTabs({ type: 'bg:newpool:batch', items });
+    }, NEWPOOL_MONITOR_BROADCAST_MS);
+  };
+  const upsertNewPoolMonitorItems = (items: NewPoolMonitorUiDetail[]) => {
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      const key = getNewPoolMonitorKey(item);
+      const merged = mergeNewPoolMonitorDetail(newPoolMonitorStore.get(key), item);
+      if (newPoolMonitorStore.has(key)) newPoolMonitorStore.delete(key);
+      newPoolMonitorStore.set(key, merged);
+      pendingNewPoolMonitorBroadcast.set(key, merged);
+    }
+    while (newPoolMonitorStore.size > NEWPOOL_MONITOR_CACHE_LIMIT) {
+      const oldestKey = newPoolMonitorStore.keys().next().value;
+      if (!oldestKey) break;
+      newPoolMonitorStore.delete(oldestKey);
+    }
+    scheduleNewPoolMonitorBroadcast();
+  };
   const resolveTradeSubmitChannel = async (chainId: number, preferred?: SubmitChannel): Promise<SubmitChannel> => {
     if (preferred === 'blox' || preferred === 'blockrazor' || preferred === 'protectRpcs') return preferred;
     const settings = await SettingsService.get();
@@ -1574,6 +1679,15 @@ export default defineBackground(() => {
             if (tasks.length > 0) {
               await Promise.all(tasks);
             }
+            return { ok: true };
+          }
+
+          case 'newpool:getSnapshot':
+            return { ok: true, items: Array.from(newPoolMonitorStore.values()) };
+
+          case 'newpool:upsertBatch': {
+            const items = Array.isArray(msg.payload?.items) ? msg.payload.items : [];
+            if (items.length) upsertNewPoolMonitorItems(items);
             return { ok: true };
           }
         }

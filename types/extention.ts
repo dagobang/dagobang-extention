@@ -616,6 +616,13 @@ export type UnifiedMarketSignal = {
   ts: number;
 };
 
+export type NewPoolMonitorUiDetail = {
+  source: UnifiedMarketSignalSource;
+  channel: string;
+  tokenData: any;
+  receivedAtMs: number;
+};
+
 export type XSniperEvalPoint = {
   atMs: number;
   marketCapUsd?: number;
@@ -829,6 +836,8 @@ export type BgRequest =
   | { type: 'newCoinSniper:clearRuntimeState' }
   | { type: 'twitter:signal'; payload: UnifiedTwitterSignal }
   | { type: 'market:signal'; payload: UnifiedMarketSignal }
+  | { type: 'newpool:getSnapshot' }
+  | { type: 'newpool:upsertBatch'; payload: { items: NewPoolMonitorUiDetail[] } }
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
   | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
   | { type: 'limitOrder:cancel'; id: string }
@@ -1016,6 +1025,10 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'twitter:signal' }
   ? { ok: true }
   : T extends { type: 'market:signal' }
+  ? { ok: true }
+  : T extends { type: 'newpool:getSnapshot' }
+  ? { ok: true; items: NewPoolMonitorUiDetail[] }
+  : T extends { type: 'newpool:upsertBatch' }
   ? { ok: true }
   : T extends { type: 'limitOrder:list' }
   ? { ok: true; orders: LimitOrder[] }

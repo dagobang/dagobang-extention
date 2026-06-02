@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AtSign, ChefHat, Coins, ExternalLink, Eye, Flame, Globe2, Image as ImageIcon, Layers3, Trophy, UserStar, Users, X } from 'lucide-react';
-import type { Settings, UnifiedMarketSignalSource } from '@/types/extention';
+import { browser } from 'wxt/browser';
+import type { NewPoolMonitorUiDetail, Settings } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber } from '@/utils/format';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { pickMaxFiniteNumber } from '@/utils/value';
 import { PLATFORM_OPTIONS, extractLaunchpadPlatform } from '@/constants/launchpad';
+import { call } from '@/utils/messaging';
 import { XSniperFilterSection } from './XSniperFilterSection';
 
 type NewPoolMonitorContentProps = {
@@ -23,12 +25,7 @@ type NewPoolMonitorPanelProps = {
   onDisplayModeChange: (mode: 'floating' | 'tab') => void;
 };
 
-type MarketTokenEventDetail = {
-  source: UnifiedMarketSignalSource;
-  channel: string;
-  tokenData: any;
-  receivedAtMs: number;
-};
+type MarketTokenEventDetail = NewPoolMonitorUiDetail;
 
 type MonitorFilterDraft = {
   platforms?: string[];
@@ -110,12 +107,10 @@ const FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_filters_v1';
 const FILTER_OPEN_STORAGE_KEY = 'dagobang_newpool_monitor_filter_open_v1';
 const GROUP_SOURCE_FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_group_source_filter_v1';
 const VIEW_MODE_STORAGE_KEY = 'dagobang_newpool_monitor_view_mode_v1';
-const ROWS_STORAGE_KEY = 'dagobang_newpool_monitor_rows_v1';
 const ALL_PLATFORM_VALUES = PLATFORM_OPTIONS.map((x) => x.value);
 const MCAP_HIGHLIGHT_WINDOW_MS = 6000;
 const PANEL_MIN_HEIGHT = 420;
 const PANEL_DEFAULT_HEIGHT = 640;
-const PERSISTED_ROWS_LIMIT = 400;
 
 const parseNumber = (v: any) => {
   if (v == null) return null;
@@ -583,43 +578,6 @@ const clampPanelPos = (value: { x: number; y: number }, panelWidth: number, pane
   return { x: clampedX, y: clampedY };
 };
 
-const loadPersistedRows = (): MarketTokenRow[] => {
-  try {
-    const raw = window.localStorage.getItem(ROWS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((item): item is MarketTokenRow => {
-        return !!item
-          && typeof item === 'object'
-          && typeof (item as any).tokenAddress === 'string'
-          && /^0x[a-f0-9]{40}$/i.test((item as any).tokenAddress)
-          && typeof (item as any).createdAtMs === 'number'
-          && Number.isFinite((item as any).createdAtMs)
-          && typeof (item as any).updatedAtMs === 'number'
-          && Number.isFinite((item as any).updatedAtMs);
-      })
-      .slice(0, PERSISTED_ROWS_LIMIT);
-  } catch {
-    return [];
-  }
-};
-
-const persistRows = (map: Map<string, MarketTokenRow>) => {
-  try {
-    const rows = Array.from(map.values())
-      .sort((a, b) => {
-        const createdDiff = b.createdAtMs - a.createdAtMs;
-        if (createdDiff !== 0) return createdDiff;
-        return b.updatedAtMs - a.updatedAtMs;
-      })
-      .slice(0, PERSISTED_ROWS_LIMIT);
-    window.localStorage.setItem(ROWS_STORAGE_KEY, JSON.stringify(rows));
-  } catch {
-  }
-};
-
 const getPlatformBadgeClassName = (platform?: string) => {
   const normalized = typeof platform === 'string' ? platform.trim().toLowerCase() : '';
   if (normalized === 'fourmeme') return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300';
@@ -941,36 +899,18 @@ export function NewPoolMonitorContent({
 
   useEffect(() => {
     if (!active) return;
-    const restoredRows = loadPersistedRows();
+    let disposed = false;
     tokenMapRef.current.clear();
-    for (const row of restoredRows) {
-      tokenMapRef.current.set(row.tokenAddress, row);
-    }
-    setTokenIds(
-      restoredRows
-        .slice()
-        .sort((a, b) => b.createdAtMs - a.createdAtMs)
-        .slice(0, MARKET_TOKEN_CACHE_LIMIT)
-        .map((item) => item.tokenAddress)
-    );
     const pendingDetails: MarketTokenEventDetail[] = [];
     let flushTimer: number | null = null;
-    let persistTimer: number | null = null;
-    const schedulePersist = () => {
-      if (persistTimer != null) return;
-      persistTimer = window.setTimeout(() => {
-        persistTimer = null;
-        persistRows(tokenMapRef.current);
-      }, 600);
-    };
     const syncIds = () => {
+      if (disposed) return;
       const map = tokenMapRef.current;
       const nextIds = Array.from(map.values())
         .sort((a, b) => b.createdAtMs - a.createdAtMs)
         .slice(0, MARKET_TOKEN_CACHE_LIMIT)
         .map((item) => item.tokenAddress);
       setTokenIds(nextIds);
-      schedulePersist();
     };
     const flush = () => {
       flushTimer = null;
@@ -980,45 +920,31 @@ export function NewPoolMonitorContent({
       ingestRows(map, batch);
       syncIds();
     };
-    const onBatch = (event: Event) => {
-      const detail = (event as CustomEvent<{ items?: MarketTokenEventDetail[] }>).detail;
-      const items = Array.isArray(detail?.items) ? detail.items : [];
+    const onBatch = (message: any) => {
+      if (message?.type !== 'bg:newpool:batch') return;
+      const items = Array.isArray(message?.items) ? message.items as MarketTokenEventDetail[] : [];
       if (!items.length) return;
       pendingDetails.push(...items);
       if (flushTimer == null) flushTimer = window.setTimeout(flush, 80);
     };
-    const onSnapshot = (event: Event) => {
-      const detail = (event as CustomEvent<{ items?: MarketTokenEventDetail[] }>).detail;
-      const items = Array.isArray(detail?.items) ? detail.items : [];
-      if (!items.length) return;
-      tokenMapRef.current.clear();
-      ingestRows(tokenMapRef.current, items);
-      syncIds();
-    };
-    try {
-      (window as any).__DAGOBANG_NEWPOOL_MONITOR_ACTIVE__ = true;
-    } catch {
-    }
-    window.addEventListener('dagobang-newpool-monitor-batch' as any, onBatch as any);
-    window.addEventListener('dagobang-newpool-monitor-snapshot' as any, onSnapshot as any);
-    window.dispatchEvent(new CustomEvent('dagobang-newpool-monitor-request-snapshot'));
+    browser.runtime.onMessage.addListener(onBatch);
+    void call({ type: 'newpool:getSnapshot' } as const)
+      .then((res) => {
+        if (disposed) return;
+        const items = Array.isArray((res as any)?.items) ? (res as any).items as MarketTokenEventDetail[] : [];
+        tokenMapRef.current.clear();
+        if (items.length) ingestRows(tokenMapRef.current, items);
+        syncIds();
+      })
+      .catch(() => { });
     return () => {
-      try {
-        (window as any).__DAGOBANG_NEWPOOL_MONITOR_ACTIVE__ = false;
-      } catch {
-      }
-      window.removeEventListener('dagobang-newpool-monitor-batch' as any, onBatch as any);
-      window.removeEventListener('dagobang-newpool-monitor-snapshot' as any, onSnapshot as any);
+      disposed = true;
+      browser.runtime.onMessage.removeListener(onBatch);
       if (flushTimer != null) {
         window.clearTimeout(flushTimer);
         flushTimer = null;
       }
-      if (persistTimer != null) {
-        window.clearTimeout(persistTimer);
-        persistTimer = null;
-      }
       flush();
-      persistRows(tokenMapRef.current);
     };
   }, [active]);
 
