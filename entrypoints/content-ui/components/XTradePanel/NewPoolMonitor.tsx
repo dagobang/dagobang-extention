@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AtSign, ChefHat, Coins, ExternalLink, Eye, Flame, Globe2, Image as ImageIcon, Layers3, Trophy, UserStar, Users, X } from 'lucide-react';
+import { AtSign, ChefHat, Coins, ExternalLink, Eye, Flame, Globe2, Image as ImageIcon, Layers3, MessageCircle, Trophy, UserStar, Users, X } from 'lucide-react';
 import { browser } from 'wxt/browser';
 import type { NewPoolMonitorUiDetail, Settings } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
@@ -77,6 +77,10 @@ type MarketTokenRow = {
   tweetAuthor?: string;
   tweetId?: string;
   tweetUrl?: string;
+  tweetType?: 'tweet' | 'reply' | 'quote' | 'repost' | 'follow' | 'unfollow';
+  telegramUrl?: string;
+  telegramHandle?: string;
+  telegramKind?: 'handle' | 'invite' | 'unknown';
   website?: string;
   websiteHost?: string;
   groupLabel?: string;
@@ -87,11 +91,14 @@ type MonitorViewMode = 'grouped' | 'globalHot';
 
 type MarketTokenGroup = {
   key: string;
-  kind: 'tweet' | 'website' | 'image' | 'name' | 'address';
+  kind: 'tweet' | 'telegram' | 'website' | 'image' | 'name' | 'address';
   label: string;
   tweetAuthor?: string;
   tweetId?: string;
   tweetUrl?: string;
+  tweetType?: MarketTokenRow['tweetType'];
+  telegramUrl?: string;
+  telegramKind?: MarketTokenRow['telegramKind'];
   website?: string;
   latestAtMs: number;
   newestTokenAtMs: number;
@@ -250,6 +257,89 @@ const normalizeTweetAuthor = (input: unknown) => {
   return raw;
 };
 
+const normalizeTweetType = (input: unknown): MarketTokenRow['tweetType'] => {
+  const raw = typeof input === 'string' ? input.trim().toLowerCase() : '';
+  if (!raw) return undefined;
+  if (raw === 'tweet') return 'tweet';
+  if (raw === 'reply') return 'reply';
+  if (raw === 'quote') return 'quote';
+  if (raw === 'retweet' || raw === 'repost') return 'repost';
+  if (raw === 'follow') return 'follow';
+  if (raw === 'unfollow') return 'unfollow';
+  return undefined;
+};
+
+const getTweetTypeLabel = (type?: MarketTokenRow['tweetType']) => {
+  if (type === 'tweet') return '原推';
+  if (type === 'reply') return '回复';
+  if (type === 'quote') return '引用';
+  if (type === 'repost') return '转推';
+  if (type === 'follow') return '关注';
+  if (type === 'unfollow') return '取关';
+  return '';
+};
+
+const getTweetTypeBadgeClassName = (type?: MarketTokenRow['tweetType']) => {
+  if (type === 'tweet') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
+  if (type === 'reply') return 'border-amber-500/30 bg-amber-500/10 text-amber-200';
+  if (type === 'quote') return 'border-violet-500/30 bg-violet-500/10 text-violet-200';
+  if (type === 'repost') return 'border-sky-500/30 bg-sky-500/10 text-sky-200';
+  if (type === 'follow') return 'border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-200';
+  if (type === 'unfollow') return 'border-rose-500/30 bg-rose-500/10 text-rose-200';
+  return 'border-zinc-700 bg-zinc-900/60 text-zinc-300';
+};
+
+const getTweetGroupPillClassName = (type?: MarketTokenRow['tweetType']) => {
+  if (!type) return 'border-zinc-700 bg-zinc-900/50 text-zinc-500';
+  return getTweetTypeBadgeClassName(type);
+};
+
+const getTelegramGroupPillClassName = (kind?: MarketTokenRow['telegramKind']) => {
+  if (kind === 'invite') return 'border-teal-500/30 bg-teal-500/10 text-teal-200';
+  return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200';
+};
+
+const getGroupKindLabel = (kind: MarketTokenGroup['kind']) => {
+  if (kind === 'tweet') return '推文';
+  if (kind === 'telegram') return 'TG';
+  if (kind === 'website') return '站点';
+  if (kind === 'image') return '同图';
+  if (kind === 'name') return '名称';
+  return '地址';
+};
+
+const formatShortAddress = (value?: string) => {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!/^0x[a-f0-9]{40}$/i.test(text)) return text || '-';
+  return `${text.slice(0, 6)}...${text.slice(-4)}`;
+};
+
+const extractTelegramRef = (tokenData: any): { telegramUrl?: string; telegramHandle?: string; telegramKind?: MarketTokenRow['telegramKind'] } => {
+  const strings: string[] = [];
+  collectStringValues(tokenData, strings, new Set());
+  const telegramUrl = findFirstUrl(strings, (url) => {
+    const host = url.hostname.replace(/^www\./i, '').toLowerCase();
+    return host === 't.me' || host === 'telegram.me';
+  });
+  if (!telegramUrl) return {};
+  try {
+    const url = new URL(telegramUrl);
+    const host = url.hostname.replace(/^www\./i, '').toLowerCase();
+    if (host !== 't.me' && host !== 'telegram.me') return { telegramUrl };
+    const segments = url.pathname.split('/').filter(Boolean);
+    const firstSeg = segments[0] || '';
+    const isInviteLink = firstSeg.startsWith('+') || firstSeg.toLowerCase() === 'joinchat';
+    const handle = firstSeg && !isInviteLink ? firstSeg.replace(/^@/, '') : '';
+    return {
+      telegramUrl,
+      telegramHandle: handle || undefined,
+      telegramKind: handle ? 'handle' : isInviteLink ? 'invite' : 'unknown',
+    };
+  } catch {
+    return { telegramUrl, telegramKind: 'unknown' };
+  }
+};
+
 const extractWebsiteRef = (tokenData: any): { website?: string; websiteHost?: string } => {
   const strings: string[] = [];
   collectStringValues(tokenData, strings, new Set());
@@ -269,14 +359,26 @@ const extractWebsiteRef = (tokenData: any): { website?: string; websiteHost?: st
   };
 };
 
-const extractTweetRef = (tokenData: any): { tweetAuthor?: string; tweetId?: string; tweetUrl?: string } => {
+const extractTweetRef = (tokenData: any): { tweetAuthor?: string; tweetId?: string; tweetUrl?: string; tweetType?: MarketTokenRow['tweetType'] } => {
   const strings: string[] = [];
   collectStringValues(tokenData, strings, new Set());
+  const tweetType = normalizeTweetType(
+    pickString(
+      tokenData?.tweetType,
+      tokenData?.tw,
+      tokenData?.f?.tweetType,
+      tokenData?.f?.tw,
+      tokenData?.sourceTweetType,
+      tokenData?.stw,
+      tokenData?.f?.sourceTweetType,
+      tokenData?.f?.stw,
+    )
+  );
   for (const value of strings) {
     const fullMatch = value.match(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([^/\s]+)\/status\/(\d{6,})/i);
     if (fullMatch?.[2]) {
       const author = normalizeTweetAuthor(fullMatch[1]);
-      return { tweetAuthor: author, tweetId: fullMatch[2], tweetUrl: fullMatch[0] };
+      return { tweetAuthor: author, tweetId: fullMatch[2], tweetUrl: fullMatch[0], tweetType };
     }
     const pathMatch = value.match(/(?:^|\/)?([A-Za-z0-9_]{1,32})\/status\/(\d{6,})(?:\?[^\s]*)?$/i);
     if (pathMatch?.[2]) {
@@ -286,14 +388,18 @@ const extractTweetRef = (tokenData: any): { tweetAuthor?: string; tweetId?: stri
         tweetAuthor: author,
         tweetId,
         tweetUrl: author ? `https://x.com/${author}/status/${tweetId}` : `https://x.com/i/status/${tweetId}`,
+        tweetType,
       };
     }
   }
   const directAuthor = normalizeTweetAuthor(pickString(
     tokenData?.m_x_user,
     tokenData?.f?.m_x_user,
-    tokenData?.tweetUserScreen,
     tokenData?.userScreen,
+    tokenData?.f?.userScreen,
+    tokenData?.u?.s,
+    tokenData?.f?.u?.s,
+    tokenData?.tweetUserScreen,
     tokenData?.twitterScreenName,
     tokenData?.twUser,
     tokenData?.twUserScreen,
@@ -302,7 +408,7 @@ const extractTweetRef = (tokenData: any): { tweetAuthor?: string; tweetId?: stri
   if (directMx) {
     const directMxFull = directMx.match(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([^/\s]+)\/status\/(\d{6,})/i);
     if (directMxFull?.[2]) {
-      return { tweetAuthor: normalizeTweetAuthor(directMxFull[1]), tweetId: directMxFull[2], tweetUrl: directMxFull[0] };
+      return { tweetAuthor: normalizeTweetAuthor(directMxFull[1]), tweetId: directMxFull[2], tweetUrl: directMxFull[0], tweetType };
     }
     const directMxPath = directMx.match(/([A-Za-z0-9_]{1,32})\/status\/(\d{6,})(?:\?[^\s]*)?$/i);
     if (directMxPath?.[2]) {
@@ -311,6 +417,7 @@ const extractTweetRef = (tokenData: any): { tweetAuthor?: string; tweetId?: stri
         tweetAuthor: author,
         tweetId: directMxPath[2],
         tweetUrl: author ? `https://x.com/${author}/status/${directMxPath[2]}` : `https://x.com/i/status/${directMxPath[2]}`,
+        tweetType,
       };
     }
   }
@@ -320,9 +427,10 @@ const extractTweetRef = (tokenData: any): { tweetAuthor?: string; tweetId?: stri
       tweetAuthor: directAuthor,
       tweetId: directId,
       tweetUrl: directAuthor ? `https://x.com/${directAuthor}/status/${directId}` : `https://x.com/i/status/${directId}`,
+      tweetType,
     };
   }
-  return {};
+  return { tweetType };
 };
 
 const extractImageRef = (tokenData: any) => {
@@ -406,7 +514,8 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
   );
   if (typeof createdAtMs !== 'number' || createdAtMs <= 0) return null;
   const updatedAtMs = normalizeEpochMs(tokenData?.updatedAtMs ?? tokenData?.ut ?? detail.receivedAtMs) ?? detail.receivedAtMs;
-  const { tweetAuthor, tweetId, tweetUrl } = extractTweetRef(tokenData);
+  const { tweetAuthor, tweetId, tweetUrl, tweetType } = extractTweetRef(tokenData);
+  const { telegramUrl, telegramHandle, telegramKind } = extractTelegramRef(tokenData);
   const { website, websiteHost } = extractWebsiteRef(tokenData);
   const tokenLogo = extractImageRef(tokenData) ?? pickString(tokenData?.tokenLogo, tokenData?.logo, tokenData?.f?.l, tokenData?.l);
   const devHoldPercentRaw = toFiniteNumber(tokenData?.devHoldPercent ?? tokenData?.d_br);
@@ -441,6 +550,10 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
     tweetAuthor,
     tweetId,
     tweetUrl,
+    tweetType,
+    telegramUrl,
+    telegramHandle,
+    telegramKind,
     website,
     websiteHost,
   };
@@ -454,16 +567,33 @@ const ingestRows = (map: Map<string, MarketTokenRow>, items: MarketTokenEventDet
   }
 };
 
-const resolveGroupInfo = (row: MarketTokenRow): Pick<MarketTokenGroup, 'key' | 'kind' | 'label' | 'tweetAuthor' | 'tweetId' | 'tweetUrl' | 'website'> => {
-  if (row.tweetId) {
-    const author = row.tweetAuthor?.replace(/^@/, '').trim();
+const resolveGroupInfo = (row: MarketTokenRow): Pick<MarketTokenGroup, 'key' | 'kind' | 'label' | 'tweetAuthor' | 'tweetId' | 'tweetUrl' | 'tweetType' | 'telegramUrl' | 'telegramKind' | 'website'> => {
+  const author = row.tweetAuthor?.replace(/^@/, '').trim();
+  if (row.tweetId || author || row.tweetUrl) {
+    const key = row.tweetId
+      ? `tweet:${row.tweetId}`
+      : row.tweetUrl
+        ? `tweet-url:${row.tweetUrl}`
+        : `tweet-author:${author}`;
+    const label = row.groupLabel
+      || (author ? `@${author}` : row.tweetId ? `Tweet #${row.tweetId}` : 'Tweet');
     return {
-      key: `tweet:${row.tweetId}`,
+      key,
       kind: 'tweet',
-      label: row.groupLabel || (author ? `@${author}` : `Tweet #${row.tweetId}`),
+      label,
       tweetAuthor: author,
       tweetId: row.tweetId,
       tweetUrl: row.tweetUrl,
+      tweetType: row.tweetType,
+    };
+  }
+  if (row.telegramHandle || row.telegramUrl) {
+    return {
+      key: row.telegramHandle ? `telegram:${row.telegramHandle.toLowerCase()}` : `telegram-url:${row.telegramUrl}`,
+      kind: 'telegram',
+      label: row.telegramHandle ? `@${row.telegramHandle}` : row.telegramKind === 'invite' ? '邀请群' : 'Telegram',
+      telegramUrl: row.telegramUrl,
+      telegramKind: row.telegramKind,
     };
   }
   if (row.websiteHost) {
@@ -492,7 +622,7 @@ const resolveGroupInfo = (row: MarketTokenRow): Pick<MarketTokenGroup, 'key' | '
   return {
     key: `address:${row.tokenAddress}`,
     kind: 'address',
-    label: row.tokenAddress,
+    label: formatShortAddress(row.tokenAddress),
   };
 };
 
@@ -559,6 +689,7 @@ const matchesTokenFilter = (row: MarketTokenRow, filterDraft: MonitorFilterDraft
 
 const getGroupIcon = (kind: MarketTokenGroup['kind']) => {
   if (kind === 'tweet') return <AtSign size={12} />;
+  if (kind === 'telegram') return <MessageCircle size={12} />;
   if (kind === 'website') return <Globe2 size={12} />;
   if (kind === 'image') return <ImageIcon size={12} />;
   return <Layers3 size={12} />;
@@ -613,6 +744,7 @@ type TokenRowCardProps = {
   listKey: string;
   resolvedSiteInfo: SiteInfo;
   tt: (key: string, subs?: Array<string | number>) => string;
+  showSocialMeta?: boolean;
 };
 
 function TokenRowCard({
@@ -621,6 +753,7 @@ function TokenRowCard({
   listKey,
   resolvedSiteInfo,
   tt,
+  showSocialMeta = false,
 }: TokenRowCardProps) {
   const shortAddr = `${row.tokenAddress.slice(0, 6)}...${row.tokenAddress.slice(-4)}`;
   const symbol = row.tokenSymbol?.trim() || '';
@@ -680,6 +813,15 @@ function TokenRowCard({
       : rank === 3
         ? 'bg-orange-600/90'
         : 'bg-zinc-700/90';
+  const socialMetaText = (() => {
+    if (!showSocialMeta) return '';
+    if (!row.tweetId && !row.tweetAuthor && !row.tweetUrl) return '';
+    const typeLabel = getTweetTypeLabel(row.tweetType);
+    const author = row.tweetAuthor?.replace(/^@/, '').trim();
+    const authorLabel = author ? `@${author}` : row.tweetId ? `#${row.tweetId.slice(-6)}` : 'Tweet';
+    return typeLabel ? `${authorLabel} · ${typeLabel}` : authorLabel;
+  })();
+  const socialMetaClassName = row.tweetType ? getTweetTypeBadgeClassName(row.tweetType) : 'border-zinc-700 bg-zinc-900/60 text-zinc-300';
   const metricItems = [
     {
       key: 'devCreated',
@@ -781,6 +923,13 @@ function TokenRowCard({
                 <span className={`rounded border px-1 py-0.5 text-[9px] ${getPlatformBadgeClassName(row.launchpadPlatform)}`}>{row.launchpadPlatform}</span>
               ) : null}
             </div>
+            {socialMetaText ? (
+              <div className="mt-1">
+                <span className={`inline-flex max-w-full items-center rounded-full border px-1.5 py-0.5 text-[10px] ${socialMetaClassName}`}>
+                  <span className="truncate">{socialMetaText}</span>
+                </span>
+              </div>
+            ) : null}
           </div>
           <div className="w-[78px] shrink-0 self-start pt-0.5 text-right leading-tight">
             <div className="flex flex-row items-center justify-end gap-0.5">
@@ -977,6 +1126,9 @@ export function NewPoolMonitorContent({
           tweetAuthor: groupInfo.tweetAuthor,
           tweetId: groupInfo.tweetId,
           tweetUrl: groupInfo.tweetUrl,
+          tweetType: groupInfo.tweetType,
+                          telegramUrl: groupInfo.telegramUrl,
+                          telegramKind: groupInfo.telegramKind,
           website: groupInfo.website,
           latestAtMs: row.updatedAtMs,
           newestTokenAtMs: row.createdAtMs,
@@ -994,6 +1146,9 @@ export function NewPoolMonitorContent({
       if (!current.tweetAuthor && groupInfo.tweetAuthor) current.tweetAuthor = groupInfo.tweetAuthor;
       if (!current.tweetId && groupInfo.tweetId) current.tweetId = groupInfo.tweetId;
       if (!current.tweetUrl && groupInfo.tweetUrl) current.tweetUrl = groupInfo.tweetUrl;
+      if (!current.tweetType && groupInfo.tweetType) current.tweetType = groupInfo.tweetType;
+      if (!current.telegramUrl && groupInfo.telegramUrl) current.telegramUrl = groupInfo.telegramUrl;
+      if (!current.telegramKind && groupInfo.telegramKind) current.telegramKind = groupInfo.telegramKind;
       if (!current.website && groupInfo.website) current.website = groupInfo.website;
     }
     const out = Array.from(groupMap.values()).map((group) => ({
@@ -1178,15 +1333,23 @@ export function NewPoolMonitorContent({
             <div>
               {visibleGroups.map((group) => (
                 <div key={group.key} className="mt-2 rounded-lg border border-zinc-800/90 bg-zinc-950/30 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] first:mt-0">
-                  {group.totalCount > 1 ? (
-                    <div className="mb-1 flex items-center justify-between gap-3 border-b border-zinc-800/80 pb-1">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 text-[12px] text-zinc-300">
-                          <span className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-900/50 px-1.5 py-0.5 text-[10px] text-zinc-500">
-                            {getGroupIcon(group.kind)}
-                            {group.kind === 'tweet' ? '推文' : group.kind === 'website' ? '站点' : group.kind === 'image' ? '同图' : '名称'}
-                          </span>
-                          {group.kind === 'tweet' && group.tweetAuthor ? (
+                  <div className="mb-1 flex items-center justify-between gap-3 border-b border-zinc-800/80 pb-1">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-[12px] text-zinc-300">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] ${
+                            group.kind === 'tweet'
+                              ? getTweetGroupPillClassName(group.tweetType)
+                              : group.kind === 'telegram'
+                                ? getTelegramGroupPillClassName(group.telegramKind)
+                                : 'border-zinc-700 bg-zinc-900/50 text-zinc-500'
+                          }`}
+                        >
+                          {getGroupIcon(group.kind)}
+                          {getGroupKindLabel(group.kind)}
+                        </span>
+                        {group.kind === 'tweet' && group.tweetAuthor ? (
+                          <span className="flex min-w-0 items-center gap-1.5">
                             <button
                               type="button"
                               className="truncate font-semibold text-sky-300 hover:text-sky-200 hover:underline underline-offset-2"
@@ -1198,25 +1361,39 @@ export function NewPoolMonitorContent({
                             >
                               @{group.tweetAuthor}
                             </button>
-                          ) : group.kind === 'tweet' && group.tweetId ? (
+                            {group.tweetType ? (
+                              <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${getTweetTypeBadgeClassName(group.tweetType)}`}>
+                                {getTweetTypeLabel(group.tweetType)}
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : group.kind === 'tweet' && group.tweetId ? (
+                          <span className="flex min-w-0 items-center gap-1.5">
                             <span className="truncate font-semibold text-sky-300">Tweet #{group.tweetId.slice(-6)}</span>
-                          ) : (
-                            <span className="truncate font-semibold text-zinc-100">{group.label}</span>
-                          )}
-                          <span className="text-[10px] text-zinc-500">{group.totalCount}</span>
-                        </div>
+                            {group.tweetType ? (
+                              <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${getTweetTypeBadgeClassName(group.tweetType)}`}>
+                                {getTweetTypeLabel(group.tweetType)}
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : group.kind === 'telegram' ? (
+                          <span className={`truncate font-semibold ${group.telegramKind === 'invite' ? 'text-teal-300' : 'text-cyan-300'}`}>{group.label}</span>
+                        ) : (
+                          <span className="truncate font-semibold text-zinc-100">{group.label}</span>
+                        )}
+                        <span className="text-[10px] text-zinc-500">{group.totalCount}</span>
                       </div>
-                      {group.tweetUrl || group.website ? (
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800"
-                          onClick={() => window.open(group.tweetUrl || group.website || '', '_blank')}
-                        >
-                          <ExternalLink size={12} />
-                        </button>
-                      ) : null}
                     </div>
-                  ) : null}
+                    {group.tweetUrl || group.telegramUrl || group.website ? (
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800"
+                        onClick={() => window.open(group.tweetUrl || group.telegramUrl || group.website || '', '_blank')}
+                      >
+                        <ExternalLink size={12} />
+                      </button>
+                    ) : null}
+                  </div>
 
                   <div className="space-y-0.5">
                     {group.tokens.map((row, idx) => (
@@ -1258,6 +1435,7 @@ export function NewPoolMonitorContent({
                     listKey="global-hot"
                     resolvedSiteInfo={resolvedSiteInfo}
                     tt={tt}
+                    showSocialMeta
                   />
                 </div>
               ))}
