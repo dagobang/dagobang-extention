@@ -1106,12 +1106,28 @@ export class GmgnAPI {
     return raw;
   }
 
+  private static normalizeTotalSupply(value: unknown): string | undefined {
+    const raw = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+    if (!raw) return undefined;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return undefined;
+    return raw;
+  }
+
   private static normalizeTokenInfo(tokenData: MultiTokenInfoResponse['data'][number], chain: string): TokenInfo {
     const quoteTokenAddress = tokenData.tpool?.quote_address || tokenData.pool?.quote_address;
     const quoteToken = tokenData.migration_market_cap_quote || tokenData.pool?.quote_symbol || '';
     const exchange = tokenData.tpool?.exchange;
     const isMigrated = tokenData.tpool?.launch_type === 'migrated';
     const dexType = isMigrated ? this.getDexType(exchange) : undefined;
+    const totalSupply = this.normalizeTotalSupply(
+      tokenData.totalSupply
+      ?? tokenData.total_supply
+      ?? tokenData.base_token_info?.totalSupply
+      ?? tokenData.base_token_info?.total_supply
+      ?? tokenData.token?.totalSupply
+      ?? tokenData.token?.total_supply
+    );
     const socialContainers = [
       tokenData,
       tokenData.links,
@@ -1195,6 +1211,7 @@ export class GmgnAPI {
       quote_token_address: quoteTokenAddress,
       pool_pair: tokenData.biggest_pool_address || tokenData.tpool?.pool_address || tokenData.pool?.pool_address,
       dex_type: dexType,
+      totalSupply,
     };
   }
 

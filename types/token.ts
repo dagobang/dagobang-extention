@@ -44,6 +44,7 @@ export interface TokenInfo {
     liquidity?: string;
     timestamp: number;
   };
+  // Normalized human-readable supply, not raw on-chain units.
   totalSupply?: string;
   aiCreator?: boolean;
 }

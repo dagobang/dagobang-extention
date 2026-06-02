@@ -181,7 +181,8 @@ export class TokenAltfunService {
         const oneToken = 10n ** BigInt(normalizedDecimals || 18);
         const quotedUsdc = await quoteHyperSellToUsdc(tokenAddress, oneToken).catch(() => 0n);
         const priceUsd = quotedUsdc > 0n ? Number(formatUnits(quotedUsdc, hyperTokens.usdc.decimals)) : 0;
-        const supply = Number(formatUnits(totalSupply, normalizedDecimals || 18));
+        const supplyText = formatUnits(totalSupply, normalizedDecimals || 18);
+        const supply = Number(supplyText);
         const marketCapUsd = priceUsd > 0 && Number.isFinite(supply) && supply > 0 ? priceUsd * supply : 0;
 
         let liquidityUsd = 0;
@@ -228,7 +229,7 @@ export class TokenAltfunService {
           quote_token: 'USDC',
           quote_token_address: hyperTokens.usdc.address,
           pool_pair: isGraduated && graduatedPair.toLowerCase() !== ZERO_ADDRESS ? graduatedPair : undefined,
-          totalSupply: totalSupply.toString(),
+          totalSupply: supplyText,
           tokenPrice: priceUsd > 0
             ? {
               price: String(priceUsd),

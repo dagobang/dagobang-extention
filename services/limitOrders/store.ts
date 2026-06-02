@@ -36,7 +36,10 @@ export const hitLimitOrder = (orderType: LimitOrderType, priceUsd: number, trigg
 
 const normalizePriceUsd = (value: number) => {
   if (!Number.isFinite(value) || value <= 0) return value;
-  return normalizePriceValue(value, 4, 4);
+  // Persist trigger prices with higher precision so ultra-small token prices
+  // are not truncated down to 0 when auto-created from quick buy flows.
+  const normalized = normalizePriceValue(value, 6, 8);
+  return Number.isFinite(normalized) && normalized > 0 ? normalized : value;
 };
 
 const normalizePercentValue = (value: number) => {
@@ -244,6 +247,17 @@ export const cancelAllLimitOrders = async (chainId: number, tokenAddress?: `0x${
     if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return true;
     if (o.status === 'executed') return true;
     return false;
+  });
+  await setLimitOrders(next);
+  return next;
+};
+
+export const clearExecutedLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
+  const all = await getLimitOrders();
+  const next = all.filter((o) => {
+    if (o.chainId !== chainId) return true;
+    if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return true;
+    return o.status !== 'executed';
   });
   await setLimitOrders(next);
   return next;

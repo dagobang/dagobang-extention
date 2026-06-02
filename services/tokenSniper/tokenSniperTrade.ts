@@ -740,6 +740,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                   tokenSymbol: tokenInfo.symbol,
                   tokenInfo,
                   basePriceUsd: entryPriceUsd,
+                  entryPriceUsd,
                 });
                 const trailingMode = (cfg as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
                 const isRolling = getAdvancedAutoSellMode(cfg) === 'rolling_take_profit';

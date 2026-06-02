@@ -6,6 +6,7 @@ import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
 import {
   cancelAllLimitOrders, cancelLimitOrder,
+  clearExecutedLimitOrders,
   createLimitOrder,
   listLimitOrders
 } from '@/services/limitOrders/store';
@@ -346,6 +347,14 @@ export default defineBackground(() => {
     // Return true to indicate async response
     const handle = async () => {
       try {
+        if ((msg as { type: string }).type === 'limitOrder:clearExecuted') {
+          const clearMsg = msg as Extract<BgRequest, { type: 'limitOrder:clearExecuted' }>;
+          const orders = await clearExecutedLimitOrders(clearMsg.chainId, clearMsg.tokenAddress);
+          broadcastStateChange();
+          limitOrderScanner?.scheduleFromStorage().catch(() => { });
+          return { ok: true, orders };
+        }
+
         switch (msg.type) {
           case 'bg:ping':
             return { ok: true, time: Date.now() };

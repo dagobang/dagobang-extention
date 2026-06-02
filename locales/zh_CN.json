@@ -762,6 +762,7 @@
       "onlyCurrentToken": "只看当前代币",
       "onlyCurrentTokenWithSymbol": "只看当前代币（{0}）",
       "scanInterval": "扫描间隔",
+      "clearExecuted": "清空历史单",
       "cancelAll": "全部取消",
       "layout": {
         "wide": "宽版",

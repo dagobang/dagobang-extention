@@ -224,10 +224,18 @@ export function createTelegramController(deps: {
       return 'price';
     }
   };
-  const triggerTextByMode = (triggerPriceUsd: number, mode: 'price' | 'marketCap') => {
+  const resolveTokenSupply = (tokenInfo?: TokenInfo | null, fallbackToDefault = false) => {
+    const raw = String(tokenInfo?.totalSupply ?? '').trim();
+    const direct = Number(raw);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    return fallbackToDefault ? TG_DEFAULT_TOKEN_SUPPLY : null;
+  };
+  const resolveTokenSupplyOrDefault = (tokenInfo?: TokenInfo | null) => resolveTokenSupply(tokenInfo, true) ?? TG_DEFAULT_TOKEN_SUPPLY;
+  const triggerTextByMode = (triggerPriceUsd: number, mode: 'price' | 'marketCap', tokenInfo?: TokenInfo | null) => {
     const priceText = `$${Number(triggerPriceUsd).toFixed(6).replace(/0+$/, '').replace(/\.$/, '')}`;
     if (mode !== 'marketCap') return `触发价: ${priceText}`;
-    const estMarketCap = Number(triggerPriceUsd) * TG_DEFAULT_TOKEN_SUPPLY;
+    const supply = resolveTokenSupplyOrDefault(tokenInfo);
+    const estMarketCap = Number(triggerPriceUsd) * Number(supply);
     if (!Number.isFinite(estMarketCap) || estMarketCap <= 0) return `触发价: ${priceText}`;
     return `触发市值: ${formatUsd(estMarketCap)}`;
   };
@@ -612,8 +620,9 @@ export function createTelegramController(deps: {
     const normalizedRpcPriceUsd = Number.isFinite(rpcPriceUsd) && rpcPriceUsd > 0 ? rpcPriceUsd : null;
     let normalizedPriceUsd = normalizedRpcPriceUsd ?? apiPriceUsd;
     const isInnerDisk = Number((tokenInfo as any)?.launchpad_status ?? 1) !== 1;
-    if (!normalizedPriceUsd && isInnerDisk && apiMarketCapUsd) normalizedPriceUsd = apiMarketCapUsd / TG_DEFAULT_TOKEN_SUPPLY;
-    const marketCapByPrice = normalizedPriceUsd ? normalizedPriceUsd * TG_DEFAULT_TOKEN_SUPPLY : null;
+    const supply = resolveTokenSupplyOrDefault(tokenInfo);
+    if (!normalizedPriceUsd && isInnerDisk && apiMarketCapUsd && supply) normalizedPriceUsd = apiMarketCapUsd / supply;
+    const marketCapByPrice = normalizedPriceUsd && supply ? normalizedPriceUsd * supply : null;
     const marketCapUsd = isInnerDisk ? (marketCapByPrice ?? apiMarketCapUsd) : (apiMarketCapUsd ?? marketCapByPrice);
 
     const status = await WalletService.getStatus();
@@ -889,6 +898,7 @@ export function createTelegramController(deps: {
             tokenSymbol: tokenInfo.symbol,
             tokenInfo,
             basePriceUsd: entryPriceUsd,
+            entryPriceUsd,
           });
           const trailingMode = (advancedAutoSell as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
           const isRolling = getAdvancedAutoSellMode(advancedAutoSell) === 'rolling_take_profit';
@@ -1156,7 +1166,7 @@ export function createTelegramController(deps: {
           allowTokenInfoPriceFallback: true,
         }).catch(() => 0);
         const usd = Number.isFinite(px) && px > 0 ? amountNum * px : 0;
-        const totalSupplyNum = Number((tokenInfo as any)?.totalSupply ?? TG_DEFAULT_TOKEN_SUPPLY);
+        const totalSupplyNum = resolveTokenSupplyOrDefault(tokenInfo);
         const apiPrice = Number((tokenInfo as any)?.tokenPrice?.price ?? 0);
         const apiMarketCap = Number((tokenInfo as any)?.tokenPrice?.marketCap ?? 0);
         const normalizedPriceUsd = Number.isFinite(px) && px > 0
@@ -1549,7 +1559,7 @@ export function createTelegramController(deps: {
             return;
           }
           const lines = visible.map((o, idx) => {
-            const triggerText = triggerTextByMode(o.triggerPriceUsd, triggerDisplayMode).replace('触发价: ', '').replace('触发市值: ', '');
+            const triggerText = triggerTextByMode(o.triggerPriceUsd, triggerDisplayMode, o.tokenInfo ?? null).replace('触发价: ', '').replace('触发市值: ', '');
             const targetText = typeof o.targetChangePercent === 'number' && Number.isFinite(o.targetChangePercent) ? `${o.targetChangePercent > 0 ? '+' : ''}${o.targetChangePercent}%` : '-';
             const nativeSymbol = getNativeSymbol(effectiveChainId);
             const actionText = o.side === 'buy'
@@ -1580,7 +1590,7 @@ export function createTelegramController(deps: {
           }
           const tokenOrders = await listLimitOrders(effectiveChainId, tokenAddress);
           const tokenOrderLines = tokenOrders.slice(0, 6).map((o, idx) => {
-            const triggerText = triggerTextByMode(o.triggerPriceUsd, triggerDisplayMode).replace('触发价: ', '').replace('触发市值: ', '');
+            const triggerText = triggerTextByMode(o.triggerPriceUsd, triggerDisplayMode, o.tokenInfo ?? null).replace('触发价: ', '').replace('触发市值: ', '');
             const targetText = typeof o.targetChangePercent === 'number' && Number.isFinite(o.targetChangePercent) ? `${o.targetChangePercent > 0 ? '+' : ''}${o.targetChangePercent}%` : '-';
             const nativeSymbol = getNativeSymbol(effectiveChainId);
             const actionText = o.side === 'buy'

@@ -9,6 +9,7 @@ import { DeployAddress } from '../../constants/contracts/address';
 import { ChainId } from '../../constants/chains/chainId';
 import { getBridgeTokenDexPreference } from '../../constants/tokens/allTokens';
 import { USDC, USDT } from '../../constants/tokens/chains/common';
+import { bscTokens } from '../../constants/tokens/chains/bsc';
 import { dagobangAbi } from '@/constants/contracts/abi';
 import { Address, HyperSwapType, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadline, getRouterSwapDesc, getSlippageBps, getV3FeeForDesc, toHyperDexSwapType } from './tradeTypes';
 import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInDex, resolveBridgeHopExactIn, resolveDexExactIn } from './tradeDex';
@@ -486,6 +487,7 @@ export class TradeService {
     if (usdc && baseTokenAddress.toLowerCase() === usdc) return 'USDC';
     const usdt = USDT[chainId as keyof typeof USDT]?.address?.toLowerCase();
     if (usdt && baseTokenAddress.toLowerCase() === usdt) return 'USDT';
+    if (chainId === ChainId.BNB && baseTokenAddress.toLowerCase() === bscTokens.usd1.address.toLowerCase()) return 'USD1';
     return 'TOKEN';
   }
 
@@ -500,6 +502,9 @@ export class TradeService {
     if (tradeBaseToken === 'USDT') {
       const usdt = USDT[chainId as keyof typeof USDT]?.address;
       if (usdt) return usdt as Address;
+    }
+    if (tradeBaseToken === 'USD1' && chainId === ChainId.BNB) {
+      return bscTokens.usd1.address as Address;
     }
     return ZERO_ADDRESS;
   }

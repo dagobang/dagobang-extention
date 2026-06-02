@@ -15,9 +15,12 @@ export function buildStrategySellOrderInputs(input: {
   tokenSymbol?: string | null;
   tokenInfo: TokenInfo;
   basePriceUsd: number;
+  entryPriceUsd?: number;
 }): LimitOrderCreateInput[] {
   const { config, chainId, tokenAddress, tokenSymbol, tokenInfo } = input;
   const basePriceUsd = Number(input.basePriceUsd);
+  const entryPriceUsd = Number(input.entryPriceUsd);
+  const normalizedEntryPriceUsd = Number.isFinite(entryPriceUsd) && entryPriceUsd > 0 ? entryPriceUsd : undefined;
   if (!Number.isFinite(basePriceUsd) || basePriceUsd <= 0) return [];
   if (!config?.enabled) return [];
   const rules = Array.isArray(config.rules) ? config.rules : [];
@@ -47,6 +50,7 @@ export function buildStrategySellOrderInputs(input: {
       orderType,
       triggerPriceUsd,
       targetChangePercent: triggerPercent,
+      rollingEntryPriceUsd: normalizedEntryPriceUsd,
       sellPercentBps,
       tokenInfo,
     });

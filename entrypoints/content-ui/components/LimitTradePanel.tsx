@@ -13,6 +13,7 @@ import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/si
 import { WalletSelectorDropdown, WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
 import { getChainIdByName, getChainRuntime, getExplorerTxUrl, getNativeSymbol } from '@/constants/chains';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
+import { bscTokens } from '@/constants/tokens/chains/bsc';
 
 const normalizeWalletAddr = (addr?: string | null): `0x${string}` | null => {
   const raw = typeof addr === 'string' ? addr.trim() : '';
@@ -294,6 +295,8 @@ export function LimitTradePanel({
 
   const formatCompactValue = (value: number) => {
     if (!Number.isFinite(value) || value <= 0) return '-';
+    if (value < 0.000001) return value.toExponential(3);
+    if (value < 1) return String(Number(value.toFixed(8)));
     const units = [
       { v: 1e12, s: 'T' },
       { v: 1e9, s: 'B' },
@@ -309,15 +312,18 @@ export function LimitTradePanel({
   };
 
   const getEffectiveTokenSupply = () => {
-    const raw = String(tokenInfo?.totalSupply || '').trim();
-    const decimals = Number(tokenInfo?.decimals ?? 18);
-    if (/^\d+$/.test(raw)) {
-      try {
-        const normalized = Number(formatUnits(BigInt(raw), decimals));
-        if (Number.isFinite(normalized) && normalized > 0) return normalized;
-      } catch {
-      }
+    const marketCapText = String(tokenInfo?.tokenPrice?.marketCap ?? '').trim();
+    const priceText = String(tokenInfo?.tokenPrice?.price ?? '').trim();
+    const marketCap = Number(marketCapText);
+    const price = Number(priceText);
+    if (Number.isFinite(marketCap) && marketCap > 0 && Number.isFinite(price) && price > 0) {
+      const derivedSupply = marketCap / price;
+      if (Number.isFinite(derivedSupply) && derivedSupply > 0) return derivedSupply;
     }
+
+    const raw = String(tokenInfo?.totalSupply || '').trim();
+    const direct = Number(raw);
+    if (Number.isFinite(direct) && direct > 0) return direct;
     return 1_000_000_000;
   };
 
@@ -375,6 +381,9 @@ export function LimitTradePanel({
     if (usdt && target === usdt.address.toLowerCase()) {
       return { symbol: usdt.symbol, decimals: usdt.decimals };
     }
+    if (chainId2 === 56 && target === bscTokens.usd1.address.toLowerCase()) {
+      return { symbol: bscTokens.usd1.symbol, decimals: bscTokens.usd1.decimals };
+    }
     return { symbol: getNativeSymbol(chainId2), decimals: runtime.viemChain.nativeCurrency.decimals };
   };
 
@@ -391,6 +400,7 @@ export function LimitTradePanel({
   const filteredOrders = onlyCurrentToken && tokenAddress
     ? orders.filter((o) => o.tokenAddress.toLowerCase() === tokenAddress.toLowerCase())
     : orders;
+  const hasExecutedOrders = filteredOrders.some((o) => o.status === 'executed');
 
   useEffect(() => {
     priceByTokenKeyRef.current = priceByTokenKey;
@@ -819,6 +829,18 @@ export function LimitTradePanel({
     const colorClass = currentPriceColorClass(currentPriceUsd, o.triggerPriceUsd, loading);
     return { text, colorClass };
   };
+  const clearExecutedOrders = async () => {
+    if (!settings) return;
+    const req = onlyCurrentToken && tokenAddress
+      ? ({ type: 'limitOrder:clearExecuted', chainId, tokenAddress } as const)
+      : ({ type: 'limitOrder:clearExecuted', chainId } as const);
+    try {
+      await call(req);
+    } catch {
+    } finally {
+      await Promise.all([refreshOrders(), refreshScanStatus()]);
+    }
+  };
   const renderOrderActions = (o: LimitOrder, compact = false) => (
     <div className={compact ? 'flex items-center justify-end gap-1 shrink-0' : 'text-right flex items-center justify-end gap-1'}>
       {o.status === 'failed' ? (
@@ -1233,6 +1255,16 @@ export function LimitTradePanel({
                   </label>
                   <button
                     type="button"
+                    disabled={!hasExecutedOrders}
+                    className="px-1.5 py-1 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-amber-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => {
+                      clearExecutedOrders().catch(() => { });
+                    }}
+                  >
+                    {tt('contentUi.limitTradePanel.clearExecuted')}
+                  </button>
+                  <button
+                    type="button"
                     disabled={!orders.length}
                     className="px-1.5 py-1 rounded border border-zinc-700 text-[10px] text-zinc-300 hover:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={async () => {
@@ -1323,6 +1355,16 @@ export function LimitTradePanel({
                       ))}
                     </select>
                   </label>
+                  <button
+                    type="button"
+                    disabled={!hasExecutedOrders}
+                    className="px-2 py-1 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-amber-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => {
+                      clearExecutedOrders().catch(() => { });
+                    }}
+                  >
+                    {tt('contentUi.limitTradePanel.clearExecuted')}
+                  </button>
                   <button
                     type="button"
                     disabled={!orders.length}

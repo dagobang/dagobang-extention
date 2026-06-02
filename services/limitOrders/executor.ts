@@ -134,12 +134,14 @@ export const createLimitOrderExecutor = (deps: {
     }
   };
 
-  const deriveEntryPriceUsdFromTakeProfit = (order: LimitOrder) => {
+  const resolveFollowupEntryPriceUsd = (order: LimitOrder) => {
+    const anchoredEntry = Number(order.rollingEntryPriceUsd);
+    if (Number.isFinite(anchoredEntry) && anchoredEntry > 0) return anchoredEntry;
     const trigger = Number(order.triggerPriceUsd);
     const change = Number(order.targetChangePercent);
-    if (!(Number.isFinite(trigger) && trigger > 0 && Number.isFinite(change) && change > -99.9)) return null;
+    if (!(Number.isFinite(trigger) && trigger > 0 && Number.isFinite(change) && change > -99.9)) return undefined;
     const entry = trigger / (1 + change / 100);
-    if (!(Number.isFinite(entry) && entry > 0)) return null;
+    if (!(Number.isFinite(entry) && entry > 0)) return undefined;
     return entry;
   };
 
@@ -201,6 +203,7 @@ export const createLimitOrderExecutor = (deps: {
           tokenSymbol: order.tokenSymbol ?? null,
           tokenInfo,
           basePriceUsd,
+          entryPriceUsd: basePriceUsd,
         });
         for (const o of orders) {
           await createLimitOrder({ ...o, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
@@ -383,7 +386,9 @@ export const createLimitOrderExecutor = (deps: {
           if (shouldCreate) {
             const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
             if (autoSellMode === 'rolling_take_profit') {
-              const entryPriceUsd = deriveEntryPriceUsdFromTakeProfit(order) ?? basePriceUsd;
+              const resolvedEntryPriceUsd = resolveFollowupEntryPriceUsd(order);
+              if (resolvedEntryPriceUsd == null) return txHash;
+              const entryPriceUsd = resolvedEntryPriceUsd;
               const nextRolling = buildStrategyRollingTakeProfitOrderInputs({
                 config,
                 chainId: order.chainId,

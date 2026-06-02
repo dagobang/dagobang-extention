@@ -13,6 +13,7 @@ import GmgnAPI, { type GmgnTokenHolding } from '@/hooks/GmgnAPI';
 import { getChainIdByName, getNativeSymbol } from '@/constants/chains';
 import { getChainRuntime } from '@/constants/chains/runtime';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
+import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import {
   buildStrategyRollingTakeProfitOrderInputs,
@@ -207,6 +208,7 @@ function resolveTradeBaseTokenAddress(settings: Settings | null | undefined, cha
   if (baseToken === 'WBNB') return runtime.wrappedNativeAddress;
   if (baseToken === 'USDC') return (USDC[chainId as keyof typeof USDC]?.address ?? zeroAddress) as `0x${string}`;
   if (baseToken === 'USDT') return (USDT[chainId as keyof typeof USDT]?.address ?? zeroAddress) as `0x${string}`;
+  if (baseToken === 'USD1' && chainId === 56) return bscTokens.usd1.address as `0x${string}`;
   return zeroAddress;
 }
 
@@ -231,6 +233,10 @@ function resolveTradeBaseTokenMeta(chainId: number, tradeBaseTokenAddress: `0x${
     return { symbol: usdt.symbol, decimals: usdt.decimals };
   }
 
+  if (chainId === 56 && target === bscTokens.usd1.address.toLowerCase()) {
+    return { symbol: bscTokens.usd1.symbol, decimals: bscTokens.usd1.decimals };
+  }
+
   return { symbol: 'TOKEN', decimals: runtime.viemChain.nativeCurrency.decimals };
 }
 
@@ -242,7 +248,7 @@ function deriveUsdFromBaseAmount(
 ): number | null {
   if (!Number.isFinite(amount) || amount <= 0) return null;
   const symbol = tradeBaseTokenMeta.symbol.toUpperCase();
-  if (symbol === 'USDC' || symbol === 'USDT') return amount;
+  if (symbol === 'USDC' || symbol === 'USDT' || symbol === 'USD1') return amount;
   if (tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase()) {
     return baseTokenPriceUsd && baseTokenPriceUsd > 0 ? amount * baseTokenPriceUsd : null;
   }
@@ -256,7 +262,7 @@ function deriveBaseAmountFromUsd(
 ): number | null {
   if (!Number.isFinite(usdAmount) || usdAmount <= 0) return null;
   const symbol = tradeBaseTokenMeta.symbol.toUpperCase();
-  if (symbol === 'USDC' || symbol === 'USDT') return usdAmount;
+  if (symbol === 'USDC' || symbol === 'USDT' || symbol === 'USD1') return usdAmount;
   return baseTokenPriceUsd && baseTokenPriceUsd > 0 ? usdAmount / baseTokenPriceUsd : null;
 }
 
@@ -1227,7 +1233,7 @@ export default function App() {
         } as TokenInfo
       : null;
     const stableSymbol = tradeBaseTokenMeta.symbol.toUpperCase();
-    if (stableSymbol === 'USDC' || stableSymbol === 'USDT') {
+    if (stableSymbol === 'USDC' || stableSymbol === 'USDT' || stableSymbol === 'USD1') {
       setTradeBasePriceUsd(1);
       return;
     }
@@ -2419,6 +2425,7 @@ export default function App() {
             tokenSymbol: tokenSymbol ?? null,
             tokenInfo,
             basePriceUsd,
+            entryPriceUsd: basePriceUsd,
           });
 
           const mode = (config as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';

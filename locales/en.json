@@ -741,6 +741,7 @@
       "onlyCurrentToken": "Only current token",
       "onlyCurrentTokenWithSymbol": "Only current token ({0})",
       "scanInterval": "Scan interval",
+      "clearExecuted": "Clear history",
       "cancelAll": "Cancel all",
       "layout": {
         "wide": "Wide",

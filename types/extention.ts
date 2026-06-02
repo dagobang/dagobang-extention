@@ -833,6 +833,7 @@ export type BgRequest =
   | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
   | { type: 'limitOrder:cancel'; id: string }
   | { type: 'limitOrder:cancelAll'; chainId: number; tokenAddress?: `0x${string}` }
+  | { type: 'limitOrder:clearExecuted'; chainId: number; tokenAddress?: `0x${string}` }
   | { type: 'limitOrder:scanStatus'; chainId: number }
   | { type: 'limitOrder:tick'; chainId: number; tokenAddress: `0x${string}`; priceUsd: number };
 
@@ -1023,6 +1024,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'limitOrder:cancel' }
   ? { ok: true; orders: LimitOrder[] }
   : T extends { type: 'limitOrder:cancelAll' }
+  ? { ok: true; orders: LimitOrder[] }
+  : T extends { type: 'limitOrder:clearExecuted' }
   ? { ok: true; orders: LimitOrder[] }
   : T extends { type: 'limitOrder:scanStatus' }
   ? ({ ok: true } & LimitOrderScanStatus)
