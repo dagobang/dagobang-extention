@@ -403,6 +403,55 @@ export function createTelegramController(deps: {
       `触发: ${triggerText} | 目标: ${targetText} | 执行: ${formatLimitOrderActionText(order, chainId)}`,
     ].join('\n');
   };
+  const formatHoldingPnlText = (pnlUsd: number | null, pnlRatio: number | null) => {
+    const formatPnlPercent = (ratio: number | null) => {
+      if (ratio == null || !Number.isFinite(ratio)) return '-';
+      const pct = ratio * 100;
+      const sign = pct > 0 ? '+' : '';
+      return `${sign}${pct.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`;
+    };
+    const pnlText = pnlUsd != null ? formatUsd(pnlUsd) : '-';
+    const pnlPct = formatPnlPercent(pnlRatio);
+    const pnlIcon = (pnlUsd ?? 0) > 0 || (pnlRatio ?? 0) > 0 ? '🟢' : (pnlUsd ?? 0) < 0 || (pnlRatio ?? 0) < 0 ? '🔴' : '⚪';
+    return `${pnlIcon} PnL ${pnlText} (${pnlPct})`;
+  };
+  const formatHoldingBlock = (
+    item: { symbol: string; amountText: string; usd: number; marketCapUsd: number | null; pnlUsd: number | null; pnlRatio: number | null },
+    index: number
+  ) => {
+    const amountShort = formatHoldingAmount(item.amountText);
+    return [
+      `${index + 1}) ${compactTokenLabel(item.symbol, 10)} | ${amountShort}`,
+      `持仓: ${formatUsd(item.usd)} | 市值: ${formatUsd(item.marketCapUsd)} | ${formatHoldingPnlText(item.pnlUsd, item.pnlRatio)}`,
+    ].join('\n');
+  };
+  const buildHoldingsKeyboard = (
+    chainId: number,
+    items: Array<{ tokenAddress: `0x${string}`; symbol: string }>
+  ): TgInlineKeyboard => {
+    const rows = items.slice(0, 6).map((item, idx) => ([{
+      text: `🔍 查看 #${idx + 1} ${compactTokenLabel(item.symbol, 8)}`,
+      callbackData: `act:token:${chainId}:${item.tokenAddress}`,
+    }]));
+    rows.push([
+      { text: '🔄 刷新持仓', callbackData: `act:holdings:${chainId}` },
+      { text: '👛 钱包列表', callbackData: 'act:wallets' },
+    ]);
+    return rows;
+  };
+  const formatWalletAccountBlock = (input: {
+    index: number;
+    address: string;
+    name?: string;
+    balanceText: string;
+    isCurrent: boolean;
+  }) => {
+    const title = `${input.index + 1}) ${input.name || '未命名'}${input.isCurrent ? ' [当前]' : ''}`;
+    return [
+      title,
+      `地址: ${shortAddress(input.address)} | 余额: ${input.balanceText}`,
+    ].join('\n');
+  };
 
   const buildTokenActionKeyboard = (chainId: number, tokenAddress: `0x${string}`, nativeSymbol: string, buyPresets: string[], sellPresets: string[]) => {
     const buyBase = buyPresets && buyPresets.length ? buyPresets : ['0.1', '0.5', '1', '2'];
@@ -657,9 +706,9 @@ export function createTelegramController(deps: {
   const buildWalletListKeyboard = (accounts: Array<{ address: string; name?: string }>) => {
     const rows = accounts.slice(0, 12).map((acc, idx) => ([
       { text: `切换 #${idx + 1}`, callbackData: `act:switch:${acc.address}` },
-      { text: shortAddress(acc.address), callbackData: `act:switch:${acc.address}` },
+      { text: compactTokenLabel(acc.name || shortAddress(acc.address), 10), callbackData: `act:switch:${acc.address}` },
     ]));
-    rows.push([{ text: '返回菜单', callbackData: 'act:menu' }]);
+    rows.push([{ text: '🔄 刷新钱包', callbackData: 'act:wallets' }, { text: '返回菜单', callbackData: 'act:menu' }]);
     return rows;
   };
   const resolveSwitchWalletTarget = (targetRaw: string, accounts: Array<{ address: string; name?: string }>): string | null => {
@@ -1185,13 +1234,16 @@ export function createTelegramController(deps: {
       if (totalSupply == null || totalSupply <= 0) return null;
       return totalSupply * priceNum;
     };
-    const formatPnlPercent = (ratio: number | null) => {
-      if (ratio == null || !Number.isFinite(ratio)) return '-';
-      const pct = ratio * 100;
-      const sign = pct > 0 ? '+' : '';
-      return `${sign}${pct.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`;
-    };
     const chainCode = chainNames[chainId] ?? String(chainId);
+    const walletStatus = await WalletService.getStatus().catch(() => null);
+    const walletAccounts = Array.isArray(walletStatus?.accounts)
+      ? walletStatus.accounts as Array<{ address: string; name?: string }>
+      : undefined;
+    const walletName = formatOrderWalletLabel({
+      fromAddress: walletAddress,
+      accounts: walletAccounts,
+      accountAliases: undefined,
+    });
     try {
       const gmgnHoldings = await deps.fetchGmgnHoldings?.(chainCode, walletAddress);
       if (Array.isArray(gmgnHoldings) && gmgnHoldings.length > 0) {
@@ -1225,17 +1277,19 @@ export function createTelegramController(deps: {
           normalized.sort((a, b) => (b.usd || 0) - (a.usd || 0));
           const top = normalized.slice(0, 12);
           const totalUsd = normalized.reduce((s, r) => s + (Number.isFinite(r.usd) ? r.usd : 0), 0);
-          const lines = top.map((r, i) => {
-            const amountShort = formatHoldingAmount(r.amountText);
-            const pnlText = r.pnlUsd != null ? formatUsd(r.pnlUsd) : '-';
-            const pnlPct = formatPnlPercent(r.pnlRatio);
-            const pnlIcon = (r.pnlUsd ?? 0) > 0 || (r.pnlRatio ?? 0) > 0 ? '🟢' : (r.pnlUsd ?? 0) < 0 || (r.pnlRatio ?? 0) < 0 ? '🔴' : '⚪';
-            return `${i + 1}) ${compactTokenLabel(r.symbol, 10)} | ${amountShort} | 持仓${formatUsd(r.usd)} | 市值${formatUsd(r.marketCapUsd)} | ${pnlIcon}PnL ${pnlText} (${pnlPct})`;
-          });
-          const viewRows = top.slice(0, 6).map((r, i) => ([{ text: `🔍 查看#${i + 1} ${compactTokenLabel(r.symbol, 8)}`, callbackData: `act:token:${chainId}:${r.tokenAddress}` }]));
+          const lines = top.map((r, i) => formatHoldingBlock(r, i));
           await sendTelegramReply(
-            ['💼 持仓', `链: ${formatChainLabel(chainId)}`, `地址: ${shortAddress(walletAddress)}`, `总估值: ${formatUsd(totalUsd)}`, `显示: ${top.length}/${normalized.length}`, '', ...lines].join('\n'),
-            { inlineKeyboard: [...viewRows, [{ text: '🔄 刷新持仓', callbackData: `act:holdings:${chainId}` }, { text: '↩️ 菜单', callbackData: 'act:menu' }]] }
+            [
+              '� 持仓面板',
+              `链: ${formatChainLabel(chainId)}`,
+              `钱包: ${walletName}`,
+              `地址: ${shortAddress(walletAddress)}`,
+              `总估值: ${formatUsd(totalUsd)}`,
+              `显示: ${top.length}/${normalized.length}`,
+              '',
+              lines.join('\n\n'),
+            ].join('\n'),
+            { inlineKeyboard: buildHoldingsKeyboard(chainId, top), chainId }
           );
           return;
         }
@@ -1309,24 +1363,27 @@ export function createTelegramController(deps: {
 
     if (!rows.length) {
       await sendTelegramReply('当前钱包未检测到持仓（基于近期交易代币集合）。', {
-        inlineKeyboard: [[{ text: '🔄 刷新持仓', callbackData: `act:holdings:${chainId}` }, { text: '↩️ 菜单', callbackData: 'act:menu' }]],
+        inlineKeyboard: [[{ text: '🔄 刷新持仓', callbackData: `act:holdings:${chainId}` }, { text: '👛 钱包列表', callbackData: 'act:wallets' }]],
+        chainId,
       });
       return;
     }
     rows.sort((a, b) => (b.usd || 0) - (a.usd || 0));
     const top = rows.slice(0, 12);
     const totalUsd = rows.reduce((s, r) => s + (Number.isFinite(r.usd) ? r.usd : 0), 0);
-    const lines = top.map((r, i) => {
-      const amountShort = formatHoldingAmount(r.amountText);
-      const pnlText = r.pnlUsd != null ? formatUsd(r.pnlUsd) : '-';
-      const pnlPct = formatPnlPercent(r.pnlRatio);
-      const pnlIcon = (r.pnlUsd ?? 0) > 0 || (r.pnlRatio ?? 0) > 0 ? '🟢' : (r.pnlUsd ?? 0) < 0 || (r.pnlRatio ?? 0) < 0 ? '🔴' : '⚪';
-      return `${i + 1}) ${compactTokenLabel(r.symbol, 10)} | ${amountShort} | 持仓${formatUsd(r.usd)} | 市值${formatUsd(r.marketCapUsd)} | ${pnlIcon}PnL ${pnlText} (${pnlPct})`;
-    });
-    const viewRows = top.slice(0, 6).map((r, i) => ([{ text: `🔍 查看#${i + 1} ${compactTokenLabel(r.symbol, 8)}`, callbackData: `act:token:${chainId}:${r.tokenAddress}` }]));
+    const lines = top.map((r, i) => formatHoldingBlock(r, i));
     await sendTelegramReply(
-      ['💼 持仓', `链: ${formatChainLabel(chainId)}`, `钱包: ${walletAddress}`, `总估值: ${formatUsd(totalUsd)}`, `显示: ${top.length}/${rows.length}`, '', ...lines].join('\n'),
-      { inlineKeyboard: [...viewRows, [{ text: '🔄 刷新持仓', callbackData: `act:holdings:${chainId}` }, { text: '↩️ 菜单', callbackData: 'act:menu' }]] }
+      [
+        '� 持仓面板',
+        `链: ${formatChainLabel(chainId)}`,
+        `钱包: ${walletName}`,
+        `地址: ${shortAddress(walletAddress)}`,
+        `总估值: ${formatUsd(totalUsd)}`,
+        `显示: ${top.length}/${rows.length}`,
+        '',
+        lines.join('\n\n'),
+      ].join('\n'),
+      { inlineKeyboard: buildHoldingsKeyboard(chainId, top), chainId }
     );
   };
 
@@ -1616,11 +1673,29 @@ export function createTelegramController(deps: {
             topAccounts.map(async (acc, idx) => {
               const nativeBalanceText = await resolveNativeBalanceText(tgChainId, acc.address, nativeSymbol);
               const isCurrent = acc.address.toLowerCase() === String(status.address || '').toLowerCase();
-              return `${idx + 1}. ${(acc.name || '未命名')} | ${acc.address} | ${nativeBalanceText}${isCurrent ? ' [当前]' : ''}`;
+              return formatWalletAccountBlock({
+                index: idx,
+                address: acc.address,
+                name: acc.name,
+                balanceText: nativeBalanceText,
+                isCurrent,
+              });
             })
           );
           const lines = lineItems;
-          await sendTelegramReply(['钱包列表', ...lines, '', '可用: /switch <address|name>'].join('\n'), { inlineKeyboard: buildWalletListKeyboard(accounts) });
+          await sendTelegramReply(
+            [
+              '👛 钱包列表',
+              `链: ${formatChainLabel(tgChainId)}`,
+              `当前: ${status.address ? shortAddress(status.address) : '-'}`,
+              `显示: ${topAccounts.length}/${accounts.length}`,
+              '',
+              lines.join('\n\n'),
+              '',
+              '可用: /switch <address|name>',
+            ].join('\n'),
+            { inlineKeyboard: buildWalletListKeyboard(accounts), chainId: tgChainId }
+          );
           return;
         }
         if (isSwitchWalletAction) {
@@ -1637,7 +1712,21 @@ export function createTelegramController(deps: {
           }
           await WalletService.switchAccount(selectedAddress);
           await deps.broadcastStateChange();
-          await sendTelegramReply(`已切换钱包: ${selectedAddress}`, { inlineKeyboard: buildMainMenuKeyboard(tgChainId) });
+          const selected = accounts.find((acc) => acc.address.toLowerCase() === selectedAddress.toLowerCase());
+          await sendTelegramReply(
+            [
+              '已切换钱包',
+              `名称: ${selected?.name || '未命名'}`,
+              `地址: ${shortAddress(selectedAddress)}`,
+              `链: ${formatChainLabel(tgChainId)}`,
+            ].join('\n'),
+            {
+              inlineKeyboard: [
+                [{ text: '💼 查看持仓', callbackData: `act:holdings:${tgChainId}` }, { text: '👛 钱包列表', callbackData: 'act:wallets' }],
+              ],
+              chainId: tgChainId,
+            }
+          );
           return;
         }
         if (isXSniperOrderAction) {
