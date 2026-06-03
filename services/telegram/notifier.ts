@@ -2,6 +2,9 @@ import type { Settings, XSniperBuyRecord } from '@/types/extention';
 import { isTelegramConfigured, telegramSendMessage, telegramSendMessageWithOptions, type TelegramApiConfig } from './api';
 import { chainNames, getNativeSymbol } from '@/constants/chains';
 
+type TgInlineButton = { text: string; callbackData: string };
+type TgInlineKeyboard = Array<Array<TgInlineButton>>;
+
 function shortAddr(addr: string | undefined): string {
   const v = String(addr || '').trim();
   if (!v || v.length < 12) return v;
@@ -52,6 +55,14 @@ function buildConfig(settings: Settings): TelegramApiConfig | null {
   return isTelegramConfigured(cfg) ? cfg : null;
 }
 
+function resolveTelegramChainId(settings: Settings): number {
+  const explicit = Number((settings as any)?.telegram?.chainId);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.floor(explicit);
+  const fallback = Number((settings as any)?.chainId);
+  if (Number.isFinite(fallback) && fallback > 0) return Math.floor(fallback);
+  return 56;
+}
+
 export function createTelegramNotifier(deps: {
   getSettings: () => Promise<Settings>;
 }) {
@@ -88,15 +99,41 @@ export function createTelegramNotifier(deps: {
   const sendText = async (
     text: string,
     predicate: (settings: Settings) => boolean,
-    options?: { inlineKeyboard?: Array<Array<{ text: string; callbackData: string }>> }
+    options?: {
+      inlineKeyboard?: TgInlineKeyboard;
+      chainId?: number;
+      includeGlobalNav?: boolean;
+    }
   ) => {
     try {
       const settings = await deps.getSettings();
       if (!predicate(settings)) return false;
       const cfg = buildConfig(settings);
       if (!cfg) return false;
-      if (options?.inlineKeyboard?.length) {
-        await telegramSendMessageWithOptions(cfg, text, options);
+      const resolvedChainId = Number.isFinite(Number(options?.chainId)) && Number(options?.chainId) > 0
+        ? Math.floor(Number(options?.chainId))
+        : resolveTelegramChainId(settings);
+      const appendGlobalNavButtons = (inlineKeyboard?: TgInlineKeyboard): TgInlineKeyboard | undefined => {
+        const rows = Array.isArray(inlineKeyboard) ? inlineKeyboard.map((row) => [...row]) : [];
+        const callbackSet = new Set(rows.flat().map((btn) => String(btn?.callbackData || '')));
+        const navRow: TgInlineButton[] = [];
+        if (!callbackSet.has(`act:holdings:${resolvedChainId}`) && !callbackSet.has('act:holdings')) {
+          navRow.push({ text: '持仓', callbackData: `act:holdings:${resolvedChainId}` });
+        }
+        if (!callbackSet.has('act:menu')) {
+          navRow.push({ text: '↩️ 返回菜单', callbackData: 'act:menu' });
+        }
+        if (navRow.length) rows.push(navRow);
+        return rows.length ? rows : undefined;
+      };
+      const finalOptions = {
+        ...options,
+        inlineKeyboard: options?.includeGlobalNav === false
+          ? options?.inlineKeyboard
+          : appendGlobalNavButtons(options?.inlineKeyboard),
+      };
+      if (finalOptions?.inlineKeyboard?.length) {
+        await telegramSendMessageWithOptions(cfg, text, finalOptions);
       } else {
         await telegramSendMessage(cfg, text);
       }
@@ -186,7 +223,7 @@ export function createTelegramNotifier(deps: {
     return await sendText(
       text,
       (settings) => !!(settings as any).telegram?.notifyTradeSuccess,
-      { inlineKeyboard: rows }
+      { inlineKeyboard: rows, chainId: buttonChainId ?? undefined }
     );
   };
 
@@ -210,25 +247,51 @@ export function createTelegramNotifier(deps: {
     stage: 'submitted' | 'success' | 'failed';
     orderId: string;
     side: 'buy' | 'sell';
+    chainId?: number;
     tokenAddress: string;
     tokenName?: string;
     tokenSymbol?: string;
+    fromAddress?: string;
+    orderType?: string;
+    triggerPriceUsd?: number;
     marketCapUsd?: number | null;
     txHash?: string;
     error?: string;
   }) => {
     const stageText = input.stage === 'submitted' ? '已提交' : input.stage === 'success' ? '执行成功' : '执行失败';
+    const chainId = Number(input.chainId);
+    const chainText = Number.isFinite(chainId) && chainId > 0
+      ? `${String(chainNames[chainId] || chainId).toUpperCase()} (${getNativeSymbol(chainId)})`
+      : '-';
+    const triggerText = Number.isFinite(Number(input.triggerPriceUsd)) && Number(input.triggerPriceUsd) > 0
+      ? `$${Number(input.triggerPriceUsd).toFixed(6).replace(/0+$/, '').replace(/\.$/, '')}`
+      : '-';
+    const walletLabel = input.fromAddress ? shortAddr(input.fromAddress) : '-';
     const text = [
-      `挂单: ${stageText}`,
+      `挂单${stageText}`,
+      `链: ${chainText}`,
       `订单: ${input.orderId}`,
       `方向: ${input.side === 'sell' ? '卖出' : '买入'}`,
       `代币: ${tokenLabel(input)}`,
       `地址: ${shortAddr(input.tokenAddress)}`,
+      `钱包: ${walletLabel}`,
+      input.orderType ? `类型: ${input.orderType}` : '',
+      `触发: ${triggerText}`,
       `市值: ${formatUsd(input.marketCapUsd)}`,
-      input.txHash ? `Tx: ${input.txHash}` : '',
       input.error ? `错误: ${input.error}` : '',
     ].filter(Boolean).join('\n');
-    return await sendText(text, (settings) => !!(settings as any).telegram?.notifyLimitOrder);
+    const rows: TgInlineKeyboard = [];
+    if (Number.isFinite(chainId) && chainId > 0 && /^0x[a-fA-F0-9]{40}$/.test(String(input.tokenAddress || ''))) {
+      rows.push([
+        { text: '🔍 查看代币', callbackData: `act:token:${chainId}:${input.tokenAddress}` },
+        { text: '📋 挂单列表', callbackData: `act:orders:${chainId}` },
+      ]);
+    }
+    return await sendText(
+      text,
+      (settings) => !!(settings as any).telegram?.notifyLimitOrder,
+      { inlineKeyboard: rows, chainId: Number.isFinite(chainId) && chainId > 0 ? chainId : undefined }
+    );
   };
 
   const notifyQuickTrade = async (text: string) => {
