@@ -477,6 +477,8 @@
       "filterDevMaxBuy": "Dev max buy",
       "filterViewerCount": "Viewers",
       "filterDevCreatedCount": "Dev token count",
+      "highlightTwitterAccounts": "Highlight X",
+      "highlightTwitterAccountsPlaceholder": "@elonmusk, cz_binance",
       "placeholderMin": "Min",
       "placeholderMax": "Max",
       "minMarketCap": "Min market cap (USD)",

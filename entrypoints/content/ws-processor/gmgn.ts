@@ -1200,7 +1200,7 @@ export function initGmgnWsMonitor(options: {
     marketForwardTimerByChannel.set(normalizedChannel, timer);
   };
 
-  const NEWPOOL_MONITOR_UI_FLUSH_MS = 80;
+  const NEWPOOL_MONITOR_UI_FLUSH_MS = 16;
   const pendingNewPoolMonitorUi = new Map<string, NewPoolMonitorUiDetail>();
   let newPoolMonitorUiTimer: number | null = null;
   const mergeNewPoolMonitorTokenData = (prev: any, next: any): any => {

@@ -9,6 +9,7 @@ type XSniperFilterSectionProps = {
   updateTwitterSnipe: (patch: any) => void;
   showTweetAge?: boolean;
   platformOptions?: Array<{ value: string; label: string }>;
+  showHighlightTwitterAccounts?: boolean;
 };
 
 export function XSniperFilterSection({
@@ -20,6 +21,7 @@ export function XSniperFilterSection({
   updateTwitterSnipe,
   showTweetAge = true,
   platformOptions = [],
+  showHighlightTwitterAccounts = false,
 }: XSniperFilterSectionProps) {
   const selectedPlatforms = Array.isArray((twitterSnipe as any)?.platforms)
     ? (twitterSnipe as any).platforms.map((x: any) => String(x).trim().toLowerCase()).filter(Boolean)
@@ -353,6 +355,21 @@ export function XSniperFilterSection({
                 </div>
               </div>
             </div>
+            {showHighlightTwitterAccounts ? (
+              <div className="flex items-start gap-3">
+                <div className="w-16 pt-1 text-[12px] text-zinc-400">{tt('contentUi.autoTradeStrategy.highlightTwitterAccounts')}</div>
+                <div className="flex-1">
+                  <textarea
+                    rows={2}
+                    placeholder={tt('contentUi.autoTradeStrategy.highlightTwitterAccountsPlaceholder')}
+                    className="w-full resize-y rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[13px] outline-none"
+                    value={(twitterSnipe as any)?.highlightTwitterAccounts ?? ''}
+                    disabled={!canEdit}
+                    onChange={(e) => updateTwitterSnipe({ highlightTwitterAccounts: e.target.value } as any)}
+                  />
+                </div>
+              </div>
+            ) : null}
           </div>
           <label className="flex items-center gap-2 text-[12px] text-zinc-300">
             <input

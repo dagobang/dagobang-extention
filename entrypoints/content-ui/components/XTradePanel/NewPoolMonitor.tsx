@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AtSign, ChefHat, Coins, ExternalLink, Eye, Flame, Globe2, Image as ImageIcon, Layers3, MessageCircle, Trophy, UserStar, Users, X } from 'lucide-react';
 import { browser } from 'wxt/browser';
-import type { NewPoolMonitorUiDetail, Settings } from '@/types/extention';
+import type { NewPoolMonitorUiDetail, Settings, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber } from '@/utils/format';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
@@ -48,6 +48,7 @@ type MonitorFilterDraft = {
   minDevCreatedTokenCount?: string;
   maxDevCreatedTokenCount?: string;
   blockIfDevSell?: boolean;
+  highlightTwitterAccounts?: string;
 };
 
 type MarketTokenRow = {
@@ -114,6 +115,7 @@ const FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_filters_v1';
 const FILTER_OPEN_STORAGE_KEY = 'dagobang_newpool_monitor_filter_open_v1';
 const GROUP_SOURCE_FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_group_source_filter_v1';
 const VIEW_MODE_STORAGE_KEY = 'dagobang_newpool_monitor_view_mode_v1';
+const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';
 const ALL_PLATFORM_VALUES = PLATFORM_OPTIONS.map((x) => x.value);
 const MCAP_HIGHLIGHT_WINDOW_MS = 6000;
 const PANEL_MIN_HEIGHT = 420;
@@ -257,6 +259,25 @@ const normalizeTweetAuthor = (input: unknown) => {
   return raw;
 };
 
+const normalizeTwitterAccountHandle = (input: unknown) => {
+  const normalized = normalizeTweetAuthor(input);
+  return normalized ? normalized.toLowerCase() : undefined;
+};
+
+const parseTwitterAccountList = (input: unknown) => {
+  const raw = typeof input === 'string' ? input : '';
+  if (!raw.trim()) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw.split(/[\s,，、;；]+/)) {
+    const normalized = normalizeTwitterAccountHandle(item);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+};
+
 const normalizeTweetType = (input: unknown): MarketTokenRow['tweetType'] => {
   const raw = typeof input === 'string' ? input.trim().toLowerCase() : '';
   if (!raw) return undefined;
@@ -340,6 +361,58 @@ const extractTelegramRef = (tokenData: any): { telegramUrl?: string; telegramHan
   }
 };
 
+const extractTweetIdsFromStrings = (values: string[]) => {
+  const ids = new Set<string>();
+  for (const value of values) {
+    for (const match of value.matchAll(/status\/(\d{6,})/gi)) {
+      if (match[1]) ids.add(match[1]);
+    }
+    for (const match of value.matchAll(/\b(\d{10,})\b/g)) {
+      if (match[1]) ids.add(match[1]);
+    }
+  }
+  return Array.from(ids);
+};
+
+const loadUnifiedTwitterSignals = (): UnifiedTwitterSignal[] => {
+  try {
+    const runtimeCache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__;
+    if (runtimeCache && Array.isArray(runtimeCache.list)) return runtimeCache.list as UnifiedTwitterSignal[];
+  } catch {
+  }
+  try {
+    const raw = window.localStorage.getItem(TWITTER_UNIFIED_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.list) ? parsed.list as UnifiedTwitterSignal[] : [];
+  } catch {
+    return [];
+  }
+};
+
+const findTweetRefFromUnifiedCache = (tweetIds: string[]) => {
+  if (!tweetIds.length) return {};
+  const wanted = new Set(tweetIds);
+  const list = loadUnifiedTwitterSignals();
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const signal = list[i];
+    if (!signal) continue;
+    const hitByTweet = typeof signal.tweetId === 'string' && wanted.has(signal.tweetId);
+    const hitByQuoted = typeof signal.quotedTweetId === 'string' && wanted.has(signal.quotedTweetId);
+    if (!hitByTweet && !hitByQuoted) continue;
+    const tweetId = hitByTweet ? signal.tweetId : signal.quotedTweetId;
+    const authorRaw = hitByTweet ? signal.userScreen : (signal.quotedUserScreen ?? signal.userScreen);
+    const author = normalizeTweetAuthor(authorRaw);
+    return {
+      tweetId,
+      tweetAuthor: author,
+      tweetUrl: tweetId ? (author ? `https://x.com/${author}/status/${tweetId}` : `https://x.com/i/status/${tweetId}`) : undefined,
+      tweetType: normalizeTweetType(signal.tweetType),
+    };
+  }
+  return {};
+};
+
 const extractWebsiteRef = (tokenData: any): { website?: string; websiteHost?: string } => {
   const strings: string[] = [];
   collectStringValues(tokenData, strings, new Set());
@@ -362,6 +435,7 @@ const extractWebsiteRef = (tokenData: any): { website?: string; websiteHost?: st
 const extractTweetRef = (tokenData: any): { tweetAuthor?: string; tweetId?: string; tweetUrl?: string; tweetType?: MarketTokenRow['tweetType'] } => {
   const strings: string[] = [];
   collectStringValues(tokenData, strings, new Set());
+  const tweetIdsFromStrings = extractTweetIdsFromStrings(strings);
   const tweetType = normalizeTweetType(
     pickString(
       tokenData?.tweetType,
@@ -422,15 +496,28 @@ const extractTweetRef = (tokenData: any): { tweetAuthor?: string; tweetId?: stri
     }
   }
   const directId = pickString(tokenData?.tweetId, tokenData?.sourceTweetId, tokenData?.twId);
+  const cacheRef = findTweetRefFromUnifiedCache([
+    ...tweetIdsFromStrings,
+    ...(directId ? [directId] : []),
+  ]);
   if (directId && /^\d{6,}$/.test(directId)) {
     return {
-      tweetAuthor: directAuthor,
+      tweetAuthor: directAuthor ?? cacheRef.tweetAuthor,
       tweetId: directId,
-      tweetUrl: directAuthor ? `https://x.com/${directAuthor}/status/${directId}` : `https://x.com/i/status/${directId}`,
-      tweetType,
+      tweetUrl: directAuthor
+        ? `https://x.com/${directAuthor}/status/${directId}`
+        : cacheRef.tweetUrl ?? `https://x.com/i/status/${directId}`,
+      tweetType: tweetType ?? cacheRef.tweetType,
     };
   }
-  return { tweetType };
+  return cacheRef.tweetId || cacheRef.tweetAuthor || cacheRef.tweetUrl
+    ? {
+      tweetAuthor: cacheRef.tweetAuthor,
+      tweetId: cacheRef.tweetId,
+      tweetUrl: cacheRef.tweetUrl,
+      tweetType: tweetType ?? cacheRef.tweetType,
+    }
+    : { tweetType };
 };
 
 const extractImageRef = (tokenData: any) => {
@@ -496,7 +583,17 @@ const createDefaultFilterDraft = (settings: Settings | null): MonitorFilterDraft
     minDevCreatedTokenCount: String((source as any).minDevCreatedTokenCount ?? ''),
     maxDevCreatedTokenCount: String((source as any).maxDevCreatedTokenCount ?? ''),
     blockIfDevSell: source.blockIfDevSell === true,
+    highlightTwitterAccounts: '',
   };
+};
+
+const extractTweetHandleForHighlight = (row: MarketTokenRow) => {
+  const direct = normalizeTwitterAccountHandle(row.tweetAuthor);
+  if (direct) return direct;
+  const rawUrl = typeof row.tweetUrl === 'string' ? row.tweetUrl.trim() : '';
+  if (!rawUrl) return undefined;
+  const match = rawUrl.match(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([^/\s?#]+)\//i);
+  return normalizeTwitterAccountHandle(match?.[1]);
 };
 
 const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | null => {
@@ -745,6 +842,7 @@ type TokenRowCardProps = {
   resolvedSiteInfo: SiteInfo;
   tt: (key: string, subs?: Array<string | number>) => string;
   showSocialMeta?: boolean;
+  highlightedByTwitterAccount?: boolean;
 };
 
 function TokenRowCard({
@@ -754,6 +852,7 @@ function TokenRowCard({
   resolvedSiteInfo,
   tt,
   showSocialMeta = false,
+  highlightedByTwitterAccount = false,
 }: TokenRowCardProps) {
   const shortAddr = `${row.tokenAddress.slice(0, 6)}...${row.tokenAddress.slice(-4)}`;
   const symbol = row.tokenSymbol?.trim() || '';
@@ -877,7 +976,11 @@ function TokenRowCard({
   return (
     <button
       type="button"
-      className="relative grid w-full grid-cols-[52px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1 rounded-md px-1 py-1.5 text-left hover:bg-zinc-900/60"
+      className={`relative grid w-full grid-cols-[52px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1 rounded-md border px-1 py-1.5 text-left transition-colors ${
+        highlightedByTwitterAccount
+          ? 'border-amber-400/70 bg-amber-500/[0.08] shadow-[0_0_0_1px_rgba(251,191,36,0.18)] hover:bg-amber-500/[0.12]'
+          : 'border-transparent hover:border-zinc-800/80 hover:bg-zinc-900/60'
+      }`}
       onClick={() => navigateToUrl(parsePlatformTokenLink(resolvedSiteInfo, row.tokenAddress))}
     >
       <span
@@ -1050,8 +1153,6 @@ export function NewPoolMonitorContent({
     if (!active) return;
     let disposed = false;
     tokenMapRef.current.clear();
-    const pendingDetails: MarketTokenEventDetail[] = [];
-    let flushTimer: number | null = null;
     const syncIds = () => {
       if (disposed) return;
       const map = tokenMapRef.current;
@@ -1061,20 +1162,12 @@ export function NewPoolMonitorContent({
         .map((item) => item.tokenAddress);
       setTokenIds(nextIds);
     };
-    const flush = () => {
-      flushTimer = null;
-      const map = tokenMapRef.current;
-      const batch = pendingDetails.splice(0, pendingDetails.length);
-      if (!batch.length) return;
-      ingestRows(map, batch);
-      syncIds();
-    };
     const onBatch = (message: any) => {
       if (message?.type !== 'bg:newpool:batch') return;
       const items = Array.isArray(message?.items) ? message.items as MarketTokenEventDetail[] : [];
       if (!items.length) return;
-      pendingDetails.push(...items);
-      if (flushTimer == null) flushTimer = window.setTimeout(flush, 80);
+      ingestRows(tokenMapRef.current, items);
+      syncIds();
     };
     browser.runtime.onMessage.addListener(onBatch);
     void call({ type: 'newpool:getSnapshot' } as const)
@@ -1089,11 +1182,6 @@ export function NewPoolMonitorContent({
     return () => {
       disposed = true;
       browser.runtime.onMessage.removeListener(onBatch);
-      if (flushTimer != null) {
-        window.clearTimeout(flushTimer);
-        flushTimer = null;
-      }
-      flush();
     };
   }, [active]);
 
@@ -1103,6 +1191,10 @@ export function NewPoolMonitorContent({
   }, [tokenIds]);
 
   const filteredTokens = useMemo(() => tokenList.filter((row) => matchesTokenFilter(row, filterDraft)), [tokenList, filterDraft]);
+  const highlightTwitterAccounts = useMemo(
+    () => new Set(parseTwitterAccountList(filterDraft.highlightTwitterAccounts)),
+    [filterDraft.highlightTwitterAccounts]
+  );
 
   const tokensBySource = useMemo(() => {
     const withTweet = filteredTokens.filter((row) => !!row.tweetId);
@@ -1315,6 +1407,7 @@ export function NewPoolMonitorContent({
               onToggle={() => setFilterOpen((v) => !v)}
               updateTwitterSnipe={updateFilterDraft}
               showTweetAge={false}
+              showHighlightTwitterAccounts
               platformOptions={[...PLATFORM_OPTIONS]}
             />
           </div>
@@ -1404,6 +1497,10 @@ export function NewPoolMonitorContent({
                         listKey={group.key}
                         resolvedSiteInfo={resolvedSiteInfo}
                         tt={tt}
+                        highlightedByTwitterAccount={
+                          highlightTwitterAccounts.size > 0 &&
+                          highlightTwitterAccounts.has(extractTweetHandleForHighlight(row) || '')
+                        }
                       />
                     ))}
                   </div>
@@ -1436,6 +1533,10 @@ export function NewPoolMonitorContent({
                     resolvedSiteInfo={resolvedSiteInfo}
                     tt={tt}
                     showSocialMeta
+                    highlightedByTwitterAccount={
+                      highlightTwitterAccounts.size > 0 &&
+                      highlightTwitterAccounts.has(extractTweetHandleForHighlight(row) || '')
+                    }
                   />
                 </div>
               ))}

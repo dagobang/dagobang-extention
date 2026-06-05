@@ -39,7 +39,7 @@ export default defineBackground(() => {
   const EIP7702_DELEGATION_PREFIX = '0xef0100';
   const STATE_CHANGE_BROADCAST_DEBOUNCE_MS = 250;
   const NEWPOOL_MONITOR_CACHE_LIMIT = 800;
-  const NEWPOOL_MONITOR_BROADCAST_MS = 80;
+  const NEWPOOL_MONITOR_BROADCAST_MS = 16;
   const parseEip7702Delegation = (code: string | null | undefined): { delegated: boolean; delegateAddress?: `0x${string}`; code: `0x${string}` } => {
     const normalized = (typeof code === 'string' && code.startsWith('0x') ? code.toLowerCase() : '0x') as `0x${string}`;
     if (!normalized.startsWith(EIP7702_DELEGATION_PREFIX) || normalized.length < 2 + 6 + 40) {

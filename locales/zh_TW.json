@@ -477,6 +477,8 @@
       "filterDevMaxBuy": "Dev最大買入",
       "filterViewerCount": "瀏覽人數",
       "filterDevCreatedCount": "Dev發幣數",
+      "highlightTwitterAccounts": "高亮推特",
+      "highlightTwitterAccountsPlaceholder": "@elonmusk, cz_binance",
       "placeholderMin": "Min",
       "placeholderMax": "Max",
       "minMarketCap": "最小市值（USD）",
