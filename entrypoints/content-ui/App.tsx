@@ -197,7 +197,7 @@ function collectSubmitChannelUrls(settings: Settings | null | undefined, chainId
     .map((url) => String(url || '').trim())
     .filter(Boolean);
   const blockrazorUrls = Array.from(new Set(allProtected.filter((url) => isBlockrazorProtectedUrl(url))));
-  const protectUrls = Array.from(new Set(allProtected.filter((url) => !isBlockrazorProtectedUrl(url))));
+  const protectUrls = Array.from(new Set(allProtected));
   return { blockrazorUrls, protectUrls };
 }
 

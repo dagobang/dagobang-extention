@@ -121,7 +121,6 @@ export class RpcService {
   private static filterObservedUrlsBySubmitChannel(urls: string[], submitChannel: SubmitChannel): string[] {
     const normalized = this.normalizeUrls(urls);
     if (submitChannel === 'blockrazor') return normalized.filter((url) => this.isBlockrazorUrl(url));
-    if (submitChannel === 'protectRpcs') return normalized.filter((url) => !this.isBlockrazorUrl(url));
     return normalized;
   }
 
@@ -129,7 +128,7 @@ export class RpcService {
     if (submitChannel === 'blox') return [];
     const candidates = this.getProtectedUrlsForSide(chainConfig, txSide);
     const filtered = this.filterObservedUrlsBySubmitChannel(candidates, submitChannel);
-    return filtered.length > 0 ? [filtered[0]] : [];
+    return filtered;
   }
 
   private static getProtectedUrlsForSide(chainConfig: any, txSide?: BroadcastTxSide): string[] {

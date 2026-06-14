@@ -134,8 +134,8 @@ const NONCE_CACHE_WINDOW_MS = 300_000;
 const txFlowLocked = new Set<string>();
 const txFlowQueue = new Map<string, Array<() => void>>();
 
-function getNonceStateKey(chainId: number, address: `0x${string}`, submitChannel?: SubmitChannel) {
-  return `${chainId}:${address.toLowerCase()}:${submitChannel ?? 'default'}`;
+function getNonceStateKey(chainId: number, address: `0x${string}`) {
+  return `${chainId}:${address.toLowerCase()}`;
 }
 
 async function acquireNonceLock(key: string): Promise<() => void> {
@@ -194,8 +194,13 @@ function releaseTxFlowLock(key: string) {
   }
 }
 
-async function reserveNonce(client: any, chainId: number, address: `0x${string}`, submitChannel?: SubmitChannel): Promise<number> {
-  const key = getNonceStateKey(chainId, address, submitChannel);
+async function reserveNonce(
+  client: any,
+  chainId: number,
+  address: `0x${string}`,
+  opts?: { submitChannel?: SubmitChannel; txSide?: 'buy' | 'sell' }
+): Promise<number> {
+  const key = getNonceStateKey(chainId, address);
   const release = await acquireNonceLock(key);
   try {
     const now = Date.now();
@@ -208,19 +213,42 @@ async function reserveNonce(client: any, chainId: number, address: `0x${string}`
       console.info('[nonce.reserve.cache]', {
         chainId,
         address,
-        submitChannel,
+        submitChannel: opts?.submitChannel,
         nonceKey: key,
         reservedNonce: nonce,
         localNextNonce: state.nextNonce,
       });
       return nonce;
     }
-    const nonce = await client.getTransactionCount({ address, blockTag: 'pending' });
+    const pendingNonce = await client.getTransactionCount({ address, blockTag: 'pending' });
+    let nonce = pendingNonce;
+    try {
+      const observedNonce = await RpcService.getObservedPendingNonce({
+        chainId,
+        address,
+        txSide: opts?.txSide,
+        submitChannel: opts?.submitChannel,
+        prefer: 'max',
+        scope: 'both',
+      });
+      if (observedNonce != null && observedNonce > nonce) nonce = observedNonce;
+      console.info('[nonce.reserve.observe]', {
+        chainId,
+        address,
+        submitChannel: opts?.submitChannel,
+        txSide: opts?.txSide,
+        nonceKey: key,
+        pendingNonce,
+        observedNonce,
+        reservedNonce: nonce,
+      });
+    } catch {
+    }
     nonceState.set(key, { nextNonce: nonce + 1, ts: now });
     console.info('[nonce.reserve.rpc]', {
       chainId,
       address,
-      submitChannel,
+      submitChannel: opts?.submitChannel,
       nonceKey: key,
       reservedNonce: nonce,
       localNextNonce: nonce + 1,
@@ -237,7 +265,7 @@ export async function prewarmNonce(
   address: `0x${string}`,
   opts?: { force?: boolean; txSide?: 'buy' | 'sell'; submitChannel?: SubmitChannel; prefer?: 'min' | 'max'; scope?: 'protected' | 'public' | 'both' }
 ): Promise<number> {
-  const key = getNonceStateKey(chainId, address, opts?.submitChannel);
+  const key = getNonceStateKey(chainId, address);
   const release = await acquireNonceLock(key);
   try {
     const now = Date.now();
@@ -310,13 +338,13 @@ export async function prewarmNonce(
 }
 
 function clearNonceState(chainId: number, address: `0x${string}`, submitChannel?: SubmitChannel) {
-  const key = getNonceStateKey(chainId, address, submitChannel);
+  const key = getNonceStateKey(chainId, address);
   console.info('[nonce.clear]', { chainId, address, submitChannel, nonceKey: key });
   nonceState.delete(key);
 }
 
 function setNextNonceAtLeast(chainId: number, address: `0x${string}`, nextNonce: number, submitChannel?: SubmitChannel) {
-  const key = getNonceStateKey(chainId, address, submitChannel);
+  const key = getNonceStateKey(chainId, address);
   const state = nonceState.get(key);
   const safeNext = Math.max(0, Math.floor(nextNonce));
   if (!state) {
@@ -373,7 +401,7 @@ export async function sendTransaction(
   opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; submitChannel?: SubmitChannel; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
 ) {
   const flowKey = `${chainId}:${String(account?.address ?? '').toLowerCase()}`;
-  const nonceKey = getNonceStateKey(chainId, account.address, opts?.submitChannel);
+  const nonceKey = getNonceStateKey(chainId, account.address);
   const releaseFlow = await acquireTxFlowLock(flowKey);
   try {
   const trace = opts?.trace;
@@ -383,7 +411,10 @@ export async function sendTransaction(
     : (async () => {
       const start = Date.now();
       const nonceClient = await RpcService.getSubmitChannelClient(chainId, opts?.submitChannel, opts?.txSide);
-      const nonce = await reserveNonce(nonceClient, chainId, account.address, opts?.submitChannel);
+      const nonce = await reserveNonce(nonceClient, chainId, account.address, {
+        submitChannel: opts?.submitChannel,
+        txSide: opts?.txSide,
+      });
       trace?.('reserveNonce', Date.now() - start);
       return nonce;
     })();
@@ -641,7 +672,10 @@ export async function sendTransaction(
       try {
         const start = Date.now();
         const nonceClient = await RpcService.getSubmitChannelClient(chainId, opts?.submitChannel, opts?.txSide);
-        const retryNonce = await reserveNonce(nonceClient, chainId, account.address, opts?.submitChannel);
+        const retryNonce = await reserveNonce(nonceClient, chainId, account.address, {
+          submitChannel: opts?.submitChannel,
+          txSide: opts?.txSide,
+        });
         trace?.('reserveNonceRetry', Date.now() - start);
         console.info('[nonce.recovery.reserve]', {
           chainId,
