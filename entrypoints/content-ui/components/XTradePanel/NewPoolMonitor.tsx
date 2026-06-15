@@ -8,6 +8,7 @@ import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/si
 import { pickMaxFiniteNumber } from '@/utils/value';
 import { PLATFORM_OPTIONS, extractLaunchpadPlatform } from '@/constants/launchpad';
 import { call } from '@/utils/messaging';
+import { normalizeInlineWebpData } from '@/utils/gmgnWs';
 import { XSniperFilterSection } from './XSniperFilterSection';
 
 type NewPoolMonitorContentProps = {
@@ -535,6 +536,10 @@ const extractImageRef = (tokenData: any) => {
     tokenData?.l,
   ));
   if (candidate) return candidate;
+  const inlineCandidate =
+    normalizeInlineWebpData(tokenData?.ls_b64) ??
+    normalizeInlineWebpData(tokenData?.f?.ls_b64);
+  if (inlineCandidate) return inlineCandidate;
   const strings: string[] = [];
   collectStringValues(tokenData, strings, new Set());
   const found = findFirstUrl(strings, (url) => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(url.pathname) || url.hostname.length > 0);
@@ -608,7 +613,7 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
     tokenData?.launch_at ??
     tokenData?.ct ??
     tokenData?.ot
-  );
+  ) ?? detail.receivedAtMs;
   if (typeof createdAtMs !== 'number' || createdAtMs <= 0) return null;
   const updatedAtMs = normalizeEpochMs(tokenData?.updatedAtMs ?? tokenData?.ut ?? detail.receivedAtMs) ?? detail.receivedAtMs;
   const { tweetAuthor, tweetId, tweetUrl, tweetType } = extractTweetRef(tokenData);

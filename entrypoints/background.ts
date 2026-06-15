@@ -32,6 +32,7 @@ import { createTelegramNotifier } from '@/services/telegram/notifier';
 import { createTelegramController } from '@/services/telegram/controller';
 import { getChainRuntime } from '@/constants/chains';
 import { RpcReadBalancer } from '@/services/rpcReadBalancer';
+import { shouldUseMergedTokenValue } from '@/utils/gmgnWs';
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
@@ -89,14 +90,20 @@ export default defineBackground(() => {
   const mergeNewPoolMonitorTokenData = (prev: any, next: any): any => {
     if (!isObject(prev)) return isObject(next) ? { ...(next as any) } : next;
     if (!isObject(next)) return { ...(prev as any) };
-    const merged: Record<string, any> = { ...(prev as any), ...(next as any) };
+    const merged: Record<string, any> = { ...(prev as any) };
+    for (const [key, value] of Object.entries(next as Record<string, any>)) {
+      if (!shouldUseMergedTokenValue(value)) continue;
+      merged[key] = value;
+    }
     const prevF = isObject((prev as any).f) ? (prev as any).f : null;
     const nextF = isObject((next as any).f) ? (next as any).f : null;
     if (prevF || nextF) {
-      merged.f = {
-        ...(prevF ?? {}),
-        ...(nextF ?? {}),
-      };
+      const mergedF: Record<string, any> = { ...(prevF ?? {}) };
+      for (const [key, value] of Object.entries((nextF ?? {}) as Record<string, any>)) {
+        if (!shouldUseMergedTokenValue(value)) continue;
+        mergedF[key] = value;
+      }
+      merged.f = mergedF;
     }
     const prevDevBuyRatio = pickFiniteNumber((prev as any).d_br);
     const nextDevBuyRatio = pickFiniteNumber((next as any).d_br);

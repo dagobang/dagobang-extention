@@ -39,6 +39,7 @@ declare global {
   const extractMedia: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractMedia
   const extractNextNonceHintFromText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').extractNextNonceHintFromText
   const extractNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractNumber
+  const extractPublicBroadcastCreates: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractPublicBroadcastCreates
   const extractText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractText
   const extractTimestampMs: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractTimestampMs
   const extractTokenAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').extractTokenAddress
@@ -63,9 +64,13 @@ declare global {
   const isObject: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').isObject
   const loadContractAbi: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi').loadContractAbi
   const navigateToUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').navigateToUrl
+  const normalizeInlineWebpData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeInlineWebpData
   const normalizeLocale: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n').normalizeLocale
+  const normalizeNewPoolTokenData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeNewPoolTokenData
   const normalizePercentValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').normalizePercentValue
   const normalizePriceValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').normalizePriceValue
+  const normalizePublicTokenData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizePublicTokenData
+  const normalizeTrenchesTokenData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeTrenchesTokenData
   const parseCurrentUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrl
   const parseCurrentUrlFull: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrlFull
   const parseGmgnEnvelope: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').parseGmgnEnvelope
@@ -75,6 +80,8 @@ declare global {
   const pickFiniteNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickFiniteNumber
   const pickMaxFiniteNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickMaxFiniteNumber
   const pickMaxPercentValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickMaxPercentValue
+  const resolveTrenchesStageByFid: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').resolveTrenchesStageByFid
+  const shouldUseMergedTokenValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').shouldUseMergedTokenValue
   const storage: typeof import('wxt/utils/storage').storage
   const t: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n').t
   const toArrayPayload: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').toArrayPayload
@@ -134,6 +141,9 @@ declare global {
   // @ts-ignore
   export type { ContractAddress } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi')
+  // @ts-ignore
+  export type { TrenchesStage } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs'
+  import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs')
   // @ts-ignore
   export type { Locale } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n')

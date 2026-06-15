@@ -2,6 +2,7 @@ import type { BgRequest, BgResponse, NewPoolMonitorUiDetail, Settings, UnifiedMa
 import { normalizeLaunchpadPlatform } from '@/constants/launchpad';
 import {
   asAddress,
+  extractPublicBroadcastCreates,
   extractFirstFromObject,
   extractGmgnUserFields,
   extractMedia,
@@ -12,6 +13,11 @@ import {
   extractTokenAddresses,
   extractTweetId,
   isObject,
+  normalizeNewPoolTokenData,
+  normalizePublicTokenData,
+  normalizeTrenchesTokenData,
+  resolveTrenchesStageByFid,
+  shouldUseMergedTokenValue,
   toArrayPayload,
 } from '@/utils/gmgnWs';
 import { normalizePercentValue, pickFiniteNumber, pickMaxPercentValue } from '@/utils/value';
@@ -98,70 +104,6 @@ const extractTranslationPatch = (payload: any, now: number): TwitterTranslationP
   };
 };
 
-const normalizePublicTokenData = (tokenData: any, chain?: string) => {
-  const address =
-    extractTokenAddress(tokenData) ??
-    asAddress(tokenData?.a);
-  const createdAtSec = typeof tokenData?.ct === 'number' ? tokenData.ct : null;
-  const createdAtMs = createdAtSec ? createdAtSec * 1000 : null;
-  const marketCapUsd = typeof tokenData?.mc === 'number' ? tokenData.mc : null;
-  const priceUsd = typeof tokenData?.p === 'number' ? tokenData.p : null;
-  return {
-    tokenAddress: address ?? undefined,
-    marketCapUsd: marketCapUsd ?? undefined,
-    priceUsd: priceUsd ?? undefined,
-    createdAtMs: createdAtMs ?? undefined,
-    chain: chain ?? undefined,
-    symbol: tokenData?.s ?? undefined,
-    name: tokenData?.nm ?? undefined,
-    ...(isObject(tokenData) ? tokenData : {}),
-  };
-};
-
-const normalizeNewPoolTokenData = (pool: any, chain?: string) => {
-  const tokenData = isObject(pool?.bti) ? pool.bti : pool;
-  const address =
-    extractTokenAddress(tokenData) ??
-    extractTokenAddress(pool) ??
-    asAddress(pool?.a) ??
-    asAddress(tokenData?.a);
-  const createdAtSec =
-    (typeof pool?.ot === 'number' ? pool.ot : null) ??
-    (typeof tokenData?.ct === 'number' ? tokenData.ct : null);
-  const createdAtMs = createdAtSec ? createdAtSec * 1000 : null;
-  const marketCapUsd =
-    (typeof tokenData?.mc === 'number' ? tokenData.mc : null) ??
-    (typeof pool?.mc === 'number' ? pool.mc : null);
-  const liquidityUsd =
-    (typeof tokenData?.lqdt === 'number' ? tokenData.lqdt : null) ??
-    (typeof pool?.lq === 'number' ? pool.lq : null) ??
-    (typeof pool?.lqdt === 'number' ? pool.lqdt : null);
-  const priceUsd =
-    (typeof tokenData?.p === 'number' ? tokenData.p : null) ??
-    (typeof pool?.p === 'number' ? pool.p : null);
-  return {
-    tokenAddress: address ?? undefined,
-    marketCapUsd: marketCapUsd ?? undefined,
-    liquidityUsd: liquidityUsd ?? undefined,
-    priceUsd: priceUsd ?? undefined,
-    createdAtMs: createdAtMs ?? undefined,
-    chain: chain ?? undefined,
-    symbol: tokenData?.s ?? undefined,
-    name: tokenData?.n ?? tokenData?.nm ?? undefined,
-    ...(isObject(tokenData) ? tokenData : {}),
-    ...(isObject(pool) ? pool : {}),
-  };
-};
-
-const resolveTrenchesStageByFid = (fid: unknown): 'new_created' | 'near_complete' | 'complete' | 'unknown' => {
-  const text = typeof fid === 'string' ? fid.trim().toLowerCase() : '';
-  if (!text) return 'unknown';
-  if (text.startsWith('bsc_nc_')) return 'new_created';
-  if (text.startsWith('bsc_ncp_')) return 'near_complete';
-  if (text.startsWith('bsc_cp_')) return 'complete';
-  return 'unknown';
-};
-
 const resolveMarketSignalSourceByStage = (
   stage: ReturnType<typeof resolveTrenchesStageByFid>,
   isNewPoolByToken: boolean,
@@ -183,82 +125,6 @@ const resolvePreferredMarketSignalSource = (
     new_pool: 3,
   };
   return (rank[next] ?? 0) >= (rank[prev] ?? 0) ? next : prev;
-};
-
-const normalizeTrenchesTokenData = (item: any) => {
-  const base = isObject(item) ? item : {};
-  const delta = isObject((base as any).f) ? (base as any).f : {};
-  const merged = {
-    ...(isObject(delta) ? delta : {}),
-    ...(isObject(base) ? base : {}),
-    a: asAddress((base as any)?.a) ?? asAddress((delta as any)?.a) ?? (base as any)?.a ?? (delta as any)?.a,
-    c: (base as any)?.c ?? (delta as any)?.c,
-    n: (base as any)?.n ?? (delta as any)?.n ?? (base as any)?.c ?? (delta as any)?.c,
-  };
-  const address =
-    asAddress((merged as any)?.a) ??
-    extractTokenAddress(merged);
-  const createdAtSec = typeof (merged as any)?.ct === 'number' ? (merged as any).ct : null;
-  const createdAtMs = createdAtSec ? createdAtSec * 1000 : null;
-  const marketCapUsd = extractNumber(merged, ['mc']);
-  const liquidityUsd = extractNumber(merged, ['lq', 'lqdt']);
-  const holders = extractNumber(merged, ['hd']);
-  const kol = extractNumber(merged, ['kol']);
-  const vol24hUsd = extractNumber(merged, ['v24h']);
-  const netBuy24hUsd = extractNumber(merged, ['nba_24h']);
-  const buyTx24h = extractNumber(merged, ['b24h']);
-  const sellTx24h = extractNumber(merged, ['s24h']);
-  const smartMoney = extractNumber(merged, ['smt']);
-  const priceUsd = extractNumber(merged, ['p']);
-  const devHoldRatio = extractNumber(merged, ['d_br']);
-  const viewerCount = extractNumber(merged, ['v_c']);
-  const devCreatedTokenCount = extractNumber(merged, ['d_ccc']);
-  const top10HoldRatio = extractNumber(merged, ['t10']);
-  const devTokenStatus = typeof (merged as any)?.d_ts === 'string' ? (merged as any).d_ts.trim() : undefined;
-  const tokenLogo = typeof (merged as any)?.l === 'string' && (merged as any).l.trim() ? (merged as any).l.trim() : undefined;
-  return {
-    tokenAddress: address ?? undefined,
-    marketCapUsd: marketCapUsd ?? undefined,
-    liquidityUsd: liquidityUsd ?? undefined,
-    holders: holders ?? undefined,
-    kol: kol ?? undefined,
-    vol24hUsd: vol24hUsd ?? undefined,
-    netBuy24hUsd: netBuy24hUsd ?? undefined,
-    buyTx24h: buyTx24h ?? undefined,
-    sellTx24h: sellTx24h ?? undefined,
-    smartMoney: smartMoney ?? undefined,
-    priceUsd: priceUsd ?? undefined,
-    createdAtMs: createdAtMs ?? undefined,
-    devAddress: asAddress((merged as any)?.d_ct) ?? undefined,
-    devHoldPercent: normalizePercentValue(devHoldRatio ?? null),
-    devMaxBuyPercent: normalizePercentValue(devHoldRatio ?? null),
-    devHasSold: typeof (merged as any)?.d_ts === 'string' ? (merged as any).d_ts.toLowerCase().includes('sell') : undefined,
-    viewerCount: viewerCount ?? undefined,
-    devCreatedTokenCount: devCreatedTokenCount ?? undefined,
-    top10HoldRatio: top10HoldRatio ?? undefined,
-    devTokenStatus,
-    tokenLogo,
-    chain: (merged as any)?.n ?? (merged as any)?.chain ?? undefined,
-    symbol: (merged as any)?.s ?? undefined,
-    name: (merged as any)?.nm ?? undefined,
-    ...(isObject(merged) ? merged : {}),
-    ...(isObject(base) ? base : {}),
-  };
-};
-
-const extractPublicBroadcastCreates = (payload: any) => {
-  const items = toArrayPayload(payload);
-  const results: Array<{ tokenData: any; chain?: string }> = [];
-  for (const item of items) {
-    if (!isObject(item)) continue;
-    const ed = (item as any).ed ?? (item as any).data ?? (item as any).d ?? null;
-    const sigOp = (isObject(ed) ? (ed as any).sig_op_t : null) ?? (item as any).sig_op_t;
-    if (sigOp !== 'create') continue;
-    const tokenData = isObject(ed) ? (ed as any).d ?? (ed as any).token ?? (ed as any).data ?? ed : ed;
-    const chain = (isObject(ed) ? (ed as any).c : null) ?? (item as any).c ?? (tokenData as any)?.n ?? (tokenData as any)?.c;
-    results.push({ tokenData, chain });
-  }
-  return results;
 };
 
 const isWsMonitorEnabled = (): boolean => {
@@ -1206,14 +1072,20 @@ export function initGmgnWsMonitor(options: {
   const mergeNewPoolMonitorTokenData = (prev: any, next: any): any => {
     if (!isObject(prev)) return isObject(next) ? { ...(next as any) } : next;
     if (!isObject(next)) return { ...(prev as any) };
-    const merged: Record<string, any> = { ...(prev as any), ...(next as any) };
+    const merged: Record<string, any> = { ...(prev as any) };
+    for (const [key, value] of Object.entries(next as Record<string, any>)) {
+      if (!shouldUseMergedTokenValue(value)) continue;
+      merged[key] = value;
+    }
     const prevF = isObject((prev as any).f) ? (prev as any).f : null;
     const nextF = isObject((next as any).f) ? (next as any).f : null;
     if (prevF || nextF) {
-      merged.f = {
-        ...(prevF ?? {}),
-        ...(nextF ?? {}),
-      };
+      const mergedF: Record<string, any> = { ...(prevF ?? {}) };
+      for (const [key, value] of Object.entries((nextF ?? {}) as Record<string, any>)) {
+        if (!shouldUseMergedTokenValue(value)) continue;
+        mergedF[key] = value;
+      }
+      merged.f = mergedF;
     }
     const prevDevBuyRatio = pickFiniteNumber((prev as any).d_br, undefined);
     const nextDevBuyRatio = pickFiniteNumber((next as any).d_br, undefined);
@@ -1285,6 +1157,49 @@ export function initGmgnWsMonitor(options: {
     };
     // console.log('emitMarketSignal>>', token.tokenName, token.launchpadPlatform, token.tokenAddress);
     enqueueMarketSignalForward(input.channel, signal);
+  };
+
+  const enrichNewPoolMonitorTokenData = (tokenData: any): any => {
+    const addrRaw = typeof tokenData?.tokenAddress === 'string'
+      ? tokenData.tokenAddress
+      : typeof tokenData?.a === 'string'
+        ? tokenData.a
+        : null;
+    if (!addrRaw) return tokenData;
+    const snapshot = tokenByAddress.get(addrRaw.toLowerCase());
+    if (!snapshot) return tokenData;
+    return {
+      ...(isObject(tokenData) ? tokenData : {}),
+      tokenAddress: snapshot.tokenAddress,
+      chain: snapshot.chain ?? tokenData?.chain ?? tokenData?.c,
+      launchpadPlatform: snapshot.launchpadPlatform ?? tokenData?.launchpadPlatform ?? tokenData?.lpp ?? tokenData?.lp,
+      tokenSymbol: snapshot.tokenSymbol ?? tokenData?.tokenSymbol ?? tokenData?.symbol ?? tokenData?.s,
+      symbol: snapshot.tokenSymbol ?? tokenData?.symbol ?? tokenData?.s,
+      tokenName: snapshot.tokenName ?? tokenData?.tokenName ?? tokenData?.name ?? tokenData?.nm,
+      name: snapshot.tokenName ?? tokenData?.name ?? tokenData?.nm,
+      nm: snapshot.tokenName ?? tokenData?.nm,
+      tokenLogo: snapshot.tokenLogo ?? tokenData?.tokenLogo ?? tokenData?.l ?? tokenData?.logo,
+      logo: snapshot.tokenLogo ?? tokenData?.logo,
+      l: snapshot.tokenLogo ?? tokenData?.l,
+      marketCapUsd: snapshot.marketCapUsd ?? tokenData?.marketCapUsd ?? tokenData?.mc,
+      liquidityUsd: snapshot.liquidityUsd ?? tokenData?.liquidityUsd ?? tokenData?.lqdt ?? tokenData?.lq,
+      holders: snapshot.holders ?? tokenData?.holders ?? tokenData?.hd,
+      kol: snapshot.kol ?? tokenData?.kol,
+      vol24hUsd: snapshot.vol24hUsd ?? tokenData?.vol24hUsd ?? tokenData?.v24h,
+      netBuy24hUsd: snapshot.netBuy24hUsd ?? tokenData?.netBuy24hUsd ?? tokenData?.nba_24h,
+      buyTx24h: snapshot.buyTx24h ?? tokenData?.buyTx24h ?? tokenData?.b24h,
+      sellTx24h: snapshot.sellTx24h ?? tokenData?.sellTx24h ?? tokenData?.s24h,
+      smartMoney: snapshot.smartMoney ?? tokenData?.smartMoney ?? tokenData?.smt,
+      devAddress: snapshot.devAddress ?? tokenData?.devAddress ?? tokenData?.d_ct,
+      devHoldPercent: snapshot.devHoldPercent ?? tokenData?.devHoldPercent,
+      devMaxBuyPercent: snapshot.devMaxBuyPercent ?? tokenData?.devMaxBuyPercent,
+      viewerCount: snapshot.viewerCount ?? tokenData?.viewerCount ?? tokenData?.v_c,
+      devCreatedTokenCount: snapshot.devCreatedTokenCount ?? tokenData?.devCreatedTokenCount ?? tokenData?.d_ccc,
+      devHasSold: snapshot.devHasSold ?? tokenData?.devHasSold,
+      top10HoldRatio: snapshot.top10HoldRatio ?? tokenData?.top10HoldRatio ?? tokenData?.t10,
+      devTokenStatus: snapshot.devTokenStatus ?? tokenData?.devTokenStatus ?? tokenData?.d_ts,
+      createdAtMs: snapshot.createdAtMs ?? tokenData?.createdAtMs,
+    };
   };
 
   let wsStatus: WsStatus = {
@@ -1504,7 +1419,7 @@ export function initGmgnWsMonitor(options: {
     const vch = typeof tokenData?._v_ch === 'string' ? String(tokenData._v_ch).trim().toLowerCase() : '';
     const preferDevMetrics = vch === 'social' || vch === 'stat';
     const tokenSymbol = pickNonEmptyString(tokenData?.tokenSymbol ?? tokenData?.symbol ?? tokenData?.s, prev?.tokenSymbol);
-    const tokenName = pickNonEmptyString(tokenData?.tokenName ?? tokenData?.name ?? tokenData?.nm ?? tokenData?.n, prev?.tokenName);
+    const tokenName = pickNonEmptyString(tokenData?.tokenName ?? tokenData?.name ?? tokenData?.nm, prev?.tokenName);
     const tokenLogo = pickNonEmptyString(tokenData?.tokenLogo ?? tokenData?.l ?? tokenData?.logo, prev?.tokenLogo);
     const devTokenStatus = pickNonEmptyString(tokenData?.devTokenStatus ?? tokenData?.d_ts, prev?.devTokenStatus);
     const rawDevBuyRatio = pickFiniteNumber(
@@ -1857,22 +1772,23 @@ export function initGmgnWsMonitor(options: {
         stage === 'new_created' &&
         (!hasPrevSnapshot || addedAddrs.has(tokenAddrLower) || hasCreateFields);
       const signalSource = resolveMarketSignalSourceByStage(stage, isNewPoolByToken);
+      updateTokenSnapshot(tokenData, now);
+      const uiTokenData = enrichNewPoolMonitorTokenData(tokenData);
       pushNewPoolMonitorUiDetail({
         source: signalSource,
         channel,
-        tokenData,
+        tokenData: uiTokenData,
         receivedAtMs: now,
       });
       const updateTypeRaw = typeof (item as any)?._v_ch === 'string' ? (item as any)._v_ch : wrapperUpdateTypeRaw;
       const updateType = typeof updateTypeRaw === 'string' ? String(updateTypeRaw).trim().toLowerCase() : '';
-      emitTrenchesTokenEvent(tokenData, now);
-      updateTokenSnapshot(tokenData, now);
+      emitTrenchesTokenEvent(uiTokenData, now);
       const mx = (item as any)?.m_x ?? (item as any)?.f?.m_x ?? deltaWrapper?.m_x ?? wrapper?.m_x;
       if (
         (typeof mx === 'string' && /status\/\d{6,}/i.test(mx)) ||
         (typeof mx === 'string' && mx.trim() && updateType.includes('social'))
       ) {
-        linkTokenToCachedSignalsByMx(tokenData, mx, now);
+        linkTokenToCachedSignalsByMx(uiTokenData, mx, now);
       }
       wsStatus = {
         ...wsStatus,
@@ -1881,13 +1797,13 @@ export function initGmgnWsMonitor(options: {
       };
       pushLog(
         'signal',
-        `${signalSource} > ${tokenData.symbol || tokenData.tokenAddress} ${tokenData.marketCapUsd?.toFixed(2) || ''} ${tokenData.chain ? ` ${tokenData.chain}` : ''}`,
+        `${signalSource} > ${uiTokenData.symbol || uiTokenData.tokenAddress} ${uiTokenData.marketCapUsd?.toFixed(2) || ''} ${uiTokenData.chain ? ` ${uiTokenData.chain}` : ''}`,
       );
       emitMarketSignal({
         source: signalSource,
         channel,
-        tokenAddress: tokenData.tokenAddress,
-        chain: tokenData.chain ? String(tokenData.chain) : undefined,
+        tokenAddress: uiTokenData.tokenAddress,
+        chain: uiTokenData.chain ? String(uiTokenData.chain) : undefined,
         receivedAtMs: now,
       });
     }
