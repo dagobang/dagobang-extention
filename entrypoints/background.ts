@@ -164,10 +164,10 @@ export default defineBackground(() => {
     scheduleNewPoolMonitorBroadcast();
   };
   const resolveTradeSubmitChannel = async (chainId: number, preferred?: SubmitChannel): Promise<SubmitChannel> => {
-    if (preferred === 'blox' || preferred === 'blockrazor' || preferred === 'protectRpcs') return preferred;
+    if (preferred === 'blox' || preferred === 'blockrazor' || preferred === 'protectRpcs' || preferred === 'mixed') return preferred;
     const settings = await SettingsService.get();
     const raw = settings?.chains?.[chainId]?.submitChannel;
-    return raw === 'blox' || raw === 'blockrazor' || raw === 'protectRpcs' ? raw : 'protectRpcs';
+    return raw === 'blox' || raw === 'blockrazor' || raw === 'protectRpcs' || raw === 'mixed' ? raw : 'protectRpcs';
   };
   browser.action.onClicked.addListener(async (tab) => {
     try {

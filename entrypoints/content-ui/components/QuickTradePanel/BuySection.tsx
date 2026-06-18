@@ -143,8 +143,9 @@ export function BuySection({
     : 'standard';
   const priorityPresetLabel = t(`contentUi.priorityFee.${priorityPreset}`, locale);
   const nativeSymbol = getNativeSymbol(settings?.chainId ?? ChainId.BNB);
-  const showPriorityFee = settings?.chainId !== ChainId.HYPER && (chainSettings?.submitChannel ?? 'protectRpcs') !== 'protectRpcs';
-  const submitChannelRisk = chainSettings?.submitChannel ?? 'protectRpcs';
+  const currentSubmitChannel = chainSettings?.submitChannel ?? 'protectRpcs';
+  const showPriorityFee = settings?.chainId !== ChainId.HYPER && currentSubmitChannel !== 'protectRpcs' && currentSubmitChannel !== 'mixed';
+  const submitChannelRisk = currentSubmitChannel;
   const isHypeBaseSymbol = baseSymbol === 'HYPE' || baseSymbol === 'WHYPE';
   const activePresetOverride = quickBuyAdvancedEnabled ? quickBuyPresetOverrides[activePreviewIndex] ?? {} : {};
   const displayGasPreset = activePresetOverride.gasPreset ?? gasPreset;
@@ -192,7 +193,9 @@ export function BuySection({
               : 'Protect + 极速模式下，大额买入仍可能被夹；建议使用默认模式 + 滑点保护，若更重视防夹可切到 Blox/Razor + PF。',
           }
         : null)
-    : !hasPriorityFeeEnabled
+    : (submitChannelRisk === 'mixed')
+      ? null
+      : !hasPriorityFeeEnabled
       ? {
           tone: 'info' as const,
           title: locale === 'en'

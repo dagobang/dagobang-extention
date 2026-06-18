@@ -123,7 +123,8 @@ export function SellSection({
   const priorityValueNum = Number(priorityValue || '0');
   const hasPriorityFeeEnabled = Number.isFinite(priorityValueNum) && priorityValueNum > 0;
   const nativeSymbol = getNativeSymbol(settings?.chainId ?? ChainId.BNB);
-  const showPriorityFee = settings?.chainId !== ChainId.HYPER && (chainSettings?.submitChannel ?? 'protectRpcs') !== 'protectRpcs';
+  const submitChannel = chainSettings?.submitChannel ?? 'protectRpcs';
+  const showPriorityFee = settings?.chainId !== ChainId.HYPER && submitChannel !== 'protectRpcs' && submitChannel !== 'mixed';
   const priorityTitle = `${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityValue} ${nativeSymbol}\n${locale === 'en'
       ? (!hasPriorityFeeEnabled
           ? 'Tip: Enable PF on Blox/Razor, otherwise confirmation may be slow.'
@@ -173,6 +174,11 @@ export function SellSection({
   const approveIcon = approveStatus === 'approved'
     ? <CheckCircle2 size={10} />
     : <RefreshCw size={10} className={approveStatus === 'approving' ? 'animate-spin' : undefined} />;
+  const sellBlockedByApproval = submitChannel === 'blox' && approveStatus === 'approving';
+  const sellDisabled = busy || !isUnlocked || sellBlockedByApproval;
+  const sellDisabledTitle = sellBlockedByApproval
+    ? (locale === 'en' ? 'Blox sell is disabled until approval is mined.' : 'Blox 通道授权中，需等待授权生效后才能卖出')
+    : undefined;
 
   return (
     <div className={isAltfunLayout ? 'p-3.5' : 'p-3'}>
@@ -212,7 +218,8 @@ export function SellSection({
           ) : (
             <button
               key={idx}
-              disabled={busy || !isUnlocked}
+              disabled={sellDisabled}
+              title={sellDisabledTitle}
               onClick={() => onSell(Number(pct))}
               onMouseEnter={() => setActivePreviewIndex(idx)}
               onFocus={() => setActivePreviewIndex(idx)}

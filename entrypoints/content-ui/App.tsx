@@ -426,10 +426,11 @@ export default function App() {
   const submitChannelStatuses = useMemo<SubmitChannelStatusView[]>(() => {
     const authHeader = String(settings?.bloxrouteAuthHeader ?? '').trim();
     const { blockrazorUrls, protectUrls } = collectSubmitChannelUrls(settings, chainId);
+    const bloxReady = !!authHeader && bloxProbeState.reachable;
     const bloxStatus: SubmitChannelStatusView = {
       channel: 'blox',
       configured: !!authHeader,
-      available: !!authHeader && bloxProbeState.reachable,
+      available: bloxReady,
       reason: !authHeader
         ? '未配置'
         : (bloxProbeState.loading
@@ -452,7 +453,17 @@ export default function App() {
       available: protectReady,
       reason: protectReady ? '已就绪' : '未配置',
     };
-    return [bloxStatus, blockrazorStatus, protectStatus];
+    const mixedStatus: SubmitChannelStatusView = {
+      channel: 'mixed',
+      configured: bloxStatus.configured && protectReady,
+      available: bloxReady && protectReady,
+      reason: !bloxStatus.configured
+        ? '缺少 Blox'
+        : !protectReady
+          ? '缺少 Protect'
+          : (bloxReady ? '已就绪' : '待检测'),
+    };
+    return [bloxStatus, blockrazorStatus, protectStatus, mixedStatus];
   }, [settings, chainId, bloxProbeState]);
   const selectedTradeWallets = useMemo(
     () => resolveSelectedTradeWallets(state?.wallet, settings),
@@ -2343,7 +2354,7 @@ export default function App() {
     if (!settings) return undefined;
     const chainSettings = effectiveChainSettings;
     if (!chainSettings) return undefined;
-    if ((chainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs') return '0';
+    if ((chainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs' || (chainSettings.submitChannel ?? 'protectRpcs') === 'mixed') return '0';
     const selectedPreset = overridePreset ?? (side === 'buy'
       ? ((chainSettings.buyPriorityFeePreset ?? 'standard') as PriorityFeePreset)
       : ((chainSettings.sellPriorityFeePreset ?? 'standard') as PriorityFeePreset));
@@ -2657,6 +2668,10 @@ export default function App() {
     withBusy(async () => {
       if (!settings) throw new Error('Settings not ready');
       if (!tokenAddressNormalized) throw new Error('Invalid token');
+      if (submitChannel === 'blox' && selectedApproveStatus === 'approving') {
+        toast.error(locale === 'en' ? 'Wait for approval to finish before selling on Blox.' : 'Blox 通道授权中，请等待授权完成后再卖出');
+        return;
+      }
       const wallets = selectedTradeWallets;
       if (wallets.length <= 0) throw new Error('No wallet selected');
 
@@ -2875,7 +2890,7 @@ export default function App() {
     if (!settings) return;
     const currentChainSettings = effectiveChainSettings;
     if (!currentChainSettings) return;
-    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs') return;
+    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs' || (currentChainSettings.submitChannel ?? 'protectRpcs') === 'mixed') return;
     const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).buyPriorityFeePreset)
       ? (currentChainSettings as any).buyPriorityFeePreset as PriorityFeePreset
       : 'standard';
@@ -2899,7 +2914,7 @@ export default function App() {
     if (!settings) return;
     const currentChainSettings = effectiveChainSettings;
     if (!currentChainSettings) return;
-    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs') return;
+    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs' || (currentChainSettings.submitChannel ?? 'protectRpcs') === 'mixed') return;
     const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).sellPriorityFeePreset)
       ? (currentChainSettings as any).sellPriorityFeePreset as PriorityFeePreset
       : 'standard';
@@ -2961,6 +2976,10 @@ export default function App() {
       ? (locale === 'en'
           ? 'Protect + Turbo may expose large buys. Use Default mode + slippage protection; for stronger MEV protection, use Blox/Razor + PF.'
           : 'Protect + 极速模式下，大额买入仍可能被夹；建议使用默认模式 + 滑点保护，若更重视防夹可切到 Blox/Razor + PF。')
+      : next === 'mixed'
+        ? (locale === 'en'
+            ? 'Mixed mode races Blox private and Protect raw routes. PF is hidden and disabled in this mode.'
+            : '混合模式会让 Blox private 与 Protect 路由并发竞速；此模式下 PF 会被隐藏并禁用。')
       : (!buyPriorityEnabled || !sellPriorityEnabled)
         ? (locale === 'en'
             ? 'Blox/Razor without PF may confirm slowly. Consider enabling PF.'
@@ -2982,7 +3001,7 @@ export default function App() {
       refreshAll();
       if (channelToast) {
         toast(channelToast, {
-          icon: next === 'protectRpcs' ? '⚠️' : 'ℹ️',
+          icon: next === 'protectRpcs' || next === 'mixed' ? '⚠️' : 'ℹ️',
           duration: 2800,
         });
       }

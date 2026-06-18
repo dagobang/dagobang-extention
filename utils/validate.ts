@@ -171,7 +171,7 @@ export function validateSettings(input: Settings): Settings | null {
     ? (input as any).quickBuy2Bnb.trim() || defaults.quickBuy2Bnb || '0.1'
     : defaults.quickBuy2Bnb || '0.1';
   const allowedTradeBaseTokens = ['BNB', 'WBNB', 'USDT', 'USDC'] as const;
-  const allowedSubmitChannels = ['blox', 'blockrazor', 'protectRpcs'] as const;
+  const allowedSubmitChannels = ['blox', 'blockrazor', 'protectRpcs', 'mixed'] as const;
   const inputTradeBaseToken = typeof (input as any).tradeBaseToken === 'string'
     ? String((input as any).tradeBaseToken).trim().toUpperCase()
     : '';

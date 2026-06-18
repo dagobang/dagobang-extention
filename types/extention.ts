@@ -3,7 +3,7 @@ import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "./token";
 export type GasPreset = 'slow' | 'standard' | 'fast' | 'turbo';
 export type PriorityFeePreset = 'none' | 'slow' | 'standard' | 'fast';
 export type TradeBaseToken = 'BNB' | 'WBNB' | 'USDT' | 'USDC';
-export type SubmitChannel = 'blox' | 'blockrazor' | 'protectRpcs';
+export type SubmitChannel = 'blox' | 'blockrazor' | 'protectRpcs' | 'mixed';
 
 export type ExecutionMode = 'default' | 'turbo';
 export type GasPriceMode = 'fixed' | 'dynamic';

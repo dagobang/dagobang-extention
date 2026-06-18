@@ -114,9 +114,9 @@ export class RpcService {
   }
 
   private static resolveSubmitChannel(chainConfig: any, requested?: SubmitChannel): SubmitChannel {
-    if (requested === 'blox' || requested === 'blockrazor' || requested === 'protectRpcs') return requested;
+    if (requested === 'blox' || requested === 'blockrazor' || requested === 'protectRpcs' || requested === 'mixed') return requested;
     const raw = chainConfig?.submitChannel;
-    if (raw === 'blox' || raw === 'blockrazor' || raw === 'protectRpcs') return raw;
+    if (raw === 'blox' || raw === 'blockrazor' || raw === 'protectRpcs' || raw === 'mixed') return raw;
     return 'protectRpcs';
   }
 
@@ -581,7 +581,11 @@ export class RpcService {
     const bundleSignerContext = opts?.signerContext;
     const priorityFeeBnb =
       txSide
-        ? this.resolvePriorityFeeBnb(chainConfig as any, txSide, opts?.priorityFeeBnbOverride)
+        ? (
+            submitChannel === 'protectRpcs' || submitChannel === 'mixed'
+              ? '0'
+              : this.resolvePriorityFeeBnb(chainConfig as any, txSide, opts?.priorityFeeBnbOverride)
+          )
         : '0';
     let priorityFeeWei = 0n;
     try {
@@ -590,14 +594,14 @@ export class RpcService {
       priorityFeeWei = 0n;
     }
     const bundlePriorityMode = !!txSide && priorityFeeWei > 0n;
-    if (submitChannel === 'protectRpcs' && bundlePriorityMode) {
-      throw new Error('protectRpcs does not support priority fee bundle mode. Switch channel to blox or blockrazor, or disable priority fee.');
+    if ((submitChannel === 'protectRpcs' || submitChannel === 'mixed') && bundlePriorityMode) {
+      throw new Error(`${submitChannel} does not support priority fee bundle mode. Switch channel to blox or blockrazor, or disable priority fee.`);
     }
 
     const protectedUrls = submitStrategy === 'allProtected'
       ? this.getProtectedUrlsForSide(chainConfig, txSide)
       : this.getSubmitProtectedUrls(chainConfig, txSide, submitChannel);
-    const includeBloxroute = submitStrategy === 'allProtected' ? false : submitChannel === 'blox';
+    const includeBloxroute = submitStrategy === 'allProtected' ? false : (submitChannel === 'blox' || submitChannel === 'mixed');
     if (includeBloxroute) {
       if (!(settings.bloxrouteAuthHeader ?? '').trim()) {
         throw new Error('Blox auth header not configured');
@@ -644,7 +648,8 @@ export class RpcService {
             ? ((chainConfig as any)?.bloxrouteSellEnabled ?? true)
             : true;
       const willUseBloxroute = includeBloxroute && this.bloxroutePrivateTxEnabled && bloxHeader && bloxEnabledBySide;
-      const useBloxroutePublicTx = willUseBloxroute && txSide === 'sell' && !bundlePriorityMode;
+      const useBloxroutePublicTx = willUseBloxroute && submitChannel === 'blox' && txSide === 'sell' && !bundlePriorityMode;
+      const preferMixedRawRace = submitChannel === 'mixed';
       const bloxrouteBundleProbe = bundlePriorityMode && willUseBloxroute
         ? await BloxRouterAPI.probeReachability({ timeoutMs: 1200 }).catch((e: any) => ({
             reachable: false,
@@ -801,7 +806,7 @@ export class RpcService {
           })(),
         );
       }
-      if (txSide === 'sell') {
+      if (txSide === 'sell' && !preferMixedRawRace) {
         try {
           const result = await Promise.any(rpcRawPromises);
           console.info('[rpc.broadcast.success]', {

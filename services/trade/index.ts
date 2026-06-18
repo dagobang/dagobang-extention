@@ -2,7 +2,7 @@ import { encodeAbiParameters, encodeFunctionData, erc20Abi, formatUnits, parseAb
 import { RpcService } from '../rpc';
 import { WalletService } from '../wallet';
 import { SettingsService } from '../settings';
-import type { GasPreset, TxBuyInput, TxSellInput } from '../../types/extention';
+import type { GasPreset, SubmitChannel, TxBuyInput, TxSellInput } from '../../types/extention';
 import { TokenInfo } from '../../types/token';
 import { ContractNames } from '../../constants/contracts/names';
 import { DeployAddress } from '../../constants/contracts/address';
@@ -263,7 +263,7 @@ export class TradeService {
     spender: string;
     maxUint256: bigint;
     client: any;
-    submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs';
+    submitChannel?: SubmitChannel;
   }): Promise<`0x${string}` | null> {
     const allowance = await input.client.readContract({
       address: input.tokenAddress as `0x${string}`,
@@ -326,7 +326,7 @@ export class TradeService {
     return resolved;
   }
 
-  static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo; fromAddress?: `0x${string}`; submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs' }) {
+  static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo; fromAddress?: `0x${string}`; submitChannel?: SubmitChannel }) {
     const settings = await SettingsService.get();
     const consoleLogsEnabled = settings.ui?.consoleLogsEnabled === true;
     const startedAt = Date.now();
@@ -450,7 +450,7 @@ export class TradeService {
     chainId: number;
     fromAddress?: `0x${string}`;
     txSide?: 'buy' | 'sell';
-    submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs';
+    submitChannel?: SubmitChannel;
     error?: any;
   }): Promise<number> {
     const client = await RpcService.getSubmitChannelClient(input.chainId, input.submitChannel, input.txSide);
@@ -590,6 +590,57 @@ export class TradeService {
       polls,
       elapsedMs: Date.now() - start,
     });
+  }
+
+  private static async resolveSellRouteManagerForAllowance(input: {
+    chainId: number;
+    tokenAddress: Address;
+    tokenInfo: TokenInfo;
+    owner: `0x${string}`;
+    client: any;
+  }): Promise<Address | null> {
+    const platform = resolveTradeLaunchpadPlatform(input.tokenInfo);
+    const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(platform);
+    const openFourRuntime = (isHyperAltfun || !usesOpenFourRuntime(platform))
+      ? null
+      : await this.getOpenFourRuntimeState(input.client, input.chainId, input.tokenAddress);
+    const isInner = isHyperAltfun
+      ? false
+      : usesOpenFourRuntime(platform)
+        ? !!openFourRuntime && openFourRuntime.phase === 1 && !openFourRuntime.paused
+        : this.isInnerDisk(input.tokenInfo);
+    if (!isInner) return null;
+
+    const launchpadConfig = this.getLaunchpadConfig(input.tokenInfo, input.chainId, openFourRuntime);
+    let routeManager = launchpadConfig?.manager ?? ZERO_ADDRESS;
+    if (!(isFourMemePlatform(platform) && routeManager !== ZERO_ADDRESS)) {
+      return routeManager !== ZERO_ADDRESS ? routeManager : null;
+    }
+
+    let amountIn = 0n;
+    try {
+      amountIn = BigInt(await input.client.readContract({
+        address: input.tokenAddress,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [input.owner],
+      }));
+    } catch {
+      amountIn = 0n;
+    }
+    if (amountIn > 0n) {
+      const alignedAmount = (amountIn / 1000000000n) * 1000000000n;
+      if (alignedAmount > 0n) amountIn = alignedAmount;
+      try {
+        const est = await tryFourMemeSellEstimatedFunds(input.client, input.chainId, input.tokenAddress, amountIn);
+        if (est?.tokenManager && est.tokenManager !== ZERO_ADDRESS) {
+          routeManager = est.tokenManager;
+        }
+      } catch {
+      }
+    }
+
+    return routeManager !== ZERO_ADDRESS ? routeManager : null;
   }
 
   private static isInnerDisk(tokenInfo: TokenInfo): boolean {
@@ -765,6 +816,7 @@ export class TradeService {
   }
 
   private static resolvePriorityFeeNative(input: TxBuyInput | TxSellInput): string | undefined {
+    if (input.submitChannel === 'protectRpcs' || input.submitChannel === 'mixed') return '0';
     const v = (typeof (input as any).priorityFeeNative === 'string' && (input as any).priorityFeeNative.trim())
       ? (input as any).priorityFeeNative
       : (typeof input.priorityFeeBnb === 'string' ? input.priorityFeeBnb : '');
@@ -1420,7 +1472,7 @@ export class TradeService {
     chainId: number,
     tokenAddress: string,
     tokenInfo: TokenInfo,
-    opts?: { extraSpenders?: string[]; fromAddress?: `0x${string}`; submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs' }
+    opts?: { extraSpenders?: string[]; fromAddress?: `0x${string}`; submitChannel?: SubmitChannel }
   ) {
     const routerAddress = DeployAddress[chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
@@ -1432,13 +1484,24 @@ export class TradeService {
     const platform = resolveTradeLaunchpadPlatform(tokenInfo);
     const isInner = this.isInnerDisk(tokenInfo);
     const isInnerFourMeme = isInner && platform.includes('four');
+    const resolvedRouteManager = await this.resolveSellRouteManagerForAllowance({
+      chainId,
+      tokenAddress: tokenAddress as Address,
+      tokenInfo,
+      owner: account.address,
+      client,
+    });
+    const mergedExtraSpenders = resolvedRouteManager && resolvedRouteManager !== ZERO_ADDRESS
+      ? [...(opts?.extraSpenders ?? []), resolvedRouteManager]
+      : opts?.extraSpenders;
 
     const spenders = getSellSpenders({
       chainId,
       tokenInfo,
       routerAddress,
-      extraSpenders: opts?.extraSpenders,
+      extraSpenders: mergedExtraSpenders,
       getLaunchpadManager: (ti, cid) => {
+        if (resolvedRouteManager && resolvedRouteManager !== ZERO_ADDRESS) return resolvedRouteManager;
         const platform = resolveTradeLaunchpadPlatform(ti);
         const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
         return cfg?.manager ?? null;
@@ -1486,6 +1549,16 @@ export class TradeService {
     const account = await WalletService.getSigner(opts?.fromAddress);
     const client = await RpcService.getClient(chainId);
     const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
+    const resolvedRouteManager = await this.resolveSellRouteManagerForAllowance({
+      chainId,
+      tokenAddress: tokenAddress as Address,
+      tokenInfo,
+      owner: account.address,
+      client,
+    });
+    const mergedExtraSpenders = resolvedRouteManager && resolvedRouteManager !== ZERO_ADDRESS
+      ? [...(opts?.extraSpenders ?? []), resolvedRouteManager]
+      : opts?.extraSpenders;
     return await hasInsufficientSellAllowance({
       chainId,
       tokenAddress,
@@ -1494,8 +1567,9 @@ export class TradeService {
       client,
       maxUint256,
       routerAddress,
-      extraSpenders: opts?.extraSpenders,
+      extraSpenders: mergedExtraSpenders,
       getLaunchpadManager: (ti, cid) => {
+        if (resolvedRouteManager && resolvedRouteManager !== ZERO_ADDRESS) return resolvedRouteManager;
         const platform = resolveTradeLaunchpadPlatform(ti);
         const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
         return cfg?.manager ?? null;
@@ -2002,7 +2076,7 @@ export class TradeService {
     spender: string,
     amountWei: string,
     fromAddress?: `0x${string}`,
-    _submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs',
+    _submitChannel?: SubmitChannel,
   ) {
     const settings = await SettingsService.get();
     const account = await WalletService.getSigner(fromAddress);
@@ -2111,7 +2185,7 @@ export class TradeService {
     value: bigint,
     gasPriceWei: bigint,
     chainId: number,
-    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs'; submitStrategy?: 'selected' | 'allProtected'; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
+    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; submitChannel?: SubmitChannel; submitStrategy?: 'selected' | 'allProtected'; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
   ) {
     return await sendTransaction(client, account, to, data, value, gasPriceWei, chainId, opts);
   }

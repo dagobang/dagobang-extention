@@ -27,6 +27,7 @@ const CHANNEL_LABELS: Record<SubmitChannel, string> = {
   blox: 'Blox',
   blockrazor: 'Razor',
   protectRpcs: 'Protect',
+  mixed: '混合',
 };
 
 export function ChannelSwitcher({
