@@ -739,8 +739,14 @@ export class TradeService {
     return null;
   }
 
-  private static getLaunchpadQuoteRouterToken(chainId: number, tokenInfo: TokenInfo, platform: string, openFourRuntime?: OpenFourRuntimeState | null): Address | null {
-    if (usesOpenFourRuntime(platform)) {
+  private static getLaunchpadQuoteRouterToken(
+    chainId: number,
+    tokenInfo: TokenInfo,
+    platform: string,
+    openFourRuntime?: OpenFourRuntimeState | null,
+    opts?: { preferRuntimeQuote?: boolean }
+  ): Address | null {
+    if (opts?.preferRuntimeQuote && usesOpenFourRuntime(platform)) {
       const runtimeToken = getOpenFourQuoteRouterToken(chainId, openFourRuntime);
       if (runtimeToken !== null) return runtimeToken;
     }
@@ -882,7 +888,9 @@ export class TradeService {
 
     const bridgeToken = isHyperAltfun
       ? null
-      : this.getLaunchpadQuoteRouterToken(input.chainId, tokenInfo, launchpadPlatform, openFourRuntime);
+      : this.getLaunchpadQuoteRouterToken(input.chainId, tokenInfo, launchpadPlatform, openFourRuntime, {
+        preferRuntimeQuote: isInner,
+      });
     console.log('input.tokenInfo', tokenInfo, isInner, launchpadConfig)
     console.log('bridgeToken', bridgeToken);
     const descs: SwapDescLike[] = [];
@@ -1567,8 +1575,12 @@ export class TradeService {
           : this.isInnerDisk(tokenInfo);
       const isInnerFourMeme = isInner && isFourMemePlatform(platformLower);
       const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId, openFourRuntime) : null;
-      const bridgeToken = isHyperAltfun ? null : this.getLaunchpadQuoteRouterToken(input.chainId as ChainId, tokenInfo, platformLower, openFourRuntime);
-      const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
+      const bridgeToken = isHyperAltfun ? null : this.getLaunchpadQuoteRouterToken(input.chainId as ChainId, tokenInfo, platformLower, openFourRuntime, {
+        preferRuntimeQuote: isInner,
+      });
+      const hasBridgeRouteToken = !!bridgeToken;
+      const needsBridgeHop2 = !!bridgeToken && bridgeToken.toLowerCase() !== ZERO_ADDRESS.toLowerCase();
+      const bridgePrefer = needsBridgeHop2 ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
       console.log('sell input.tokenInfo', tokenInfo, isInner, launchpadConfig)
       console.log('sell bridgeToken', bridgeToken, bridgePrefer);
       const descs: SwapDescLike[] = [];
@@ -1671,7 +1683,7 @@ export class TradeService {
                   dataForSell = encodeFourMemeUint256(minFunds);
                   minFundsForSell = minFunds;
                 }
-                if (!bridgeToken) {
+                if (!needsBridgeHop2) {
                   estimatedOut = netFunds;
                 }
               }
@@ -1699,7 +1711,7 @@ export class TradeService {
             if (!est || est.userReceives <= 0n) throw new Error('OpenFour 卖出预估失败或当前不可交易');
             minFunds = applySlippage(est.userReceives, slippageBps);
             minFundsForSell = minFunds;
-            if (!bridgeToken) {
+            if (!needsBridgeHop2) {
               estimatedOut = est.userReceives;
             }
           }
@@ -1711,7 +1723,7 @@ export class TradeService {
           );
         }
 
-        const innerTokenOut = bridgeToken ?? baseTokenAddress;
+        const innerTokenOut = hasBridgeRouteToken ? bridgeToken : baseTokenAddress;
         descs.push(getRouterSwapDesc({
           swapType: launchpadConfig.sellType,
           tokenIn: sellToken,
@@ -1722,7 +1734,7 @@ export class TradeService {
           data: dataForSell,
         }));
 
-        if (innerTokenOut.toLowerCase() !== baseTokenAddress.toLowerCase()) {
+        if (needsBridgeHop2) {
           const hop2AmountIn = isTurbo ? 1n : (minFunds > 0n ? minFunds : 1n);
           const hop2 = await timeStep('quote:bridge:hop2', () =>
             resolveBridgeHopExactIn(
@@ -1753,10 +1765,9 @@ export class TradeService {
 
       if (!isInner && !isHyperAltfun) {
         // hop1
-        const hop1RouterOut = bridgeToken ? bridgeToken : baseTokenAddress;
-        const hop1NeedAmountOut = !!bridgeToken && !isTurbo;
+        const hop1RouterOut = hasBridgeRouteToken ? bridgeToken : baseTokenAddress;
+        const hop1NeedAmountOut = needsBridgeHop2 && !isTurbo;
         const poolVersion = getDexPoolPrefer(tokenInfo.dex_type);
-        const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
         const hop1 = await timeStep('quote:token', () =>
           resolveDexExactIn(
             input.chainId,
@@ -1795,7 +1806,7 @@ export class TradeService {
         }));
 
         // hop2
-        if (!bridgeToken) {
+        if (!needsBridgeHop2) {
           estimatedOut = isTurbo ? 0n : hop1.amountOut;
         } else {
           if (!isTurbo && hop1.amountOut <= 0n) {
