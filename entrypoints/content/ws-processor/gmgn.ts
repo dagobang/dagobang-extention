@@ -339,6 +339,14 @@ const pickNonEmptyString = (next: any, prev?: string): string | undefined => {
 
 const normalizeTokenKey = (addr: string) => addr.trim().toLowerCase();
 
+const hasTokenDisplayIdentity = (tokenData: any): boolean => {
+  if (!tokenData || typeof tokenData !== 'object') return false;
+  const tokenName = pickNonEmptyString(tokenData?.tokenName ?? tokenData?.name ?? tokenData?.nm);
+  const tokenSymbol = pickNonEmptyString(tokenData?.tokenSymbol ?? tokenData?.symbol ?? tokenData?.s);
+  const tokenLogo = pickNonEmptyString(tokenData?.tokenLogo ?? tokenData?.logo ?? tokenData?.l);
+  return Boolean(tokenName || tokenSymbol || tokenLogo);
+};
+
 const normalizeSignalTokens = (signal: UnifiedTwitterSignal): UnifiedSignalToken[] => {
   const fromList = Array.isArray(signal.tokens)
     ? (signal.tokens as UnifiedSignalToken[]).filter((t) => t && typeof (t as any).tokenAddress === 'string' && (t as any).tokenAddress.trim())
@@ -1755,6 +1763,7 @@ export function initGmgnWsMonitor(options: {
       const tokenData = normalizeTrenchesTokenData(item);
       if (!tokenData.tokenAddress) continue;
       const tokenAddrLower = tokenData.tokenAddress.toLowerCase();
+      const prevSnapshot = tokenByAddress.get(tokenAddrLower);
       const hasPrevSnapshot = tokenByAddress.has(tokenAddrLower);
       const rawF = isObject((item as any)?.f) ? (item as any).f : null;
       const hasCreateFields = Boolean(
@@ -1774,12 +1783,19 @@ export function initGmgnWsMonitor(options: {
       const signalSource = resolveMarketSignalSourceByStage(stage, isNewPoolByToken);
       updateTokenSnapshot(tokenData, now);
       const uiTokenData = enrichNewPoolMonitorTokenData(tokenData);
-      pushNewPoolMonitorUiDetail({
-        source: signalSource,
-        channel,
-        tokenData: uiTokenData,
-        receivedAtMs: now,
-      });
+      const nextSnapshot = tokenByAddress.get(tokenAddrLower);
+      const canPublishUiToken =
+        hasTokenDisplayIdentity(uiTokenData) ||
+        hasTokenDisplayIdentity(nextSnapshot) ||
+        hasTokenDisplayIdentity(prevSnapshot);
+      if (canPublishUiToken) {
+        pushNewPoolMonitorUiDetail({
+          source: signalSource,
+          channel,
+          tokenData: uiTokenData,
+          receivedAtMs: now,
+        });
+      }
       const updateTypeRaw = typeof (item as any)?._v_ch === 'string' ? (item as any)._v_ch : wrapperUpdateTypeRaw;
       const updateType = typeof updateTypeRaw === 'string' ? String(updateTypeRaw).trim().toLowerCase() : '';
       emitTrenchesTokenEvent(uiTokenData, now);

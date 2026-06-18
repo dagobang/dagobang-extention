@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Zap, Fuel, RefreshCw, Sliders } from 'lucide-react';
+import { CheckCircle2, Fuel, RefreshCw, Sliders, Zap } from 'lucide-react';
 import { ChainId } from '@/constants/chains/chainId';
 import { getNativeSymbol } from '@/constants/chains/runtime';
 import type { Settings } from '@/types/extention';
@@ -7,7 +7,7 @@ import { formatPriceValue } from '@/utils/format';
 import { t, type Locale } from '@/utils/i18n';
 import { getDynamicGasPreview } from './useDynamicGasPreview';
 
-type SellSectionProps = {
+export type SellSectionProps = {
   formattedTokenBalance: string;
   tokenBalanceAmount: number | null;
   tokenSymbol: string | null;
@@ -18,6 +18,8 @@ type SellSectionProps = {
   tokenPriceUsd: number | null;
   previewRouteLabel: string | null;
   isAltfunLayout?: boolean;
+  approveStatus: 'ready' | 'approving' | 'approved';
+  approveStatusTitle: string;
   busy: boolean;
   isUnlocked: boolean;
   onSell: (pct: number) => void;
@@ -50,6 +52,8 @@ export function SellSection({
   tokenPriceUsd,
   previewRouteLabel,
   isAltfunLayout = false,
+  approveStatus,
+  approveStatusTitle,
   busy,
   isUnlocked,
   onSell,
@@ -116,8 +120,18 @@ export function SellSection({
     : 'standard';
   const priorityValue = priorityPresets[priorityPreset] ?? '0';
   const priorityPresetLabel = t(`contentUi.priorityFee.${priorityPreset}`, locale);
+  const priorityValueNum = Number(priorityValue || '0');
+  const hasPriorityFeeEnabled = Number.isFinite(priorityValueNum) && priorityValueNum > 0;
   const nativeSymbol = getNativeSymbol(settings?.chainId ?? ChainId.BNB);
   const showPriorityFee = settings?.chainId !== ChainId.HYPER && (chainSettings?.submitChannel ?? 'protectRpcs') !== 'protectRpcs';
+  const priorityTitle = `${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityValue} ${nativeSymbol}\n${locale === 'en'
+      ? (!hasPriorityFeeEnabled
+          ? 'Tip: Enable PF on Blox/Razor, otherwise confirmation may be slow.'
+          : 'MEV protection is stronger when PF stays enabled on Blox/Razor.')
+      : (!hasPriorityFeeEnabled
+          ? '建议：当前通道开启 PF，否则确认可能较慢。'
+          : '当前已启用 PF，更适合防夹场景。')}`;
+  const slippageTitle = t('contentUi.slippage.toggleSlippage', locale);
   const activePreviewPct = (() => {
     const raw = String(sellPresets[activePreviewIndex] ?? '').replace(/,/g, '').trim();
     const value = Number(raw);
@@ -145,6 +159,20 @@ export function SellSection({
     const text = formatPriceValue(value, 4, 4);
     return text === '-' ? '--' : text;
   };
+  const approveLabel = approveStatus === 'approved'
+    ? (locale === 'en' ? 'Approved' : '已授权')
+    : approveStatus === 'approving'
+      ? (locale === 'en' ? 'Approving' : '授权中')
+      : t('contentUi.approve.button', locale);
+  const approveClassName = approveStatus === 'approved'
+    ? 'text-emerald-400'
+    : approveStatus === 'approving'
+      ? 'text-cyan-300'
+      : 'text-zinc-500 hover:text-zinc-300';
+  const approveDisabled = !isUnlocked || busy || approveStatus === 'approving';
+  const approveIcon = approveStatus === 'approved'
+    ? <CheckCircle2 size={10} />
+    : <RefreshCw size={10} className={approveStatus === 'approving' ? 'animate-spin' : undefined} />;
 
   return (
     <div className={isAltfunLayout ? 'p-3.5' : 'p-3'}>
@@ -241,7 +269,7 @@ export function SellSection({
           {showPriorityFee ? (
             <div
               className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-              title={`${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityValue} ${nativeSymbol}`}
+              title={priorityTitle}
               onClick={showPriorityFee ? onTogglePriorityFeePreset : undefined}
             >
               <span className="text-[10px] font-semibold">PF</span>
@@ -251,7 +279,7 @@ export function SellSection({
 
           <div
             className="flex items-center gap-1 cursor-pointer hover:text-amber-400 text-zinc-500"
-            title={t('contentUi.slippage.toggleSlippage', locale)}
+            title={slippageTitle}
             onClick={onToggleSlippage}
           >
             <Sliders size={10} />
@@ -260,11 +288,12 @@ export function SellSection({
         </div>
         <button
           onClick={onApprove}
-          className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-          title={t('contentUi.approve.title', locale)}
+          disabled={approveDisabled}
+          className={`flex items-center gap-1 transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${approveClassName}`}
+          title={approveStatusTitle || t('contentUi.approve.title', locale)}
         >
-          <RefreshCw size={10} />
-          <span>{t('contentUi.approve.button', locale)}</span>
+          {approveIcon}
+          <span>{approveLabel}</span>
         </button>
       </div>
     </div>

@@ -17,11 +17,13 @@ export type BroadcastTxResult = {
 };
 
 export type BroadcastTxSide = 'buy' | 'sell';
+export type BroadcastSubmitStrategy = 'selected' | 'allProtected';
 
 export type BroadcastTxOptions = {
   txSide?: BroadcastTxSide;
   priorityFeeBnbOverride?: string;
   submitChannel?: SubmitChannel;
+  submitStrategy?: BroadcastSubmitStrategy;
   signerContext?: {
     account: any;
     chainId: number;
@@ -374,6 +376,17 @@ export class RpcService {
     return await this.getClient(chainId);
   }
 
+  static async getProtectedClient(
+    chainId: number,
+    txSide?: BroadcastTxSide,
+  ): Promise<PublicClient> {
+    const settings = await SettingsService.get();
+    const chainConfig = settings.chains[chainId];
+    const protectedUrls = this.getProtectedUrlsForSide(chainConfig, txSide);
+    if (protectedUrls.length > 0) return this.getClientForUrl(protectedUrls[0], chainId);
+    return await this.getClient(chainId);
+  }
+
   static async withBalancedReadClient<T>(input: {
     chainId?: number;
     scope?: 'public' | 'both';
@@ -563,6 +576,7 @@ export class RpcService {
     const chainConfig = settings.chains[targetChainId];
     const runtime = getChainRuntime(targetChainId);
     const txSide = opts?.txSide;
+    const submitStrategy = opts?.submitStrategy ?? 'selected';
     const submitChannel = this.resolveSubmitChannel(chainConfig, opts?.submitChannel);
     const bundleSignerContext = opts?.signerContext;
     const priorityFeeBnb =
@@ -580,8 +594,10 @@ export class RpcService {
       throw new Error('protectRpcs does not support priority fee bundle mode. Switch channel to blox or blockrazor, or disable priority fee.');
     }
 
-    const protectedUrls = this.getSubmitProtectedUrls(chainConfig, txSide, submitChannel);
-    const includeBloxroute = submitChannel === 'blox';
+    const protectedUrls = submitStrategy === 'allProtected'
+      ? this.getProtectedUrlsForSide(chainConfig, txSide)
+      : this.getSubmitProtectedUrls(chainConfig, txSide, submitChannel);
+    const includeBloxroute = submitStrategy === 'allProtected' ? false : submitChannel === 'blox';
     if (includeBloxroute) {
       if (!(settings.bloxrouteAuthHeader ?? '').trim()) {
         throw new Error('Blox auth header not configured');
@@ -593,6 +609,7 @@ export class RpcService {
       chainId: targetChainId,
       txSide,
       submitChannel,
+      submitStrategy,
       bundlePriorityMode,
       protectedUrls,
       includeBloxroute,
@@ -627,6 +644,7 @@ export class RpcService {
             ? ((chainConfig as any)?.bloxrouteSellEnabled ?? true)
             : true;
       const willUseBloxroute = includeBloxroute && this.bloxroutePrivateTxEnabled && bloxHeader && bloxEnabledBySide;
+      const useBloxroutePublicTx = willUseBloxroute && txSide === 'sell' && !bundlePriorityMode;
       const bloxrouteBundleProbe = bundlePriorityMode && willUseBloxroute
         ? await BloxRouterAPI.probeReachability({ timeoutMs: 1200 }).catch((e: any) => ({
             reachable: false,
@@ -749,7 +767,9 @@ export class RpcService {
       let rawDeterministicError: string | null = null;
       let rawInFlightError: string | null = null;
       const runBloxRaw = async (): Promise<BroadcastTxResult> => {
-        const txHash = await BloxRouterAPI.sendPrivateTx(targetChainId, signedTx);
+        const txHash = useBloxroutePublicTx
+          ? await BloxRouterAPI.sendPublicTx(targetChainId, signedTx)
+          : await BloxRouterAPI.sendPrivateTx(targetChainId, signedTx);
         if (!txHash) throw new Error('BloxRoute did not return tx hash');
         return { txHash, via: 'bloxroute' };
       };

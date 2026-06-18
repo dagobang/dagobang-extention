@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { SatelliteDish } from 'lucide-react';
 import { formatUnits, parseUnits, zeroAddress } from 'viem';
@@ -179,6 +179,13 @@ type SubmitChannelStatusView = {
   reason: string;
 };
 
+type WalletApproveState = {
+  approved?: boolean;
+  pendingSince?: number;
+};
+
+const APPROVE_PENDING_TIMEOUT_MS = 90_000;
+
 function isBlockrazorProtectedUrl(raw: string): boolean {
   try {
     return new URL(raw).hostname.toLowerCase().includes('blockrazor');
@@ -334,6 +341,7 @@ export default function App() {
   const [marketCapDisplay, setMarketCapDisplay] = useState<string | null>(null);
   const [liquidityDisplay, setLiquidityDisplay] = useState<string | null>(null);
   const [gmgnHoldingStats, setGmgnHoldingStats] = useState<GmgnHoldingStats | null>(null);
+  const [walletApproveStates, setWalletApproveStates] = useState<Record<string, WalletApproveState>>({});
   const [gmgnHoldingPollingEnabled, setGmgnHoldingPollingEnabled] = useState(false);
   const [pendingQuickBuy, setPendingQuickBuy] = useState<{ tokenAddress: string; amount: string } | null>(null);
   const [cookingSiteInfoOverride, setCookingSiteInfoOverride] = useState<SiteInfo | null>(null);
@@ -356,6 +364,7 @@ export default function App() {
   const prewarmedTurboRef = useRef<Set<string>>(new Set());
   const prewarmedRpcRef = useRef<Set<string>>(new Set());
   const fastPollingRef = useRef<any>(null);
+  const approveStatusRefreshSeqRef = useRef(0);
   const tokenRefreshSeqRef = useRef(0);
   const gmgnHoldingRefreshSeqRef = useRef(0);
   const gmgnHoldingPollingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -449,6 +458,10 @@ export default function App() {
     () => resolveSelectedTradeWallets(state?.wallet, settings),
     [state?.wallet, settings]
   );
+  const selectedTradeWalletsKey = useMemo(
+    () => selectedTradeWallets.map((item) => item.toLowerCase()).sort().join(','),
+    [selectedTradeWallets]
+  );
   const gmgnHoldingWallets = useMemo(() => {
     if (selectedTradeWallets.length > 0) return selectedTradeWallets;
     const fallback = normalizeAddr(String(address || ''));
@@ -526,6 +539,10 @@ export default function App() {
     const t = siteInfo.tokenAddress.trim();
     return /^0x[a-fA-F0-9]{40}$/.test(t) ? (t as `0x${string}`) : null;
   }, [siteInfo]);
+  useEffect(() => {
+    approveStatusRefreshSeqRef.current += 1;
+    setWalletApproveStates({});
+  }, [chainId, tokenAddressNormalized, selectedTradeWalletsKey]);
   const consoleLogsEnabled = settings?.ui?.consoleLogsEnabled === true;
   const shouldDebugHyperReads = consoleLogsEnabled && (chainId === 999 || siteInfo?.platform === 'altfun');
   const logUiDebug = (event: string, payload: Record<string, unknown>) => {
@@ -2168,14 +2185,159 @@ export default function App() {
     let count = 0;
     fastPollingRef.current = setInterval(() => {
       count++;
-        refreshAll(false, 'fastPolling');
-        refreshToken(true, false, 'fastPolling'); // force refresh
+      refreshAll(false, 'fastPolling');
+      refreshToken(true, false, 'fastPolling'); // force refresh
+      void refreshApproveStatuses('fastPolling');
       if (count >= 15) {
         if (fastPollingRef.current) clearInterval(fastPollingRef.current);
         fastPollingRef.current = null;
       }
     }, 500);
   };
+
+  const refreshApproveStatuses = useCallback(async (_source = 'unknown') => {
+    if (!tokenAddressNormalized || !tokenInfo || selectedTradeWallets.length <= 0) {
+      return;
+    }
+    const seq = ++approveStatusRefreshSeqRef.current;
+    const wallets = selectedTradeWallets;
+    const now = Date.now();
+    const results = await Promise.allSettled(
+      wallets.map(async (walletAddress) => {
+        const res = await call({
+          type: 'tx:checkSellAllowanceInsufficient',
+          chainId,
+          tokenAddress: tokenAddressNormalized,
+          tokenInfo,
+          fromAddress: walletAddress,
+        } as const);
+        return {
+          walletAddress,
+          approved: !res.insufficient,
+        };
+      })
+    );
+    if (seq !== approveStatusRefreshSeqRef.current) return;
+    setWalletApproveStates((prev) => {
+      const next = { ...prev };
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue;
+        const key = result.value.walletAddress.toLowerCase();
+        const prevState = prev[key];
+        const pendingActive = !!prevState?.pendingSince && (now - prevState.pendingSince < APPROVE_PENDING_TIMEOUT_MS);
+        if (result.value.approved) {
+          next[key] = { approved: true };
+          continue;
+        }
+        if (pendingActive) {
+          next[key] = { approved: false, pendingSince: prevState?.pendingSince };
+          continue;
+        }
+        next[key] = { approved: false };
+      }
+      return next;
+    });
+  }, [chainId, selectedTradeWallets, tokenAddressNormalized, tokenInfo]);
+
+  const requestApproveForWallets = useCallback(async (
+    wallets: `0x${string}`[],
+    opts?: { silent?: boolean },
+  ) => {
+    if (!tokenAddressNormalized) throw new Error('Invalid token');
+    if (!tokenInfo) throw new Error('Token info required');
+    if (wallets.length <= 0) return [];
+    const pendingSince = Date.now();
+    setWalletApproveStates((prev) => {
+      const next = { ...prev };
+      for (const walletAddress of wallets) {
+        const key = walletAddress.toLowerCase();
+        next[key] = {
+          approved: prev[key]?.approved,
+          pendingSince,
+        };
+      }
+      return next;
+    });
+    const results = await Promise.allSettled(
+      wallets.map(async (walletAddress) => ({
+        walletAddress,
+        res: await call({
+          type: 'tx:approveMaxForSellIfNeeded',
+          chainId,
+          tokenAddress: tokenAddressNormalized,
+          tokenInfo,
+          fromAddress: walletAddress,
+        } as const),
+      }))
+    );
+    setWalletApproveStates((prev) => {
+      const next = { ...prev };
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          const key = result.value.walletAddress.toLowerCase();
+          const txHash = result.value.res?.txHash;
+          next[key] = txHash
+            ? { approved: false, pendingSince: pendingSince }
+            : { approved: true };
+          continue;
+        }
+        const failedWallet = wallets[results.indexOf(result)];
+        if (!failedWallet) continue;
+        const key = failedWallet.toLowerCase();
+        next[key] = { approved: prev[key]?.approved ?? false };
+      }
+      return next;
+    });
+    const submitted = results
+      .filter((item): item is PromiseFulfilledResult<{ walletAddress: `0x${string}`; res: any }> => item.status === 'fulfilled')
+      .map((item) => item.value)
+      .filter((item) => !!item.res?.txHash);
+    const alreadyApprovedCount = results
+      .filter((item): item is PromiseFulfilledResult<{ walletAddress: `0x${string}`; res: any }> => item.status === 'fulfilled')
+      .filter((item) => !item.value.res?.txHash)
+      .length;
+    if (!opts?.silent) {
+      if (submitted[0]?.res?.txHash) setTxHash(submitted[0].res.txHash);
+      if (submitted.length > 0 || alreadyApprovedCount > 0) {
+        const parts = [
+          submitted.length > 0 ? `已提交 ${submitted.length}` : '',
+          alreadyApprovedCount > 0 ? `已授权 ${alreadyApprovedCount}` : '',
+        ].filter(Boolean);
+        toast.success(`授权状态已更新 ${parts.join(' / ')}`, { icon: '✅' });
+      }
+    }
+    await Promise.all([refreshToken(true), refreshAll()]);
+    startFastPolling();
+    void refreshApproveStatuses(opts?.silent ? 'autoApprove' : 'manualApprove');
+    return results;
+  }, [chainId, refreshAll, refreshApproveStatuses, refreshToken, startFastPolling, tokenAddressNormalized, tokenInfo]);
+
+  useEffect(() => {
+    if (!tokenAddressNormalized || !tokenInfo || selectedTradeWallets.length <= 0) return;
+    void refreshApproveStatuses('approve:init');
+    const timer = setInterval(() => {
+      void refreshApproveStatuses('approve:interval');
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [refreshApproveStatuses, selectedTradeWallets.length, tokenAddressNormalized, tokenInfo]);
+
+  const selectedApproveStatus = useMemo<'ready' | 'approving' | 'approved'>(() => {
+    if (!tokenAddressNormalized || !tokenInfo || selectedTradeWallets.length <= 0) return 'ready';
+    const now = Date.now();
+    let allApproved = true;
+    for (const walletAddress of selectedTradeWallets) {
+      const state = walletApproveStates[walletAddress.toLowerCase()];
+      const pendingActive = !!state?.pendingSince && (now - state.pendingSince < APPROVE_PENDING_TIMEOUT_MS);
+      if (pendingActive) return 'approving';
+      if (state?.approved !== true) allApproved = false;
+    }
+    return allApproved ? 'approved' : 'ready';
+  }, [selectedTradeWallets, tokenAddressNormalized, tokenInfo, walletApproveStates]);
+  const approveStatusTitle = selectedApproveStatus === 'approved'
+    ? (locale === 'en' ? 'Selected wallets are approved' : '已选钱包已完成授权')
+    : selectedApproveStatus === 'approving'
+      ? (locale === 'en' ? 'Approval submitted and waiting on-chain' : '授权已提交，等待上链生效')
+      : (locale === 'en' ? 'Approve selected wallets for sell' : '为已选钱包补充卖出授权');
 
   const resolvePriorityFee = (side: 'buy' | 'sell', overridePreset?: PriorityFeePreset) => {
     if (!settings) return undefined;
@@ -2389,17 +2551,9 @@ export default function App() {
         buyLoadingClosed = true;
 
         if (tokenInfo) {
-          void Promise.allSettled(
-            successes.map(({ walletAddress }) =>
-              call({
-                type: 'tx:approveMaxForSellIfNeeded',
-                chainId,
-                tokenAddress: tokenAddressNormalized,
-                tokenInfo: tokenInfo,
-                fromAddress: walletAddress,
-                submitChannel,
-              } as const)
-            )
+          void requestApproveForWallets(
+            successes.map(({ walletAddress }) => walletAddress),
+            { silent: true }
           ).catch(() => { });
         }
 
@@ -2646,30 +2800,7 @@ export default function App() {
       if (!tokenInfo) throw new Error('Token info required');
       const wallets = selectedTradeWallets;
       if (wallets.length <= 0) throw new Error('No wallet selected');
-      const results = await Promise.allSettled(
-        wallets.map((walletAddress) =>
-          call({
-            type: 'tx:approveMaxForSellIfNeeded',
-            chainId,
-            tokenAddress: tokenAddressNormalized,
-            tokenInfo,
-            fromAddress: walletAddress,
-            submitChannel,
-          } as const)
-        )
-      );
-      const successes = results
-        .filter((item): item is PromiseFulfilledResult<any> => item.status === 'fulfilled')
-        .map((item) => item.value)
-        .filter((res) => !!res?.txHash);
-      if (successes[0]?.txHash) {
-        setTxHash(successes[0].txHash);
-      }
-      toast.success(`授权已提交 ${successes.length}/${wallets.length} 个钱包`, { icon: '✅' });
-
-      // Trigger immediate refresh and start fast polling
-      await Promise.all([refreshToken(true), refreshAll()]);
-      startFastPolling();
+      await requestApproveForWallets(wallets);
     });
   };
 
@@ -2815,6 +2946,26 @@ export default function App() {
     const target = submitChannelStatuses.find((item) => item.channel === next);
     if (!target?.available) return;
     if ((currentChainSettings.submitChannel ?? 'protectRpcs') === next) return;
+    const buyPriorityPresets = currentChainSettings.buyPriorityFeePresets ?? DEFAULT_PRIORITY_FEE_PRESET_VALUES;
+    const sellPriorityPresets = currentChainSettings.sellPriorityFeePresets ?? DEFAULT_PRIORITY_FEE_PRESET_VALUES;
+    const buyPriorityPreset = (['none', 'slow', 'standard', 'fast'] as const).includes((currentChainSettings as any)?.buyPriorityFeePreset)
+      ? (currentChainSettings as any).buyPriorityFeePreset as PriorityFeePreset
+      : 'standard';
+    const sellPriorityPreset = (['none', 'slow', 'standard', 'fast'] as const).includes((currentChainSettings as any)?.sellPriorityFeePreset)
+      ? (currentChainSettings as any).sellPriorityFeePreset as PriorityFeePreset
+      : 'standard';
+    const buyPriorityEnabled = Number(buyPriorityPresets[buyPriorityPreset] ?? '0') > 0;
+    const sellPriorityEnabled = Number(sellPriorityPresets[sellPriorityPreset] ?? '0') > 0;
+    const nextExecutionMode = (currentChainSettings.executionMode ?? 'turbo') === 'turbo' ? 'turbo' : 'default';
+    const channelToast = next === 'protectRpcs' && nextExecutionMode === 'turbo'
+      ? (locale === 'en'
+          ? 'Protect + Turbo may expose large buys. Use Default mode + slippage protection; for stronger MEV protection, use Blox/Razor + PF.'
+          : 'Protect + 极速模式下，大额买入仍可能被夹；建议使用默认模式 + 滑点保护，若更重视防夹可切到 Blox/Razor + PF。')
+      : (!buyPriorityEnabled || !sellPriorityEnabled)
+        ? (locale === 'en'
+            ? 'Blox/Razor without PF may confirm slowly. Consider enabling PF.'
+            : 'Blox/Razor 未开启 PF 时确认可能较慢，建议开启 PF。')
+        : null;
     void call({
       type: 'settings:set',
       settings: {
@@ -2827,7 +2978,15 @@ export default function App() {
           },
         },
       },
-    } as const).then(() => refreshAll());
+    } as const).then(() => {
+      refreshAll();
+      if (channelToast) {
+        toast(channelToast, {
+          icon: next === 'protectRpcs' ? '⚠️' : 'ℹ️',
+          duration: 2800,
+        });
+      }
+    });
   };
 
   const handleEditToggle = () => {
@@ -3202,6 +3361,8 @@ export default function App() {
               tokenSymbol={tokenSymbol}
               buyPreviewRoute={quickTradePreviewRoutes.buy}
               sellPreviewRoute={quickTradePreviewRoutes.sell}
+              approveStatus={selectedApproveStatus}
+              approveStatusTitle={approveStatusTitle}
               onSell={handleSell}
               onApprove={handleApprove}
               siteInfo={siteInfo}

@@ -1,5 +1,6 @@
 import { decodeAbiParameters } from 'viem';
 import { RpcService } from '../rpc';
+import type { BroadcastSubmitStrategy } from '../rpc';
 import type { ChainSettings, GasPreset, SubmitChannel } from '../../types/extention';
 import { classifyBroadcastError, collectErrorText, extractNextNonceHintFromText, getNonceErrorKindFromText, isInFlightLimitLikeText } from '../../utils/txErrorClassify';
 import { parseGweiToWei } from '../../utils/dexUtils';
@@ -398,7 +399,7 @@ export async function sendTransaction(
   value: bigint,
   gasPriceWei: bigint,
   chainId: number,
-  opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; submitChannel?: SubmitChannel; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
+  opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; submitChannel?: SubmitChannel; submitStrategy?: BroadcastSubmitStrategy; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
 ) {
   const flowKey = `${chainId}:${String(account?.address ?? '').toLowerCase()}`;
   const nonceKey = getNonceStateKey(chainId, account.address);
@@ -410,7 +411,9 @@ export async function sendTransaction(
     ? Promise.resolve(opts.nonce)
     : (async () => {
       const start = Date.now();
-      const nonceClient = await RpcService.getSubmitChannelClient(chainId, opts?.submitChannel, opts?.txSide);
+      const nonceClient = opts?.submitStrategy === 'allProtected'
+        ? await RpcService.getProtectedClient(chainId, opts?.txSide)
+        : await RpcService.getSubmitChannelClient(chainId, opts?.submitChannel, opts?.txSide);
       const nonce = await reserveNonce(nonceClient, chainId, account.address, {
         submitChannel: opts?.submitChannel,
         txSide: opts?.txSide,
@@ -525,6 +528,7 @@ export async function sendTransaction(
     const res0 = await RpcService.broadcastTxDetailed(signed, {
       txSide: opts?.txSide,
       submitChannel: opts?.submitChannel,
+      submitStrategy: opts?.submitStrategy,
       priorityFeeBnbOverride: opts?.priorityFeeBnbOverride,
       signerContext: {
         account,

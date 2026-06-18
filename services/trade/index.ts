@@ -2002,7 +2002,7 @@ export class TradeService {
     spender: string,
     amountWei: string,
     fromAddress?: `0x${string}`,
-    submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs',
+    _submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs',
   ) {
     const settings = await SettingsService.get();
     const account = await WalletService.getSigner(fromAddress);
@@ -2032,7 +2032,15 @@ export class TradeService {
       0n,
       gasPriceWei,
       chainId,
-      { skipEstimateGas: true, gasLimit: 900000n, feeMode: gasPriceMode, gasPreset, submitChannel }
+      {
+        skipEstimateGas: true,
+        gasLimit: 900000n,
+        feeMode: gasPriceMode,
+        gasPreset,
+        // Approval should not inherit the trade submit channel.
+        // Use all protected RPC routes concurrently to reduce confirmation lag.
+        submitStrategy: 'allProtected',
+      }
     );
     return txHash;
   }
@@ -2103,7 +2111,7 @@ export class TradeService {
     value: bigint,
     gasPriceWei: bigint,
     chainId: number,
-    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs'; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
+    opts?: { nonce?: number; skipEstimateGas?: boolean; gasLimit?: bigint; trace?: (label: string, ms: number) => void; txSide?: 'buy' | 'sell'; submitChannel?: 'blox' | 'blockrazor' | 'protectRpcs'; submitStrategy?: 'selected' | 'allProtected'; priorityFeeBnbOverride?: string; feeMode?: 'fixed' | 'dynamic'; gasPreset?: GasPreset }
   ) {
     return await sendTransaction(client, account, to, data, value, gasPriceWei, chainId, opts);
   }

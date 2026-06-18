@@ -4,7 +4,7 @@ import type { SiteInfo } from '@/utils/sites';
 import type { Locale } from '@/utils/i18n';
 import { Header } from './Header';
 import { BuySection } from './BuySection';
-import { SellSection } from './SellSection';
+import { SellSection, type SellSectionProps } from './SellSection';
 import { Overlays } from './Overlays';
 import { FooterStats, type FooterHoldingStats } from './FooterStats';
 import { Logo } from '@/components/Logo';
@@ -87,6 +87,8 @@ type QuickTradePanelProps = {
   tokenSymbol: string | null;
   buyPreviewRoute: string | null;
   sellPreviewRoute: string | null;
+  approveStatus: 'ready' | 'approving' | 'approved';
+  approveStatusTitle: string;
   onSell: (pct: number) => void;
   onApprove: () => void;
   siteInfo: SiteInfo;
@@ -179,6 +181,8 @@ export function QuickTradePanel({
   tokenSymbol,
   buyPreviewRoute,
   sellPreviewRoute,
+  approveStatus,
+  approveStatusTitle,
   onSell,
   onApprove,
   siteInfo,
@@ -203,6 +207,39 @@ export function QuickTradePanel({
   const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
 
   const walletSelectorVisible = isUnlocked && walletAccounts.length > 0;
+  const sellSectionProps: SellSectionProps = {
+    formattedTokenBalance,
+    tokenBalanceAmount,
+    tokenSymbol,
+    baseSymbol: tradeBaseSymbol,
+    baseTokenPriceUsd: tradeBasePriceUsd,
+    quotedUsdValues: sellPreviewQuotedUsd,
+    quotedBaseAmounts: sellPreviewQuotedBaseAmounts,
+    tokenPriceUsd,
+    previewRouteLabel: sellPreviewRoute,
+    isAltfunLayout: siteInfo.platform === 'altfun',
+    approveStatus,
+    approveStatusTitle,
+    busy,
+    isUnlocked,
+    onSell,
+    settings,
+    dynamicGasBasePriceWei,
+    onToggleMode,
+    onToggleGas: onToggleSellGas,
+    onTogglePriorityFeePreset: onToggleSellPriorityFeePreset,
+    onToggleSlippage,
+    onApprove,
+    isEditing,
+    onUpdatePreset: onUpdateSellPreset,
+    draftPresets: draftSellPresets,
+    locale,
+    showHotkeys: showSellHotkeys,
+    hotkeyLabels: ['A', 'S', 'D', 'F'],
+    gmgnVisible: false,
+    gmgnEnabled: gmgnSellEnabled,
+    onToggleGmgn: onToggleGmgnSell,
+  };
   const handleToggleWalletSelector = () => {
     setWalletSelectorOpen((prev) => {
       const next = !prev;
@@ -322,37 +359,7 @@ export function QuickTradePanel({
           <div className="mx-3 h-px bg-zinc-800/80" />
 
           <div className="pt-0.5">
-            <SellSection
-              formattedTokenBalance={formattedTokenBalance}
-              tokenBalanceAmount={tokenBalanceAmount}
-              tokenSymbol={tokenSymbol}
-              baseSymbol={tradeBaseSymbol}
-              baseTokenPriceUsd={tradeBasePriceUsd}
-              quotedUsdValues={sellPreviewQuotedUsd}
-              quotedBaseAmounts={sellPreviewQuotedBaseAmounts}
-              tokenPriceUsd={tokenPriceUsd}
-              previewRouteLabel={sellPreviewRoute}
-              isAltfunLayout={siteInfo.platform === 'altfun'}
-              busy={busy}
-              isUnlocked={isUnlocked}
-              onSell={onSell}
-              settings={settings}
-              dynamicGasBasePriceWei={dynamicGasBasePriceWei}
-              onToggleMode={onToggleMode}
-              onToggleGas={onToggleSellGas}
-              onTogglePriorityFeePreset={onToggleSellPriorityFeePreset}
-              onToggleSlippage={onToggleSlippage}
-              onApprove={onApprove}
-              isEditing={isEditing}
-              onUpdatePreset={onUpdateSellPreset}
-              draftPresets={draftSellPresets}
-              locale={locale}
-              showHotkeys={showSellHotkeys}
-              hotkeyLabels={['A', 'S', 'D', 'F'] as [string, string, string, string]}
-              gmgnVisible={false}
-              gmgnEnabled={gmgnSellEnabled}
-              onToggleGmgn={onToggleGmgnSell}
-            />
+            <SellSection {...sellSectionProps} />
           </div>
 
           {siteInfo.platform === 'gmgn' && (

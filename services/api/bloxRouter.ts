@@ -129,7 +129,29 @@ export class BloxRouterAPI {
         mev_builders: ["all"],
       },
     });
-    let hash = json?.result?.txHash as `0x${string}`;
+    let hash = (json?.result?.txHash ?? json?.result?.tx_hash ?? json?.result) as `0x${string}`;
+    if (!hash) {
+      throw new Error("Bloxroute did not return tx hash");
+    }
+    return hash.startsWith("0x") ? hash : `0x${hash}`;
+  }
+
+  static async sendPublicTx(chainId: number, signedTx: string): Promise<`0x${string}` | null> {
+    const rawTx = signedTx.startsWith("0x") ? signedTx.slice(2) : signedTx;
+    const runtime = getChainRuntime(chainId);
+    const params: Record<string, unknown> = {
+      transaction: rawTx,
+    };
+    if (runtime.bloxrouteNetwork) {
+      params.blockchain_network = runtime.bloxrouteNetwork;
+    }
+    const json = await this.post({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "blxr_tx",
+      params,
+    });
+    const hash = (json?.result?.tx_hash ?? json?.result?.txHash ?? json?.result) as `0x${string}`;
     if (!hash) {
       throw new Error("Bloxroute did not return tx hash");
     }

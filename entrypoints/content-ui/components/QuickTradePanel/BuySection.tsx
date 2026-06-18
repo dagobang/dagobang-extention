@@ -144,6 +144,7 @@ export function BuySection({
   const priorityPresetLabel = t(`contentUi.priorityFee.${priorityPreset}`, locale);
   const nativeSymbol = getNativeSymbol(settings?.chainId ?? ChainId.BNB);
   const showPriorityFee = settings?.chainId !== ChainId.HYPER && (chainSettings?.submitChannel ?? 'protectRpcs') !== 'protectRpcs';
+  const submitChannelRisk = chainSettings?.submitChannel ?? 'protectRpcs';
   const isHypeBaseSymbol = baseSymbol === 'HYPE' || baseSymbol === 'WHYPE';
   const activePresetOverride = quickBuyAdvancedEnabled ? quickBuyPresetOverrides[activePreviewIndex] ?? {} : {};
   const displayGasPreset = activePresetOverride.gasPreset ?? gasPreset;
@@ -163,9 +164,42 @@ export function BuySection({
   const displayPriorityPreset = activePresetOverride.priorityFeePreset ?? priorityPreset;
   const displayPriorityValue = priorityPresets[displayPriorityPreset] ?? '0';
   const displayPriorityPresetLabel = t(`contentUi.priorityFee.${displayPriorityPreset}`, locale);
+  const displayPriorityValueNum = Number(displayPriorityValue || '0');
+  const hasPriorityFeeEnabled = Number.isFinite(displayPriorityValueNum) && displayPriorityValueNum > 0;
   const mainPriorityTitle = activeHasPriorityOverride
     ? `${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityPresets[priorityPreset] ?? '0'} ${nativeSymbol}\n当前按钮覆盖: ${displayPriorityPresetLabel} ${displayPriorityValue} ${nativeSymbol}`
     : `${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityPresets[priorityPreset] ?? '0'} ${nativeSymbol}`;
+  const priorityTitle = showPriorityFee
+    ? `${mainPriorityTitle}\n${locale === 'en'
+        ? (!hasPriorityFeeEnabled
+            ? 'Tip: Enable PF on Blox/Razor, otherwise confirmation may be slow.'
+            : 'MEV protection is stronger when PF stays enabled on Blox/Razor.')
+        : (!hasPriorityFeeEnabled
+            ? '建议：当前通道开启 PF，否则确认可能较慢。'
+            : '当前已启用 PF，更适合防夹场景。')}`
+    : mainPriorityTitle;
+  const slippageTitle = submitChannelRisk === 'protectRpcs' && executionMode === 'turbo'
+    ? (locale === 'en'
+        ? 'Protect + Turbo has no slippage protection. Large buys may be sandwiched. Use Default mode + slippage protection; for stronger MEV protection, use Blox/Razor + PF.'
+        : 'Protect + 极速模式下没有滑点保护，大额买入仍可能被夹；建议使用默认模式 + 滑点保护。若更重视防夹，建议切到 Blox/Razor 并开启 PF。')
+    : t('contentUi.slippage.toggleSlippage', locale);
+  const submitChannelWarning = submitChannelRisk === 'protectRpcs'
+    ? (executionMode === 'turbo'
+        ? {
+            tone: 'warning' as const,
+            title: locale === 'en'
+              ? 'Protect + Turbo may expose large buys. Use Default mode + slippage protection, or switch to Blox/Razor + PF for stronger MEV protection.'
+              : 'Protect + 极速模式下，大额买入仍可能被夹；建议使用默认模式 + 滑点保护，若更重视防夹可切到 Blox/Razor + PF。',
+          }
+        : null)
+    : !hasPriorityFeeEnabled
+      ? {
+          tone: 'info' as const,
+          title: locale === 'en'
+            ? 'Blox/Razor without PF often submits quickly but confirms slowly. Consider enabling PF.'
+            : 'Blox/Razor 在未开启 PF 时常见现象是提交快、确认慢，建议开启 PF。',
+        }
+      : null;
 
   const canEditAdvanced = !!settings && !!isUnlocked && !isEditing;
   const activePreviewAmount = (() => {
@@ -204,6 +238,7 @@ export function BuySection({
             onSelectSubmitChannel={onSelectSubmitChannel}
             prewarmIndicatorState={prewarmIndicatorState}
             prewarmIndicatorTitle={prewarmIndicatorTitle}
+            warningHint={submitChannelWarning}
             inline
             menuPlacement="down"
           />
@@ -390,7 +425,7 @@ export function BuySection({
           {showPriorityFee ? (
             <div
               className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-              title={mainPriorityTitle}
+              title={priorityTitle}
               onClick={showPriorityFee ? onTogglePriorityFeePreset : undefined}
             >
               <span className="text-[10px] font-semibold">PF</span>
@@ -399,7 +434,7 @@ export function BuySection({
           ) : null}
           <div
             className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
-            title={t('contentUi.slippage.toggleSlippage', locale)}
+            title={slippageTitle}
             onClick={onToggleSlippage}
           >
             <Sliders size={10} />

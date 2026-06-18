@@ -1,4 +1,4 @@
-import { ChevronDown, CircleCheckBig, LoaderCircle } from 'lucide-react';
+import { AlertTriangle, ChevronDown, CircleCheckBig, LoaderCircle } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { SubmitChannel } from '@/types/extention';
 
@@ -15,6 +15,10 @@ type ChannelSwitcherProps = {
   onSelectSubmitChannel: (channel: SubmitChannel) => void;
   prewarmIndicatorState?: 'hidden' | 'warming' | 'done';
   prewarmIndicatorTitle?: string;
+  warningHint?: {
+    tone: 'warning' | 'info';
+    title: string;
+  } | null;
   inline?: boolean;
   menuPlacement?: 'up' | 'down';
 };
@@ -31,6 +35,7 @@ export function ChannelSwitcher({
   onSelectSubmitChannel,
   prewarmIndicatorState,
   prewarmIndicatorTitle,
+  warningHint,
   inline = false,
   menuPlacement = 'up',
 }: ChannelSwitcherProps) {
@@ -90,7 +95,21 @@ export function ChannelSwitcher({
             <span className={inline ? 'truncate text-[10px] font-medium text-zinc-200' : 'truncate text-[11px] font-semibold text-zinc-100'}>
               {activeStatus ? CHANNEL_LABELS[activeStatus.channel] : CHANNEL_LABELS[submitChannel]}
             </span>
-            {prewarmIndicatorState && prewarmIndicatorState !== 'hidden' && (
+            {warningHint ? (
+              <span
+                className={[
+                  'inline-flex items-center justify-center rounded-full animate-pulse',
+                  inline ? 'ml-0.5 h-5 w-5 bg-amber-500/14' : 'ml-1 h-6 w-6 bg-amber-500/14',
+                  warningHint.tone === 'warning'
+                    ? 'text-amber-200 hover:text-amber-100'
+                    : 'text-amber-200 hover:text-amber-100',
+                ].join(' ')}
+                title={warningHint.title}
+              >
+                <AlertTriangle size={inline ? 12 : 14} />
+              </span>
+            ) : null}
+            {!warningHint && prewarmIndicatorState && prewarmIndicatorState !== 'hidden' && (
               <span
                 className={`inline-flex items-center justify-center rounded-sm ${inline ? 'ml-0.5 h-4 w-4' : 'ml-1 h-5 w-5'} ${prewarmToneClass}`}
                 title={prewarmHint}
