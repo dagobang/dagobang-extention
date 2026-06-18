@@ -1,4 +1,4 @@
-import { encodeFunctionData, erc20Abi, formatUnits } from 'viem';
+import { encodeAbiParameters, encodeFunctionData, erc20Abi, formatUnits, parseAbi, parseAbiParameters } from 'viem';
 import { RpcService } from '../rpc';
 import { WalletService } from '../wallet';
 import { SettingsService } from '../settings';
@@ -32,9 +32,177 @@ import { classifyBroadcastError, collectErrorText, getNonceErrorKindFromText, is
 import { tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { getNativeSymbol } from '@/constants/chains';
 import { getChainRuntime } from '@/constants/chains/runtime';
+import { normalizeLaunchpadPlatform } from '@/constants/launchpad';
+import { OpenFourInnerLaunchpadManager, OpenFourRegistryAddress } from '@/constants/contracts/address';
 
 function getDefaultBridgeV3Fee(chainId: number): number {
   return chainId === ChainId.HYPER ? 3000 : 500;
+}
+
+const INNER_LAUNCHPAD_PLATFORMS = new Set([
+  'fourmeme',
+  'bn_fourmeme',
+  'fourmeme_agent',
+  'four_xmode_agent',
+  'xmode',
+  'xmode_agent',
+  'flap',
+  'flap_stocks',
+  'flap_aioracle',
+  'printr',
+  'openfour',
+  'likwid',
+  'goplus_skills',
+  'goplus_creator',
+  'cubepeg',
+]);
+
+const FOUR_MEME_PLATFORMS = new Set([
+  'fourmeme',
+  'bn_fourmeme',
+  'fourmeme_agent',
+  'four_xmode_agent',
+  'xmode',
+  'xmode_agent',
+]);
+
+const OPEN_FOUR_PLATFORMS = new Set([
+  'openfour',
+  'likwid',
+  'goplus_skills',
+  'goplus_creator',
+  'cubepeg',
+]);
+
+const OPEN_FOUR_RUNTIME_PLATFORMS = new Set(OPEN_FOUR_PLATFORMS);
+
+const openFourRegistryAbi = parseAbi([
+  'function openFourCore() view returns (address)',
+  'function openFourTool() view returns (address)',
+]);
+
+const openFourCoreAbi = parseAbi([
+  'function tokens(address token_) view returns (uint32 version, address creator, uint256 presetId, address token, string name, string symbol, uint256 maxSupply, uint256 saleAmount, uint256 raiseAmount, address quoteAsset, address vault, address curveModule, address tradeModule, address migrateModule, address tokenModule, address customData, uint256 createBlock, bool exists, bool paused, bool antiSniperEnabled)',
+]);
+
+const openFourToolsAbi = parseAbi([
+  'function estimateBuyByBudget(address token, address trader, uint256 maxQuotePayAmount, uint256 options, bytes proof) view returns ((uint256 curveQuote, uint256 totalFee, uint256 userPays, uint256 userReceives, uint256 tokenAmount, uint256 executionPrice))',
+  'function estimateSell(address token, address trader, uint256 amount, uint256 options, bytes proof) view returns ((uint256 curveQuote, uint256 totalFee, uint256 userPays, uint256 userReceives, uint256 tokenAmount, uint256 executionPrice))',
+]);
+
+const openFourVaultAbi = parseAbi([
+  'function phase() view returns (uint8)',
+]);
+
+type OpenFourNetworkContracts = {
+  core: Address;
+  tools: Address;
+};
+
+type OpenFourRuntimeState = {
+  core: Address;
+  tools: Address;
+  quoteAsset: Address;
+  vault: Address;
+  phase: number;
+  exists: boolean;
+  paused: boolean;
+};
+
+type OpenFourTradeEstimate = {
+  curveQuote: bigint;
+  totalFee: bigint;
+  userPays: bigint;
+  userReceives: bigint;
+  tokenAmount: bigint;
+  executionPrice: bigint;
+};
+
+const DEFAULT_SWAP_GAS_LIMIT = 900000n;
+const OPEN_FOUR_SWAP_GAS_LIMIT = 2500000n;
+
+function resolveLaunchpadPlatform(platform: string | undefined): string {
+  return normalizeLaunchpadPlatform(platform) ?? String(platform || '').trim().toLowerCase();
+}
+
+function resolveTradeLaunchpadPlatform(tokenInfo: Pick<TokenInfo, 'launchpad' | 'launchpad_platform'>): string {
+  const launchpad = resolveLaunchpadPlatform(tokenInfo.launchpad);
+  if (launchpad === 'openfour') return 'openfour';
+  return resolveLaunchpadPlatform(tokenInfo.launchpad_platform || tokenInfo.launchpad);
+}
+
+function isFourMemePlatform(platform: string): boolean {
+  return FOUR_MEME_PLATFORMS.has(platform);
+}
+
+function isOpenFourPlatform(platform: string): boolean {
+  return OPEN_FOUR_PLATFORMS.has(platform);
+}
+
+function usesOpenFourRuntime(platform: string): boolean {
+  return OPEN_FOUR_RUNTIME_PLATFORMS.has(platform);
+}
+
+function isAddressLike(value: string | undefined | null): value is Address {
+  return /^0x[a-fA-F0-9]{40}$/.test(String(value || '').trim());
+}
+
+function toOpenFourEstimate(raw: any): OpenFourTradeEstimate {
+  const values = Array.isArray(raw) ? raw : [
+    raw?.curveQuote,
+    raw?.totalFee,
+    raw?.userPays,
+    raw?.userReceives,
+    raw?.tokenAmount,
+    raw?.executionPrice,
+  ];
+  return {
+    curveQuote: BigInt(values[0] ?? 0),
+    totalFee: BigInt(values[1] ?? 0),
+    userPays: BigInt(values[2] ?? 0),
+    userReceives: BigInt(values[3] ?? 0),
+    tokenAmount: BigInt(values[4] ?? 0),
+    executionPrice: BigInt(values[5] ?? 0),
+  };
+}
+
+function getOpenFourRouteAddress(runtimeState?: OpenFourRuntimeState | null): Address {
+  if (runtimeState?.core && runtimeState.core !== ZERO_ADDRESS) return runtimeState.core;
+  return OpenFourInnerLaunchpadManager as Address;
+}
+
+function getOpenFourQuoteRouterToken(chainId: number, runtimeState?: OpenFourRuntimeState | null): Address | null {
+  const quoteAsset = runtimeState?.quoteAsset;
+  if (!quoteAsset || quoteAsset === ZERO_ADDRESS) return null;
+  const wrappedNative = getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
+  return quoteAsset.toLowerCase() === wrappedNative ? ZERO_ADDRESS : quoteAsset;
+}
+
+function getSwapGasLimitForLaunchpad(platform: string, isInner: boolean): bigint {
+  if (isInner && usesOpenFourRuntime(platform)) return OPEN_FOUR_SWAP_GAS_LIMIT;
+  return DEFAULT_SWAP_GAS_LIMIT;
+}
+
+function encodeOpenFourSwapData(
+  isBuy: boolean,
+  minAmountOut: bigint,
+  options: bigint = 0n,
+  proof: `0x${string}` = '0x'
+): `0x${string}` {
+  return encodeAbiParameters(
+    parseAbiParameters('bool isBuy, uint256 minAmountOut, uint256 options, bytes proof'),
+    [isBuy, minAmountOut, options, proof]
+  );
+}
+
+function parseOpenFourOptions(raw: string | undefined): bigint {
+  const text = String(raw || '').trim();
+  if (!text) return 0n;
+  try {
+    return text.startsWith('0x') || text.startsWith('0X') ? BigInt(text) : BigInt(text);
+  } catch {
+    return 0n;
+  }
 }
 
 export class TradeService {
@@ -45,6 +213,7 @@ export class TradeService {
   private static readonly quoteBestExactInCache = new Map<string, { ts: number; value: { amountOut: bigint; swapType: number; fee?: number; poolAddress: string } }>();
   private static readonly quoteBestExactInInFlight = new Map<string, Promise<{ amountOut: bigint; swapType: number; fee?: number; poolAddress: string }>>();
   private static readonly turboPrewarmInFlight = new Map<string, Promise<void>>();
+  private static readonly openFourNetworkCache = new Map<number, OpenFourNetworkContracts>();
 
   private static makeApproveKey(chainId: number, owner: string, token: string, spender: string) {
     return `${chainId}:${owner.toLowerCase()}:${token.toLowerCase()}:${spender.toLowerCase()}`;
@@ -52,7 +221,7 @@ export class TradeService {
 
   private static getTurboWarmFingerprint(tokenInfo: TokenInfo) {
     return [
-      String(tokenInfo.launchpad_platform || '').toLowerCase(),
+      resolveTradeLaunchpadPlatform(tokenInfo),
       String(tokenInfo.launchpad_status ?? ''),
       String(tokenInfo.pool_pair || '').toLowerCase(),
       String(tokenInfo.dex_type || '').toLowerCase(),
@@ -425,22 +594,118 @@ export class TradeService {
 
   private static isInnerDisk(tokenInfo: TokenInfo): boolean {
     if (tokenInfo.launchpad) {
-      // Assuming 'status' 1 means Trading (Outer), anything else (0/2?) is Inner/Launchpad
-      // Or checking if platform is known launchpad
-      if (['fourmeme', 'bn_fourmeme', 'fourmeme_agent', 'four_xmode_agent', 'flap'].includes(tokenInfo.launchpad_platform?.toLowerCase() || '')) {
-        // If status is NOT 1 (assuming 1 is "Trading on DEX"), treat as Inner
-        // This logic might need adjustment based on exact status codes
+      const platform = resolveTradeLaunchpadPlatform(tokenInfo);
+      if (INNER_LAUNCHPAD_PLATFORMS.has(platform)) {
         return tokenInfo.launchpad_status !== 1;
       }
     }
     return false;
   }
 
-  private static getLaunchpadConfig(tokenInfo: TokenInfo, chainId: number) {
-    const platform = tokenInfo.launchpad_platform?.toLowerCase();
-    const contracts = DeployAddress[chainId as ChainId] || {};
+  private static async getOpenFourNetworkContracts(client: any, chainId: number): Promise<OpenFourNetworkContracts | null> {
+    const cached = this.openFourNetworkCache.get(chainId);
+    if (cached) return cached;
+    const registryAddress = OpenFourRegistryAddress[chainId as ChainId];
+    if (!isAddressLike(registryAddress)) return null;
+    const [coreAddress, toolsAddress] = await Promise.all([
+      client.readContract({
+        address: registryAddress,
+        abi: openFourRegistryAbi,
+        functionName: 'openFourCore',
+      }),
+      client.readContract({
+        address: registryAddress,
+        abi: openFourRegistryAbi,
+        functionName: 'openFourTool',
+      }),
+    ]);
+    if (!isAddressLike(coreAddress) || !isAddressLike(toolsAddress)) return null;
+    const contracts = {
+      core: coreAddress as Address,
+      tools: toolsAddress as Address,
+    };
+    this.openFourNetworkCache.set(chainId, contracts);
+    return contracts;
+  }
 
-    if (platform.includes('four')) {
+  private static async getOpenFourRuntimeState(client: any, chainId: number, tokenAddress: Address): Promise<OpenFourRuntimeState | null> {
+    const contracts = await this.getOpenFourNetworkContracts(client, chainId);
+    if (!contracts) return null;
+    const cfg = await client.readContract({
+      address: contracts.core,
+      abi: openFourCoreAbi,
+      functionName: 'tokens',
+      args: [tokenAddress],
+    });
+    const values = cfg as any[];
+    const quoteAsset = values[9] as Address;
+    const vault = values[10] as Address;
+    const exists = Boolean(values[17]);
+    const paused = Boolean(values[18]);
+    if (!exists || !isAddressLike(vault)) return null;
+    const phase = Number(await client.readContract({
+      address: vault,
+      abi: openFourVaultAbi,
+      functionName: 'phase',
+    }));
+    return {
+      core: contracts.core,
+      tools: contracts.tools,
+      quoteAsset: isAddressLike(quoteAsset) ? quoteAsset : ZERO_ADDRESS,
+      vault,
+      phase,
+      exists,
+      paused,
+    };
+  }
+
+  private static async estimateOpenFourBuyByBudget(
+    client: any,
+    chainId: number,
+    tokenAddress: Address,
+    trader: Address,
+    maxQuotePayAmount: bigint,
+    options: bigint,
+    proof: `0x${string}`
+  ): Promise<OpenFourTradeEstimate | null> {
+    const contracts = await this.getOpenFourNetworkContracts(client, chainId);
+    if (!contracts) return null;
+    const estimate = await client.readContract({
+      address: contracts.tools,
+      abi: openFourToolsAbi,
+      functionName: 'estimateBuyByBudget',
+      args: [tokenAddress, trader, maxQuotePayAmount, options, proof],
+    });
+    return toOpenFourEstimate(estimate);
+  }
+
+  private static async estimateOpenFourSell(
+    client: any,
+    chainId: number,
+    tokenAddress: Address,
+    trader: Address,
+    amount: bigint,
+    options: bigint,
+    proof: `0x${string}`
+  ): Promise<OpenFourTradeEstimate | null> {
+    const contracts = await this.getOpenFourNetworkContracts(client, chainId);
+    if (!contracts) return null;
+    const estimate = await client.readContract({
+      address: contracts.tools,
+      abi: openFourToolsAbi,
+      functionName: 'estimateSell',
+      args: [tokenAddress, trader, amount, options, proof],
+    });
+    return toOpenFourEstimate(estimate);
+  }
+
+  private static getLaunchpadConfig(tokenInfo: TokenInfo, chainId: number, openFourRuntime?: OpenFourRuntimeState | null) {
+    const platform = resolveTradeLaunchpadPlatform(tokenInfo);
+    const contracts = DeployAddress[chainId as ChainId] || {};
+    const routeAddress = ((tokenInfo.pool_pair && tokenInfo.pool_pair.trim()) || ZERO_ADDRESS) as Address;
+    const openFourRouteAddress = getOpenFourRouteAddress(openFourRuntime);
+
+    if (isFourMemePlatform(platform)) {
       return {
         buyType: SwapType.FOUR_MEME_BUY_AMAP,
         sellType: SwapType.FOUR_MEME_SELL,
@@ -448,14 +713,42 @@ export class TradeService {
       };
     }
 
-    if (platform === 'flap') {
+    if (platform === 'flap' || platform === 'flap_stocks') {
       return {
         buyType: SwapType.FLAP_EXACT_INPUT,
-        sellType: SwapType.FLAP_EXACT_INPUT, // Assuming same for sell
+        sellType: SwapType.FLAP_EXACT_INPUT,
         manager: (contracts[ContractNames.FlapshTokenManager]?.address || ZERO_ADDRESS) as Address
       };
     }
+
+    if (platform === 'printr') {
+      return {
+        buyType: SwapType.PRINTR_EXACT_IN,
+        sellType: SwapType.PRINTR_EXACT_IN,
+        manager: routeAddress,
+      };
+    }
+
+    if (isOpenFourPlatform(platform)) {
+      return {
+        buyType: SwapType.OPEN_FOUR_EXACT_IN,
+        sellType: SwapType.OPEN_FOUR_EXACT_IN,
+        manager: openFourRouteAddress,
+      };
+    }
     return null;
+  }
+
+  private static getLaunchpadQuoteRouterToken(chainId: number, tokenInfo: TokenInfo, platform: string, openFourRuntime?: OpenFourRuntimeState | null): Address | null {
+    if (usesOpenFourRuntime(platform)) {
+      const runtimeToken = getOpenFourQuoteRouterToken(chainId, openFourRuntime);
+      if (runtimeToken !== null) return runtimeToken;
+    }
+    if (!isOpenFourPlatform(platform)) return getBridgeToken(chainId, tokenInfo.address, tokenInfo.quote_token_address);
+    const raw = typeof tokenInfo.quote_token_address === 'string' ? tokenInfo.quote_token_address.trim() : '';
+    if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) return null;
+    const wrappedNative = getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
+    return raw.toLowerCase() === wrappedNative ? ZERO_ADDRESS : raw as Address;
   }
 
   private static resolveNativeAmountWei(input: TxBuyInput): string {
@@ -575,13 +868,21 @@ export class TradeService {
       : undefined;
 
     const tokenOut = input.tokenAddress;
-    const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(tokenInfo.launchpad_platform);
-    const isInner = isHyperAltfun ? false : this.isInnerDisk(tokenInfo);
-    const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
+    const launchpadPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
+    const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(launchpadPlatform);
+    const openFourRuntime = (isHyperAltfun || !usesOpenFourRuntime(launchpadPlatform))
+      ? null
+      : await this.getOpenFourRuntimeState(client, input.chainId, tokenOut as Address);
+    const isInner = isHyperAltfun
+      ? false
+      : usesOpenFourRuntime(launchpadPlatform)
+        ? !!openFourRuntime && openFourRuntime.phase === 1 && !openFourRuntime.paused
+        : this.isInnerDisk(tokenInfo);
+    const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId, openFourRuntime) : null;
 
     const bridgeToken = isHyperAltfun
       ? null
-      : getBridgeToken(input.chainId, tokenInfo.address, tokenInfo.quote_token_address);
+      : this.getLaunchpadQuoteRouterToken(input.chainId, tokenInfo, launchpadPlatform, openFourRuntime);
     console.log('input.tokenInfo', tokenInfo, isInner, launchpadConfig)
     console.log('bridgeToken', bridgeToken);
     const descs: SwapDescLike[] = [];
@@ -702,10 +1003,12 @@ export class TradeService {
 
       // Hop 2: [BaseToken/Quote] -> Meme
       if (isInner && launchpadConfig) {
-        const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
+        const platform = launchpadPlatform;
         let dataForDesc: `0x${string}` = '0x';
+        let feeForDesc = 0;
+        let tickSpacingForDesc = 0;
 
-        if (platform.includes('four')) {
+        if (isFourMemePlatform(platform)) {
           const to = account.address as Address;
           const fundsForEstimate = currentRouterToken === ZERO_ADDRESS ? amountIn : currentAmount;
           let minAmount = 0n;
@@ -737,12 +1040,40 @@ export class TradeService {
           }
         }
 
+        if (isOpenFourPlatform(platform)) {
+          const openFourOptions = parseOpenFourOptions(input.openFourOptions);
+          const openFourProof = input.openFourProof ?? '0x';
+          if (!isTurbo) {
+            const est = await timeStep('openfour:estimateBuyByBudget', () =>
+              this.estimateOpenFourBuyByBudget(
+                client,
+                input.chainId,
+                tokenOut as Address,
+                account.address as Address,
+                currentAmount,
+                openFourOptions,
+                openFourProof
+              )
+            );
+            if (!est || est.tokenAmount <= 0n) throw new Error('OpenFour 买入预估失败或当前不可交易');
+            const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+            minOut = applySlippage(est.tokenAmount, slippageBps);
+          }
+          dataForDesc = encodeOpenFourSwapData(
+            true,
+            minOut,
+            openFourOptions,
+            openFourProof
+          );
+        }
+
         descs.push(getRouterSwapDesc({
           swapType: launchpadConfig.buyType,
           tokenIn: currentRouterToken,
           tokenOut,
           poolAddress: launchpadConfig.manager,
-          fee: 0,
+          fee: feeForDesc,
+          tickSpacing: tickSpacingForDesc,
           data: dataForDesc,
         }));
       } else {
@@ -809,7 +1140,7 @@ export class TradeService {
 
     const txOpts = {
       skipEstimateGas: true,
-      gasLimit: 900000n,
+      gasLimit: getSwapGasLimitForLaunchpad(launchpadPlatform, isInner),
       trace,
       txSide: 'buy' as const,
       submitChannel: input.submitChannel,
@@ -1090,7 +1421,7 @@ export class TradeService {
     const client = await RpcService.getClient(chainId);
 
     const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
-    const platform = tokenInfo.launchpad_platform?.toLowerCase() || '';
+    const platform = resolveTradeLaunchpadPlatform(tokenInfo);
     const isInner = this.isInnerDisk(tokenInfo);
     const isInnerFourMeme = isInner && platform.includes('four');
 
@@ -1100,7 +1431,7 @@ export class TradeService {
       routerAddress,
       extraSpenders: opts?.extraSpenders,
       getLaunchpadManager: (ti, cid) => {
-        const platform = ti.launchpad_platform?.toLowerCase() || '';
+        const platform = resolveTradeLaunchpadPlatform(ti);
         const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
         return cfg?.manager ?? null;
       },
@@ -1157,7 +1488,7 @@ export class TradeService {
       routerAddress,
       extraSpenders: opts?.extraSpenders,
       getLaunchpadManager: (ti, cid) => {
-        const platform = ti.launchpad_platform?.toLowerCase() || '';
+        const platform = resolveTradeLaunchpadPlatform(ti);
         const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
         return cfg?.manager ?? null;
       },
@@ -1223,17 +1554,24 @@ export class TradeService {
         }
         : undefined;
 
-      const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(tokenInfo.launchpad_platform);
-      const isInner = isHyperAltfun ? false : this.isInnerDisk(tokenInfo);
-      const platformLower = tokenInfo.launchpad_platform?.toLowerCase() || '';
-      const isInnerFourMeme = isInner && platformLower.includes('four');
-      const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId) : null;
-      const bridgeToken = isHyperAltfun ? null : getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
+      const sellToken: Address = input.tokenAddress;
+      const platformLower = resolveTradeLaunchpadPlatform(tokenInfo);
+      const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(platformLower);
+      const openFourRuntime = (isHyperAltfun || !usesOpenFourRuntime(platformLower))
+        ? null
+        : await this.getOpenFourRuntimeState(client, input.chainId, sellToken);
+      const isInner = isHyperAltfun
+        ? false
+        : usesOpenFourRuntime(platformLower)
+          ? !!openFourRuntime && openFourRuntime.phase === 1 && !openFourRuntime.paused
+          : this.isInnerDisk(tokenInfo);
+      const isInnerFourMeme = isInner && isFourMemePlatform(platformLower);
+      const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId, openFourRuntime) : null;
+      const bridgeToken = isHyperAltfun ? null : this.getLaunchpadQuoteRouterToken(input.chainId as ChainId, tokenInfo, platformLower, openFourRuntime);
       const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
       console.log('sell input.tokenInfo', tokenInfo, isInner, launchpadConfig)
       console.log('sell bridgeToken', bridgeToken, bridgePrefer);
       const descs: SwapDescLike[] = [];
-      const sellToken: Address = input.tokenAddress;
       let estimatedOut = 0n;
       let minFundsForSell = 0n;
       let sellTokenManager: Address | null = null;
@@ -1305,9 +1643,12 @@ export class TradeService {
           }));
         }
       } else if (isInner && launchpadConfig) {
+        const platform = resolveTradeLaunchpadPlatform(tokenInfo);
         const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
         let minFunds = 0n;
         let dataForSell: `0x${string}` = '0x';
+        let feeForSellDesc = 0;
+        let tickSpacingForSellDesc = 0;
 
         if (!isTurbo && isInnerFourMeme) {
           if (amountIn > 0n) {
@@ -1340,22 +1681,53 @@ export class TradeService {
           }
         }
 
+        if (isOpenFourPlatform(platform)) {
+          const openFourOptions = parseOpenFourOptions(input.openFourOptions);
+          const openFourProof = input.openFourProof ?? '0x';
+          if (!isTurbo) {
+            const est = await timeStep('openfour:estimateSell', () =>
+              this.estimateOpenFourSell(
+                client,
+                input.chainId,
+                sellToken,
+                account.address as Address,
+                amountIn,
+                openFourOptions,
+                openFourProof
+              )
+            );
+            if (!est || est.userReceives <= 0n) throw new Error('OpenFour 卖出预估失败或当前不可交易');
+            minFunds = applySlippage(est.userReceives, slippageBps);
+            minFundsForSell = minFunds;
+            if (!bridgeToken) {
+              estimatedOut = est.userReceives;
+            }
+          }
+          dataForSell = encodeOpenFourSwapData(
+            false,
+            minFunds,
+            openFourOptions,
+            openFourProof
+          );
+        }
+
         const innerTokenOut = bridgeToken ?? baseTokenAddress;
         descs.push(getRouterSwapDesc({
           swapType: launchpadConfig.sellType,
           tokenIn: sellToken,
           tokenOut: innerTokenOut,
           poolAddress: sellManagerForRoute,
-          fee: 0,
+          fee: feeForSellDesc,
+          tickSpacing: tickSpacingForSellDesc,
           data: dataForSell,
         }));
 
-        if (innerTokenOut !== ZERO_ADDRESS && bridgeToken) {
+        if (innerTokenOut.toLowerCase() !== baseTokenAddress.toLowerCase()) {
           const hop2AmountIn = isTurbo ? 1n : (minFunds > 0n ? minFunds : 1n);
           const hop2 = await timeStep('quote:bridge:hop2', () =>
             resolveBridgeHopExactIn(
               input.chainId,
-              bridgeToken,
+              innerTokenOut,
               baseTokenAddress,
               hop2AmountIn,
               bridgePrefer,
@@ -1368,7 +1740,7 @@ export class TradeService {
           }
           descs.push(getRouterSwapDesc({
             swapType: hop2.swapType,
-            tokenIn: bridgeToken,
+            tokenIn: innerTokenOut,
             tokenOut: baseTokenAddress,
             poolAddress: hop2.poolAddress,
             fee: getV3FeeForDesc(hop2, getDefaultBridgeV3Fee(input.chainId)),
@@ -1507,7 +1879,7 @@ export class TradeService {
 
       const txOpts = {
         skipEstimateGas: true,
-        gasLimit: 900000n,
+        gasLimit: getSwapGasLimitForLaunchpad(platformLower, isInner),
         trace,
         txSide: 'sell' as const,
         submitChannel: input.submitChannel,
@@ -1569,7 +1941,7 @@ export class TradeService {
           routerAddress,
           extraSpenders: allowanceExtraSpenders,
           getLaunchpadManager: (ti, cid) => {
-            const platform = ti.launchpad_platform?.toLowerCase() || '';
+            const platform = resolveTradeLaunchpadPlatform(ti);
             const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
             return cfg?.manager ?? null;
           },

@@ -124,3 +124,7 @@ export const getDeploysByAddress = (chainId: ChainId, address: string) => {
 
 export const PancakeFactoryV2 = '0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73'
 export const PancakeFactoryV3 = '0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865'
+export const OpenFourInnerLaunchpadManager = '0xebe7b6C1089D9F72aD07f34E36d898e44E5e27f3'
+export const OpenFourRegistryAddress: Partial<Record<ChainId, string>> = {
+  [ChainId.BNB]: '0x912CEf0C3aE9Ab6eB3Ec87cab69371cFb317Ab94',
+}

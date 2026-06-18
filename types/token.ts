@@ -37,6 +37,7 @@ export interface TokenInfo {
   quote_token: string;
   quote_token_address?: string;
   pool_pair?: string;
+  tpool_exchange?: string;
   dex_type?: string;
   tokenPrice?: {
     price: string;

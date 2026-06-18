@@ -1,9 +1,13 @@
 import { ChainId } from "./chains";
 
 export const SUPPORTED_LAUNCHPADS: Partial<Record<ChainId, string[]>> = ({
-    [ChainId.BNB]: ["fourmeme", "fourmeme_agent",
-        "bn_fourmeme", "four_xmode_agent", "xmode", "xmode_agent", 
-        "flap", "flap_stocks"],
+    [ChainId.BNB]: ["fourmeme",
+        // "fourmeme_agent",
+        // "bn_fourmeme",
+        //  "four_xmode_agent", "xmode", "xmode_agent",
+        "flap", "flap_stocks", "flap_aioracle",
+        "printr",
+        "openfour", "likwid", "goplus_skills", "goplus_creator", "cubepeg"],
 
     [ChainId.ETH]: ["livo", "trench"],
 
@@ -13,11 +17,18 @@ export const SUPPORTED_LAUNCHPADS: Partial<Record<ChainId, string[]>> = ({
 
 export const PLATFORM_OPTIONS = [
     { value: 'fourmeme', label: 'Fourmeme' },
-    { value: 'fourmeme_agent', label: 'Fourmeme Agent' },
-    { value: 'xmode', label: 'X Mode' },
-    { value: 'xmode_agent', label: 'X Mode Agent' },
+    // { value: 'fourmeme_agent', label: 'Fourmeme Agent' },
+    // { value: 'xmode', label: 'X Mode' },
+    // { value: 'xmode_agent', label: 'X Mode Agent' },
     { value: 'flap', label: 'Flap' },
     { value: 'flap_stocks', label: 'Flap Stocks' },
+    { value: 'flap_aioracle', label: 'Flap AI' },
+    { value: 'printr', label: 'Printr' },
+    { value: 'openfour', label: 'OpenFour' },
+    { value: 'goplus_skills', label: 'GoPlus Skills' },
+    { value: 'goplus_creator', label: 'GoPlus Creator' },
+    { value: 'likwid', label: 'Likwid' },
+    { value: 'cubepeg', label: 'Cubepeg' },
 ] as const;
 
 export const PLATFORM_OPTIONS_ETH = [
@@ -42,6 +53,10 @@ export function normalizeLaunchpadPlatform(value: unknown): string | undefined {
     if (raw === 'bn_fourmeme' || raw === 'bn_fourmeme' || raw === 'xmode' || raw === 'x mode') return 'xmode';
     if (raw === 'four_xmode_agent') return 'xmode_agent';
     if (raw === 'flap') return 'flap';
+    if (raw === 'flap_stocks' || raw === 'flap stocks') return 'flap_stocks';
+    if (raw === 'printr') return 'printr';
+    if (raw === 'openfour' || raw === 'open four') return 'openfour';
+    if (raw === 'likwid') return 'likwid';
     if (raw === 'alt.fun' || raw === 'altfun') return 'altfun';
     return raw;
 }

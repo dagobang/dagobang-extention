@@ -12,6 +12,9 @@ export enum SwapType {
   FOUR_MEME_BUY_AMAP = 5,
   FOUR_MEME_SELL = 6,
   FLAP_EXACT_INPUT = 7,
+  PRINTR_EXACT_IN = 8,
+  OPEN_FOUR_EXACT_IN = 9,
+  LIKWID_EXACT_IN = 10,
 }
 
 export function toHyperDexSwapType(swapType: SwapType): HyperSwapType {
@@ -67,14 +70,22 @@ export function toQuoteToken(chainId: number, routerToken: Address): Address {
   return routerToken === ZERO_ADDRESS ? getWNative(chainId) : routerToken;
 }
 
-export function getRouterSwapDesc(params: { swapType: number; tokenIn: Address; tokenOut: Address; poolAddress: Address; fee: number; data?: Hex }): SwapDescLike {
+export function getRouterSwapDesc(params: {
+  swapType: number;
+  tokenIn: Address;
+  tokenOut: Address;
+  poolAddress: Address;
+  fee: number;
+  tickSpacing?: number;
+  data?: Hex;
+}): SwapDescLike {
   return {
     swapType: params.swapType,
     tokenIn: params.tokenIn,
     tokenOut: params.tokenOut,
     poolAddress: params.poolAddress,
     fee: params.fee,
-    tickSpacing: 0,
+    tickSpacing: params.tickSpacing ?? 0,
     hooks: ZERO_ADDRESS,
     hookData: '0x',
     poolManager: ZERO_ADDRESS,

@@ -5,12 +5,26 @@ import { call } from "@/utils/messaging";
 import { parseEther, zeroAddress } from "viem";
 import { chainNames, getChainIdByName } from "@/constants/chains";
 import { MEME_SUFFIXS } from "@/constants/meme";
+import { getSupportedLaunchpads, normalizeLaunchpadPlatform } from "@/constants/launchpad";
 import FlapAPI from "./FlapAPI";
 
 const PLATFORM_API: Record<string, { getTokenInfo: (chain: string, address: string) => Promise<TokenInfo | null> }> = {
     "gmgn": GmgnAPI,
     "axiom": AxiomAPI,
 };
+
+const FOUR_MEME_LIKE_LAUNCHPADS = new Set([
+    'fourmeme',
+    'fourmeme_agent',
+    'xmode',
+    'xmode_agent',
+]);
+
+const FLAP_LIKE_LAUNCHPADS = new Set([
+    'flap',
+    'flap_stocks',
+    'flap_aioracle',
+]);
 
 
 export class TokenAPI {
@@ -43,6 +57,7 @@ export class TokenAPI {
         opts?: { cacheTtlMs?: number }
     ): Promise<TokenInfo | null> {
         const key = this.toTokenInfoKey(platform, chain, tokenAddress);
+        const normalizedRequestedPlatform = normalizeLaunchpadPlatform(platform) ?? platform.trim().toLowerCase();
         const now = Date.now();
         const requestedTtl = typeof opts?.cacheTtlMs === 'number' && opts.cacheTtlMs >= 0
             ? opts.cacheTtlMs
@@ -101,7 +116,15 @@ export class TokenAPI {
                     try {
                         const tokenInfo = await api.getTokenInfo(chain, address);
                         if (tokenInfo) {
-                            if (tokenInfo.launchpad_platform.includes('four') && tokenInfo.quote_token != "BNB") {
+                            const chainId = getChainIdByName(chain);
+                            const normalizedLaunchpad = normalizeLaunchpadPlatform(tokenInfo.launchpad_platform) ?? '';
+                            const supportedLaunchpads = Number.isFinite(chainId)
+                                ? new Set(getSupportedLaunchpads(chainId))
+                                : new Set<string>();
+                            const isFourMemeLike = FOUR_MEME_LIKE_LAUNCHPADS.has(normalizedLaunchpad);
+                            const isSupportedLaunchpad = normalizedLaunchpad !== '' && supportedLaunchpads.has(normalizedLaunchpad);
+
+                            if (isFourMemeLike && tokenInfo.quote_token != "BNB") {
                                 const fourmemeTokenInfo = await this.getTokenInfoByFourmeme(platform, chain, address);
                                 if (fourmemeTokenInfo) {
                                     nextValue = fourmemeTokenInfo;
@@ -110,7 +133,8 @@ export class TokenAPI {
                                 }
                             } else if (
                                 MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
-                                tokenInfo.launchpad_platform.includes('four')
+                                isFourMemeLike ||
+                                isSupportedLaunchpad
                             ) {
                                 nextValue = tokenInfo;
                             } else {
@@ -123,10 +147,12 @@ export class TokenAPI {
                 }
 
                 if (nextValue == null) {
-                    if (address.endsWith("7777") || address.endsWith("8888")) {
+                    if (FLAP_LIKE_LAUNCHPADS.has(normalizedRequestedPlatform) || address.endsWith("7777") || address.endsWith("8888")) {
                         nextValue = await this.getTokenInfoByFlap(platform, chain, address);
-                    } else {
+                    } else if (FOUR_MEME_LIKE_LAUNCHPADS.has(normalizedRequestedPlatform)) {
                         nextValue = await this.getTokenInfoByFourmeme(platform, chain, address);
+                    } else {
+                        nextValue = null;
                     }
                 }
             }

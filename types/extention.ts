@@ -428,6 +428,8 @@ export type TxBuyInput = {
   priorityFeeBnb?: string;
   submitChannel?: SubmitChannel;
   deadlineSeconds?: number;
+  openFourOptions?: string;
+  openFourProof?: `0x${string}`;
   tokenInfo?: TokenInfo;
 };
 
@@ -447,6 +449,8 @@ export type TxSellInput = {
   priorityFeeBnb?: string;
   submitChannel?: SubmitChannel;
   deadlineSeconds?: number;
+  openFourOptions?: string;
+  openFourProof?: `0x${string}`;
   tokenInfo?: TokenInfo;
 };
 

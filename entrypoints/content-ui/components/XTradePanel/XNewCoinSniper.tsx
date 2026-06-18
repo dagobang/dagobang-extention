@@ -873,7 +873,7 @@ export function XNewCoinSniperContent({
             twitterSnipe={draft}
             onToggle={() => toggleConfigSection('autoTask')}
             updateTwitterSnipe={updateDraft}
-            platformOptions={PLATFORM_OPTIONS.filter((x) => x.value === 'fourmeme' || x.value === 'fourmeme_agent')}
+            platformOptions={PLATFORM_OPTIONS.filter((x) => x.value === 'fourmeme')}
           /> : null}
           {!taskManagerOnly ? <XSniperFilterSection
             open={configSectionOpen.filter}

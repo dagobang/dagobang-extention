@@ -1210,6 +1210,7 @@ export class GmgnAPI {
       quote_token: quoteToken,
       quote_token_address: quoteTokenAddress,
       pool_pair: tokenData.biggest_pool_address || tokenData.tpool?.pool_address || tokenData.pool?.pool_address,
+      tpool_exchange: exchange,
       dex_type: dexType,
       totalSupply,
     };
