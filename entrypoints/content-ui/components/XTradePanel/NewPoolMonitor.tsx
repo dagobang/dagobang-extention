@@ -58,7 +58,8 @@ type MarketTokenRow = {
   signalId: string;
   receivedAtMs: number;
   updatedAtMs: number;
-  createdAtMs: number;
+  createdAtMs?: number;
+  sortAtMs: number;
   tokenName?: string;
   tokenSymbol?: string;
   tokenLogo?: string;
@@ -165,6 +166,12 @@ const shouldUseIncomingValue = (value: unknown) => {
 
 const mergeTokenRow = (prev: MarketTokenRow | undefined, next: MarketTokenRow): MarketTokenRow => {
   if (!prev) return next;
+  const mergedCreatedAtMs =
+    typeof prev.createdAtMs === 'number' && prev.createdAtMs > 0
+      ? typeof next.createdAtMs === 'number' && next.createdAtMs > 0
+        ? Math.min(prev.createdAtMs, next.createdAtMs)
+        : prev.createdAtMs
+      : next.createdAtMs;
   const merged: MarketTokenRow = {
     ...prev,
     tokenAddress: next.tokenAddress,
@@ -172,7 +179,8 @@ const mergeTokenRow = (prev: MarketTokenRow | undefined, next: MarketTokenRow): 
     channel: next.channel,
     receivedAtMs: Math.max(prev.receivedAtMs, next.receivedAtMs),
     updatedAtMs: Math.max(prev.updatedAtMs, next.updatedAtMs),
-    createdAtMs: Math.min(prev.createdAtMs, next.createdAtMs),
+    createdAtMs: mergedCreatedAtMs,
+    sortAtMs: mergedCreatedAtMs ?? Math.max(prev.sortAtMs, next.sortAtMs),
   };
   if (
     typeof prev.marketCapUsd === 'number' &&
@@ -187,7 +195,7 @@ const mergeTokenRow = (prev: MarketTokenRow | undefined, next: MarketTokenRow): 
   }
   const keys = Object.keys(next) as Array<keyof MarketTokenRow>;
   for (const key of keys) {
-    if (key === 'tokenAddress' || key === 'signalId' || key === 'channel' || key === 'receivedAtMs' || key === 'updatedAtMs' || key === 'createdAtMs') continue;
+    if (key === 'tokenAddress' || key === 'signalId' || key === 'channel' || key === 'receivedAtMs' || key === 'updatedAtMs' || key === 'createdAtMs' || key === 'sortAtMs') continue;
     const value = next[key];
     if (!shouldUseIncomingValue(value)) continue;
     if (key === 'devMaxBuyPercent') {
@@ -605,16 +613,8 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
   const tokenData = detail.tokenData;
   const tokenAddress = pickString(tokenData?.tokenAddress, tokenData?.address, tokenData?.a)?.toLowerCase();
   if (!tokenAddress || !/^0x[a-f0-9]{40}$/i.test(tokenAddress)) return null;
-  const createdAtMs = normalizeEpochMs(
-    tokenData?.createdAtMs ??
-    tokenData?.createdAt ??
-    tokenData?.created_at ??
-    tokenData?.launchAt ??
-    tokenData?.launch_at ??
-    tokenData?.ct ??
-    tokenData?.ot
-  ) ?? detail.receivedAtMs;
-  if (typeof createdAtMs !== 'number' || createdAtMs <= 0) return null;
+  const createdAtMs = normalizeEpochMs(tokenData?.createdAtMs ?? tokenData?.ct);
+  const sortAtMs = createdAtMs ?? detail.receivedAtMs;
   const updatedAtMs = normalizeEpochMs(tokenData?.updatedAtMs ?? tokenData?.ut ?? detail.receivedAtMs) ?? detail.receivedAtMs;
   const { tweetAuthor, tweetId, tweetUrl, tweetType } = extractTweetRef(tokenData);
   const { telegramUrl, telegramHandle, telegramKind } = extractTelegramRef(tokenData);
@@ -622,6 +622,37 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
   const tokenLogo = extractImageRef(tokenData) ?? pickString(tokenData?.tokenLogo, tokenData?.logo, tokenData?.f?.l, tokenData?.l);
   const devHoldPercentRaw = toFiniteNumber(tokenData?.devHoldPercent ?? tokenData?.d_br);
   const devMaxBuyPercentRaw = toFiniteNumber(tokenData?.devMaxBuyPercent ?? tokenData?.d_br);
+  // #region debug-point C:ui-row-age-devhold
+  if (createdAtMs == null || devHoldPercentRaw == null) {
+    const dbgKey = `__DBG_NEWPOOL_ROW_MISSING__:${tokenAddress}`;
+    if (!(window as any)[dbgKey]) {
+      (window as any)[dbgKey] = 1;
+      fetch('http://127.0.0.1:7777/event', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: 'newpool-age-devhold',
+          runId: 'pre-fix',
+          hypothesisId: 'C',
+          location: 'NewPoolMonitor.tsx:buildMarketTokenRow',
+          msg: '[DEBUG] ui row missing age/devhold',
+          data: {
+            tokenAddress,
+            source: detail?.source ?? null,
+            channel: detail?.channel ?? null,
+            createdAtMs,
+            rawCreatedAtMs: tokenData?.createdAtMs ?? null,
+            rawCt: tokenData?.ct ?? null,
+            devHoldPercentRaw,
+            rawDevHoldPercent: tokenData?.devHoldPercent ?? null,
+            rawDevBuyRatio: tokenData?.d_br ?? null,
+            receivedAtMs: detail?.receivedAtMs ?? null,
+          },
+          ts: Date.now(),
+        }),
+      }).catch(() => { });
+    }
+  }
+  // #endregion
   return {
     tokenAddress,
     signalId: `${detail.source}:${detail.channel}:${tokenAddress}`,
@@ -629,6 +660,7 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
     receivedAtMs: detail.receivedAtMs,
     updatedAtMs,
     createdAtMs,
+    sortAtMs,
     tokenName: pickString(tokenData?.tokenName, tokenData?.name, tokenData?.nm),
     tokenSymbol: pickString(tokenData?.tokenSymbol, tokenData?.symbol, tokenData?.s),
     tokenLogo: tokenLogo ?? undefined,
@@ -662,11 +694,71 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
 };
 
 const ingestRows = (map: Map<string, MarketTokenRow>, items: MarketTokenEventDetail[]) => {
+  const beforeSize = map.size;
+  const debugStats = {
+    built: 0,
+    droppedInvalidAddress: 0,
+    droppedInvalidCreatedAt: 0,
+    builtWithIdentity: 0,
+    builtWithLogo: 0,
+    missingIdentity: 0,
+    missingLogo: 0,
+    missingMarketCap: 0,
+    missingVolume: 0,
+    missingHolders: 0,
+    missingViewer: 0,
+  };
   for (const item of items) {
+    const tokenData = item?.tokenData;
     const row = buildMarketTokenRow(item);
-    if (!row) continue;
+    if (!row) {
+      const tokenAddress = pickString(tokenData?.tokenAddress, tokenData?.address, tokenData?.a)?.toLowerCase();
+      if (!tokenAddress || !/^0x[a-f0-9]{40}$/i.test(tokenAddress)) debugStats.droppedInvalidAddress += 1;
+      else debugStats.droppedInvalidCreatedAt += 1;
+      continue;
+    }
+    debugStats.built += 1;
+    if (row.tokenName || row.tokenSymbol) debugStats.builtWithIdentity += 1;
+    else debugStats.missingIdentity += 1;
+    if (row.tokenLogo) debugStats.builtWithLogo += 1;
+    else debugStats.missingLogo += 1;
+    if (row.marketCapUsd == null) debugStats.missingMarketCap += 1;
+    if (row.vol24hUsd == null) debugStats.missingVolume += 1;
+    if (row.holders == null) debugStats.missingHolders += 1;
+    if (row.viewerCount == null) debugStats.missingViewer += 1;
     map.set(row.tokenAddress, mergeTokenRow(map.get(row.tokenAddress), row));
   }
+  // #region debug-point C:newpool-ui-ingest
+  (() => {
+    fetch('http://127.0.0.1:7777/event', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: 'newpool-v2-crash',
+        runId: 'post-fix',
+        hypothesisId: 'C',
+        location: 'NewPoolMonitor.tsx:ingestRows',
+        msg: '[DEBUG] ui ingest rows',
+        data: {
+          incoming: items.length,
+          beforeSize,
+          afterSize: map.size,
+          built: debugStats.built,
+          droppedInvalidAddress: debugStats.droppedInvalidAddress,
+          droppedInvalidCreatedAt: debugStats.droppedInvalidCreatedAt,
+          builtWithIdentity: debugStats.builtWithIdentity,
+          builtWithLogo: debugStats.builtWithLogo,
+          missingIdentity: debugStats.missingIdentity,
+          missingLogo: debugStats.missingLogo,
+          missingMarketCap: debugStats.missingMarketCap,
+          missingVolume: debugStats.missingVolume,
+          missingHolders: debugStats.missingHolders,
+          missingViewer: debugStats.missingViewer,
+        },
+        ts: Date.now(),
+      }),
+    }).catch(() => { });
+  })();
+  // #endregion
 };
 
 const resolveGroupInfo = (row: MarketTokenRow): Pick<MarketTokenGroup, 'key' | 'kind' | 'label' | 'tweetAuthor' | 'tweetId' | 'tweetUrl' | 'tweetType' | 'telegramUrl' | 'telegramKind' | 'website'> => {
@@ -765,6 +857,7 @@ const matchesTokenFilter = (row: MarketTokenRow, filterDraft: MonitorFilterDraft
   const maxAgeSeconds = parseNumber(filterDraft.maxTokenAgeSeconds);
   if (minAgeSeconds != null || maxAgeSeconds != null) {
     const ageBaseMs = row.createdAtMs;
+    if (typeof ageBaseMs !== 'number' || ageBaseMs <= 0) return false;
     const ageSeconds = Math.max(0, Math.floor((Date.now() - ageBaseMs) / 1000));
     if (minAgeSeconds != null && ageSeconds < minAgeSeconds) return false;
     if (maxAgeSeconds != null && ageSeconds > maxAgeSeconds) return false;
@@ -831,7 +924,7 @@ const compareByMarketCapDesc = (a: MarketTokenRow, b: MarketTokenRow) => {
   if (mcDiff !== 0) return mcDiff;
   const updatedDiff = b.updatedAtMs - a.updatedAtMs;
   if (updatedDiff !== 0) return updatedDiff;
-  return b.createdAtMs - a.createdAtMs;
+  return b.sortAtMs - a.sortAtMs;
 };
 
 const compareByViewerAndMarketCapDesc = (a: MarketTokenRow, b: MarketTokenRow) => {
@@ -863,7 +956,7 @@ function TokenRowCard({
   const symbol = row.tokenSymbol?.trim() || '';
   const tokenName = row.tokenName?.trim() || '';
   const displayName = symbol || tokenName || shortAddr;
-  const ageText = formatAgeShort(row.createdAtMs);
+  const ageText = typeof row.createdAtMs === 'number' && row.createdAtMs > 0 ? formatAgeShort(row.createdAtMs) : '-';
   const marketCapHighlightActive =
     typeof row.marketCapChangedAtMs === 'number' &&
     Date.now() - row.marketCapChangedAtMs <= MCAP_HIGHLIGHT_WINDOW_MS &&
@@ -1161,18 +1254,47 @@ export function NewPoolMonitorContent({
     const syncIds = () => {
       if (disposed) return;
       const map = tokenMapRef.current;
+      const startedAt = performance.now();
       const nextIds = Array.from(map.values())
-        .sort((a, b) => b.createdAtMs - a.createdAtMs)
+        .sort((a, b) => b.sortAtMs - a.sortAtMs)
         .slice(0, MARKET_TOKEN_CACHE_LIMIT)
         .map((item) => item.tokenAddress);
       setTokenIds(nextIds);
+      return {
+        mapSize: map.size,
+        nextIdsSize: nextIds.length,
+        sortMs: performance.now() - startedAt,
+      };
     };
     const onBatch = (message: any) => {
       if (message?.type !== 'bg:newpool:batch') return;
       const items = Array.isArray(message?.items) ? message.items as MarketTokenEventDetail[] : [];
       if (!items.length) return;
+      const startedAt = performance.now();
       ingestRows(tokenMapRef.current, items);
-      syncIds();
+      const syncInfo = syncIds();
+      // #region debug-point D:newpool-ui-batch
+      (() => {
+        fetch('http://127.0.0.1:7777/event', {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionId: 'newpool-v2-crash',
+            runId: 'post-fix',
+            hypothesisId: 'D',
+            location: 'NewPoolMonitor.tsx:onBatch',
+            msg: '[DEBUG] ui batch applied',
+            data: {
+              incoming: items.length,
+              ingestAndSyncMs: performance.now() - startedAt,
+              mapSize: syncInfo?.mapSize ?? tokenMapRef.current.size,
+              nextIdsSize: syncInfo?.nextIdsSize ?? 0,
+              sortMs: syncInfo?.sortMs ?? null,
+            },
+            ts: Date.now(),
+          }),
+        }).catch(() => { });
+      })();
+      // #endregion
     };
     browser.runtime.onMessage.addListener(onBatch);
     void call({ type: 'newpool:getSnapshot' } as const)
@@ -1180,8 +1302,31 @@ export function NewPoolMonitorContent({
         if (disposed) return;
         const items = Array.isArray((res as any)?.items) ? (res as any).items as MarketTokenEventDetail[] : [];
         tokenMapRef.current.clear();
+        const startedAt = performance.now();
         if (items.length) ingestRows(tokenMapRef.current, items);
-        syncIds();
+        const syncInfo = syncIds();
+        // #region debug-point D:newpool-ui-snapshot
+        (() => {
+          fetch('http://127.0.0.1:7777/event', {
+            method: 'POST',
+            body: JSON.stringify({
+              sessionId: 'newpool-v2-crash',
+              runId: 'post-fix',
+              hypothesisId: 'D',
+              location: 'NewPoolMonitor.tsx:getSnapshot',
+              msg: '[DEBUG] ui snapshot applied',
+              data: {
+                incoming: items.length,
+                ingestAndSyncMs: performance.now() - startedAt,
+                mapSize: syncInfo?.mapSize ?? tokenMapRef.current.size,
+                nextIdsSize: syncInfo?.nextIdsSize ?? 0,
+                sortMs: syncInfo?.sortMs ?? null,
+              },
+              ts: Date.now(),
+            }),
+          }).catch(() => { });
+        })();
+        // #endregion
       })
       .catch(() => { });
     return () => {
@@ -1228,7 +1373,7 @@ export function NewPoolMonitorContent({
                           telegramKind: groupInfo.telegramKind,
           website: groupInfo.website,
           latestAtMs: row.updatedAtMs,
-          newestTokenAtMs: row.createdAtMs,
+          newestTokenAtMs: typeof row.createdAtMs === 'number' ? row.createdAtMs : 0,
           topMarketCapUsd: row.marketCapUsd ?? 0,
           totalCount: 1,
           tokens: [row],
@@ -1238,7 +1383,7 @@ export function NewPoolMonitorContent({
       current.tokens.push(row);
       current.totalCount += 1;
       current.latestAtMs = Math.max(current.latestAtMs, row.updatedAtMs);
-      current.newestTokenAtMs = Math.max(current.newestTokenAtMs, row.createdAtMs);
+      current.newestTokenAtMs = Math.max(current.newestTokenAtMs, typeof row.createdAtMs === 'number' ? row.createdAtMs : 0);
       current.topMarketCapUsd = Math.max(current.topMarketCapUsd, row.marketCapUsd ?? 0);
       if (!current.tweetAuthor && groupInfo.tweetAuthor) current.tweetAuthor = groupInfo.tweetAuthor;
       if (!current.tweetId && groupInfo.tweetId) current.tweetId = groupInfo.tweetId;

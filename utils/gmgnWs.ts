@@ -106,6 +106,13 @@ export const normalizeTrenchesTokenData = (item: any) => {
     c: (base as any)?.c ?? (delta as any)?.c,
     n: (base as any)?.n ?? (delta as any)?.n ?? (base as any)?.c ?? (delta as any)?.c,
   };
+  const symbol =
+    (typeof (merged as any)?.s === 'string' && (merged as any).s.trim() ? (merged as any).s.trim() : undefined) ??
+    (typeof (merged as any)?.ts_s === 'string' && (merged as any).ts_s.trim() ? (merged as any).ts_s.trim() : undefined);
+  const name =
+    (typeof (merged as any)?.nm === 'string' && (merged as any).nm.trim() ? (merged as any).nm.trim() : undefined) ??
+    (typeof (merged as any)?.ts_n === 'string' && (merged as any).ts_n.trim() ? (merged as any).ts_n.trim() : undefined) ??
+    symbol;
   const address =
     asAddress((merged as any)?.a) ??
     extractTokenAddress(merged);
@@ -152,8 +159,8 @@ export const normalizeTrenchesTokenData = (item: any) => {
     devTokenStatus,
     tokenLogo,
     chain: (merged as any)?.n ?? (merged as any)?.chain ?? undefined,
-    symbol: (merged as any)?.s ?? undefined,
-    name: (merged as any)?.nm ?? undefined,
+    symbol,
+    name,
     ...(isObject(merged) ? merged : {}),
     ...(isObject(base) ? base : {}),
   };

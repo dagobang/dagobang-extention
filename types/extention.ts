@@ -627,6 +627,37 @@ export type NewPoolMonitorUiDetail = {
   receivedAtMs: number;
 };
 
+export type GmgnTokenSnapshot = {
+  tokenAddress: string;
+  source?: UnifiedMarketSignalSource;
+  channel?: string;
+  chain?: string;
+  launchpadPlatform?: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  tokenLogo?: string;
+  marketCapUsd?: number;
+  priceUsd?: number;
+  liquidityUsd?: number;
+  holders?: number;
+  kol?: number;
+  vol24hUsd?: number;
+  netBuy24hUsd?: number;
+  buyTx24h?: number;
+  sellTx24h?: number;
+  smartMoney?: number;
+  devAddress?: string;
+  devHoldPercent?: number;
+  devMaxBuyPercent?: number;
+  viewerCount?: number;
+  devCreatedTokenCount?: number;
+  devHasSold?: boolean;
+  top10HoldRatio?: number;
+  devTokenStatus?: string;
+  createdAtMs?: number;
+  receivedAtMs: number;
+};
+
 export type XSniperEvalPoint = {
   atMs: number;
   marketCapUsd?: number;
@@ -840,6 +871,8 @@ export type BgRequest =
   | { type: 'newCoinSniper:clearRuntimeState' }
   | { type: 'twitter:signal'; payload: UnifiedTwitterSignal }
   | { type: 'market:signal'; payload: UnifiedMarketSignal }
+  | { type: 'gmgn:tokenSnapshot:getAll' }
+  | { type: 'gmgn:tokenSnapshot:upsertBatch'; payload: { items: GmgnTokenSnapshot[] } }
   | { type: 'newpool:getSnapshot' }
   | { type: 'newpool:upsertBatch'; payload: { items: NewPoolMonitorUiDetail[] } }
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
@@ -1029,6 +1062,10 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'twitter:signal' }
   ? { ok: true }
   : T extends { type: 'market:signal' }
+  ? { ok: true }
+  : T extends { type: 'gmgn:tokenSnapshot:getAll' }
+  ? { ok: true; items: GmgnTokenSnapshot[] }
+  : T extends { type: 'gmgn:tokenSnapshot:upsertBatch' }
   ? { ok: true }
   : T extends { type: 'newpool:getSnapshot' }
   ? { ok: true; items: NewPoolMonitorUiDetail[] }

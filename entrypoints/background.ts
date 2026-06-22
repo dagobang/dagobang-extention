@@ -16,7 +16,7 @@ import { createXSniperTrade } from '@/services/xSniper/xSniperTrade';
 import { createTokenSniperTrade } from '@/services/tokenSniper/tokenSniperTrade';
 import { createNewCoinSniperTrade } from '@/services/newCoinSniper/newCoinSniperTrade';
 import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/limitOrders/executor';
-import type { BgRequest, LimitOrderScanStatus, NewPoolMonitorUiDetail, SubmitChannel, TxSellInput, UnifiedMarketSignalSource } from '@/types/extention';
+import type { BgRequest, GmgnTokenSnapshot, LimitOrderScanStatus, NewPoolMonitorUiDetail, SubmitChannel, TxSellInput, UnifiedMarketSignalSource } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenAltfunService } from '@/services/token/altfun';
@@ -39,6 +39,9 @@ export default defineBackground(() => {
   const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
   const EIP7702_DELEGATION_PREFIX = '0xef0100';
   const STATE_CHANGE_BROADCAST_DEBOUNCE_MS = 250;
+  const GMGN_TOKEN_SNAPSHOT_CACHE_LIMIT = 1500;
+  const GMGN_TOKEN_SNAPSHOT_STORAGE_KEY = 'dagobang_gmgn_token_snapshot_v2';
+  const GMGN_TOKEN_SNAPSHOT_PERSIST_DEBOUNCE_MS = 8000;
   const NEWPOOL_MONITOR_CACHE_LIMIT = 800;
   const NEWPOOL_MONITOR_BROADCAST_MS = 16;
   const parseEip7702Delegation = (code: string | null | undefined): { delegated: boolean; delegateAddress?: `0x${string}`; code: `0x${string}` } => {
@@ -54,6 +57,8 @@ export default defineBackground(() => {
   let stateChangeBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingStateChangeResolvers: Array<() => void> = [];
   let pendingStateChangeRejectors: Array<(error: unknown) => void> = [];
+  const gmgnTokenSnapshotStore = new Map<string, GmgnTokenSnapshot>();
+  let gmgnTokenSnapshotPersistTimer: ReturnType<typeof setTimeout> | null = null;
   const newPoolMonitorStore = new Map<string, NewPoolMonitorUiDetail>();
   const pendingNewPoolMonitorBroadcast = new Map<string, NewPoolMonitorUiDetail>();
   let newPoolMonitorBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -137,30 +142,308 @@ export default defineBackground(() => {
       receivedAtMs: Math.max(prev.receivedAtMs, next.receivedAtMs),
     };
   };
+  const normalizeTokenSnapshotKey = (input: unknown) =>
+    typeof input === 'string' ? input.trim().toLowerCase() : '';
+  const mergeGmgnTokenSnapshot = (prev: GmgnTokenSnapshot | undefined, next: GmgnTokenSnapshot): GmgnTokenSnapshot => {
+    if (!prev) return next;
+    const merged: Record<string, any> = { ...(prev as any) };
+    for (const [key, value] of Object.entries(next as Record<string, any>)) {
+      if (!shouldUseMergedTokenValue(value)) continue;
+      merged[key] = value;
+    }
+    merged.tokenAddress = normalizeTokenSnapshotKey(next.tokenAddress || prev.tokenAddress);
+    merged.receivedAtMs = Math.max(prev.receivedAtMs ?? 0, next.receivedAtMs ?? 0);
+    return merged as GmgnTokenSnapshot;
+  };
+  const persistGmgnTokenSnapshotStore = async () => {
+    const items = Array.from(gmgnTokenSnapshotStore.values())
+      .sort((a, b) => ((a.receivedAtMs ?? 0) - (b.receivedAtMs ?? 0)))
+      .slice(-GMGN_TOKEN_SNAPSHOT_CACHE_LIMIT);
+    try {
+      await browser.storage.local.set({ [GMGN_TOKEN_SNAPSHOT_STORAGE_KEY]: items } as any);
+    } catch {
+    }
+  };
+  const scheduleGmgnTokenSnapshotPersist = () => {
+    if (gmgnTokenSnapshotPersistTimer != null) return;
+    gmgnTokenSnapshotPersistTimer = setTimeout(() => {
+      gmgnTokenSnapshotPersistTimer = null;
+      void persistGmgnTokenSnapshotStore();
+    }, GMGN_TOKEN_SNAPSHOT_PERSIST_DEBOUNCE_MS);
+  };
+  let gmgnTokenSnapshotStoreLoadPromise: Promise<void> | null = null;
+  const ensureGmgnTokenSnapshotStoreLoaded = () => {
+    if (gmgnTokenSnapshotStoreLoadPromise) return gmgnTokenSnapshotStoreLoadPromise;
+    gmgnTokenSnapshotStoreLoadPromise = (async () => {
+      try {
+        const res = await browser.storage.local.get(GMGN_TOKEN_SNAPSHOT_STORAGE_KEY as any);
+        const items = Array.isArray((res as any)?.[GMGN_TOKEN_SNAPSHOT_STORAGE_KEY])
+          ? (res as any)[GMGN_TOKEN_SNAPSHOT_STORAGE_KEY] as GmgnTokenSnapshot[]
+          : [];
+        for (const item of items) {
+          if (!item || typeof item !== 'object') continue;
+          const key = normalizeTokenSnapshotKey(item.tokenAddress);
+          if (!key) continue;
+          const merged = mergeGmgnTokenSnapshot(gmgnTokenSnapshotStore.get(key), { ...item, tokenAddress: key });
+          gmgnTokenSnapshotStore.set(key, merged);
+        }
+      } catch {
+      }
+    })();
+    return gmgnTokenSnapshotStoreLoadPromise;
+  };
+  const upsertGmgnTokenSnapshots = (items: GmgnTokenSnapshot[]) => {
+    let changed = false;
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      const key = normalizeTokenSnapshotKey(item.tokenAddress);
+      if (!key) continue;
+      const prev = gmgnTokenSnapshotStore.get(key);
+      const merged = mergeGmgnTokenSnapshot(prev, { ...item, tokenAddress: key });
+      if (prev === merged) continue;
+      gmgnTokenSnapshotStore.set(key, merged);
+      changed = true;
+    }
+    if (!changed) return;
+    while (gmgnTokenSnapshotStore.size > GMGN_TOKEN_SNAPSHOT_CACHE_LIMIT) {
+      const oldestKey = gmgnTokenSnapshotStore.keys().next().value;
+      if (!oldestKey) break;
+      gmgnTokenSnapshotStore.delete(oldestKey);
+    }
+    scheduleGmgnTokenSnapshotPersist();
+  };
+  const buildGmgnTokenSnapshotFromDetail = (detail: NewPoolMonitorUiDetail): GmgnTokenSnapshot | null => {
+    const tokenData = detail?.tokenData;
+    const tokenAddress = normalizeTokenSnapshotKey(tokenData?.tokenAddress);
+    if (!tokenAddress) return null;
+    return {
+      tokenAddress,
+      source: detail.source,
+      channel: detail.channel,
+      chain: typeof tokenData?.chain === 'string' ? tokenData.chain : undefined,
+      launchpadPlatform: typeof tokenData?.launchpadPlatform === 'string' ? tokenData.launchpadPlatform : undefined,
+      tokenSymbol:
+        (typeof tokenData?.tokenSymbol === 'string' && tokenData.tokenSymbol.trim() ? tokenData.tokenSymbol.trim() : undefined) ??
+        (typeof tokenData?.symbol === 'string' && tokenData.symbol.trim() ? tokenData.symbol.trim() : undefined) ??
+        (typeof tokenData?.s === 'string' && tokenData.s.trim() ? tokenData.s.trim() : undefined),
+      tokenName:
+        (typeof tokenData?.tokenName === 'string' && tokenData.tokenName.trim() ? tokenData.tokenName.trim() : undefined) ??
+        (typeof tokenData?.name === 'string' && tokenData.name.trim() ? tokenData.name.trim() : undefined) ??
+        (typeof tokenData?.nm === 'string' && tokenData.nm.trim() ? tokenData.nm.trim() : undefined),
+      tokenLogo:
+        (typeof tokenData?.tokenLogo === 'string' && tokenData.tokenLogo.trim() ? tokenData.tokenLogo.trim() : undefined) ??
+        (typeof tokenData?.logo === 'string' && tokenData.logo.trim() ? tokenData.logo.trim() : undefined) ??
+        (typeof tokenData?.l === 'string' && tokenData.l.trim() ? tokenData.l.trim() : undefined),
+      marketCapUsd: pickFiniteNumber(tokenData?.marketCapUsd ?? tokenData?.mc),
+      priceUsd: pickFiniteNumber(tokenData?.priceUsd ?? tokenData?.p),
+      liquidityUsd: pickFiniteNumber(tokenData?.liquidityUsd ?? tokenData?.lqdt),
+      holders: pickFiniteNumber(tokenData?.holders ?? tokenData?.hd),
+      kol: pickFiniteNumber(tokenData?.kol),
+      vol24hUsd: pickFiniteNumber(tokenData?.vol24hUsd ?? tokenData?.v24h),
+      netBuy24hUsd: pickFiniteNumber(tokenData?.netBuy24hUsd ?? tokenData?.nba_24h),
+      buyTx24h: pickFiniteNumber(tokenData?.buyTx24h ?? tokenData?.b24h),
+      sellTx24h: pickFiniteNumber(tokenData?.sellTx24h ?? tokenData?.s24h),
+      smartMoney: pickFiniteNumber(tokenData?.smartMoney ?? tokenData?.smt),
+      devAddress: typeof tokenData?.devAddress === 'string' ? tokenData.devAddress : undefined,
+      devHoldPercent: pickFiniteNumber(tokenData?.devHoldPercent ?? tokenData?.d_br),
+      devMaxBuyPercent: pickFiniteNumber(tokenData?.devMaxBuyPercent),
+      viewerCount: pickFiniteNumber(tokenData?.viewerCount ?? tokenData?.v_c),
+      devCreatedTokenCount: pickFiniteNumber(tokenData?.devCreatedTokenCount ?? tokenData?.d_ccc),
+      devHasSold: typeof tokenData?.devHasSold === 'boolean' ? tokenData.devHasSold : undefined,
+      top10HoldRatio: pickFiniteNumber(tokenData?.top10HoldRatio ?? tokenData?.t10),
+      devTokenStatus: typeof tokenData?.devTokenStatus === 'string' ? tokenData.devTokenStatus : undefined,
+      createdAtMs: pickFiniteNumber(tokenData?.createdAtMs ?? tokenData?.ct),
+      receivedAtMs: pickFiniteNumber(detail?.receivedAtMs) ?? Date.now(),
+    };
+  };
+  const buildNewPoolMonitorDetailFromSnapshot = (snapshot: GmgnTokenSnapshot): NewPoolMonitorUiDetail | null => {
+    const tokenAddress = normalizeTokenSnapshotKey(snapshot?.tokenAddress);
+    if (!tokenAddress) return null;
+    const createdAtMs = pickFiniteNumber(snapshot.createdAtMs);
+    const tokenData = {
+      tokenAddress,
+      chain: snapshot.chain,
+      launchpadPlatform: snapshot.launchpadPlatform,
+      tokenSymbol: snapshot.tokenSymbol,
+      symbol: snapshot.tokenSymbol,
+      s: snapshot.tokenSymbol,
+      tokenName: snapshot.tokenName,
+      name: snapshot.tokenName,
+      nm: snapshot.tokenName,
+      tokenLogo: snapshot.tokenLogo,
+      logo: snapshot.tokenLogo,
+      l: snapshot.tokenLogo,
+      marketCapUsd: snapshot.marketCapUsd,
+      mc: snapshot.marketCapUsd,
+      priceUsd: snapshot.priceUsd,
+      p: snapshot.priceUsd,
+      liquidityUsd: snapshot.liquidityUsd,
+      lqdt: snapshot.liquidityUsd,
+      holders: snapshot.holders,
+      hd: snapshot.holders,
+      kol: snapshot.kol,
+      vol24hUsd: snapshot.vol24hUsd,
+      v24h: snapshot.vol24hUsd,
+      netBuy24hUsd: snapshot.netBuy24hUsd,
+      nba_24h: snapshot.netBuy24hUsd,
+      buyTx24h: snapshot.buyTx24h,
+      b24h: snapshot.buyTx24h,
+      sellTx24h: snapshot.sellTx24h,
+      s24h: snapshot.sellTx24h,
+      smartMoney: snapshot.smartMoney,
+      smt: snapshot.smartMoney,
+      devAddress: snapshot.devAddress,
+      devHoldPercent: snapshot.devHoldPercent,
+      d_br: snapshot.devHoldPercent,
+      devMaxBuyPercent: snapshot.devMaxBuyPercent,
+      viewerCount: snapshot.viewerCount,
+      v_c: snapshot.viewerCount,
+      devCreatedTokenCount: snapshot.devCreatedTokenCount,
+      d_ccc: snapshot.devCreatedTokenCount,
+      devHasSold: snapshot.devHasSold,
+      top10HoldRatio: snapshot.top10HoldRatio,
+      t10: snapshot.top10HoldRatio,
+      devTokenStatus: snapshot.devTokenStatus,
+      createdAtMs,
+      ct: createdAtMs,
+    };
+    return {
+      source: snapshot.source ?? 'token_update',
+      channel: snapshot.channel ?? 'trenches_delta',
+      tokenData,
+      receivedAtMs: snapshot.receivedAtMs ?? 0,
+    };
+  };
+  const getNewPoolMonitorSnapshotItems = (): NewPoolMonitorUiDetail[] => {
+    const byKey = new Map<string, NewPoolMonitorUiDetail>();
+    for (const snapshot of gmgnTokenSnapshotStore.values()) {
+      const detail = buildNewPoolMonitorDetailFromSnapshot(snapshot);
+      if (!detail) continue;
+      byKey.set(getNewPoolMonitorKey(detail), detail);
+    }
+    for (const runtimeDetail of newPoolMonitorStore.values()) {
+      const key = getNewPoolMonitorKey(runtimeDetail);
+      const merged = mergeNewPoolMonitorDetail(byKey.get(key), runtimeDetail);
+      byKey.set(key, merged);
+    }
+    const items = Array.from(byKey.values())
+      .sort((a, b) => (a.receivedAtMs ?? 0) - (b.receivedAtMs ?? 0))
+      .slice(-NEWPOOL_MONITOR_CACHE_LIMIT);
+    // #region debug-point B:getsnapshot-age-devhold
+    (() => {
+      const sample = items
+        .filter((item) => {
+          const td = item?.tokenData;
+          return td?.createdAtMs == null || td?.devHoldPercent == null;
+        })
+        .slice(0, 8)
+        .map((item) => ({
+          tokenAddress: item?.tokenData?.tokenAddress ?? null,
+          source: item?.source ?? null,
+          channel: item?.channel ?? null,
+          createdAtMs: item?.tokenData?.createdAtMs ?? null,
+          ct: item?.tokenData?.ct ?? null,
+          devHoldPercent: item?.tokenData?.devHoldPercent ?? null,
+          d_br: item?.tokenData?.d_br ?? null,
+          receivedAtMs: item?.receivedAtMs ?? null,
+        }));
+      fetch('http://127.0.0.1:7777/event', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: 'newpool-age-devhold',
+          runId: 'pre-fix',
+          hypothesisId: 'B',
+          location: 'background.ts:getNewPoolMonitorSnapshotItems',
+          msg: '[DEBUG] background snapshot items age/devhold summary',
+          data: {
+            total: items.length,
+            missingCreatedAt: items.filter((item) => item?.tokenData?.createdAtMs == null).length,
+            missingDevHoldPercent: items.filter((item) => item?.tokenData?.devHoldPercent == null).length,
+            sample,
+          },
+          ts: Date.now(),
+        }),
+      }).catch(() => { });
+    })();
+    // #endregion
+    return items;
+  };
   const scheduleNewPoolMonitorBroadcast = () => {
     if (newPoolMonitorBroadcastTimer != null) return;
     newPoolMonitorBroadcastTimer = setTimeout(() => {
       newPoolMonitorBroadcastTimer = null;
       const items = Array.from(pendingNewPoolMonitorBroadcast.values());
+      // #region debug-point B:newpool-bg-broadcast
+      (() => {
+        const key = '__DBG_NEWPOOL_BG_BROADCAST_TS__';
+        const nowTs = Date.now();
+        const lastTs = typeof (globalThis as any)[key] === 'number' ? (globalThis as any)[key] : 0;
+        (globalThis as any)[key] = nowTs;
+        fetch('http://127.0.0.1:7777/event', {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionId: 'newpool-v2-crash',
+            runId: 'post-fix',
+            hypothesisId: 'B',
+            location: 'background.ts:scheduleNewPoolMonitorBroadcast',
+            msg: '[DEBUG] background newpool broadcast',
+            data: {
+              items: items.length,
+              gapMs: lastTs > 0 ? nowTs - lastTs : null,
+              pendingSize: pendingNewPoolMonitorBroadcast.size,
+              storeSize: newPoolMonitorStore.size,
+            },
+            ts: nowTs,
+          }),
+        }).catch(() => { });
+      })();
+      // #endregion
       pendingNewPoolMonitorBroadcast.clear();
       if (!items.length) return;
       void broadcastToTabs({ type: 'bg:newpool:batch', items });
     }, NEWPOOL_MONITOR_BROADCAST_MS);
   };
   const upsertNewPoolMonitorItems = (items: NewPoolMonitorUiDetail[]) => {
+    const beforeSize = newPoolMonitorStore.size;
+    const snapshotItems: GmgnTokenSnapshot[] = [];
     for (const item of items) {
       if (!item || typeof item !== 'object') continue;
+      const snapshot = buildGmgnTokenSnapshotFromDetail(item);
+      if (snapshot) snapshotItems.push(snapshot);
       const key = getNewPoolMonitorKey(item);
       const merged = mergeNewPoolMonitorDetail(newPoolMonitorStore.get(key), item);
       if (newPoolMonitorStore.has(key)) newPoolMonitorStore.delete(key);
       newPoolMonitorStore.set(key, merged);
       pendingNewPoolMonitorBroadcast.set(key, merged);
+      maybeEnrichNewPoolMonitorItem(merged);
     }
+    if (snapshotItems.length) upsertGmgnTokenSnapshots(snapshotItems);
     while (newPoolMonitorStore.size > NEWPOOL_MONITOR_CACHE_LIMIT) {
       const oldestKey = newPoolMonitorStore.keys().next().value;
       if (!oldestKey) break;
       newPoolMonitorStore.delete(oldestKey);
     }
+    // #region debug-point B:newpool-bg-upsert
+    (() => {
+      fetch('http://127.0.0.1:7777/event', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: 'newpool-v2-crash',
+          runId: 'post-fix',
+          hypothesisId: 'B',
+          location: 'background.ts:upsertNewPoolMonitorItems',
+          msg: '[DEBUG] background newpool upsert',
+          data: {
+            incoming: items.length,
+            beforeSize,
+            afterSize: newPoolMonitorStore.size,
+            pendingBroadcast: pendingNewPoolMonitorBroadcast.size,
+          },
+          ts: Date.now(),
+        }),
+      }).catch(() => { });
+    })();
+    // #endregion
     scheduleNewPoolMonitorBroadcast();
   };
   const resolveTradeSubmitChannel = async (chainId: number, preferred?: SubmitChannel): Promise<SubmitChannel> => {
@@ -266,18 +549,22 @@ export default defineBackground(() => {
     }
   };
 
-  const tokenBriefCache = new Map<string, { atMs: number; tokenName?: string; tokenSymbol?: string; marketCapUsd?: number | null }>();
+  const tokenBriefCache = new Map<string, { atMs: number; tokenName?: string; tokenSymbol?: string; tokenLogo?: string; marketCapUsd?: number | null }>();
+  const pendingNewPoolIdentityLookup = new Set<string>();
   const resolveTokenBrief = async (chainId: number | undefined, tokenAddress: string | undefined) => {
     const addr = String(tokenAddress || '').trim();
-    if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) return { tokenName: undefined, tokenSymbol: undefined, marketCapUsd: null as number | null };
+    if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+      return { tokenName: undefined, tokenSymbol: undefined, tokenLogo: undefined, marketCapUsd: null as number | null };
+    }
     const key = `${chainId ?? 56}:${addr.toLowerCase()}`;
     const now = Date.now();
     const cached = tokenBriefCache.get(key);
     if (cached && now - cached.atMs < 15_000) return cached;
-    const out: { atMs: number; tokenName?: string; tokenSymbol?: string; marketCapUsd?: number | null } = {
+    const out: { atMs: number; tokenName?: string; tokenSymbol?: string; tokenLogo?: string; marketCapUsd?: number | null } = {
       atMs: now,
       tokenName: undefined,
       tokenSymbol: undefined,
+      tokenLogo: undefined,
       marketCapUsd: null,
     };
     const resolvedChainId = chainId ?? 56;
@@ -288,8 +575,10 @@ export default defineBackground(() => {
       out.marketCapUsd = Number.isFinite(mcapRaw) && mcapRaw > 0 ? mcapRaw : null;
       const symbol = String((tokenInfo as any)?.symbol || '').trim();
       const name = String((tokenInfo as any)?.name || '').trim();
+      const logo = String((tokenInfo as any)?.logo || '').trim();
       out.tokenSymbol = symbol || undefined;
       out.tokenName = name || undefined;
+      out.tokenLogo = logo || undefined;
     } catch {
     }
     if (!out.tokenSymbol || !out.tokenName) {
@@ -303,6 +592,88 @@ export default defineBackground(() => {
     }
     tokenBriefCache.set(key, out);
     return out;
+  };
+  const maybeEnrichNewPoolMonitorItem = (detail: NewPoolMonitorUiDetail) => {
+    const tokenData = detail?.tokenData;
+    const tokenAddress = typeof tokenData?.tokenAddress === 'string' ? tokenData.tokenAddress.trim().toLowerCase() : '';
+    if (!/^0x[a-f0-9]{40}$/i.test(tokenAddress)) return;
+    const hasName = typeof tokenData?.tokenName === 'string' && tokenData.tokenName.trim()
+      || typeof tokenData?.name === 'string' && tokenData.name.trim()
+      || typeof tokenData?.nm === 'string' && tokenData.nm.trim()
+      || typeof tokenData?.ts_n === 'string' && tokenData.ts_n.trim();
+    const hasSymbol = typeof tokenData?.tokenSymbol === 'string' && tokenData.tokenSymbol.trim()
+      || typeof tokenData?.symbol === 'string' && tokenData.symbol.trim()
+      || typeof tokenData?.s === 'string' && tokenData.s.trim()
+      || typeof tokenData?.ts_s === 'string' && tokenData.ts_s.trim();
+    const hasLogo = typeof tokenData?.tokenLogo === 'string' && tokenData.tokenLogo.trim()
+      || typeof tokenData?.logo === 'string' && tokenData.logo.trim()
+      || typeof tokenData?.l === 'string' && tokenData.l.trim();
+    const hasMarketCap = typeof tokenData?.marketCapUsd === 'number' || typeof tokenData?.mc === 'number';
+    if ((hasName && hasSymbol && hasLogo && hasMarketCap) || pendingNewPoolIdentityLookup.has(tokenAddress)) return;
+    pendingNewPoolIdentityLookup.add(tokenAddress);
+    void (async () => {
+      try {
+        const chainRaw = typeof tokenData?.chain === 'string' ? tokenData.chain.trim().toLowerCase() : '';
+        const chainId = chainRaw === 'bsc' || !chainRaw ? 56 : undefined;
+        const brief = await resolveTokenBrief(chainId, tokenAddress);
+        const current = newPoolMonitorStore.get(tokenAddress);
+        if (!current) return;
+        const nextTokenData = {
+          ...(current.tokenData && typeof current.tokenData === 'object' ? current.tokenData : {}),
+          tokenAddress,
+          tokenName:
+            (typeof current.tokenData?.tokenName === 'string' && current.tokenData.tokenName.trim() ? current.tokenData.tokenName : undefined) ??
+            (typeof current.tokenData?.name === 'string' && current.tokenData.name.trim() ? current.tokenData.name : undefined) ??
+            brief.tokenName,
+          name:
+            (typeof current.tokenData?.name === 'string' && current.tokenData.name.trim() ? current.tokenData.name : undefined) ??
+            brief.tokenName,
+          nm:
+            (typeof current.tokenData?.nm === 'string' && current.tokenData.nm.trim() ? current.tokenData.nm : undefined) ??
+            brief.tokenName,
+          tokenSymbol:
+            (typeof current.tokenData?.tokenSymbol === 'string' && current.tokenData.tokenSymbol.trim() ? current.tokenData.tokenSymbol : undefined) ??
+            (typeof current.tokenData?.symbol === 'string' && current.tokenData.symbol.trim() ? current.tokenData.symbol : undefined) ??
+            brief.tokenSymbol,
+          symbol:
+            (typeof current.tokenData?.symbol === 'string' && current.tokenData.symbol.trim() ? current.tokenData.symbol : undefined) ??
+            brief.tokenSymbol,
+          s:
+            (typeof current.tokenData?.s === 'string' && current.tokenData.s.trim() ? current.tokenData.s : undefined) ??
+            brief.tokenSymbol,
+          tokenLogo:
+            (typeof current.tokenData?.tokenLogo === 'string' && current.tokenData.tokenLogo.trim() ? current.tokenData.tokenLogo : undefined) ??
+            (typeof current.tokenData?.l === 'string' && current.tokenData.l.trim() ? current.tokenData.l : undefined) ??
+            brief.tokenLogo,
+          logo:
+            (typeof current.tokenData?.logo === 'string' && current.tokenData.logo.trim() ? current.tokenData.logo : undefined) ??
+            brief.tokenLogo,
+          l:
+            (typeof current.tokenData?.l === 'string' && current.tokenData.l.trim() ? current.tokenData.l : undefined) ??
+            brief.tokenLogo,
+          marketCapUsd:
+            typeof current.tokenData?.marketCapUsd === 'number' ? current.tokenData.marketCapUsd
+              : typeof current.tokenData?.mc === 'number' ? current.tokenData.mc
+                : brief.marketCapUsd ?? undefined,
+          mc:
+            typeof current.tokenData?.mc === 'number' ? current.tokenData.mc : brief.marketCapUsd ?? undefined,
+        };
+        const merged = mergeNewPoolMonitorDetail(current, {
+          ...current,
+          tokenData: nextTokenData,
+          receivedAtMs: Date.now(),
+        });
+        newPoolMonitorStore.delete(tokenAddress);
+        newPoolMonitorStore.set(tokenAddress, merged);
+        const snapshot = buildGmgnTokenSnapshotFromDetail(merged);
+        if (snapshot) upsertGmgnTokenSnapshots([snapshot]);
+        pendingNewPoolMonitorBroadcast.set(tokenAddress, merged);
+        scheduleNewPoolMonitorBroadcast();
+      } catch {
+      } finally {
+        pendingNewPoolIdentityLookup.delete(tokenAddress);
+      }
+    })();
   };
 
   const broadcastTradeSuccess = async (payload: any, tabId?: number | null) => {
@@ -1698,7 +2069,19 @@ export default defineBackground(() => {
           }
 
           case 'newpool:getSnapshot':
-            return { ok: true, items: Array.from(newPoolMonitorStore.values()) };
+            await ensureGmgnTokenSnapshotStoreLoaded();
+            return { ok: true, items: getNewPoolMonitorSnapshotItems() };
+
+          case 'gmgn:tokenSnapshot:getAll':
+            await ensureGmgnTokenSnapshotStoreLoaded();
+            return { ok: true, items: Array.from(gmgnTokenSnapshotStore.values()) };
+
+          case 'gmgn:tokenSnapshot:upsertBatch': {
+            await ensureGmgnTokenSnapshotStoreLoaded();
+            const items = Array.isArray(msg.payload?.items) ? msg.payload.items : [];
+            if (items.length) upsertGmgnTokenSnapshots(items);
+            return { ok: true };
+          }
 
           case 'newpool:upsertBatch': {
             const items = Array.isArray(msg.payload?.items) ? msg.payload.items : [];

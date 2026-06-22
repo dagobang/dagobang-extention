@@ -1,4 +1,4 @@
-import type { BgRequest, BgResponse, NewPoolMonitorUiDetail, Settings, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
+import type { BgRequest, BgResponse, GmgnTokenSnapshot, NewPoolMonitorUiDetail, Settings, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { normalizeLaunchpadPlatform } from '@/constants/launchpad';
 import {
   asAddress,
@@ -302,34 +302,7 @@ const upsertUnifiedSignal = (signal: UnifiedTwitterSignal, cacheList?: UnifiedTw
   return next;
 };
 
-type TokenSnapshot = {
-  tokenAddress: string;
-  chain?: string;
-  launchpadPlatform?: string;
-  tokenSymbol?: string;
-  tokenName?: string;
-  tokenLogo?: string;
-  marketCapUsd?: number;
-  priceUsd?: number;
-  liquidityUsd?: number;
-  holders?: number;
-  kol?: number;
-  vol24hUsd?: number;
-  netBuy24hUsd?: number;
-  buyTx24h?: number;
-  sellTx24h?: number;
-  smartMoney?: number;
-  devAddress?: string;
-  devHoldPercent?: number;
-  devMaxBuyPercent?: number;
-  viewerCount?: number;
-  devCreatedTokenCount?: number;
-  devHasSold?: boolean;
-  top10HoldRatio?: number;
-  devTokenStatus?: string;
-  createdAtMs?: number;
-  receivedAtMs: number;
-};
+type TokenSnapshot = GmgnTokenSnapshot;
 
 
 const pickNonEmptyString = (next: any, prev?: string): string | undefined => {
@@ -798,6 +771,40 @@ export function initGmgnWsMonitor(options: {
   const translationsByEventId = new Map<string, TwitterTranslationPatch>();
   const signalsByEventId = new Map<string, { signal: UnifiedTwitterSignal; updatedAtMs: number }>();
   const tokenByAddress = new Map<string, TokenSnapshot>();
+  const pendingTokenSnapshotPersistByAddress = new Map<string, TokenSnapshot>();
+  const TOKEN_SNAPSHOT_PERSIST_DEBOUNCE_MS = 8000;
+  let pendingTokenSnapshotPersistTimer: number | null = null;
+  const hydrateTokenSnapshots = (items: TokenSnapshot[]) => {
+    for (const snapshot of items) {
+      if (!snapshot || typeof snapshot.tokenAddress !== 'string') continue;
+      const key = normalizeTokenKey(snapshot.tokenAddress);
+      if (!key) continue;
+      const prev = tokenByAddress.get(key);
+      if (!prev || (prev.receivedAtMs ?? 0) <= (snapshot.receivedAtMs ?? 0)) {
+        tokenByAddress.set(key, { ...snapshot, tokenAddress: key });
+      }
+    }
+  };
+  void options.call({ type: 'gmgn:tokenSnapshot:getAll' })
+    .then((res) => {
+      const items = Array.isArray(res?.items) ? (res.items as TokenSnapshot[]) : [];
+      if (items.length) hydrateTokenSnapshots(items);
+    })
+    .catch(() => { });
+  const flushTokenSnapshotPersist = () => {
+    const items = Array.from(pendingTokenSnapshotPersistByAddress.values());
+    pendingTokenSnapshotPersistByAddress.clear();
+    if (!items.length) return;
+    void options.call({ type: 'gmgn:tokenSnapshot:upsertBatch', payload: { items } }).catch(() => { });
+  };
+  const scheduleTokenSnapshotPersist = (snapshot: TokenSnapshot) => {
+    pendingTokenSnapshotPersistByAddress.set(snapshot.tokenAddress, snapshot);
+    if (pendingTokenSnapshotPersistTimer != null) return;
+    pendingTokenSnapshotPersistTimer = window.setTimeout(() => {
+      pendingTokenSnapshotPersistTimer = null;
+      flushTokenSnapshotPersist();
+    }, TOKEN_SNAPSHOT_PERSIST_DEBOUNCE_MS);
+  };
   const pendingForwardByChannel = new Map<string, Map<string, UnifiedTwitterSignal>>();
   const forwardTimerByChannel = new Map<string, number>();
   const forwardQueueByChannel = new Map<string, Promise<void>>();
@@ -1121,6 +1128,31 @@ export function initGmgnWsMonitor(options: {
     }
     if (!pendingNewPoolMonitorUi.size) return;
     const items = Array.from(pendingNewPoolMonitorUi.values());
+    // #region debug-point B:newpool-ui-flush
+    (() => {
+      const key = '__DBG_NEWPOOL_UI_FLUSH_TS__';
+      const nowTs = Date.now();
+      const lastTs = typeof (window as any)[key] === 'number' ? (window as any)[key] : 0;
+      (window as any)[key] = nowTs;
+      fetch('http://127.0.0.1:7777/event', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: 'newpool-v2-crash',
+          runId: 'post-fix',
+          hypothesisId: 'B',
+          location: 'gmgn.ts:flushNewPoolMonitorUi',
+          msg: '[DEBUG] newpool ui flush',
+          data: {
+            items: items.length,
+            gapMs: lastTs > 0 ? nowTs - lastTs : null,
+            withIdentity: items.filter((it) => hasTokenDisplayIdentity(it?.tokenData)).length,
+            pendingMapSize: pendingNewPoolMonitorUi.size,
+          },
+          ts: nowTs,
+        }),
+      }).catch(() => { });
+    })();
+    // #endregion
     pendingNewPoolMonitorUi.clear();
     void options.call({ type: 'newpool:upsertBatch', payload: { items } }).catch(() => { });
   };
@@ -1419,7 +1451,11 @@ export function initGmgnWsMonitor(options: {
     emitStatus();
   };
 
-  const updateTokenSnapshot = (tokenData: any, receivedAtMs: number) => {
+  const updateTokenSnapshot = (
+    tokenData: any,
+    receivedAtMs: number,
+    meta?: { source?: UnifiedMarketSignal['source']; channel?: string },
+  ) => {
     const addrRaw = typeof tokenData?.tokenAddress === 'string' ? tokenData.tokenAddress : null;
     if (!addrRaw) return;
     const addr = addrRaw.toLowerCase();
@@ -1436,6 +1472,12 @@ export function initGmgnWsMonitor(options: {
     );
     const devHoldPercent = (() => {
       const next = normalizePercentValue(rawDevBuyRatio ?? null);
+      const prevHold = prev?.devHoldPercent;
+      // Some sparse v2 packets carry d_br=0 without a real dev metric refresh.
+      // Preserve an existing non-zero hold unless this is a dev-metric-focused update.
+      if (!preferDevMetrics && rawDevBuyRatio === 0 && typeof prevHold === 'number' && prevHold > 0) {
+        return prevHold;
+      }
       return pickFiniteNumber(next, prev?.devHoldPercent);
     })();
     const devMaxBuyPercent = (() => {
@@ -1510,6 +1552,8 @@ export function initGmgnWsMonitor(options: {
 
     const next: TokenSnapshot = {
       tokenAddress: addr,
+      source: meta?.source ?? prev?.source,
+      channel: meta?.channel ?? prev?.channel,
       chain: pickNonEmptyString(tokenData?.chain, prev?.chain),
       launchpadPlatform: pickNonEmptyString(
         normalizeLaunchpadPlatform(
@@ -1575,8 +1619,45 @@ export function initGmgnWsMonitor(options: {
       createdAtMs: typeof tokenData?.createdAtMs === 'number' ? tokenData.createdAtMs : prev?.createdAtMs,
       receivedAtMs,
     };
+    // #region debug-point A:snapshot-age-devhold
+    if (
+      typeof tokenData?.ct === 'number' ||
+      typeof tokenData?.createdAtMs === 'number' ||
+      rawDevBuyRatio != null ||
+      next.createdAtMs == null ||
+      next.devHoldPercent == null
+    ) {
+      fetch('http://127.0.0.1:7777/event', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: 'newpool-age-devhold',
+          runId: 'pre-fix',
+          hypothesisId: 'A',
+          location: 'gmgn.ts:updateTokenSnapshot',
+          msg: '[DEBUG] snapshot age/devhold merge',
+          data: {
+            tokenAddress: addr,
+            source: meta?.source ?? null,
+            channel: meta?.channel ?? null,
+            vch,
+            rawCt: typeof tokenData?.ct === 'number' ? tokenData.ct : null,
+            rawCreatedAtMs: typeof tokenData?.createdAtMs === 'number' ? tokenData.createdAtMs : null,
+            prevCreatedAtMs: typeof prev?.createdAtMs === 'number' ? prev.createdAtMs : null,
+            nextCreatedAtMs: typeof next.createdAtMs === 'number' ? next.createdAtMs : null,
+            rawDevBuyRatio,
+            prevDevHoldPercent: typeof prev?.devHoldPercent === 'number' ? prev.devHoldPercent : null,
+            nextDevHoldPercent: typeof next.devHoldPercent === 'number' ? next.devHoldPercent : null,
+            prevDevMaxBuyPercent: typeof prev?.devMaxBuyPercent === 'number' ? prev.devMaxBuyPercent : null,
+            nextDevMaxBuyPercent: typeof next.devMaxBuyPercent === 'number' ? next.devMaxBuyPercent : null,
+          },
+          ts: Date.now(),
+        }),
+      }).catch(() => { });
+    }
+    // #endregion
     if (prev) tokenByAddress.delete(addr);
     tokenByAddress.set(addr, next);
+    scheduleTokenSnapshotPersist(next);
     const cache = (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? loadUnifiedTwitterCache();
     const list = Array.isArray(cache?.list) ? (cache.list as UnifiedTwitterSignal[]).slice() : [];
     if (!list.length) return;
@@ -1683,7 +1764,7 @@ export function initGmgnWsMonitor(options: {
         tokenData,
         receivedAtMs: now,
       });
-      updateTokenSnapshot(tokenData, now);
+      updateTokenSnapshot(tokenData, now, { source: 'new_pool', channel });
       wsStatus = {
         ...wsStatus,
         lastSignalAt: now,
@@ -1715,7 +1796,7 @@ export function initGmgnWsMonitor(options: {
           tokenData,
           receivedAtMs: now,
         });
-        updateTokenSnapshot(tokenData, now);
+        updateTokenSnapshot(tokenData, now, { source: 'new_pool', channel });
         wsStatus = {
           ...wsStatus,
           lastSignalAt: now,
@@ -1751,6 +1832,15 @@ export function initGmgnWsMonitor(options: {
     const inner = deltaWrapper?.t ?? (wrapper && wrapper.data != null ? wrapper.data : payload);
     const items = toArrayPayload(inner);
     const list = items.length ? items : [inner];
+    const debugPacket = {
+      total: 0,
+      publishable: 0,
+      suppressed: 0,
+      beforeIdentity: 0,
+      beforeSnapshotIdentity: 0,
+      afterIdentity: 0,
+      updateTypes: {} as Record<string, number>,
+    };
     const addedAddrs = new Set<string>(
       Array.isArray(deltaWrapper?.a)
         ? (deltaWrapper!.a as any[])
@@ -1762,9 +1852,12 @@ export function initGmgnWsMonitor(options: {
     for (const item of list) {
       const tokenData = normalizeTrenchesTokenData(item);
       if (!tokenData.tokenAddress) continue;
+      debugPacket.total += 1;
       const tokenAddrLower = tokenData.tokenAddress.toLowerCase();
       const prevSnapshot = tokenByAddress.get(tokenAddrLower);
       const hasPrevSnapshot = tokenByAddress.has(tokenAddrLower);
+      if (hasTokenDisplayIdentity(tokenData)) debugPacket.beforeIdentity += 1;
+      if (hasTokenDisplayIdentity(prevSnapshot)) debugPacket.beforeSnapshotIdentity += 1;
       const rawF = isObject((item as any)?.f) ? (item as any).f : null;
       const hasCreateFields = Boolean(
         rawF &&
@@ -1781,23 +1874,25 @@ export function initGmgnWsMonitor(options: {
         stage === 'new_created' &&
         (!hasPrevSnapshot || addedAddrs.has(tokenAddrLower) || hasCreateFields);
       const signalSource = resolveMarketSignalSourceByStage(stage, isNewPoolByToken);
-      updateTokenSnapshot(tokenData, now);
+      updateTokenSnapshot(tokenData, now, { source: signalSource, channel });
       const uiTokenData = enrichNewPoolMonitorTokenData(tokenData);
       const nextSnapshot = tokenByAddress.get(tokenAddrLower);
+      if (hasTokenDisplayIdentity(nextSnapshot)) debugPacket.afterIdentity += 1;
       const canPublishUiToken =
         hasTokenDisplayIdentity(uiTokenData) ||
         hasTokenDisplayIdentity(nextSnapshot) ||
         hasTokenDisplayIdentity(prevSnapshot);
-      if (canPublishUiToken) {
-        pushNewPoolMonitorUiDetail({
-          source: signalSource,
-          channel,
-          tokenData: uiTokenData,
-          receivedAtMs: now,
-        });
-      }
+      if (canPublishUiToken) debugPacket.publishable += 1;
+      else debugPacket.suppressed += 1;
+      pushNewPoolMonitorUiDetail({
+        source: signalSource,
+        channel,
+        tokenData: uiTokenData,
+        receivedAtMs: now,
+      });
       const updateTypeRaw = typeof (item as any)?._v_ch === 'string' ? (item as any)._v_ch : wrapperUpdateTypeRaw;
       const updateType = typeof updateTypeRaw === 'string' ? String(updateTypeRaw).trim().toLowerCase() : '';
+      debugPacket.updateTypes[updateType || 'unknown'] = (debugPacket.updateTypes[updateType || 'unknown'] ?? 0) + 1;
       emitTrenchesTokenEvent(uiTokenData, now);
       const mx = (item as any)?.m_x ?? (item as any)?.f?.m_x ?? deltaWrapper?.m_x ?? wrapper?.m_x;
       if (
@@ -1823,6 +1918,32 @@ export function initGmgnWsMonitor(options: {
         receivedAtMs: now,
       });
     }
+    // #region debug-point A:trenches-delta-packet
+    (() => {
+      fetch('http://127.0.0.1:7777/event', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: 'newpool-v2-crash',
+          runId: 'post-fix',
+          hypothesisId: 'A',
+          location: 'gmgn.ts:handleTrenchesUpdateChannel',
+          msg: '[DEBUG] trenches packet summary',
+          data: {
+            channel,
+            stage,
+            total: debugPacket.total,
+            publishable: debugPacket.publishable,
+            suppressed: debugPacket.suppressed,
+            beforeIdentity: debugPacket.beforeIdentity,
+            beforeSnapshotIdentity: debugPacket.beforeSnapshotIdentity,
+            afterIdentity: debugPacket.afterIdentity,
+            updateTypes: debugPacket.updateTypes,
+          },
+          ts: Date.now(),
+        }),
+      }).catch(() => { });
+    })();
+    // #endregion
     emitStatus();
   };
 
@@ -1904,6 +2025,11 @@ export function initGmgnWsMonitor(options: {
       }
       flushSignalForwardProbe(Date.now(), resolveSignalForwardDedupeMode());
       flushNewPoolMonitorUi();
+      if (pendingTokenSnapshotPersistTimer != null) {
+        window.clearTimeout(pendingTokenSnapshotPersistTimer);
+        pendingTokenSnapshotPersistTimer = null;
+      }
+      flushTokenSnapshotPersist();
       window.removeEventListener('message', onMessage);
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('beforeunload', onPageHide);
