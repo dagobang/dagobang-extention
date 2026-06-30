@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { Account, AutoTradeInteractionType, AutoTradeTwitterSnipePreset } from '@/types/extention';
+import type { ChainAddress } from '@/types/chain/address';
 import { WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
 
 const interactionOptions: Array<{ value: AutoTradeInteractionType; labelKey: string }> = [
@@ -34,10 +35,10 @@ type XSniperBasicSectionProps = {
   onBuyNewCaCountChange: (value: string) => void;
   walletSelectorOpen: boolean;
   walletAccounts: Account[];
-  activeWalletAddress: `0x${string}` | null;
-  selectedWalletAddress?: `0x${string}`;
+  activeWalletAddress: ChainAddress | null;
+  selectedWalletAddress?: ChainAddress;
   onToggleWalletSelector: () => void;
-  onSelectWalletAddress: (address?: `0x${string}`) => void;
+  onSelectWalletAddress: (address?: ChainAddress) => void;
 };
 
 export function XSniperBasicSection({

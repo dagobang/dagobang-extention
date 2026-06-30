@@ -17,6 +17,19 @@ import { SymbolCoinIcon } from '@/components/Coins';
 import { TradeService } from '@/services/trade';
 import { SwapType } from '@/services/trade/tradeTypes';
 
+const SOLANA_TOKEN_META = {
+  USDC: {
+    address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    decimals: 6,
+    symbol: 'USDC',
+  },
+  USDT: {
+    address: 'Es9vMFrzaCERmJfrF4H2FYD4KxuxMxDPZWS9Vyuk3F8F',
+    decimals: 6,
+    symbol: 'USDT',
+  },
+} as const;
+
 type HomeViewProps = {
   state: BgGetStateResponse;
   balances: Record<string, string>;
@@ -29,6 +42,10 @@ type HomeViewProps = {
   onLocaleChange: (locale: Locale) => void;
   bloxrouteUnlockWarning?: string | null;
 };
+
+type TransferAssetState =
+  | { kind: 'native'; symbol: string; decimals: number }
+  | { kind: 'token'; symbol: string; decimals: number; tokenAddress: string };
 
 export function HomeView({
   state,
@@ -47,21 +64,23 @@ export function HomeView({
   const [newAccountName, setNewAccountName] = useState('');
   const [privateKey, setPrivateKey] = useState('');
   const [addAccountPassword, setAddAccountPassword] = useState('');
-  const [manageAddress, setManageAddress] = useState<`0x${string}` | null>(null);
+  const [manageAddress, setManageAddress] = useState<string | null>(null);
   const [manageAlias, setManageAlias] = useState('');
   const [manageDefaultName, setManageDefaultName] = useState('');
   const [exportPassword, setExportPassword] = useState('');
-  const [exportedPrivateKey, setExportedPrivateKey] = useState<`0x${string}` | null>(null);
+  const [exportedPrivateKey, setExportedPrivateKey] = useState<string | null>(null);
   const [copiedPk, setCopiedPk] = useState(false);
-  const [transferFromAddress, setTransferFromAddress] = useState<`0x${string}` | null>(null);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [transferFromAddress, setTransferFromAddress] = useState<string | null>(null);
   const [transferToAddress, setTransferToAddress] = useState('');
   const [transferAmountBnb, setTransferAmountBnb] = useState('');
   const [transferUseMax, setTransferUseMax] = useState(false);
   const [transferPassword, setTransferPassword] = useState('');
   const [transferBalanceWei, setTransferBalanceWei] = useState<string | null>(null);
+  const [transferAsset, setTransferAsset] = useState<TransferAssetState | null>(null);
   const [busy, setBusy] = useState(false);
   const [tradeBaseBalances, setTradeBaseBalances] = useState<Record<string, string>>({});
-  const [convertAddress, setConvertAddress] = useState<`0x${string}` | null>(null);
+  const [convertAddress, setConvertAddress] = useState<string | null>(null);
   const [convertAmount, setConvertAmount] = useState('');
   const [convertMode, setConvertMode] = useState<'wrap' | 'unwrap'>('wrap');
   const [convertQuote, setConvertQuote] = useState<{
@@ -76,7 +95,7 @@ export function HomeView({
     errorText: null,
   });
   const [allowances, setAllowances] = useState<Record<string, string>>({});
-  const [approveDialogAddress, setApproveDialogAddress] = useState<`0x${string}` | null>(null);
+  const [approveDialogAddress, setApproveDialogAddress] = useState<string | null>(null);
   const [approvingAddress, setApprovingAddress] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
@@ -89,24 +108,41 @@ export function HomeView({
   }>>({});
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
   const chainId = state.settings.chainId;
+  const isSolana = chainId === ChainId.SOL;
   const nativeSymbol = getNativeSymbol(chainId);
-  const tradeBaseToken = String(state.settings.chains?.[chainId]?.tradeBaseToken ?? state.settings.tradeBaseToken ?? 'BNB').toUpperCase();
-  const wrappedNativeAddress = getChainRuntime(chainId).wrappedNativeAddress;
-  const tradeBaseTokenAddress = tradeBaseToken === 'WBNB'
+  const tradeBaseToken = String(
+    isSolana
+      ? (state.settings.chains?.[chainId]?.tradeBaseToken ?? 'BNB')
+      : (state.settings.chains?.[chainId]?.tradeBaseToken ?? state.settings.tradeBaseToken ?? 'BNB'),
+  ).toUpperCase();
+  const wrappedNativeAddress = isSolana ? zeroAddress : getChainRuntime(chainId).wrappedNativeAddress;
+  const solanaTradeBaseMeta =
+    tradeBaseToken === 'USDC'
+      ? SOLANA_TOKEN_META.USDC
+      : tradeBaseToken === 'USDT'
+        ? SOLANA_TOKEN_META.USDT
+        : null;
+  const tradeBaseTokenAddress = isSolana
+    ? (solanaTradeBaseMeta?.address ?? zeroAddress)
+    : tradeBaseToken === 'WBNB'
     ? wrappedNativeAddress
     : tradeBaseToken === 'USDC'
       ? (USDC[chainId as keyof typeof USDC]?.address ?? zeroAddress)
       : tradeBaseToken === 'USDT'
         ? (USDT[chainId as keyof typeof USDT]?.address ?? zeroAddress)
         : zeroAddress;
-  const tradeBaseSymbol = tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase()
+  const tradeBaseSymbol = isSolana
+    ? (solanaTradeBaseMeta?.symbol ?? nativeSymbol)
+    : tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase()
     ? `W${nativeSymbol}`
     : tradeBaseTokenAddress.toLowerCase() === (USDC[chainId as keyof typeof USDC]?.address ?? '').toLowerCase()
       ? 'USDC'
       : tradeBaseTokenAddress.toLowerCase() === (USDT[chainId as keyof typeof USDT]?.address ?? '').toLowerCase()
         ? 'USDT'
         : nativeSymbol;
-  const tradeBaseDecimals = tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase()
+  const tradeBaseDecimals = isSolana
+    ? (solanaTradeBaseMeta?.decimals ?? 9)
+    : tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase()
     ? 18
     : tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase()
       ? 18
@@ -115,8 +151,8 @@ export function HomeView({
         : tradeBaseTokenAddress.toLowerCase() === (USDT[chainId as keyof typeof USDT]?.address ?? '').toLowerCase()
           ? (USDT[chainId as keyof typeof USDT]?.decimals ?? 18)
           : 18;
-  const isWrappedTradeBase = tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase();
-  const routerAddress = DeployAddress[chainId as keyof typeof DeployAddress]?.[ContractNames.DagobangRouter]?.address;
+  const isWrappedTradeBase = !isSolana && tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase();
+  const routerAddress = isSolana ? undefined : DeployAddress[chainId as keyof typeof DeployAddress]?.[ContractNames.DagobangRouter]?.address;
   const MAX_UINT256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
   const APPROVAL_READY_THRESHOLD = '1000000000000000000000'; // 1000 tokens
   const accountAddressListKey = (state.wallet.accounts ?? []).map((acc) => acc.address.toLowerCase()).join('|');
@@ -136,6 +172,7 @@ export function HomeView({
   const getCurrentAddress = () => {
     return state.wallet.address;
   };
+  const canRemoveManagedAccount = !!manageAddress && (state.wallet.accounts?.length ?? 0) > 1;
 
   const formatBalance = (addr: string) => {
     try {
@@ -334,13 +371,13 @@ export function HomeView({
     tradeBaseTokenAddress,
   ]);
 
-  const getAliasKey = (addr: `0x${string}`) => addr.toLowerCase();
-  const get7702Key = (addr: `0x${string}`) => addr.toLowerCase();
+  const getAliasKey = (addr: string) => addr.toLowerCase();
+  const get7702Key = (addr: string) => addr.toLowerCase();
 
   useEffect(() => {
     let disposed = false;
     const accounts = state.wallet.accounts ?? [];
-    if (!state.wallet.isUnlocked || accounts.length === 0) {
+    if (isSolana || !state.wallet.isUnlocked || accounts.length === 0) {
       setEip7702ByAddress({});
       return () => {
         disposed = true;
@@ -430,12 +467,12 @@ export function HomeView({
     return () => {
       disposed = true;
     };
-  }, [state.wallet.isUnlocked, accountAddressListKey, tradeBaseTokenAddress]);
+  }, [state.wallet.isUnlocked, accountAddressListKey, tradeBaseTokenAddress, chainId]);
 
   useEffect(() => {
     let disposed = false;
     const accounts = state.wallet.accounts ?? [];
-    if (!state.wallet.isUnlocked || tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase() || !routerAddress || accounts.length === 0) {
+    if (isSolana || !state.wallet.isUnlocked || tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase() || !routerAddress || accounts.length === 0) {
       setAllowances({});
       return () => {
         disposed = true;
@@ -447,11 +484,11 @@ export function HomeView({
           try {
             const res = await call({
               type: 'token:getAllowance',
-              tokenAddress: tradeBaseTokenAddress,
+              tokenAddress: tradeBaseTokenAddress as `0x${string}`,
               owner: acc.address,
               spender: routerAddress as `0x${string}`,
               chainId,
-            });
+            }) as any;
             return [acc.address.toLowerCase(), res.allowanceWei] as const;
           } catch {
             return [acc.address.toLowerCase(), '0'] as const;
@@ -466,9 +503,9 @@ export function HomeView({
     return () => {
       disposed = true;
     };
-  }, [state.wallet.isUnlocked, accountAddressListKey, tradeBaseTokenAddress, routerAddress]);
+  }, [isSolana, state.wallet.isUnlocked, accountAddressListKey, tradeBaseTokenAddress, routerAddress]);
 
-  const openManage = (addr: `0x${string}`, fallbackName: string) => {
+  const openManage = (addr: string, fallbackName: string) => {
     const currentAlias = state.settings.accountAliases?.[getAliasKey(addr)] ?? '';
     setManageAddress(addr);
     setManageAlias(currentAlias || fallbackName);
@@ -476,6 +513,7 @@ export function HomeView({
     setExportPassword('');
     setExportedPrivateKey(null);
     setCopiedPk(false);
+    setDeletePassword('');
   };
 
   const closeManage = () => {
@@ -485,23 +523,37 @@ export function HomeView({
     setExportPassword('');
     setExportedPrivateKey(null);
     setCopiedPk(false);
+    setDeletePassword('');
   };
 
-  const openTransfer = (addr: `0x${string}`) => {
+  const openTransfer = (addr: string, asset?: TransferAssetState) => {
+    const nextAsset = asset ?? { kind: 'native' as const, symbol: nativeSymbol, decimals: isSolana ? 9 : 18 };
     setTransferFromAddress(addr);
+    setTransferAsset(nextAsset);
     setTransferToAddress('');
     setTransferAmountBnb('');
     setTransferUseMax(false);
     setTransferPassword('');
     setTransferBalanceWei(null);
     withBusy(async () => {
-      const balRes = await call({ type: 'chain:getBalance', address: addr, chainId });
-      setTransferBalanceWei(balRes.balanceWei);
+      if (nextAsset.kind === 'token') {
+        const balRes = await call({
+          type: 'token:getBalance',
+          tokenAddress: nextAsset.tokenAddress,
+          address: addr,
+          chainId,
+        });
+        setTransferBalanceWei(balRes.balanceWei);
+      } else {
+        const balRes = await call({ type: 'chain:getBalance', address: addr, chainId });
+        setTransferBalanceWei(balRes.balanceWei);
+      }
     });
   };
 
   const closeTransfer = () => {
     setTransferFromAddress(null);
+    setTransferAsset(null);
     setTransferToAddress('');
     setTransferAmountBnb('');
     setTransferUseMax(false);
@@ -509,7 +561,7 @@ export function HomeView({
     setTransferBalanceWei(null);
   };
 
-  const openConvert = (addr: `0x${string}`) => {
+  const openConvert = (addr: string) => {
     setConvertAddress(addr);
     setConvertAmount('');
     setConvertMode('wrap');
@@ -520,25 +572,28 @@ export function HomeView({
     setConvertAmount('');
     setConvertMode('wrap');
   };
-  const openApproveDialog = (addr: `0x${string}`) => setApproveDialogAddress(addr);
+  const openApproveDialog = (addr: string) => setApproveDialogAddress(addr);
   const closeApproveDialog = () => setApproveDialogAddress(null);
 
   const getTransferBalanceBnb = () => {
     const addr = transferFromAddress;
-    if (!addr) return null;
+    if (!addr || !transferAsset) return null;
     if (transferBalanceWei) {
       try {
-        return formatEther(BigInt(transferBalanceWei));
+        const raw = BigInt(transferBalanceWei);
+        return transferAsset.kind === 'native'
+          ? (isSolana ? (Number(raw) / 1e9).toString() : formatEther(raw))
+          : formatUnits(raw, transferAsset.decimals);
       } catch {
       }
     }
-    return balances[addr] ?? null;
+    return transferAsset.kind === 'token' ? (tradeBaseBalances[addr] ?? null) : (balances[addr] ?? null);
   };
 
   const canSubmitTransfer = (() => {
     if (!transferFromAddress) return false;
     const to = transferToAddress.trim();
-    if (!to || !isAddress(to)) return false;
+    if (!to || (isSolana ? !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(to) : !isAddress(to))) return false;
     if (!transferPassword) return false;
     if (transferUseMax) return true;
     const raw = transferAmountBnb.trim();
@@ -624,6 +679,7 @@ export function HomeView({
                     name: newAccountName,
                     password: addAccountPassword,
                     privateKey: isImport ? privateKey : undefined,
+                    chainId,
                   });
                   setNewAccountName('');
                   setAddAccountPassword('');
@@ -734,7 +790,7 @@ export function HomeView({
                           disabled={busy}
                           onClick={() =>
                             withBusy(async () => {
-                              await call({ type: 'wallet:switchAccount', address: acc.address });
+                              await call({ type: 'wallet:switchAccount', address: acc.address, chainId });
                               showActionNotice('success', '已切换钱包');
                               await onRefresh();
                             })
@@ -813,6 +869,24 @@ export function HomeView({
                         );
                       })()
                     )}
+                    {isSolana && tradeBaseTokenAddress.toLowerCase() !== zeroAddress.toLowerCase() && (
+                      <button
+                        className="px-2 py-1 rounded bg-zinc-800 text-[11px] hover:bg-zinc-700 transition-colors"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openTransfer(acc.address, {
+                            kind: 'token',
+                            symbol: tradeBaseSymbol,
+                            decimals: tradeBaseDecimals,
+                            tokenAddress: tradeBaseTokenAddress,
+                          });
+                        }}
+                        title={`发送 ${tradeBaseSymbol}`}
+                      >
+                        转{tradeBaseSymbol}
+                      </button>
+                    )}
                     {tradeBaseTokenAddress.toLowerCase() !== zeroAddress.toLowerCase() && (
                       <button
                         className="px-2 py-1 rounded bg-zinc-800 text-[11px] hover:bg-zinc-700 transition-colors"
@@ -876,7 +950,7 @@ export function HomeView({
           className="w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 text-xs font-semibold hover:bg-zinc-800 transition-colors flex items-center justify-center gap-2"
           onClick={() =>
             withBusy(async () => {
-              await call({ type: 'wallet:lock' });
+              await call({ type: 'wallet:lock', chainId });
               await onRefresh();
             })
           }
@@ -946,6 +1020,7 @@ export function HomeView({
                       type: 'wallet:exportAccountPrivateKey',
                       address: manageAddress,
                       password: exportPassword,
+                      chainId,
                     });
                     setExportedPrivateKey(res.privateKey);
                     setExportPassword('');
@@ -978,15 +1053,52 @@ export function HomeView({
                 </div>
               )}
             </div>
+
+            <div className="pt-3 border-t border-zinc-800 space-y-2">
+              <div className="text-[14px] text-red-400">{tt('popup.home.manage.removeAccount')}</div>
+              <div className="text-[11px] text-zinc-500">{tt('popup.home.manage.removeAccountHint')}</div>
+              {!canRemoveManagedAccount && (
+                <div className="text-[11px] text-amber-400">{tt('popup.home.manage.removeAccountLastDisabled')}</div>
+              )}
+              <input
+                className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs outline-none"
+                placeholder={tt('popup.home.manage.passwordPlaceholder')}
+                value={deletePassword}
+                type="password"
+                onChange={(e) => setDeletePassword(e.target.value)}
+                disabled={!canRemoveManagedAccount}
+              />
+              <button
+                className="w-full rounded-md bg-red-600 px-3 py-2 text-xs font-semibold disabled:opacity-60 hover:bg-red-500 transition-colors"
+                disabled={busy || !deletePassword || !canRemoveManagedAccount}
+                onClick={() =>
+                  withBusy(async () => {
+                    if (!manageAddress) return;
+                    await call({
+                      type: 'wallet:removeAccount',
+                      address: manageAddress,
+                      password: deletePassword,
+                      chainId,
+                    });
+                    setDeletePassword('');
+                    closeManage();
+                    showActionNotice('success', tt('popup.home.manage.removeSuccess'));
+                    await onRefresh();
+                  })
+                }
+              >
+                {tt('popup.home.manage.removeConfirm')}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {transferFromAddress && (
+      {transferFromAddress && transferAsset && (
         <div className="absolute inset-0 bg-black/60 flex items-center justify-center p-4">
           <div className="w-full rounded-md bg-zinc-950 border border-zinc-800 p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold">{tt('popup.home.transfer.title')}</div>
+              <div className="text-xs font-semibold">{tt('popup.home.transfer.title')} {transferAsset.symbol}</div>
               <button
                 className="text-[12px] text-zinc-400 hover:text-zinc-200"
                 onClick={closeTransfer}
@@ -1013,7 +1125,7 @@ export function HomeView({
               <div className="flex items-center justify-between">
                 <div className="text-[14px] text-zinc-400">{tt('popup.home.transfer.amount')}</div>
                 <div className="text-[12px] text-zinc-500">
-                  {tt('popup.home.transfer.available')} {getTransferBalanceBnb() ?? '...'} {nativeSymbol}
+                  {tt('popup.home.transfer.available')} {getTransferBalanceBnb() ?? '...'} {transferAsset.symbol}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1059,16 +1171,29 @@ export function HomeView({
               disabled={busy || !canSubmitTransfer}
               onClick={() =>
                 withBusy(async () => {
-                  const to = transferToAddress.trim() as `0x${string}`;
-                  await call({
-                    type: 'tx:transferNative',
-                    chainId,
-                    fromAddress: transferFromAddress,
-                    toAddress: to,
-                    amountBnb: transferAmountBnb.trim(),
-                    useMax: transferUseMax,
-                    password: transferPassword,
-                  });
+                  const to = transferToAddress.trim();
+                  if (transferAsset.kind === 'token') {
+                    await call({
+                      type: 'tx:transferToken',
+                      chainId,
+                      tokenAddress: transferAsset.tokenAddress,
+                      fromAddress: transferFromAddress,
+                      toAddress: to,
+                      amount: transferAmountBnb.trim(),
+                      useMax: transferUseMax,
+                      password: transferPassword,
+                    });
+                  } else {
+                    await call({
+                      type: 'tx:transferNative',
+                      chainId,
+                      fromAddress: transferFromAddress,
+                      toAddress: to,
+                      amountBnb: transferAmountBnb.trim(),
+                      useMax: transferUseMax,
+                      password: transferPassword,
+                    });
+                  }
                   closeTransfer();
                   await onRefresh();
                 })
@@ -1160,10 +1285,10 @@ export function HomeView({
                   try {
                     if (isWrappedTradeBase) {
                       if (convertMode === 'wrap') {
-                        const rsp = await call({ type: 'tx:wrapNative', chainId, fromAddress: convertAddress, amountWei });
+                        const rsp = await call({ type: 'tx:wrapNative', chainId, fromAddress: convertAddress as `0x${string}`, amountWei }) as any;
                         showActionNotice('success', `兑换已提交: ${String(rsp.txHash).slice(0, 10)}...`);
                       } else {
-                        const rsp = await call({ type: 'tx:unwrapWrapped', chainId, fromAddress: convertAddress, amountWei });
+                        const rsp = await call({ type: 'tx:unwrapWrapped', chainId, fromAddress: convertAddress as `0x${string}`, amountWei }) as any;
                         showActionNotice('success', `兑换已提交: ${String(rsp.txHash).slice(0, 10)}...`);
                       }
                     } else if (convertMode === 'wrap') {
@@ -1171,15 +1296,15 @@ export function HomeView({
                         type: 'tx:buyWithReceiptAuto',
                         input: {
                           chainId,
-                          tokenAddress: tradeBaseTokenAddress,
+                          tokenAddress: tradeBaseTokenAddress as `0x${string}`,
                           nativeAmountWei: amountWei,
                           baseTokenAddress: zeroAddress,
-                          fromAddress: convertAddress,
+                          fromAddress: convertAddress as `0x${string}`,
                           executionModeOverride: 'default',
                           poolFee: chainId === ChainId.HYPER ? 3000 : undefined,
                           tokenInfo: getTradeBaseSwapTokenInfo(),
                         },
-                      });
+                      }) as any;
                       if (!rsp.ok) {
                         const msg = rsp.revertReason || rsp.error?.message || '兑换失败';
                         showActionNotice('error', msg);
@@ -1191,15 +1316,15 @@ export function HomeView({
                         type: 'tx:sellWithReceiptAuto',
                         input: {
                           chainId,
-                          tokenAddress: tradeBaseTokenAddress,
+                          tokenAddress: tradeBaseTokenAddress as `0x${string}`,
                           tokenAmountWei: amountWei,
                           baseTokenAddress: zeroAddress,
-                          fromAddress: convertAddress,
+                          fromAddress: convertAddress as `0x${string}`,
                           executionModeOverride: 'default',
                           poolFee: chainId === ChainId.HYPER ? 3000 : undefined,
                           tokenInfo: getTradeBaseSwapTokenInfo(),
                         },
-                      });
+                      }) as any;
                       if (!rsp.ok) {
                         const msg = rsp.revertReason || rsp.error?.message || '兑换失败';
                         showActionNotice('error', msg);
@@ -1262,11 +1387,11 @@ export function HomeView({
                     const rsp = await call({
                       type: 'tx:approve',
                       chainId,
-                      tokenAddress: tradeBaseTokenAddress,
+                      tokenAddress: tradeBaseTokenAddress as `0x${string}`,
                       spender: routerAddress as `0x${string}`,
                       amountWei: MAX_UINT256,
-                      fromAddress: approveDialogAddress,
-                    });
+                      fromAddress: approveDialogAddress as `0x${string}`,
+                    }) as any;
                     setAllowances((prev) => ({ ...prev, [key]: MAX_UINT256 }));
                     showActionNotice('success', `授权已提交: ${String(rsp.txHash).slice(0, 10)}...`);
                     closeApproveDialog();

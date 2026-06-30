@@ -34,6 +34,7 @@ export function Header({ chainId, onChainChange, isUnlocked, onSettingsClick, lo
               >
                 <option value={ChainId.BNB}>BNB</option>
                 <option value={ChainId.HYPER}>HYPER</option>
+                <option value={ChainId.SOL}>SOL</option>
               </select>
               <ChevronDown size={14} className="pointer-events-none absolute right-2 text-zinc-400" />
             </span>

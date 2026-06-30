@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import type { Settings } from '@/types/extention';
-import { RpcService } from '@/services/rpc';
 import { t, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
 
@@ -18,6 +17,8 @@ type RpcLatency = {
   ok: boolean;
   measured: boolean;
   group: 'protected' | 'public';
+  reason?: 'timeout' | 'rate_limit' | 'forbidden' | 'unauthorized' | 'rpc_error' | 'network' | 'unknown';
+  error?: string;
 };
 
 type RpcNodeProfile = {
@@ -328,16 +329,20 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
         }
         return next;
       })();
-      const results: RpcLatency[] = await Promise.all(
-        urls.map(async (url) => {
-          try {
-            const latencyMs = await RpcService.measureLatency(url);
-            return { url, latencyMs, ok: true, measured: true, group: 'public' as const };
-          } catch {
-            return { url, latencyMs: null, ok: false, measured: true, group: 'public' as const };
-          }
-        }),
-      );
+      const rsp = await call({
+        type: 'rpc:measureLatencies',
+        chainId: settings.chainId,
+        urls,
+      });
+      const results: RpcLatency[] = (rsp.results ?? []).map((item) => ({
+        url: item.url,
+        latencyMs: item.latencyMs,
+        ok: item.ok,
+        measured: true,
+        group: 'public' as const,
+        reason: item.reason,
+        error: item.error,
+      }));
       setLatencies((prev) => {
         const groupByUrl = new Map(prev.map((x) => [x.url, x.group]));
         return results.map((x) => ({
@@ -371,6 +376,25 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
     if (min < 60) return `${min}m`;
     const hr = Math.floor(min / 60);
     return `${hr}h`;
+  };
+  const formatFailureReason = (item: RpcLatency) => {
+    if (item.latencyMs != null || !item.measured) return '';
+    switch (item.reason) {
+      case 'timeout':
+        return 'Timeout';
+      case 'rate_limit':
+        return '429 Limit';
+      case 'forbidden':
+        return '403 Forbidden';
+      case 'unauthorized':
+        return '401 Unauthorized';
+      case 'network':
+        return 'Network';
+      case 'rpc_error':
+        return 'RPC Error';
+      default:
+        return 'Unknown';
+    }
   };
 
   const totalSuccess = profiles.reduce((acc, p) => acc + Math.max(0, Number(p.businessSuccessCount || 0)), 0);
@@ -564,6 +588,7 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
                   const latencyText = item.latencyMs != null
                     ? `${item.latencyMs.toFixed(0)} ms`
                     : (item.measured ? tt('contentUi.rpcPanel.measureFailed') : '未测量');
+                  const failureReason = formatFailureReason(item);
                   const statusColor = item.latencyMs == null
                     ? (item.measured ? 'text-red-400' : 'text-zinc-500')
                     : item.latencyMs < 200 ? 'text-emerald-400' : item.latencyMs < 500 ? 'text-yellow-300' : 'text-orange-400';
@@ -576,6 +601,15 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
                         <div className="flex-1 break-all text-zinc-300">{url}</div>
                         <div className={`ml-2 font-mono text-[14px] font-semibold ${statusColor}`}>{latencyText}</div>
                       </div>
+                      {!!failureReason && (
+                        <div
+                          className="rounded border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] text-red-300"
+                          title={item.error || failureReason}
+                        >
+                          {failureReason}
+                          {item.error ? ` · ${item.error}` : ''}
+                        </div>
+                      )}
                       <div className="grid grid-cols-3 gap-2 rounded border border-zinc-800/70 bg-black/20 p-2">
                         <div>
                           <div className="text-[10px] text-zinc-500" title={tips.score}>评分(越低越好)</div>
@@ -622,6 +656,7 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
                   const latencyText = item.latencyMs != null
                     ? `${item.latencyMs.toFixed(0)} ms`
                     : (item.measured ? tt('contentUi.rpcPanel.measureFailed') : '未测量');
+                  const failureReason = formatFailureReason(item);
                   const statusColor = item.latencyMs == null
                     ? (item.measured ? 'text-red-400' : 'text-zinc-500')
                     : item.latencyMs < 200 ? 'text-emerald-400' : item.latencyMs < 500 ? 'text-yellow-300' : 'text-orange-400';
@@ -634,6 +669,15 @@ export function RpcPanel({ visible, onVisibleChange, settings, locale }: RpcPane
                         <div className="flex-1 break-all text-zinc-300">{url}</div>
                         <div className={`ml-2 font-mono text-[14px] font-semibold ${statusColor}`}>{latencyText}</div>
                       </div>
+                      {!!failureReason && (
+                        <div
+                          className="rounded border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] text-red-300"
+                          title={item.error || failureReason}
+                        >
+                          {failureReason}
+                          {item.error ? ` · ${item.error}` : ''}
+                        </div>
+                      )}
                       <div className="grid grid-cols-3 gap-2 rounded border border-zinc-800/70 bg-black/20 p-2">
                         <div>
                           <div className="text-[10px] text-zinc-500" title={tips.score}>评分(越低越好)</div>

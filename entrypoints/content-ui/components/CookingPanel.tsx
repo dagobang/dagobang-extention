@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import toast from 'react-hot-toast';
 import type { Account } from '@/types/extention';
+import type { ChainAddress } from '@/types/chain/address';
 import type { TokenInfo } from '@/types/token';
+import GmgnAPI from '@/hooks/GmgnAPI';
+import { call } from '@/utils/messaging';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
-import GmgnAPI from '@/hooks/GmgnAPI';
 
 type CookingPanelProps = {
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
   address: string | null;
   walletAccounts: Account[];
-  activeWalletAddress: `0x${string}` | null;
+  activeWalletAddress: ChainAddress | null;
   siteInfo: SiteInfo | null;
   currentTokenName?: string | null;
   currentTokenSymbol?: string | null;
@@ -156,7 +158,7 @@ export function CookingPanel({
   const [twitterInput, setTwitterInput] = useState('');
   const [websiteInput, setWebsiteInput] = useState('');
   const [telegramInput, setTelegramInput] = useState('');
-  const [deployWallet, setDeployWallet] = useState<`0x${string}` | null>(null);
+  const [deployWallet, setDeployWallet] = useState<ChainAddress | null>(null);
   const [defaultBuyBnb, setDefaultBuyBnb] = useState('0.1');
   const [autoSellEnabled, setAutoSellEnabled] = useState(true);
   const [autoSellRules, setAutoSellRules] = useState<AutoSellRule[]>([{ marketCapUsd: '3700', sellPercent: '100' }]);
@@ -175,7 +177,7 @@ export function CookingPanel({
   const autoSellRulesRef = useRef(autoSellRules);
 
   const persistCookingConfig = (patch?: {
-    deployWallet?: `0x${string}` | null;
+    deployWallet?: ChainAddress | null;
     defaultBuyBnb?: string;
     autoSellEnabled?: boolean;
     autoSellRules?: AutoSellRule[];
@@ -243,7 +245,7 @@ export function CookingPanel({
       return;
     }
     if (!deployWallet && address) {
-      setDeployWallet(address as `0x${string}`);
+      setDeployWallet(address);
     }
   }, [address, activeWalletAddress, deployWallet]);
 
@@ -257,7 +259,7 @@ export function CookingPanel({
         autoSellEnabled?: boolean;
         autoSellRules?: AutoSellRule[];
       };
-      if (parsed.deployWallet) setDeployWallet(parsed.deployWallet as `0x${string}`);
+      if (parsed.deployWallet) setDeployWallet(parsed.deployWallet as ChainAddress);
       if (typeof parsed.defaultBuyBnb === 'string') setDefaultBuyBnb(parsed.defaultBuyBnb);
       if (typeof parsed.autoSellEnabled === 'boolean') setAutoSellEnabled(parsed.autoSellEnabled);
       if (Array.isArray(parsed.autoSellRules) && parsed.autoSellRules.length > 0) {

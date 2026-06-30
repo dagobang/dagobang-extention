@@ -143,6 +143,9 @@ const collectErrorTexts = (e: any) => {
     if (Array.isArray(err?.metaMessages)) {
       for (const x of err.metaMessages) push(x);
     }
+    if (Array.isArray(err?.errors)) {
+      for (const item of err.errors) visit(item, depth + 1);
+    }
     push(err?.details);
     push(err?.shortMessage);
     push(err?.message);
@@ -178,6 +181,26 @@ export const extractRevertReasonFromError = (e: any) => {
   }
 
   return best;
+};
+
+export const extractDisplayErrorMessageFromError = (e: any, fallback = 'Transaction failed') => {
+  const bestReason = extractRevertReasonFromError(e);
+  if (bestReason) return bestReason;
+  const texts = collectErrorTexts(e)
+    .map((text) => text.trim())
+    .filter(Boolean);
+  for (const text of texts) {
+    const lower = text.toLowerCase();
+    if (
+      lower === 'all promises were rejected'
+      || lower === 'aggregateerror: all promises were rejected'
+      || lower === 'transaction failed'
+    ) {
+      continue;
+    }
+    return text;
+  }
+  return fallback;
 };
 
 export const serializeTxError = (e: any) => {

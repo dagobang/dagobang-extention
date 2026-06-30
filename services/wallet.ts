@@ -38,6 +38,7 @@ export class WalletService {
     await setUnlockedState({
       accounts: payload.accounts,
       selectedAddress: payload.selectedAddress,
+      mnemonic: payload.mnemonic,
       expiresAt: Date.now() + settings.autoLockSeconds * 1000,
     });
 
@@ -97,6 +98,7 @@ export class WalletService {
     await setUnlockedState({
       accounts: payload.accounts,
       selectedAddress: payload.selectedAddress,
+      mnemonic: payload.mnemonic,
       expiresAt: Date.now() + settings.autoLockSeconds * 1000,
     });
 
@@ -154,6 +156,7 @@ export class WalletService {
     await setUnlockedState({
       accounts: payload.accounts,
       selectedAddress: selectedAddress,
+      mnemonic: payload.mnemonic,
       // expiresAt: Date.now() + settings.autoLockSeconds * 1000, // Auto-lock disabled
     });
 
@@ -248,7 +251,8 @@ export class WalletService {
       await setUnlockedState({
           ...state,
           accounts: newAccounts,
-          selectedAddress: newAcc.address
+          selectedAddress: newAcc.address,
+          mnemonic: payload.mnemonic,
       });
       
       const newPayload: WalletPayload = {
@@ -260,6 +264,63 @@ export class WalletService {
       await setStoredWallet({ version: 1, payload: encrypted });
       
       return { address: newAcc.address };
+  }
+
+  static async removeAccount(password: string, address: `0x${string}`): Promise<{ removedAddress: `0x${string}`; nextSelectedAddress: `0x${string}` }> {
+    const state = await getUnlockedState();
+    if (!state) throw new Error('Locked');
+
+    const stored = await getStoredWallet();
+    if (!stored) throw new Error('No wallet stored');
+
+    let payload: WalletPayload;
+    try {
+      payload = await decryptJson(password, stored.payload) as WalletPayload;
+    } catch {
+      throw new Error('Invalid password');
+    }
+
+    if (!payload.accounts || payload.accounts.length === 0) {
+      throw new Error('Account not found');
+    }
+    if (payload.accounts.length === 1) {
+      throw new Error('Cannot remove the last account');
+    }
+
+    const targetIndex = payload.accounts.findIndex((account) => account.address.toLowerCase() === address.toLowerCase());
+    if (targetIndex < 0) throw new Error('Account not found');
+
+    const nextAccounts = payload.accounts.filter((account) => account.address.toLowerCase() !== address.toLowerCase());
+    const nextSelectedAddress = payload.selectedAddress.toLowerCase() === address.toLowerCase()
+      ? nextAccounts[Math.min(targetIndex, nextAccounts.length - 1)].address
+      : payload.selectedAddress;
+
+    const nextPayload: WalletPayload = {
+      mnemonic: payload.mnemonic,
+      accounts: nextAccounts,
+      selectedAddress: nextSelectedAddress,
+    };
+    const encrypted = await encryptJson(password, nextPayload);
+    await setStoredWallet({ version: 1, payload: encrypted });
+    await setUnlockedState({
+      ...state,
+      accounts: nextAccounts,
+      selectedAddress: nextSelectedAddress,
+      mnemonic: payload.mnemonic,
+    });
+
+    const settings = await getSettings();
+    if ((settings.lastSelectedAddress ?? '').toLowerCase() === address.toLowerCase()) {
+      await setSettings({
+        ...settings,
+        lastSelectedAddress: nextSelectedAddress,
+      });
+    }
+
+    return {
+      removedAddress: address,
+      nextSelectedAddress,
+    };
   }
   
   static async switchAccount(address: string) {

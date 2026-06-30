@@ -3,6 +3,7 @@ import { getChainIdByName } from "@/constants/chains";
 import { MEME_SUFFIXS } from "@/constants/meme";
 import { getBridgeTokenAddresses } from "@/constants/tokens";
 import { TokenAPI } from '@/hooks/TokenAPI';
+import { call } from '@/utils/messaging';
 
 export interface SiteInfo {
   chain: string;
@@ -312,7 +313,13 @@ export async function parseCurrentUrlFull(href: string): Promise<SiteInfo | null
     if (!base) return null;
 
     if (base.platform === 'axiom') {
-      const tokenInfo = await AxiomAPI.getTokenInfo(base.chain, base.tokenAddress);
+      const res = await call({
+        type: 'thirdParty:getTokenInfo',
+        platform: 'axiom',
+        chain: base.chain,
+        address: base.tokenAddress,
+      } as const);
+      const tokenInfo = res.tokenInfo;
       if (!tokenInfo) return null;
       return {
         ...base,

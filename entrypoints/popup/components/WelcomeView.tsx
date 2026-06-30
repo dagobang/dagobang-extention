@@ -11,9 +11,10 @@ type WelcomeViewProps = {
   onError: (msg: string) => void;
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
+  chainId: number;
 };
 
-export function WelcomeView({ onBackup, onRefresh, onError, locale, onLocaleChange }: WelcomeViewProps) {
+export function WelcomeView({ onBackup, onRefresh, onError, locale, onLocaleChange, chainId }: WelcomeViewProps) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [importText, setImportText] = useState('');
@@ -66,7 +67,7 @@ export function WelcomeView({ onBackup, onRefresh, onError, locale, onLocaleChan
             disabled={busy || !passwordsMatch}
             onClick={() =>
               withBusy(async () => {
-                const res = await call({ type: 'wallet:create', input: { password: newPassword } });
+                const res = await call({ type: 'wallet:create', input: { password: newPassword, chainId } });
                 if (res.mnemonic) onBackup(res.mnemonic);
                 await onRefresh();
               })
@@ -98,7 +99,7 @@ export function WelcomeView({ onBackup, onRefresh, onError, locale, onLocaleChan
             onClick={() =>
               withBusy(async () => {
                 const trimmed = importText.trim();
-                const input: WalletImportInput = { password: newPassword };
+                const input: WalletImportInput = { password: newPassword, chainId };
                 if (isHexPrivateKey(trimmed)) input.privateKey = trimmed;
                 else input.mnemonic = trimmed;
                 const res = await call({ type: 'wallet:import', input });

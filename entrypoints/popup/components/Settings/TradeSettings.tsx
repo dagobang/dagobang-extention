@@ -6,9 +6,14 @@ type TradeSettingsProps = SettingsDraftProps;
 
 export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSettingsProps) {
   const chainId = settingsDraft.chainId;
+  const isSolana = chainId === ChainId.SOL;
   const nativeSymbol = getNativeSymbol(chainId);
   const tradeBaseTokenValue = settingsDraft.chains[chainId]?.tradeBaseToken ?? 'BNB';
-  const tradeBaseTokenOptions = chainId === ChainId.HYPER
+  const tradeBaseTokenOptions = isSolana
+    ? [
+      { value: 'BNB', label: nativeSymbol },
+    ]
+    : chainId === ChainId.HYPER
     ? [
       { value: 'BNB', label: nativeSymbol },
       { value: 'USDC', label: 'USDC' },
@@ -91,7 +96,9 @@ export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSett
               ))}
             </select>
             <div className="text-[12px] text-zinc-500">
-              {tt('popup.settings.tradeBaseTokenHint', [nativeSymbol])}
+              {isSolana
+                ? tt('popup.settings.tradeBaseTokenHintSolana', [nativeSymbol])
+                : tt('popup.settings.tradeBaseTokenHint', [nativeSymbol])}
             </div>
           </label>
         </div>
@@ -101,7 +108,7 @@ export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSett
         <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">GMGN</div>
         <div className="grid grid-cols-2 gap-3">
           <label className="block space-y-1">
-            <div className="text-[14px] text-zinc-400">{tt('popup.settings.quickBuy1Bnb')}</div>
+            <div className="text-[14px] text-zinc-400">{tt('popup.settings.quickBuy1Native', [nativeSymbol])}</div>
             <input
               className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
               value={settingsDraft.quickBuy1Bnb ?? ''}
@@ -115,7 +122,7 @@ export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSett
             />
           </label>
           <label className="block space-y-1">
-            <div className="text-[14px] text-zinc-400">{tt('popup.settings.quickBuy2Bnb')}</div>
+            <div className="text-[14px] text-zinc-400">{tt('popup.settings.quickBuy2Native', [nativeSymbol])}</div>
             <input
               className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[14px] outline-none"
               value={settingsDraft.quickBuy2Bnb ?? ''}

@@ -2,22 +2,24 @@ import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react
 import { Coins, Copy } from 'lucide-react';
 import { formatUnits } from 'viem';
 import type { Account } from '@/types/extention';
+import type { ChainAddress } from '@/types/chain/address';
 
 type WalletSelectorDropdownProps = {
   open: boolean;
-  selectedTradeWallets: `0x${string}`[];
+  selectedTradeWallets: ChainAddress[];
   walletAccounts: Account[];
-  activeWalletAddress: `0x${string}` | null;
-  onToggleTradeWallet: (address: `0x${string}`) => void;
+  activeWalletAddress: ChainAddress | null;
+  onToggleTradeWallet: (address: ChainAddress) => void;
   walletNativeBalancesWei: Record<string, string>;
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
+  nativeDecimals?: number;
   multiWalletBuyMode: 'uniform' | 'child_custom';
   childWalletBuyAmountsNative?: Record<string, string>;
   childWalletBuyPresetAmountsNative?: Record<string, string[]>;
   onChangeMultiWalletBuyMode: (mode: 'uniform' | 'child_custom') => void;
-  onUpdateChildWalletBuyAmount?: (address: `0x${string}`, amountNative: string) => void;
-  onUpdateChildWalletBuyPresetAmount?: (address: `0x${string}`, presetIndex: number, amountNative: string) => void;
+  onUpdateChildWalletBuyAmount?: (address: ChainAddress, amountNative: string) => void;
+  onUpdateChildWalletBuyPresetAmount?: (address: ChainAddress, presetIndex: number, amountNative: string) => void;
   nativeSymbol?: string;
   className?: string;
   onRequestClose: () => void;
@@ -35,9 +37,10 @@ const formatWeiToText = (wei: string | undefined, decimals: number, maxFraction 
   }
 };
 
-const getNativeBalanceToneClass = (wei: string | undefined) => {
+const getNativeBalanceToneClass = (wei: string | undefined, decimals: number) => {
   const value = BigInt(wei || '0');
-  const oneNative = 10n ** 18n;
+  const safeDecimals = Math.max(0, Math.min(18, decimals));
+  const oneNative = 10n ** BigInt(safeDecimals);
   const oneTenthNative = oneNative / 10n;
   if (value >= oneNative) return 'text-emerald-300';
   if (value >= oneTenthNative) return 'text-cyan-300';
@@ -54,6 +57,7 @@ export function WalletSelectorDropdown({
   walletNativeBalancesWei,
   walletTokenBalancesWei,
   tokenDecimals,
+  nativeDecimals = 18,
   multiWalletBuyMode,
   childWalletBuyPresetAmountsNative = {},
   onChangeMultiWalletBuyMode,
@@ -103,9 +107,9 @@ export function WalletSelectorDropdown({
           const isActive = !!activeWalletAddress && activeWalletAddress.toLowerCase() === acc.address.toLowerCase();
           const addrLower = acc.address.toLowerCase();
           const nativeWei = walletNativeBalancesWei[addrLower];
-          const nativeBal = formatWeiToText(walletNativeBalancesWei[addrLower], 18, 4);
+          const nativeBal = formatWeiToText(walletNativeBalancesWei[addrLower], nativeDecimals, 4);
           const tokenBal = formatWeiToText(walletTokenBalancesWei[addrLower], tokenDecimals ?? 18, 4);
-          const nativeToneClass = getNativeBalanceToneClass(nativeWei);
+          const nativeToneClass = getNativeBalanceToneClass(nativeWei, nativeDecimals);
           return (
             <div
               key={acc.address}

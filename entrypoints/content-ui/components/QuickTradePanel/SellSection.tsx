@@ -39,6 +39,7 @@ export type SellSectionProps = {
   gmgnVisible: boolean;
   gmgnEnabled: boolean;
   onToggleGmgn: () => void;
+  showApproveAction?: boolean;
 };
 
 export function SellSection({
@@ -73,6 +74,7 @@ export function SellSection({
   gmgnVisible,
   gmgnEnabled,
   onToggleGmgn,
+  showApproveAction = true,
 }: SellSectionProps) {
   const [activePreviewIndex, setActivePreviewIndex] = useState(0);
   const sellPresets = isEditing && draftPresets ? draftPresets : (settings?.chains[settings.chainId]?.sellPresets || ['10', '25', '50', '100']);
@@ -149,6 +151,9 @@ export function SellSection({
     : null;
   const activePreviewUsd = quotedUsdValues?.[activePreviewIndex] ?? fallbackPreviewUsd;
   const activePreviewBaseAmount = quotedBaseAmounts?.[activePreviewIndex] ?? fallbackPreviewBaseAmount;
+  // #region debug-point A:sell-section-preview
+  if (settings?.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'A', location: 'SellSection.tsx:preview', msg: '[DEBUG] sell section preview values', data: { chainId: settings?.chainId ?? null, tokenSymbol, baseSymbol, formattedTokenBalance, tokenBalanceAmount, tokenPriceUsd, baseTokenPriceUsd, activePreviewIndex, activePreviewPct, activePreviewTokenAmount, fallbackPreviewUsd, fallbackPreviewBaseAmount, quotedUsdValues: quotedUsdValues?.slice(0, 4) ?? null, quotedBaseAmounts: quotedBaseAmounts?.slice(0, 4) ?? null, activePreviewUsd, activePreviewBaseAmount, previewRouteLabel }, ts: Date.now() }) }).catch(() => { });
+  // #endregion
   const formatUsd = (value: number | null) => {
     if (value == null || !Number.isFinite(value) || value <= 0) return '--';
     const text = formatPriceValue(value, 2, 4);
@@ -293,15 +298,19 @@ export function SellSection({
             <span>{slippageText}</span>
           </div>
         </div>
-        <button
-          onClick={onApprove}
-          disabled={approveDisabled}
-          className={`flex items-center gap-1 transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${approveClassName}`}
-          title={approveStatusTitle || t('contentUi.approve.title', locale)}
-        >
-          {approveIcon}
-          <span>{approveLabel}</span>
-        </button>
+        {showApproveAction ? (
+          <button
+            onClick={onApprove}
+            disabled={approveDisabled}
+            className={`flex items-center gap-1 transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${approveClassName}`}
+            title={approveStatusTitle || t('contentUi.approve.title', locale)}
+          >
+            {approveIcon}
+            <span>{approveLabel}</span>
+          </button>
+        ) : (
+          <span />
+        )}
       </div>
     </div>
   );

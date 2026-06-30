@@ -18,7 +18,7 @@ declare module '#imports' {
   export { InvalidMatchPattern, MatchPattern } from 'wxt/utils/match-patterns';
   export { useState, useCallback, useMemo, useEffect, useRef, useContext, useReducer } from 'react';
   export { fakeBrowser } from 'wxt/testing';
-  export { BNBCoinIcon, ETHCoinIcon, HYPECoinIcon, USDCCoinIcon, ChainCoinIcon, SymbolCoinIcon } from '../components/Coins';
+  export { BNBCoinIcon, ETHCoinIcon, HYPECoinIcon, SOLCoinIcon, USDCCoinIcon, ChainCoinIcon, SymbolCoinIcon } from '../components/Coins';
   export { Logo } from '../components/Logo';
   export { default as AxiomAPI, AxiomAPI, AxiomPairInfoResponse } from '../hooks/AxiomAPI';
   export { default as FlapAPI, FlapAPI } from '../hooks/FlapAPI';
@@ -29,7 +29,7 @@ declare module '#imports' {
   export { encryptJson, decryptJson } from '../utils/crypto';
   export { defaultSettings } from '../utils/defaults';
   export { getDexPoolPrefer, parseGweiToWei } from '../utils/dexUtils';
-  export { isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime, formatAgeShort, formatCountShort, formatCompactNumber, formatBnbAmount, formatShortAddress, formatBroadcastProvider } from '../utils/format';
+  export { isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime, formatAgeShort, formatCountShort, formatCompactNumber, formatBnbAmount, formatShortAddress, formatBroadcastProvider, formatRpcEndpointLabel } from '../utils/format';
   export { isObject, asAddress, toArrayPayload, normalizeInlineWebpData, shouldUseMergedTokenValue, normalizePublicTokenData, normalizeNewPoolTokenData, resolveTrenchesStageByFid, normalizeTrenchesTokenData, extractPublicBroadcastCreates, extractFirstFromObject, extractNumber, extractTokenAddress, extractTokenAddresses, extractTweetId, extractText, extractMedia, extractGmgnTweetText, extractGmgnUserFields, extractUser, extractTimestampMs, parseGmgnEnvelope, extractGmgnWsConnectionInfo, TrenchesStage } from '../utils/gmgnWs';
   export { t, normalizeLocale, Locale } from '../utils/i18n';
   export { call } from '../utils/messaging';

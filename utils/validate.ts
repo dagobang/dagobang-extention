@@ -1,4 +1,5 @@
 import type { Settings, AutoTradeConfig, AdvancedAutoSellConfig } from '../types/extention';
+import type { ChainAddress } from '@/types/chain/address';
 import { TRADE_SUCCESS_SOUND_PRESETS } from '../types/extention';
 import { defaultSettings } from './defaults';
 import { ChainId } from '@/constants/chains';
@@ -10,6 +11,20 @@ function normalizeAddress(addr: string | undefined): `0x${string}` | '' {
   if (!trimmed) return '';
   // Basic check, could use viem's isAddress/getAddress
   return trimmed as `0x${string}`;
+}
+
+function isLikelySolanaAddress(addr: string | undefined): boolean {
+  const trimmed = typeof addr === 'string' ? addr.trim() : '';
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmed);
+}
+
+function normalizeChainAddress(addr: string | undefined): ChainAddress | '' {
+  if (!addr) return '';
+  const trimmed = addr.trim();
+  if (!trimmed) return '';
+  if (/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return trimmed as `0x${string}`;
+  if (isLikelySolanaAddress(trimmed)) return trimmed;
+  return '';
 }
 
 function clampNumber(value: any, min: number, max: number, fallback: number) {
@@ -71,7 +86,7 @@ function readAmountStringAlias(input: any, fallback: string) {
   return fallback;
 }
 
-function isAllowedProtectedRpcUrl(raw: string): boolean {
+function isAllowedProtectedRpcUrl(raw: string, chainId?: number): boolean {
   const url = (raw ?? '').trim();
   if (!url) return false;
   let u: URL;
@@ -83,6 +98,7 @@ function isAllowedProtectedRpcUrl(raw: string): boolean {
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
   const host = (u.hostname ?? '').toLowerCase();
   if (!host) return false;
+  if (chainId === ChainId.SOL) return true;
   if (host.endsWith('48.club')) return true;
   if (host.endsWith('getblock')) return true;
   if (host.includes('blockrazor')) return true;
@@ -99,7 +115,7 @@ function isAllowedProtectedRpcUrl(raw: string): boolean {
 
 export function validateSettings(input: Settings): Settings | null {
   const defaults = defaultSettings();
-  const supportedChainIds = [ChainId.ETH, ChainId.BNB, ChainId.HYPER] as const;
+  const supportedChainIds = [ChainId.ETH, ChainId.BNB, ChainId.HYPER, ChainId.SOL] as const;
   const inputChainId = Number((input as any).chainId);
   const chainId = supportedChainIds.includes(inputChainId as any)
     ? inputChainId
@@ -107,7 +123,8 @@ export function validateSettings(input: Settings): Settings | null {
   const autoLockSeconds = clampNumber(input.autoLockSeconds, 30, 3600, defaults.autoLockSeconds);
   const selectedTradeWallets = Array.isArray((input as any).selectedTradeWallets)
     ? ((input as any).selectedTradeWallets as unknown[])
-      .filter((v): v is `0x${string}` => typeof v === 'string' && /^0x[a-fA-F0-9]{40}$/.test(v))
+      .map((v) => normalizeChainAddress(typeof v === 'string' ? v : ''))
+      .filter((v): v is ChainAddress => !!v)
     : ((defaults as any).selectedTradeWallets ?? []);
   const inputMultiWalletBuyMode = (input as any).multiWalletBuyMode;
   const multiWalletBuyMode: 'uniform' | 'child_custom' =
@@ -116,8 +133,8 @@ export function validateSettings(input: Settings): Settings | null {
   const childWalletBuyAmountsBnb: Record<string, string> = {};
   if (rawChildWalletBuyAmounts && typeof rawChildWalletBuyAmounts === 'object') {
     for (const [rawAddr, rawAmount] of Object.entries(rawChildWalletBuyAmounts as Record<string, unknown>)) {
-      const addr = String(rawAddr || '').trim().toLowerCase();
-      if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) continue;
+      const addr = normalizeChainAddress(String(rawAddr || '').trim()).toLowerCase();
+      if (!addr) continue;
       if (typeof rawAmount !== 'string') continue;
       const amount = rawAmount.trim();
       if (!amount) continue;
@@ -128,8 +145,8 @@ export function validateSettings(input: Settings): Settings | null {
   const childWalletBuyPresetAmountsNative: Record<string, string[]> = {};
   if (rawChildWalletBuyPresetAmounts && typeof rawChildWalletBuyPresetAmounts === 'object') {
     for (const [rawAddr, rawPresets] of Object.entries(rawChildWalletBuyPresetAmounts as Record<string, unknown>)) {
-      const addr = String(rawAddr || '').trim().toLowerCase();
-      if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) continue;
+      const addr = normalizeChainAddress(String(rawAddr || '').trim()).toLowerCase();
+      if (!addr) continue;
       if (!Array.isArray(rawPresets)) continue;
       const normalized = [0, 1, 2, 3].map((idx) => {
         const item = rawPresets[idx];
@@ -323,15 +340,15 @@ export function validateSettings(input: Settings): Settings | null {
         const protectedRpcUrls = (cInput.protectedRpcUrls || [])
           .map((x) => x.trim())
           .filter(Boolean)
-          .filter(isAllowedProtectedRpcUrl);
+          .filter((x) => isAllowedProtectedRpcUrl(x, cid));
         const protectedRpcUrlsBuyRaw = ((cInput as any).protectedRpcUrlsBuy || [])
           .map((x: string) => x.trim())
           .filter(Boolean)
-          .filter(isAllowedProtectedRpcUrl);
+          .filter((x: string) => isAllowedProtectedRpcUrl(x, cid));
         const protectedRpcUrlsSellRaw = ((cInput as any).protectedRpcUrlsSell || [])
           .map((x: string) => x.trim())
           .filter(Boolean)
-          .filter(isAllowedProtectedRpcUrl);
+          .filter((x: string) => isAllowedProtectedRpcUrl(x, cid));
         const protectedRpcUrlsBuy = protectedRpcUrlsBuyRaw.length > 0 ? protectedRpcUrlsBuyRaw : undefined;
         const protectedRpcUrlsSell = protectedRpcUrlsSellRaw.length > 0 ? protectedRpcUrlsSellRaw : undefined;
         const bloxrouteBuyEnabled = typeof (cInput as any).bloxrouteBuyEnabled === 'boolean'
@@ -340,12 +357,73 @@ export function validateSettings(input: Settings): Settings | null {
         const bloxrouteSellEnabled = typeof (cInput as any).bloxrouteSellEnabled === 'boolean'
           ? (cInput as any).bloxrouteSellEnabled
           : ((cDef as any).bloxrouteSellEnabled ?? true);
+        const solanaSwqosInput = (cInput as any).solanaSwqos;
+        const solanaSwqosDefault = (cDef as any).solanaSwqos;
+        const allowedSolanaSwqosStrategies = ['single', 'concurrent'] as const;
+        const allowedSolanaSwqosRegions = ['default', 'newyork', 'frankfurt', 'amsterdam', 'slc', 'tokyo', 'london', 'losangeles'] as const;
+        const allowedSolanaSwqosProviders = ['jito', 'nextblock', 'blox', 'temporal'] as const;
+        const normalizedSolanaSwqosProviders = Array.isArray(solanaSwqosInput?.providers)
+          ? solanaSwqosInput.providers
+          : Array.isArray(solanaSwqosDefault?.providers)
+            ? solanaSwqosDefault.providers
+            : [];
+        const solanaSwqos = {
+          enabled: typeof solanaSwqosInput?.enabled === 'boolean'
+            ? solanaSwqosInput.enabled
+            : !!solanaSwqosDefault?.enabled,
+          strategy: allowedSolanaSwqosStrategies.includes(solanaSwqosInput?.strategy)
+            ? solanaSwqosInput.strategy
+            : (allowedSolanaSwqosStrategies.includes(solanaSwqosDefault?.strategy)
+              ? solanaSwqosDefault.strategy
+              : 'concurrent'),
+          timeoutMs: clampNumber(
+            Number(solanaSwqosInput?.timeoutMs),
+            1000,
+            30000,
+            clampNumber(Number(solanaSwqosDefault?.timeoutMs), 1000, 30000, 10000),
+          ),
+          region: allowedSolanaSwqosRegions.includes(solanaSwqosInput?.region)
+            ? solanaSwqosInput.region
+            : (allowedSolanaSwqosRegions.includes(solanaSwqosDefault?.region)
+              ? solanaSwqosDefault.region
+              : 'default'),
+          providers: normalizedSolanaSwqosProviders
+            .map((provider: any, index: number) => {
+              const fallbackProvider = Array.isArray(solanaSwqosDefault?.providers) ? solanaSwqosDefault.providers[index] : undefined;
+              const type = allowedSolanaSwqosProviders.includes(provider?.type)
+                ? provider.type
+                : (allowedSolanaSwqosProviders.includes(fallbackProvider?.type) ? fallbackProvider.type : null);
+              if (!type) return null;
+              return {
+                type,
+                enabled: typeof provider?.enabled === 'boolean'
+                  ? provider.enabled
+                  : !!fallbackProvider?.enabled,
+                authKey: typeof provider?.authKey === 'string'
+                  ? provider.authKey.trim()
+                  : (typeof fallbackProvider?.authKey === 'string' ? fallbackProvider.authKey.trim() : ''),
+                endpoint: typeof provider?.endpoint === 'string'
+                  ? provider.endpoint.trim()
+                  : (typeof fallbackProvider?.endpoint === 'string' ? fallbackProvider.endpoint.trim() : ''),
+                weight: clampNumber(
+                  Number(provider?.weight),
+                  1,
+                  100,
+                  clampNumber(Number(fallbackProvider?.weight), 1, 100, 1),
+                ),
+              };
+            })
+            .filter(Boolean),
+        };
         const chainTradeBaseTokenInput = typeof (cInput as any).tradeBaseToken === 'string'
           ? String((cInput as any).tradeBaseToken).trim().toUpperCase()
           : '';
-        const tradeBaseToken = allowedTradeBaseTokens.includes(chainTradeBaseTokenInput as any)
+        const normalizedTradeBaseToken = allowedTradeBaseTokens.includes(chainTradeBaseTokenInput as any)
           ? (chainTradeBaseTokenInput as 'BNB' | 'WBNB' | 'USDT' | 'USDC')
           : ((cDef as any).tradeBaseToken ?? legacyTradeBaseToken ?? 'BNB');
+        const tradeBaseToken = cid === ChainId.SOL
+          ? 'BNB'
+          : normalizedTradeBaseToken;
         const submitChannel = allowedSubmitChannels.includes((cInput as any).submitChannel)
           ? (cInput as any).submitChannel
           : ((allowedSubmitChannels.includes((cDef as any).submitChannel) ? (cDef as any).submitChannel : 'protectRpcs') as (typeof allowedSubmitChannels)[number]);
@@ -384,6 +462,7 @@ export function validateSettings(input: Settings): Settings | null {
           quickBuyPresetOverrides,
           bloxrouteBuyEnabled,
           bloxrouteSellEnabled,
+          solanaSwqos,
         };
         // Fallback for RPCs if empty
         if (chains[cid].rpcUrls.length === 0) {

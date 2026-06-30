@@ -12,6 +12,7 @@ declare global {
   const InvalidMatchPattern: typeof import('wxt/utils/match-patterns').InvalidMatchPattern
   const Logo: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Logo').Logo
   const MatchPattern: typeof import('wxt/utils/match-patterns').MatchPattern
+  const SOLCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').SOLCoinIcon
   const SymbolCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').SymbolCoinIcon
   const TokenAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/TokenAPI').TokenAPI
   const USDCCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').USDCCoinIcon
@@ -53,6 +54,7 @@ declare global {
   const formatCompactNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatCompactNumber
   const formatCountShort: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatCountShort
   const formatPriceValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatPriceValue
+  const formatRpcEndpointLabel: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatRpcEndpointLabel
   const formatShortAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatShortAddress
   const formatTime: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatTime
   const getDexPoolPrefer: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/dexUtils').getDexPoolPrefer

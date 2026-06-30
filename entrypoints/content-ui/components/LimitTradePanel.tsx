@@ -4,21 +4,22 @@ import { parseUnits, formatUnits, zeroAddress } from 'viem';
 import { Wallet, PanelRightOpen, PanelRightClose, ChevronUpSquare, ChevronDownSquare, X } from 'lucide-react';
 import type { Account, Settings, LimitOrder, LimitOrderCreateInput, LimitOrderScanStatus, LimitOrderType } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
-import { TokenAPI } from '@/hooks/TokenAPI';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
 import { call } from '@/utils/messaging';
 import { formatPriceValue, parseNumberLoose, formatTime } from '@/utils/format';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { WalletSelectorDropdown, WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
-import { getChainIdByName, getChainRuntime, getExplorerTxUrl, getNativeSymbol } from '@/constants/chains';
+import { getChainIdByName, getExplorerTxUrl, getNativeSymbol } from '@/constants/chains';
+import { getChainRuntimeBase, isSolanaChain } from '@/constants/chains/runtime';
+import { getEvmChainRuntime } from '@/constants/chains/evmRuntime';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
+import type { ChainAddress } from '@/types/chain/address';
 
-const normalizeWalletAddr = (addr?: string | null): `0x${string}` | null => {
+const normalizeWalletAddr = (addr?: string | null): ChainAddress | null => {
   const raw = typeof addr === 'string' ? addr.trim() : '';
-  if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) return null;
-  return raw as `0x${string}`;
+  return raw || null;
 };
 
 const LIMIT_PANEL_MIN_HEIGHT = 420;
@@ -46,20 +47,20 @@ type LimitTradePanelProps = {
   isUnlocked: boolean;
   address: string | null;
   walletAccounts: Account[];
-  activeWalletAddress: `0x${string}` | null;
-  selectedTradeWallets: `0x${string}`[];
-  onToggleTradeWallet: (address: `0x${string}`) => void;
+  activeWalletAddress: ChainAddress | null;
+  selectedTradeWallets: ChainAddress[];
+  onToggleTradeWallet: (address: ChainAddress) => void;
   walletTradeBaseBalancesWei: Record<string, string>;
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
   tokenPrice?: number | null;
   formattedTradeBaseBalance: string;
-  tradeBaseTokenAddress: `0x${string}`;
+  tradeBaseTokenAddress: ChainAddress;
   tradeBaseTokenSymbol: string;
   tradeBaseTokenDecimals: number;
   formattedTokenBalance: string;
   tokenSymbol: string | null;
-  tokenAddress: `0x${string}` | null;
+  tokenAddress: ChainAddress | null;
   tokenInfo: TokenInfo | null;
 };
 
@@ -213,11 +214,7 @@ export function LimitTradePanel({
   const [onlyCurrentToken, setOnlyCurrentToken] = useState(false);
   const [orders, setOrders] = useState<LimitOrder[]>([]);
   const [scanStatus, setScanStatus] = useState<LimitOrderScanStatus | null>(null);
-  const [latestTokenPriceUsd, setLatestTokenPriceUsd] = useState<number | null>(null);
-  const [priceByTokenKey, setPriceByTokenKey] = useState<Record<string, { priceUsd: number | null; ts: number }>>({});
-  const priceByTokenKeyRef = useRef(priceByTokenKey);
-  const priceFetchRef = useRef<{ inFlight: Set<string> }>({ inFlight: new Set() });
-  const didImmediateListPriceFetchRef = useRef(false);
+  const [scanPriceByTokenKey, setScanPriceByTokenKey] = useState<Record<string, { priceUsd: number | null; ts: number }>>({});
   const buyPriceRef = useRef(buyPrice);
   const sellPriceRef = useRef(sellPrice);
   const tokenPriceSnapshotRef = useRef<number | null>(null);
@@ -357,21 +354,14 @@ export function LimitTradePanel({
   };
 
   const toTokenKey = (chainId2: number, tokenAddress2: string) => `${chainId2}:${tokenAddress2.toLowerCase()}`;
-  const getWNativeAddress = (chainId2: number) => {
-    try {
-      return getChainRuntime(chainId2).wrappedNativeAddress;
-    } catch {
-      return null;
-    }
-  };
-  const resolveBaseTokenMeta = (chainId2: number, baseTokenAddress?: `0x${string}` | null) => {
-    const runtime = getChainRuntime(chainId2);
+  const resolveBaseTokenMeta = (chainId2: number, baseTokenAddress?: ChainAddress | null) => {
+    const runtime = getChainRuntimeBase(chainId2);
     const target = (baseTokenAddress ?? zeroAddress).toLowerCase();
     if (target === zeroAddress.toLowerCase()) {
-      return { symbol: getNativeSymbol(chainId2), decimals: runtime.viemChain.nativeCurrency.decimals };
+      return { symbol: getNativeSymbol(chainId2), decimals: runtime.kind === 'evm' ? getEvmChainRuntime(chainId2).viemChain.nativeCurrency.decimals : 9 };
     }
-    if (target === runtime.wrappedNativeAddress.toLowerCase()) {
-      return { symbol: `W${getNativeSymbol(chainId2)}`, decimals: runtime.viemChain.nativeCurrency.decimals };
+    if (runtime.kind === 'evm' && target === getEvmChainRuntime(chainId2).wrappedNativeAddress.toLowerCase()) {
+      return { symbol: `W${getNativeSymbol(chainId2)}`, decimals: getEvmChainRuntime(chainId2).viemChain.nativeCurrency.decimals };
     }
     const usdc = USDC[chainId2 as keyof typeof USDC];
     if (usdc && target === usdc.address.toLowerCase()) {
@@ -384,7 +374,7 @@ export function LimitTradePanel({
     if (chainId2 === 56 && target === bscTokens.usd1.address.toLowerCase()) {
       return { symbol: bscTokens.usd1.symbol, decimals: bscTokens.usd1.decimals };
     }
-    return { symbol: getNativeSymbol(chainId2), decimals: runtime.viemChain.nativeCurrency.decimals };
+    return { symbol: getNativeSymbol(chainId2), decimals: runtime.kind === 'evm' ? getEvmChainRuntime(chainId2).viemChain.nativeCurrency.decimals : 9 };
   };
 
   const explorerTxUrl = (txHash: string) => getExplorerTxUrl(chainId, txHash);
@@ -401,10 +391,6 @@ export function LimitTradePanel({
     ? orders.filter((o) => o.tokenAddress.toLowerCase() === tokenAddress.toLowerCase())
     : orders;
   const hasExecutedOrders = filteredOrders.some((o) => o.status === 'executed');
-
-  useEffect(() => {
-    priceByTokenKeyRef.current = priceByTokenKey;
-  }, [priceByTokenKey]);
 
   useEffect(() => {
     try {
@@ -431,30 +417,12 @@ export function LimitTradePanel({
   }, [panelWidth]);
 
   useEffect(() => {
-    if (!visible) return;
-    if (!tokenAddress) return;
-    const v = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null;
-    if (v == null) return;
-    const key = toTokenKey(chainId, tokenAddress);
-    const now = Date.now();
-    setPriceByTokenKey((prev) => {
-      const cached = prev[key];
-      if (cached && cached.priceUsd === v && now - cached.ts < 2000) return prev;
-      return { ...prev, [key]: { priceUsd: v, ts: now } };
-    });
-  }, [visible, chainId, tokenAddress, tokenPrice]);
-
-  useEffect(() => {
     buyPriceRef.current = buyPrice;
   }, [buyPrice]);
 
   useEffect(() => {
     sellPriceRef.current = sellPrice;
   }, [sellPrice]);
-
-  useEffect(() => {
-    if (!visible) didImmediateListPriceFetchRef.current = false;
-  }, [visible]);
 
   const refreshOrders = async () => {
     if (!settings) return;
@@ -471,13 +439,16 @@ export function LimitTradePanel({
     setScanStatus(status);
     const prices = (status as any).pricesByTokenKey as undefined | Record<string, { priceUsd: number; ts: number }>;
     if (prices && typeof prices === 'object') {
-      setPriceByTokenKey((prev) => {
+      setScanPriceByTokenKey((prev) => {
         let changed = false;
         const next = { ...prev };
         for (const [k, v] of Object.entries(prices)) {
           if (!v || typeof v.priceUsd !== 'number' || typeof v.ts !== 'number') continue;
           const old = prev[k];
           if (!old || old.ts < v.ts || old.priceUsd !== v.priceUsd) {
+            // #region debug-point A:ui-scan-status-price
+            fetch('http://127.0.0.1:7779/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-limit-price-flicker', runId: 'pre-fix', hypothesisId: 'A', location: 'LimitTradePanel.tsx:scanStatusMerge', msg: '[DEBUG] limit panel merged scanStatus price', data: { chainId, tokenKey: k, incomingPriceUsd: v.priceUsd, incomingTs: v.ts, previousPriceUsd: old?.priceUsd ?? null, previousTs: old?.ts ?? null, openOrders: (status as any)?.openOrders ?? null, lastScanAt: (status as any)?.lastScanAt ?? null }, ts: Date.now() }) }).catch(() => { });
+            // #endregion
             next[k] = { priceUsd: v.priceUsd, ts: v.ts };
             changed = true;
           }
@@ -557,7 +528,11 @@ export function LimitTradePanel({
     const bps = o.sellPercentBps ?? 0;
     const pct = Number.isFinite(bps) && bps > 0 ? (bps / 100) : null;
     if (fixedAmountWei > 0n && o.tokenInfo) {
-      const decimals = typeof (o.tokenInfo as any).decimals === 'number' ? (o.tokenInfo as any).decimals : 18;
+      const decimals = typeof (o.tokenInfo as any).decimals === 'number'
+        && Number.isFinite((o.tokenInfo as any).decimals)
+        && (o.tokenInfo as any).decimals >= 0
+        ? (o.tokenInfo as any).decimals
+        : (isSolanaChain(o.chainId) ? 9 : 18);
       const tokens = Number(formatUnits(fixedAmountWei, decimals));
       const sym = o.tokenSymbol || tt('contentUi.common.token');
       const amtText = Number.isFinite(tokens) && tokens > 0 ? `${formatPriceValue(tokens, 4, 4)} ${sym}` : '-';
@@ -575,7 +550,7 @@ export function LimitTradePanel({
   };
 
   const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const switchTokenInCurrentUrl = (nextTokenAddress: `0x${string}`) => {
+  const switchTokenInCurrentUrl = (nextTokenAddress: ChainAddress) => {
     const tokenLink = parsePlatformTokenLink(siteInfo, nextTokenAddress);
     if (tokenLink) {
       navigateToUrl(tokenLink);
@@ -666,8 +641,31 @@ export function LimitTradePanel({
     setSellPrice('');
     buyPriceRef.current = '';
     sellPriceRef.current = '';
-    setLatestTokenPriceUsd(null);
   }, [visible, chainId, tokenAddress]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (!tokenAddress) return;
+    if (!isSolanaChain(chainId)) return;
+    void call({
+      type: 'limitOrder:trackPrice',
+      chainId,
+      tokenAddress,
+      tokenInfo: tokenInfo ?? null,
+      active: true,
+    }).then(() => {
+      requestRefreshScanStatus(0).catch(() => { });
+    }).catch(() => { });
+    return () => {
+      void call({
+        type: 'limitOrder:trackPrice',
+        chainId,
+        tokenAddress,
+        tokenInfo: tokenInfo ?? null,
+        active: false,
+      }).catch(() => { });
+    };
+  }, [visible, chainId, tokenAddress, tokenInfo]);
 
   useEffect(() => {
     if (!visible) return;
@@ -682,10 +680,6 @@ export function LimitTradePanel({
     const tokenInfoMatches = tokenInfoLower === tokenLower;
     const tokenPriceChangedSinceSwitch = tokenPriceSnapshotRef.current == null || tokenPriceSnapshotRef.current !== v;
     if (!tokenInfoMatches && !tokenPriceChangedSinceSwitch) return;
-
-    setLatestTokenPriceUsd(v);
-    const tokenKey = toTokenKey(chainId, tokenAddress);
-    setPriceByTokenKey((prev) => ({ ...prev, [tokenKey]: { priceUsd: v, ts: Date.now() } }));
 
     if (buyPriceRef.current !== autoTriggerPriceRef.current.buy || sellPriceRef.current !== autoTriggerPriceRef.current.sell) return;
     const formatted = formatPrice4(v, true);
@@ -724,89 +718,6 @@ export function LimitTradePanel({
     };
   }, [visible, chainId, onlyCurrentToken, tokenAddress, settings, limitOrderScanIntervalMs, scanStatus?.openOrders]);
 
-  useEffect(() => {
-    if (!visible) return;
-    let cancelled = false;
-
-    const runWithLimit = async <T,>(items: T[], limit: number, fn: (item: T) => Promise<void>) => {
-      const queue = items.slice();
-      const workers = Array.from({ length: Math.max(1, limit) }, async () => {
-        while (queue.length) {
-          const item = queue.shift();
-          if (item === undefined) return;
-          await fn(item);
-        }
-      });
-      await Promise.all(workers);
-    };
-
-    const fetchOnce = async () => {
-      const unique = new Map<string, { chainId: number; tokenAddress: string; tokenInfo: TokenInfo | null }>();
-      for (const o of filteredOrders) {
-        const key = toTokenKey(o.chainId, o.tokenAddress);
-        if (!unique.has(key)) unique.set(key, { chainId: o.chainId, tokenAddress: o.tokenAddress, tokenInfo: o.tokenInfo ?? null });
-      }
-      for (const o of filteredOrders) {
-        const wNative = getWNativeAddress(o.chainId);
-        if (!wNative) continue;
-        const key = toTokenKey(o.chainId, wNative);
-        if (!unique.has(key)) unique.set(key, { chainId: o.chainId, tokenAddress: wNative, tokenInfo: null });
-      }
-
-      const tokenPriceValid = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0;
-      if (tokenPriceValid && tokenAddress) {
-        const addrLower = tokenAddress.toLowerCase();
-        for (const o of filteredOrders) {
-          if (o.tokenAddress.toLowerCase() !== addrLower) continue;
-          unique.delete(toTokenKey(o.chainId, o.tokenAddress));
-        }
-      }
-
-      const now = Date.now();
-      const tasks = Array.from(unique.entries())
-        .filter(([key, v]) => {
-          if (priceFetchRef.current.inFlight.has(key)) return false;
-          const cached = priceByTokenKeyRef.current[key];
-          const wNative = getWNativeAddress(v.chainId);
-          const ttl = wNative && toTokenKey(v.chainId, wNative) === key ? 60_000 : 10_000;
-          if (cached && now - cached.ts < ttl) return false;
-          return true;
-        })
-        .map(([, v]) => v);
-
-      if (!tasks.length) return;
-
-      await runWithLimit(tasks, 5, async (t) => {
-        if (cancelled) return;
-        const key = toTokenKey(t.chainId, t.tokenAddress);
-        if (priceFetchRef.current.inFlight.has(key)) return;
-        priceFetchRef.current.inFlight.add(key);
-        try {
-          const v = await TokenAPI.getTokenPriceUsd(siteInfo.platform, t.chainId, t.tokenAddress, t.tokenInfo);
-          if (cancelled) return;
-          setPriceByTokenKey((prev) => ({ ...prev, [key]: { priceUsd: v, ts: Date.now() } }));
-        } finally {
-          priceFetchRef.current.inFlight.delete(key);
-        }
-      });
-    };
-
-    if (!didImmediateListPriceFetchRef.current) {
-      didImmediateListPriceFetchRef.current = true;
-      if ((scanStatus?.openOrders ?? 0) <= 0) fetchOnce().catch(() => { });
-    }
-    if ((scanStatus?.openOrders ?? 0) > 0) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    const timer = setInterval(() => fetchOnce().catch(() => { }), 30000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [visible, filteredOrders, siteInfo.platform, scanStatus?.openOrders]);
-
   if (!visible) {
     return null;
   }
@@ -822,9 +733,9 @@ export function LimitTradePanel({
   };
   const getCurrentDisplayForOrder = (o: LimitOrder) => {
     const key = toTokenKey(o.chainId, o.tokenAddress);
-    const cached = priceByTokenKey[key];
-    const loading = priceFetchRef.current.inFlight.has(key);
-    const currentPriceUsd = cached?.priceUsd ?? null;
+    const scannerCached = scanPriceByTokenKey[key];
+    const loading = !scannerCached && !!scanStatus?.running;
+    const currentPriceUsd = scannerCached?.priceUsd ?? null;
     const text = formatCurrentValue(currentPriceUsd, loading);
     const colorClass = currentPriceColorClass(currentPriceUsd, o.triggerPriceUsd, loading);
     return { text, colorClass };
@@ -1654,6 +1565,7 @@ export function LimitTradePanel({
             walletNativeBalancesWei={walletTradeBaseBalancesWei}
             walletTokenBalancesWei={walletTokenBalancesWei}
             tokenDecimals={tokenDecimals}
+            nativeDecimals={tradeBaseTokenDecimals}
             multiWalletBuyMode={settings?.multiWalletBuyMode ?? 'uniform'}
             childWalletBuyAmountsNative={settings?.childWalletBuyAmountsBnb ?? {}}
             onChangeMultiWalletBuyMode={() => {}}

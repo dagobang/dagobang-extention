@@ -1,8 +1,8 @@
 import { parseAbi } from 'viem';
-import { WalletService } from '@/services/wallet';
+import { ChainId } from '@/constants/chains/chainId';
 import { SettingsService } from '@/services/settings';
-import { TradeService } from '@/services/trade';
 import { RpcService } from '@/services/rpc';
+import { SolanaRpcService } from '@/services/chain/solana/rpc';
 import { getLimitOrders } from '@/services/storage';
 import {
   buildStrategyRollingFloorOrderInputs,
@@ -15,6 +15,8 @@ import { applyTrailingStopUpdate, cancelAllSellLimitOrdersForToken, createLimitO
 import { extractRevertReasonFromError, tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import type { LimitOrder } from '@/types/extention';
+import { getTradeExecutor, getWalletAdapter } from '@/services/chain/registry';
+import type { ChainAddress } from '@/types/chain/address';
 
 const erc20AbiLite = parseAbi([
   'function balanceOf(address owner) view returns (uint256)',
@@ -22,9 +24,9 @@ const erc20AbiLite = parseAbi([
 
 export const tickLimitOrdersForToken = async (input: {
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: ChainAddress;
   priceUsd: number;
-  executeLimitOrder: (order: LimitOrder, ctx?: { priceUsd?: number }) => Promise<`0x${string}`>;
+  executeLimitOrder: (order: LimitOrder, ctx?: { priceUsd?: number }) => Promise<string>;
 }) => {
   const { chainId, tokenAddress, priceUsd, executeLimitOrder } = input;
   if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
@@ -100,14 +102,15 @@ export const tickLimitOrdersForToken = async (input: {
 
 export const createLimitOrderExecutor = (deps: {
   onOrdersChanged: () => void;
-  onOrderTxSubmitted?: (input: { order: LimitOrder; txHash: `0x${string}`; submitElapsedMs?: number }) => void;
+  resolveLatestTokenInfo?: (input: { chainId: number; tokenAddress: string; tokenInfo?: any | null }) => Promise<any | null>;
+  onOrderTxSubmitted?: (input: { order: LimitOrder; txHash: string; submitElapsedMs?: number }) => void;
   onOrderSubmitted?: (input: {
     order: LimitOrder;
-    txHash: `0x${string}`;
+    txHash: string;
     submitElapsedMs?: number;
     receiptElapsedMs?: number;
     totalElapsedMs?: number;
-    broadcastVia?: 'bloxroute' | 'rpc';
+    broadcastVia?: string;
     broadcastUrl?: string;
     isBundle?: boolean;
   }) => void;
@@ -145,11 +148,41 @@ export const createLimitOrderExecutor = (deps: {
     return entry;
   };
 
+  const resolveSellBalance = async (order: LimitOrder): Promise<bigint> => {
+    if (order.chainId === ChainId.SOL) {
+      const signer = await getWalletAdapter(order.chainId).getSigner(order.fromAddress);
+      const ownerAddress = signer?.publicKey?.toBase58?.();
+      if (!ownerAddress) throw new Error('Solana signer unavailable');
+      return await SolanaRpcService.getSplTokenBalance(ownerAddress, order.tokenAddress);
+    }
+
+    const account = await getWalletAdapter(order.chainId).getSigner(order.fromAddress);
+    const client = await RpcService.getClient(order.chainId);
+    return await client.readContract({
+      address: order.tokenAddress as `0x${string}`,
+      abi: erc20AbiLite,
+      functionName: 'balanceOf',
+      args: [account.address],
+    });
+  };
+
   const executeLimitOrder = async (order: LimitOrder, ctx?: { priceUsd?: number }) => {
+    // #region debug-point C:executor-entry
+    fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"executor.ts:executeLimitOrder:entry",msg:"[DEBUG] limit executor entered",data:{orderId:order.id,chainId:order.chainId,tokenAddress:order.tokenAddress,fromAddress:order.fromAddress??null,side:order.side,orderType:order.orderType,triggerPriceUsd:order.triggerPriceUsd,ctxPriceUsd:ctx?.priceUsd??null},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     const resolveLatestTokenInfo = async () => {
-      const refreshed =
-        (await fetchTokenInfoFresh(order.chainId, order.tokenAddress)) ??
-        (await buildGenericTokenInfo(order.chainId, order.tokenAddress));
+      const refreshed = order.chainId === ChainId.SOL
+        ? (deps.resolveLatestTokenInfo
+          ? await deps.resolveLatestTokenInfo({
+            chainId: order.chainId,
+            tokenAddress: order.tokenAddress,
+            tokenInfo: order.tokenInfo ?? null,
+          })
+          : null)
+        : (
+          (await fetchTokenInfoFresh(order.chainId, order.tokenAddress as `0x${string}`)) ??
+          (await buildGenericTokenInfo(order.chainId, order.tokenAddress as `0x${string}`))
+        );
       if (!refreshed) return order.tokenInfo ?? null;
       if (!order.tokenInfo || JSON.stringify(order.tokenInfo) !== JSON.stringify(refreshed)) {
         try {
@@ -164,7 +197,8 @@ export const createLimitOrderExecutor = (deps: {
     if (order.side === 'buy') {
       const buyAmountWei = order.buyNativeAmountWei || order.buyBnbAmountWei;
       if (!buyAmountWei) throw new Error('Buy amount required');
-      const res = await TradeService.buyWithReceiptAndNonceRecovery({
+      const trade = getTradeExecutor(order.chainId);
+      const res = await trade.buyWithReceiptAndNonceRecovery({
         chainId: order.chainId,
         tokenAddress: order.tokenAddress,
         nativeAmountWei: buyAmountWei,
@@ -178,7 +212,7 @@ export const createLimitOrderExecutor = (deps: {
           deps.onOrderTxSubmitted?.({ order, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs });
         },
       });
-      const txHash = res.txHash as `0x${string}`;
+      const txHash = res.txHash;
       await patchLimitOrder(order.id, { txHash });
       deps.onOrderSubmitted?.({
         order,
@@ -261,14 +295,10 @@ export const createLimitOrderExecutor = (deps: {
       return txHash;
     }
 
-    const account = await WalletService.getSigner(order.fromAddress);
-    const client = await RpcService.getClient(order.chainId);
-    const balance = await client.readContract({
-      address: order.tokenAddress,
-      abi: erc20AbiLite,
-      functionName: 'balanceOf',
-      args: [account.address],
-    });
+    const balance = await resolveSellBalance(order);
+    // #region debug-point C:sell-balance
+    fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"executor.ts:executeLimitOrder:sellBalance",msg:"[DEBUG] limit executor resolved sell balance",data:{orderId:order.id,chainId:order.chainId,tokenAddress:order.tokenAddress,balance:balance.toString(),sellPercentBps:order.sellPercentBps??null,sellTokenAmountWei:order.sellTokenAmountWei??null},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     const fixedAmount = (() => {
       try {
         return order.sellTokenAmountWei ? BigInt(order.sellTokenAmountWei) : 0n;
@@ -289,6 +319,9 @@ export const createLimitOrderExecutor = (deps: {
       : 0n;
     const rawAmountIn = fixedAmount > 0n ? fixedAmount : amountByPercent;
     const amountIn = rawAmountIn > balance ? balance : rawAmountIn;
+    // #region debug-point C:sell-amount
+    fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"executor.ts:executeLimitOrder:sellAmount",msg:"[DEBUG] limit executor computed sell amount",data:{orderId:order.id,chainId:order.chainId,tokenAddress:order.tokenAddress,fixedAmount:fixedAmount.toString(),amountByPercent:amountByPercent.toString(),rawAmountIn:rawAmountIn.toString(),amountIn:amountIn.toString()},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     if (amountIn <= 0n) throw new Error('No balance');
 
     const sellInput = {
@@ -301,10 +334,13 @@ export const createLimitOrderExecutor = (deps: {
       sellPercentBps: Number.isFinite(percentBps) && percentBps > 0 && percentBps <= 10000 ? percentBps : undefined,
     } as const;
 
-    const firstSell = await TradeService.sellWithReceiptAndAutoRecovery(sellInput, {
+    const firstSell = await getTradeExecutor(order.chainId).sellWithReceiptAndAutoRecovery(sellInput, {
       maxRetry: 1,
       timeoutMs: 20_000,
       onSubmitted: (ctx) => {
+        // #region debug-point C:sell-submitted
+        fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"executor.ts:executeLimitOrder:sellSubmitted",msg:"[DEBUG] limit executor sell submitted",data:{orderId:order.id,chainId:order.chainId,tokenAddress:order.tokenAddress,txHash:ctx.txHash,submitElapsedMs:ctx.submitElapsedMs??null},ts:Date.now()})}).catch(()=>{});
+        // #endregion
         deps.onOrderTxSubmitted?.({ order, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs });
       },
     });

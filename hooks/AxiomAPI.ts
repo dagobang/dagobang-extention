@@ -79,13 +79,14 @@ export class AxiomAPI {
    * Get common request headers
    */
   private static getHeaders(): HeadersInit {
+    const cookieValue = typeof document !== 'undefined' ? document.cookie : '';
     return {
       'accept': 'application/json, text/plain, */*',
       'accept-encoding': 'gzip, deflate, br, zstd',
       'accept-language': 'zh-CN,zh;q=0.9,ru;q=0.8',
 
       'content-type': 'application/json',
-      'cookie': document.cookie,
+      'cookie': cookieValue,
       'origin': 'https://axiom.trade',
       'referer': 'https://axiom.trade/',
       'sec-ch-ua': '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',

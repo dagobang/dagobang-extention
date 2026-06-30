@@ -44,6 +44,7 @@ function includesAny(haystack: string, needles: readonly string[]): boolean {
 }
 
 export function collectErrorText(e: any, lowercase = true): string {
+  const seen = new Set<any>();
   const texts: string[] = [];
   const push = (v: any) => {
     if (typeof v !== 'string') return;
@@ -51,14 +52,23 @@ export function collectErrorText(e: any, lowercase = true): string {
     if (!t) return;
     texts.push(lowercase ? t.toLowerCase() : t);
   };
-  push(e?.shortMessage);
-  push(e?.message);
-  push(e?.details);
-  push(e?.cause?.message);
-  push(e?.cause?.details);
-  if (Array.isArray(e?.metaMessages)) {
-    for (const x of e.metaMessages) push(x);
-  }
+  const visit = (err: any, depth: number) => {
+    if (!err || depth > 4) return;
+    if (seen.has(err)) return;
+    seen.add(err);
+    push(err?.shortMessage);
+    push(err?.message);
+    push(err?.details);
+    push(err?.data);
+    if (Array.isArray(err?.metaMessages)) {
+      for (const x of err.metaMessages) push(x);
+    }
+    if (Array.isArray(err?.errors)) {
+      for (const item of err.errors) visit(item, depth + 1);
+    }
+    if (err?.cause) visit(err.cause, depth + 1);
+  };
+  visit(e, 0);
   return texts.join(' | ');
 }
 

@@ -144,6 +144,50 @@ const HYPER_MAINNET: ChainSettings = {
   bloxrouteSellEnabled: false,
 };
 
+const SOL_MAINNET: ChainSettings = {
+  rpcUrls: [
+    'https://api.mainnet-beta.solana.com',
+  ],
+  protectedRpcUrls: [],
+  protectedRpcUrlsBuy: [],
+  protectedRpcUrlsSell: [],
+  submitChannel: 'protectRpcs',
+  tradeBaseToken: 'BNB',
+  antiMev: false,
+  gasPreset: 'standard',
+  buyGasPreset: 'standard',
+  sellGasPreset: 'standard',
+  executionMode: 'default',
+  gasPriceMode: 'dynamic',
+  slippageBps: 4000,
+  deadlineSeconds: 60,
+  buyPresets: ['0.1', '0.5', '1', '2'],
+  sellPresets: ['10', '20', '50', '100'],
+  buyGasGwei: ETH_GAS_GWEI,
+  sellGasGwei: ETH_GAS_GWEI,
+  approveGasGwei: '0',
+  buyPriorityFeePreset: 'standard',
+  sellPriorityFeePreset: 'standard',
+  buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  sellPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  quickBuyAdvancedEnabled: false,
+  quickBuyPresetOverrides: DEFAULT_QUICK_BUY_PRESET_OVERRIDES,
+  bloxrouteBuyEnabled: false,
+  bloxrouteSellEnabled: false,
+  solanaSwqos: {
+    enabled: false,
+    strategy: 'concurrent',
+    timeoutMs: 10_000,
+    region: 'default',
+    providers: [
+      { type: 'jito', enabled: false, weight: 70 },
+      { type: 'blox', enabled: false, weight: 50 },
+      { type: 'nextblock', enabled: false, weight: 30 },
+      { type: 'temporal', enabled: false, weight: 20 },
+    ],
+  },
+};
+
 const DEFAULT_AUTOTRADE: AutoTradeConfig = {
   takeProfitMultiple: '2',
   stopLossMultiple: '0.5',
@@ -449,6 +493,7 @@ export function defaultSettings(): Settings {
       [ChainId.ETH]: ETH_MAINNET,
       [ChainId.BNB]: BSC_MAINNET,
       [ChainId.HYPER]: HYPER_MAINNET,
+      [ChainId.SOL]: SOL_MAINNET,
     },
     autoLockSeconds: 30 * 60, // 30 minutes
     selectedTradeWallets: [],

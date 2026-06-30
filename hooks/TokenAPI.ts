@@ -1,17 +1,11 @@
 import GmgnAPI from "./GmgnAPI";
-import AxiomAPI from "./AxiomAPI";
 import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "@/types/token";
 import { call } from "@/utils/messaging";
 import { parseEther, zeroAddress } from "viem";
 import { chainNames, getChainIdByName } from "@/constants/chains";
+import { ChainId } from "@/constants/chains/chainId";
 import { MEME_SUFFIXS } from "@/constants/meme";
 import { getSupportedLaunchpads, normalizeLaunchpadPlatform } from "@/constants/launchpad";
-import FlapAPI from "./FlapAPI";
-
-const PLATFORM_API: Record<string, { getTokenInfo: (chain: string, address: string) => Promise<TokenInfo | null> }> = {
-    "gmgn": GmgnAPI,
-    "axiom": AxiomAPI,
-};
 
 const FOUR_MEME_LIKE_LAUNCHPADS = new Set([
     'fourmeme',
@@ -37,7 +31,10 @@ export class TokenAPI {
         return (window as any).__DAGOBANG_SETTINGS__?.ui?.consoleLogsEnabled === true;
     }
     private static toBalanceKey(platform: string, chain: string, address: string, tokenAddress: string) {
-        return `${platform}:${chain}:${address.toLowerCase()}:${tokenAddress.toLowerCase()}`;
+        const chainId = getChainIdByName(chain);
+        const addressKey = chainId === ChainId.SOL ? address : address.toLowerCase();
+        const tokenKey = chainId === ChainId.SOL ? tokenAddress : tokenAddress.toLowerCase();
+        return `${platform}:${chain}:${addressKey}:${tokenKey}`;
     }
     private static toTokenInfoKey(platform: string, chain: string, tokenAddress: string) {
         return `${platform}:${chain}:${tokenAddress.toLowerCase()}`;
@@ -110,13 +107,22 @@ export class TokenAPI {
                 } as any) as { tokenInfo: TokenInfo | null };
                 nextValue = res.tokenInfo;
             } else {
-                const api = PLATFORM_API[platform];
                 let address = tokenAddress;
-                if (api) {
+                if (platform === 'gmgn' || platform === 'axiom') {
                     try {
-                        const tokenInfo = await api.getTokenInfo(chain, address);
+                        const tokenInfo = platform === 'gmgn'
+                            ? await GmgnAPI.getTokenInfo(chain, address)
+                            : (await call({
+                                type: 'thirdParty:getTokenInfo',
+                                platform,
+                                chain,
+                                address,
+                            } as const)).tokenInfo;
                         if (tokenInfo) {
                             const chainId = getChainIdByName(chain);
+                            if (platform === 'gmgn' && chainId === ChainId.SOL) {
+                                nextValue = tokenInfo;
+                            } else {
                             const normalizedLaunchpad = normalizeLaunchpadPlatform(tokenInfo.launchpad_platform) ?? '';
                             const supportedLaunchpads = Number.isFinite(chainId)
                                 ? new Set(getSupportedLaunchpads(chainId))
@@ -139,6 +145,7 @@ export class TokenAPI {
                                 nextValue = tokenInfo;
                             } else {
                                 nextValue = null;
+                            }
                             }
                         }
                     } catch {
@@ -194,17 +201,21 @@ export class TokenAPI {
                     const bal = await call({ type: 'chain:getBalance', address: address as `0x${string}`, chainId });
                     return bal?.balanceWei ?? null;
                 }
-                const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
+                const tokenAddressNormalized = chainId === ChainId.SOL
+                    ? tokenAddress
+                    : tokenAddress.toLowerCase();
                 const bal = await call({
                     type: 'token:getBalance',
                     tokenAddress: tokenAddressNormalized,
-                    address: address as `0x${string}`,
+                    address,
                     chainId,
                 });
                 return bal?.balanceWei ?? null;
             };
 
-            if (platform !== 'gmgn') {
+            const chainId = getChainIdByName(chain);
+
+            if (platform !== 'gmgn' || chainId === ChainId.SOL) {
                 const onchainWei = await readOnchainWei();
                 this.balanceCache.set(key, { ts: Date.now(), value: onchainWei });
                 return onchainWei;
@@ -239,8 +250,7 @@ export class TokenAPI {
     }
 
     static async getTokenHolding(platform: string, chain: string, walletAddress: string, tokenAddress: string, opts?: { cacheTtlMs?: number }): Promise<string | null> {
-        const tokenAddressNormalized = tokenAddress.toLowerCase() as `0x${string}`;
-        return await this.getBalance(platform, chain, walletAddress, tokenAddressNormalized, opts);
+        return await this.getBalance(platform, chain, walletAddress, tokenAddress, opts);
     }
 
     static async getTokenInfoByFourmemeContract(chain: string, address: string): Promise<FourmemeTokenInfo | null> {
@@ -287,7 +297,14 @@ export class TokenAPI {
     static async getTokenInfoByFlap(platform: string, chain: string, address: string): Promise<TokenInfo | null> {
         const [contractInfo, httpInfo] = await Promise.all([
             this.getTokenInfoByFlapContract(chain, address),
-            platform === 'flap' ? FlapAPI.getTokenInfo(chain, address) : null,
+            platform === 'flap'
+                ? call({
+                    type: 'thirdParty:getTokenInfo',
+                    platform: 'flap',
+                    chain,
+                    address,
+                } as const).then((res) => res.tokenInfo)
+                : null,
         ]);
         if (contractInfo && httpInfo) {
             httpInfo.quote_token_address = contractInfo.quoteTokenAddress;
@@ -334,15 +351,37 @@ export class TokenAPI {
     }
 
     static async getTokenPriceUsd(platform: string, chainId: number, tokenAddress: string, tokenInfo?: TokenInfo | null): Promise<number | null> {
+        const infoPrice = Number(
+            (tokenInfo as any)?.priceUsd
+            ?? tokenInfo?.tokenPrice?.price
+            ?? (tokenInfo as any)?.price
+            ?? 0
+        );
+
+        if (platform === 'gmgn' && chainId === ChainId.SOL && Number.isFinite(infoPrice) && infoPrice > 0) {
+            return infoPrice;
+        }
 
         try {
             // Try to get price from GMGN
-            const tokenStat = platform === 'gmgn' ? await GmgnAPI.getTokenPrice(chainNames[chainId], tokenAddress) : null;
-            if (tokenStat && tokenStat.price) {
-                return Number(tokenStat.price);
+            const res = platform === 'gmgn'
+                ? await GmgnAPI.getTokenPrice(chainNames[chainId], tokenAddress)
+                : null;
+            if (res?.price) {
+                const gmgnPrice = Number(res.price);
+                if (Number.isFinite(gmgnPrice) && gmgnPrice > 0) {
+                    if (platform === 'gmgn' && chainId === ChainId.SOL) {
+                        return gmgnPrice;
+                    }
+                    return gmgnPrice;
+                }
             }
         } catch {
 
+        }
+
+        if (Number.isFinite(infoPrice) && infoPrice > 0) {
+            return infoPrice;
         }
 
         try {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatEther } from 'viem';
+import { ChainId } from '@/constants/chains/chainId';
 import type { BgGetStateResponse } from '@/types/extention';
 import { defaultSettings } from '@/utils/defaults';
 import { call } from '@/utils/messaging';
@@ -32,6 +33,17 @@ function App() {
   // Data
   const [balances, setBalances] = useState<Record<string, string>>({});
   const [backupMnemonic, setBackupMnemonic] = useState<string | null>(null);
+  const formatNativeBalance = (balanceWei: string, chainId: number) => {
+    try {
+      const raw = BigInt(balanceWei || '0');
+      if (chainId === ChainId.SOL) {
+        return (Number(raw) / 1e9).toString();
+      }
+      return formatEther(raw);
+    } catch {
+      return '0';
+    }
+  };
 
   const handleLocaleChange = (loc: Locale) => {
     setLocale(loc);
@@ -86,7 +98,7 @@ function App() {
           res.wallet.accounts.map(async (acc) => {
             try {
               const balRes = await call({ type: 'chain:getBalance', address: acc.address, chainId: res.settings.chainId });
-              newBalances[acc.address] = formatEther(BigInt(balRes.balanceWei));
+              newBalances[acc.address] = formatNativeBalance(balRes.balanceWei, res.settings.chainId);
             } catch (e) {
               console.error(`Failed to fetch balance for ${acc.address}`, e);
               newBalances[acc.address] = '0';
@@ -174,6 +186,7 @@ function App() {
         onError={handleChildError}
         locale={locale}
         onLocaleChange={handleLocaleChange}
+        chainId={state?.settings.chainId ?? defaultSettings().chainId}
       />
     );
   } else if (view === 'unlock') {
@@ -183,6 +196,7 @@ function App() {
         onError={handleChildError}
         locale={locale}
         onLocaleChange={handleLocaleChange}
+        chainId={state?.settings.chainId ?? defaultSettings().chainId}
       />
     );
   } else if (view === 'settings') {

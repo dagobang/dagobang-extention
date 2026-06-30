@@ -1,7 +1,6 @@
+import { Buffer } from 'buffer';
 import { browser } from 'wxt/browser';
-import { WalletService } from '@/services/wallet';
 import { SettingsService } from '@/services/settings';
-import { TradeService } from '@/services/trade';
 import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
 import {
@@ -10,7 +9,7 @@ import {
   createLimitOrder,
   listLimitOrders
 } from '@/services/limitOrders/store';
-import { debugLogTxError, extractRevertReasonFromError, serializeTxError, tryGetReceiptRevertReason } from '@/services/tx/errors';
+import { debugLogTxError, extractDisplayErrorMessageFromError, extractRevertReasonFromError, serializeTxError, tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { createLimitOrderScanner } from './background/limitOrderScanner';
 import { createXSniperTrade } from '@/services/xSniper/xSniperTrade';
 import { createTokenSniperTrade } from '@/services/tokenSniper/tokenSniperTrade';
@@ -22,8 +21,9 @@ import { TokenFlapService } from '@/services/token/flap';
 import { TokenAltfunService } from '@/services/token/altfun';
 import FourmemeAPI from '@/services/api/fourmeme';
 import { chainNames } from '@/constants/chains';
+import { ChainId } from '@/constants/chains/chainId';
 import BloxRouterAPI from '@/services/api/bloxRouter';
-import { isAddress, parseEther } from 'viem';
+import { isAddress, parseEther, parseUnits } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { getGasPriceWei, sendTransaction } from '@/services/trade/tradeTx';
 import { classifyBroadcastError, collectErrorText } from '@/utils/txErrorClassify';
@@ -33,9 +33,30 @@ import { createTelegramController } from '@/services/telegram/controller';
 import { getChainRuntime } from '@/constants/chains';
 import { RpcReadBalancer } from '@/services/rpcReadBalancer';
 import { shouldUseMergedTokenValue } from '@/utils/gmgnWs';
+import { getTradeExecutor, getWalletAdapter } from '@/services/chain/registry';
+import type { BuyRetryContext, BuySubmittedContext, SellRetryContext, SellSubmittedContext } from '@/services/chain/types';
+import { SolanaRpcService } from '@/services/chain/solana/rpc';
+import type { ChainTxId } from '@/types/chain';
+import AxiomAPI from '@/hooks/AxiomAPI';
+import FlapAPI from '@/hooks/FlapAPI';
+import { resolveMigratedSolanaTokenInfo, shouldTryRefreshMigratedSolanaTokenInfo } from '@/services/limitOrders/solanaTokenInfoRefresh';
+
+if (!(globalThis as any).Buffer) {
+  (globalThis as any).Buffer = Buffer;
+}
 
 export default defineBackground(() => {
   console.log('Dagobang Background Service Started');
+  const getTrade = (chainId: number) => getTradeExecutor(chainId);
+  const getWallet = (chainId?: number) => getWalletAdapter(chainId);
+  const resolveWallet = async (msg?: { chainId?: number; input?: { chainId?: number } }) => {
+    const chainId = typeof msg?.chainId === 'number'
+      ? msg.chainId
+      : typeof msg?.input?.chainId === 'number'
+        ? msg.input.chainId
+        : (await SettingsService.get()).chainId;
+    return getWallet(chainId);
+  };
   const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
   const EIP7702_DELEGATION_PREFIX = '0xef0100';
   const STATE_CHANGE_BROADCAST_DEBOUNCE_MS = 250;
@@ -676,6 +697,29 @@ export default defineBackground(() => {
     })();
   };
 
+  const resolveLatestLimitOrderTokenInfo = async (input: {
+    chainId: number;
+    tokenAddress: string;
+    tokenInfo?: any | null;
+  }) => {
+    const currentTokenInfo = input.tokenInfo ?? null;
+    if (input.chainId !== ChainId.SOL) return currentTokenInfo;
+    if (!shouldTryRefreshMigratedSolanaTokenInfo({
+      tokenAddress: input.tokenAddress,
+      tokenInfo: currentTokenInfo,
+    })) {
+      return currentTokenInfo;
+    }
+    await ensureGmgnTokenSnapshotStoreLoaded();
+    const snapshot = gmgnTokenSnapshotStore.get(normalizeTokenSnapshotKey(input.tokenAddress));
+    const refreshed = resolveMigratedSolanaTokenInfo({
+      tokenAddress: input.tokenAddress,
+      tokenInfo: currentTokenInfo,
+      snapshot,
+    }) ?? currentTokenInfo;
+    return refreshed;
+  };
+
   const broadcastTradeSuccess = async (payload: any, tabId?: number | null) => {
     if (typeof tabId === 'number' && tabId > 0) {
       browser.tabs.sendMessage(tabId, payload).catch(() => { });
@@ -748,6 +792,7 @@ export default defineBackground(() => {
       broadcastStateChange();
       limitOrderScanner?.scheduleFromStorage().catch(() => { });
     },
+    resolveLatestTokenInfo: resolveLatestLimitOrderTokenInfo,
     onOrderTxSubmitted: ({ order, txHash, submitElapsedMs }) => {
       broadcastTradeSuccess({
         type: 'bg:tradeSubmitted',
@@ -797,6 +842,7 @@ export default defineBackground(() => {
   });
   limitOrderScanner = createLimitOrderScanner({
     executeLimitOrder: limitOrderExecutor.executeLimitOrder,
+    resolveLatestTokenInfo: resolveLatestLimitOrderTokenInfo,
     onStateChanged: broadcastStateChange,
     onOrderFailed: ({ order, error }) => {
       void (async () => {
@@ -826,7 +872,7 @@ export default defineBackground(() => {
   });
   const TokenSniperTrade = createTokenSniperTrade({ onStateChanged: broadcastStateChange });
   const NewCoinSniperTrade = createNewCoinSniperTrade({ onStateChanged: broadcastStateChange });
-  const buyInputByTxHash = new Map<`0x${string}`, { input: TxBuyInput; receiptRetried: boolean }>();
+  const buyInputByTxHash = new Map<ChainTxId, { input: TxBuyInput; receiptRetried: boolean }>();
 
   browser.runtime.onInstalled.addListener(() => {
     console.log('Extension installed');
@@ -865,8 +911,8 @@ export default defineBackground(() => {
             }
 
           case 'bg:getState': {
-            const status = await WalletService.getStatus();
             const settings = await SettingsService.get();
+            const status = await getWallet(settings.chainId).getStatus();
             const ttl = status.expiresAt ? Math.floor((status.expiresAt - Date.now()) / 1000) : null;
             return {
               wallet: {
@@ -931,18 +977,20 @@ export default defineBackground(() => {
             return { ok: true };
           }
 
-          case 'wallet:create':
-            const resCreate = await WalletService.create(msg.input.password);
+          case 'wallet:create': {
+            const resCreate = await (await resolveWallet(msg)).create(msg.input.password);
             broadcastStateChange();
             return { ok: true, ...resCreate };
+          }
 
-          case 'wallet:import':
-            const resImport = await WalletService.import(msg.input.password, msg.input);
+          case 'wallet:import': {
+            const resImport = await (await resolveWallet(msg)).importWallet(msg.input.password, msg.input);
             broadcastStateChange();
             return { ok: true, ...resImport };
+          }
 
-          case 'wallet:unlock':
-            const resUnlock = await WalletService.unlock(msg.input.password);
+          case 'wallet:unlock': {
+            const resUnlock = await (await resolveWallet(msg)).unlock(msg.input.password);
             try {
               const settings = await SettingsService.get();
               RpcReadBalancer.requestCapacityProbe(settings.chainId);
@@ -950,40 +998,48 @@ export default defineBackground(() => {
             }
             broadcastStateChange();
             return { ok: true, ...resUnlock };
+          }
 
           case 'wallet:lock':
-            await WalletService.lock();
+            await (await resolveWallet(msg)).lock();
             broadcastStateChange();
             return { ok: true };
 
           case 'wallet:wipe':
-            await WalletService.wipe();
+            await (await resolveWallet(msg)).wipe();
             broadcastStateChange();
             return { ok: true };
 
-          case 'wallet:addAccount':
-            const resAdd = await WalletService.addAccount(msg.name, msg.password, msg.privateKey);
+          case 'wallet:addAccount': {
+            const resAdd = await (await resolveWallet(msg)).addAccount(msg.name, msg.password, msg.privateKey);
             broadcastStateChange();
             return { ok: true, ...resAdd };
+          }
+
+          case 'wallet:removeAccount': {
+            const resRemove = await (await resolveWallet(msg)).removeAccount(msg.password, msg.address);
+            broadcastStateChange();
+            return { ok: true, ...resRemove };
+          }
 
           case 'wallet:switchAccount':
-            await WalletService.switchAccount(msg.address);
+            await (await resolveWallet(msg)).switchAccount(msg.address);
             broadcastStateChange();
             return { ok: true };
 
           case 'wallet:updatePassword':
-            await WalletService.updatePassword(msg.oldPassword, msg.newPassword);
+            await (await resolveWallet(msg)).updatePassword(msg.oldPassword, msg.newPassword);
             broadcastStateChange();
             return { ok: true };
 
           case 'wallet:exportPrivateKey':
-            return { ok: true, privateKey: await WalletService.exportPrivateKey(msg.password) };
+            return { ok: true, privateKey: await (await resolveWallet(msg)).exportPrivateKey(msg.password) };
 
           case 'wallet:exportAccountPrivateKey':
-            return { ok: true, privateKey: await WalletService.exportAccountPrivateKey(msg.password, msg.address) };
+            return { ok: true, privateKey: await (await resolveWallet(msg)).exportAccountPrivateKey(msg.password, msg.address) };
 
           case 'wallet:exportMnemonic':
-            return { ok: true, mnemonic: await WalletService.exportMnemonic(msg.password) };
+            return { ok: true, mnemonic: await (await resolveWallet(msg)).exportMnemonic(msg.password) };
 
           case 'wallet:getEip7702Status': {
             const client = await RpcService.getClient(msg.chainId);
@@ -998,7 +1054,7 @@ export default defineBackground(() => {
             const status = parseEip7702Delegation(code);
             if (!status.delegated) throw new Error('Address is not in EIP-7702 delegated state');
 
-            const account = await WalletService.getSigner(msg.address);
+            const account = await getWallet(chainId).getSigner(msg.address);
             const txNonce = await client.getTransactionCount({ address: account.address, blockTag: 'pending' });
             const authNonce = txNonce + 1;
             const signedAuthorization = await account.signAuthorization({
@@ -1096,7 +1152,7 @@ export default defineBackground(() => {
             const fromAddress = (msg.input.fromAddress && isAddress(msg.input.fromAddress))
               ? (msg.input.fromAddress as `0x${string}`)
               : undefined;
-            const account = await WalletService.getSigner(fromAddress);
+            const account = await getWallet(settings.chainId).getSigner(fromAddress);
             const address = account.address;
             const networkCode = 'BSC';
 
@@ -1169,7 +1225,7 @@ export default defineBackground(() => {
               const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
               const buyOnce = async (wallet: { address: `0x${string}`; amountBnb: string }) => {
                 const amountWei = parseEther(wallet.amountBnb).toString();
-                const rsp = await TradeService.buyWithReceiptAndNonceRecovery(
+                const rsp = await getTrade(settings.chainId).buyWithReceiptAndNonceRecovery(
                   {
                     chainId: settings.chainId,
                     tokenAddress: onChainResult.tokenAddress!,
@@ -1355,7 +1411,38 @@ export default defineBackground(() => {
             return { ok: true, ...status };
           }
 
+          case 'limitOrder:trackPrice': {
+            await limitOrderScanner?.setTrackedToken({
+              chainId: msg.chainId,
+              tokenAddress: msg.tokenAddress,
+              tokenInfo: msg.tokenInfo ?? null,
+              active: msg.active,
+            });
+            if (msg.active) {
+              await limitOrderScanner?.refreshNow();
+            }
+            broadcastStateChange();
+            const status = await (limitOrderScanner?.getStatus(msg.chainId) ?? Promise.resolve({
+              intervalMs: 3000,
+              running: false,
+              lastScanAtMs: 0,
+              lastScanOk: true,
+              lastScanError: null,
+              totalOrders: 0,
+              openOrders: 0,
+              pricesByTokenKey: {},
+            } as LimitOrderScanStatus));
+            const key = `${msg.chainId}:${String(msg.tokenAddress).toLowerCase()}`;
+            return { ok: true, priceUsd: status.pricesByTokenKey?.[key]?.priceUsd ?? null };
+          }
+
           case 'limitOrder:tick': {
+            limitOrderScanner.observeExternalPrice({
+              chainId: msg.chainId,
+              tokenAddress: msg.tokenAddress,
+              priceUsd: msg.priceUsd,
+              ts: Date.now(),
+            });
             const res = await tickLimitOrdersForToken({
               chainId: msg.chainId,
               tokenAddress: msg.tokenAddress,
@@ -1370,14 +1457,14 @@ export default defineBackground(() => {
 
           case 'trade:prewarmTurbo': {
             try {
-              await TradeService.prewarmTurbo(msg.input);
+              await getTrade(msg.input.chainId).prewarmTurbo(msg.input);
             } catch { }
             return { ok: true };
           }
 
           case 'trade:refreshNonce': {
             try {
-              await TradeService.refreshNonce(msg.input);
+              await getTrade(msg.input.chainId).refreshNonce(msg.input);
             } catch { }
             return { ok: true };
           }
@@ -1387,6 +1474,74 @@ export default defineBackground(() => {
               await RpcService.prewarm(msg.input);
             } catch { }
             return { ok: true };
+          }
+
+          case 'rpc:measureLatencies': {
+            const urls = Array.isArray(msg.urls)
+              ? Array.from(new Set(msg.urls.map((item) => String(item ?? '').trim()).filter(Boolean)))
+              : [];
+            const classifyMeasureError = (error: unknown) => {
+              const message = String((error as any)?.message || error || '').trim();
+              const lower = message.toLowerCase();
+              if (
+                lower.includes('aborterror')
+                || lower.includes('timeout')
+                || lower.includes('timed out')
+                || lower.includes('signal is aborted')
+              ) {
+                return { reason: 'timeout' as const, error: message || 'timeout' };
+              }
+              if (lower.includes('http 429') || lower.includes('too many requests') || lower.includes('rate limit')) {
+                return { reason: 'rate_limit' as const, error: message || 'http 429' };
+              }
+              if (lower.includes('http 401') || lower.includes('unauthorized')) {
+                return { reason: 'unauthorized' as const, error: message || 'http 401' };
+              }
+              if (lower.includes('http 403') || lower.includes('forbidden')) {
+                return { reason: 'forbidden' as const, error: message || 'http 403' };
+              }
+              if (
+                lower.includes('failed to fetch')
+                || lower.includes('networkerror')
+                || lower.includes('fetch failed')
+                || lower.includes('load failed')
+              ) {
+                return { reason: 'network' as const, error: message || 'network error' };
+              }
+              if (lower.includes('http ') || lower.includes('json-rpc') || lower.includes('rpc')) {
+                return { reason: 'rpc_error' as const, error: message || 'rpc error' };
+              }
+              return { reason: 'unknown' as const, error: message || 'unknown error' };
+            };
+            const results = await Promise.all(
+              urls.map(async (url) => {
+                try {
+                  const latencyMs = await RpcService.measureLatency(url, msg.chainId);
+                  return { url, latencyMs, ok: true };
+                } catch (error) {
+                  const classified = classifyMeasureError(error);
+                  return {
+                    url,
+                    latencyMs: null,
+                    ok: false,
+                    reason: classified.reason,
+                    error: classified.error,
+                  };
+                }
+              }),
+            );
+            return { ok: true, results };
+          }
+
+          case 'thirdParty:getTokenInfo': {
+            const platform = String(msg.platform || '').trim().toLowerCase();
+            let tokenInfo = null;
+            if (platform === 'axiom') {
+              tokenInfo = await AxiomAPI.getTokenInfo(msg.chain, msg.address);
+            } else if (platform === 'flap') {
+              tokenInfo = await FlapAPI.getTokenInfo(msg.chain, msg.address);
+            }
+            return { ok: true, tokenInfo };
           }
 
           case 'rpc:readProfiles': {
@@ -1420,11 +1575,47 @@ export default defineBackground(() => {
             const chainId = msg.chainId;
             const chainSettings = settings.chains[chainId];
 
+            if (chainId === ChainId.SOL) {
+              if (!SolanaRpcService.isValidAddress(msg.fromAddress)) throw new Error('Invalid from address');
+              if (!SolanaRpcService.isValidAddress(msg.toAddress)) throw new Error('Invalid to address');
+              const signer = await getWallet(chainId).getSigner?.(msg.fromAddress);
+              if (!signer) throw new Error('Signer unavailable');
+              const signerAddress = signer.publicKey?.toBase58?.();
+              if (!signerAddress || signerAddress !== msg.fromAddress) {
+                throw new Error('Invalid from address');
+              }
+              const balanceLamports = BigInt(await TokenService.getNativeBalance(msg.fromAddress, chainId));
+              const useMax = !!msg.useMax;
+              const valueLamports = (() => {
+                if (useMax) {
+                  // Reserve a small buffer for fees.
+                  const reserve = 5000n;
+                  return balanceLamports > reserve ? (balanceLamports - reserve) : 0n;
+                }
+                const raw = typeof msg.amountBnb === 'string' ? msg.amountBnb.trim() : '';
+                if (!raw) return 0n;
+                if (!/^\d+(\.\d+)?$/.test(raw)) return 0n;
+                const [wholePart, fracPart = ''] = raw.split('.');
+                const whole = BigInt(wholePart || '0');
+                const frac = BigInt((fracPart + '000000000').slice(0, 9) || '0');
+                return whole * 1_000_000_000n + frac;
+              })();
+              if (valueLamports <= 0n) throw new Error('Invalid amount');
+              if (valueLamports >= balanceLamports) throw new Error('Insufficient balance');
+              const txHash = await SolanaRpcService.sendNativeTransfer({
+                signer,
+                toAddress: msg.toAddress,
+                lamports: valueLamports,
+              });
+              broadcastStateChange();
+              return { ok: true, txHash, broadcastVia: 'rpc' as const };
+            }
+
             if (!isAddress(msg.fromAddress)) throw new Error('Invalid from address');
             if (!isAddress(msg.toAddress)) throw new Error('Invalid to address');
 
-            const pk = await WalletService.exportAccountPrivateKey(msg.password, msg.fromAddress);
-            const account = privateKeyToAccount(pk);
+            const pk = await getWallet(chainId).exportAccountPrivateKey(msg.password, msg.fromAddress);
+            const account = privateKeyToAccount(pk as `0x${string}`);
             if (account.address.toLowerCase() !== msg.fromAddress.toLowerCase()) {
               throw new Error('Invalid from address');
             }
@@ -1467,6 +1658,45 @@ export default defineBackground(() => {
             return { ok: true, txHash, broadcastVia, broadcastUrl };
           }
 
+          case 'tx:transferToken': {
+            const chainId = msg.chainId;
+            if (chainId !== ChainId.SOL) {
+              throw new Error('Token transfer not implemented for this chain');
+            }
+            if (!SolanaRpcService.isValidAddress(msg.fromAddress)) throw new Error('Invalid from address');
+            if (!SolanaRpcService.isValidAddress(msg.toAddress)) throw new Error('Invalid to address');
+            if (!SolanaRpcService.isValidAddress(msg.tokenAddress)) throw new Error('Invalid token address');
+            const signer = await getWallet(chainId).getSigner?.(msg.fromAddress);
+            if (!signer) throw new Error('Signer unavailable');
+            const signerAddress = signer.publicKey?.toBase58?.();
+            if (!signerAddress || signerAddress !== msg.fromAddress) {
+              throw new Error('Invalid from address');
+            }
+            const meta = await TokenService.getMeta(msg.tokenAddress, chainId);
+            const balanceRaw = BigInt(await TokenService.getBalance(msg.tokenAddress, msg.fromAddress, chainId));
+            const amountRaw = (() => {
+              if (msg.useMax) return balanceRaw;
+              const raw = typeof msg.amount === 'string' ? msg.amount.trim() : '';
+              if (!raw) return 0n;
+              try {
+                return parseUnits(raw, meta.decimals);
+              } catch {
+                return 0n;
+              }
+            })();
+            if (amountRaw <= 0n) throw new Error('Invalid amount');
+            if (amountRaw > balanceRaw) throw new Error('Insufficient balance');
+            const txHash = await SolanaRpcService.sendSplTokenTransfer({
+              signer,
+              mintAddress: msg.tokenAddress,
+              toAddress: msg.toAddress,
+              amountRaw,
+              decimals: meta.decimals,
+            });
+            broadcastStateChange();
+            return { ok: true, txHash, broadcastVia: 'rpc' as const };
+          }
+
           case 'tx:buy': {
             RpcReadBalancer.noteTradeActivity();
             const input = {
@@ -1478,7 +1708,7 @@ export default defineBackground(() => {
               return classifyBroadcastError(msg) === 'nonce' || msg.includes('nonce');
             };
             const returnBuySuccess = async (rsp: any) => {
-              const txHash = (rsp as any)?.txHash as `0x${string}` | undefined;
+              const txHash = (rsp as any)?.txHash as ChainTxId | undefined;
               if (txHash) {
                 buyInputByTxHash.set(txHash, { input: msg.input, receiptRetried: false });
               }
@@ -1503,7 +1733,7 @@ export default defineBackground(() => {
               return { ok: true, ...rsp };
             };
             try {
-              const rsp = await TradeService.buy(input);
+              const rsp = await getTrade(input.chainId).buy(input);
               return await returnBuySuccess(rsp);
             } catch (e: any) {
               let lastErr: any = e;
@@ -1515,9 +1745,9 @@ export default defineBackground(() => {
               });
               if (isNonceLikeError(e)) {
                 try {
-                  const refreshedNonce = await TradeService.refreshNonce({
+                  const refreshedNonce = await getTrade(input.chainId).refreshNonce({
                     chainId: msg.input.chainId,
-                    fromAddress: msg.input.fromAddress,
+                    fromAddress: isAddress(msg.input.fromAddress ?? '') ? msg.input.fromAddress as `0x${string}` : undefined,
                     txSide: 'buy',
                     submitChannel: input.submitChannel,
                     error: e,
@@ -1527,7 +1757,7 @@ export default defineBackground(() => {
                     token: msg.input.tokenAddress,
                     refreshedNonce,
                   });
-                  const rsp = await TradeService.buy(input, { forceRefreshHyperState: true });
+                  const rsp = await getTrade(input.chainId).buy(input, { forceRefreshHyperState: true });
                   console.info('[nonce.repair][buy.submit.retry.success]', {
                     chainId: msg.input.chainId,
                     token: msg.input.tokenAddress,
@@ -1558,7 +1788,7 @@ export default defineBackground(() => {
               submitChannel: await resolveTradeSubmitChannel(msg.input.chainId, msg.input.submitChannel),
             } as TxBuyInput;
             const startedAt = Date.now();
-            let submittedTxHash: `0x${string}` | null = null;
+            let submittedTxHash: ChainTxId | null = null;
             let submittedElapsedMs: number | undefined;
             console.log('[bg.buy.auto.request]', {
               chainId: msg.input.chainId,
@@ -1568,10 +1798,13 @@ export default defineBackground(() => {
               baseTokenAddress: msg.input.baseTokenAddress ?? ZERO_ADDRESS,
             });
             const returnBuySuccess = async (rsp: any) => {
-              const txHash = (rsp as any)?.txHash as `0x${string}` | undefined;
+              const txHash = (rsp as any)?.txHash as ChainTxId | undefined;
               if (txHash) {
                 buyInputByTxHash.set(txHash, { input, receiptRetried: false });
               }
+              // #region debug-point D:bg-buy-success
+              if (msg.input.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'D', location: 'background.ts:bgBuySuccess', msg: '[DEBUG] bg broadcasting tradeSuccess buy', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: (rsp as any)?.txHash, submitElapsedMs: (rsp as any)?.submitElapsedMs, receiptElapsedMs: (rsp as any)?.receiptElapsedMs, totalElapsedMs: (rsp as any)?.totalElapsedMs, broadcastVia: (rsp as any)?.broadcastVia, broadcastUrl: (rsp as any)?.broadcastUrl, confirmUrl: (rsp as any)?.confirmUrl, tabId: sender?.tab?.id ?? null }, ts: Date.now() }) }).catch(() => { });
+              // #endregion
               await broadcastTradeSuccess(
                 {
                   type: 'bg:tradeSuccess',
@@ -1585,6 +1818,7 @@ export default defineBackground(() => {
                   totalElapsedMs: (rsp as any)?.totalElapsedMs,
                   broadcastVia: (rsp as any)?.broadcastVia,
                   broadcastUrl: (rsp as any)?.broadcastUrl,
+                  confirmUrl: (rsp as any)?.confirmUrl,
                   isBundle: (rsp as any)?.isBundle,
                 },
                 sender?.tab?.id ?? null,
@@ -1597,12 +1831,15 @@ export default defineBackground(() => {
               };
             };
             try {
-              const rsp = await TradeService.buyWithReceiptAndNonceRecovery(input, {
+              const rsp = await getTrade(input.chainId).buyWithReceiptAndNonceRecovery(input, {
                 maxRetry: 1,
                 timeoutMs: 5_000,
-                onSubmitted: async (ctx) => {
+                onSubmitted: async (ctx: BuySubmittedContext) => {
                   submittedTxHash = ctx.txHash;
                   submittedElapsedMs = ctx.submitElapsedMs;
+                  // #region debug-point C:bg-buy-submitted
+                  if (msg.input.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:bgBuySubmitted', msg: '[DEBUG] bg broadcasting tradeSubmitted buy', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs, broadcastVia: ctx.broadcastVia ?? null, broadcastUrl: ctx.broadcastUrl ?? null, tabId: sender?.tab?.id ?? null }, ts: Date.now() }) }).catch(() => { });
+                  // #endregion
                   await broadcastTradeSuccess(
                     {
                       type: 'bg:tradeSubmitted',
@@ -1611,11 +1848,13 @@ export default defineBackground(() => {
                       tokenAddress: msg.input.tokenAddress,
                       txHash: ctx.txHash,
                       submitElapsedMs: ctx.submitElapsedMs,
+                      broadcastVia: ctx.broadcastVia,
+                      broadcastUrl: ctx.broadcastUrl,
                     },
                     sender?.tab?.id ?? null,
                   );
                 },
-                onRetry: async (ctx) => {
+                onRetry: async (ctx: BuyRetryContext) => {
                   await broadcastTradeSuccess(
                     {
                       type: 'bg:tradeRetrying',
@@ -1646,9 +1885,10 @@ export default defineBackground(() => {
               console.warn('[trade.buy.auto.failed]', {
                 chainId: msg.input.chainId,
                 token: msg.input.tokenAddress,
-                error: String(e?.shortMessage || e?.message || e || ''),
+                error: extractDisplayErrorMessageFromError(e),
               });
               const reason = extractRevertReasonFromError(e);
+              const displayErrorMessage = extractDisplayErrorMessageFromError(e);
               if (!reason || reason.toLowerCase().includes('zero_input')) {
                 debugLogTxError('tx:buyWithReceiptAuto failed', e, { input: msg.input as any });
               }
@@ -1662,7 +1902,7 @@ export default defineBackground(() => {
                   txHash: submittedTxHash ?? undefined,
                   submitElapsedMs: submittedElapsedMs,
                   stage: submittedTxHash ? 'receipt' : 'submit',
-                  errorMessage: String(reason || e?.shortMessage || e?.message || 'Transaction failed'),
+                  errorMessage: reason || displayErrorMessage,
                 },
                 sender?.tab?.id ?? null,
               );
@@ -1681,7 +1921,7 @@ export default defineBackground(() => {
               return classifyBroadcastError(msg) === 'nonce' || msg.includes('nonce');
             };
             try {
-              const rsp = await TradeService.sell(input);
+              const rsp = await getTrade(input.chainId).sell(input);
               broadcastTradeSuccess(
                 {
                   type: 'bg:tradeSuccess',
@@ -1711,9 +1951,9 @@ export default defineBackground(() => {
               });
               if (isNonceLikeError(e)) {
                 try {
-                  const refreshedNonce = await TradeService.refreshNonce({
+                  const refreshedNonce = await getTrade(input.chainId).refreshNonce({
                     chainId: msg.input.chainId,
-                    fromAddress: msg.input.fromAddress,
+                    fromAddress: isAddress(msg.input.fromAddress ?? '') ? msg.input.fromAddress as `0x${string}` : undefined,
                     txSide: 'sell',
                     submitChannel: input.submitChannel,
                     error: e,
@@ -1723,7 +1963,7 @@ export default defineBackground(() => {
                     token: msg.input.tokenAddress,
                     refreshedNonce,
                   });
-                  const rsp = await TradeService.sell(input, { forceRefreshHyperState: true });
+                  const rsp = await getTrade(input.chainId).sell(input, { forceRefreshHyperState: true });
                   console.info('[nonce.repair][sell.submit.retry.success]', {
                     chainId: msg.input.chainId,
                     token: msg.input.tokenAddress,
@@ -1773,16 +2013,25 @@ export default defineBackground(() => {
             } as TxSellInput;
             const flowId = `bg-sell-auto:${msg.input.chainId}:${msg.input.tokenAddress.toLowerCase()}:${Date.now().toString(36)}`;
             const start = Date.now();
-            let submittedTxHash: `0x${string}` | null = null;
+            let submittedTxHash: ChainTxId | null = null;
             let submittedElapsedMs: number | undefined;
             console.log('[bg.sell.auto][start]', { flowId, chainId: msg.input.chainId, token: msg.input.tokenAddress });
+            // #region debug-point C:bg-sell-auto-start-timeout-session
+            fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:tx:sellWithReceiptAuto:start', msg: '[DEBUG] bg sellWithReceiptAuto start', data: { flowId, chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, fromAddress: msg.input.fromAddress ?? null, sellPercentBps: msg.input.sellPercentBps ?? null, expectedTokenInWei: msg.input.expectedTokenInWei ?? null, tokenAmountWei: msg.input.tokenAmountWei ?? null, submitChannel: input.submitChannel ?? null, executionMode: msg.input.executionModeOverride ?? null, launchpadPlatform: msg.input.tokenInfo?.launchpad_platform ?? msg.input.tokenInfo?.launchpad ?? null, launchpadStatus: msg.input.tokenInfo?.launchpad_status ?? null }, ts: Date.now() }) }).catch(() => { });
+            // #endregion
             try {
-              const rsp = await TradeService.sellWithReceiptAndAutoRecovery(input, {
+              const rsp = await getTrade(input.chainId).sellWithReceiptAndAutoRecovery(input, {
                 maxRetry: 1,
-                timeoutMs: 8_000,
-                onSubmitted: async (ctx) => {
+                timeoutMs: input.chainId === ChainId.SOL ? 20_000 : 8_000,
+                onSubmitted: async (ctx: SellSubmittedContext) => {
                   submittedTxHash = ctx.txHash;
                   submittedElapsedMs = ctx.submitElapsedMs;
+                  // #region debug-point C:bg-sell-auto-submitted-timeout-session
+                  fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:tx:sellWithReceiptAuto:submitted', msg: '[DEBUG] bg sellWithReceiptAuto submitted', data: { flowId, chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs, broadcastVia: ctx.broadcastVia ?? null, broadcastUrl: ctx.broadcastUrl ?? null, elapsedMs: Date.now() - start }, ts: Date.now() }) }).catch(() => { });
+                  // #endregion
+                  // #region debug-point C:bg-sell-submitted
+                  if (msg.input.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:bgSellSubmitted', msg: '[DEBUG] bg broadcasting tradeSubmitted sell', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs, broadcastVia: ctx.broadcastVia ?? null, broadcastUrl: ctx.broadcastUrl ?? null, tabId: sender?.tab?.id ?? null }, ts: Date.now() }) }).catch(() => { });
+                  // #endregion
                   await broadcastTradeSuccess(
                     {
                       type: 'bg:tradeSubmitted',
@@ -1791,11 +2040,13 @@ export default defineBackground(() => {
                       tokenAddress: msg.input.tokenAddress,
                       txHash: ctx.txHash,
                       submitElapsedMs: ctx.submitElapsedMs,
+                      broadcastVia: ctx.broadcastVia,
+                      broadcastUrl: ctx.broadcastUrl,
                     },
                     sender?.tab?.id ?? null,
                   );
                 },
-                onRetry: async (ctx) => {
+                onRetry: async (ctx: SellRetryContext) => {
                   const reason = ctx.allowanceRepaired ? 'allowance' : (ctx.nonceLike ? 'nonce' : 'other');
                   console.log('[bg.sell.auto][retry]', {
                     flowId,
@@ -1821,6 +2072,12 @@ export default defineBackground(() => {
                 txHash: (rsp as any)?.txHash,
                 elapsedMs: Date.now() - start,
               });
+              // #region debug-point C:bg-sell-auto-success-timeout-session
+              fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:tx:sellWithReceiptAuto:success', msg: '[DEBUG] bg sellWithReceiptAuto success', data: { flowId, chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: (rsp as any)?.txHash ?? null, submitElapsedMs: (rsp as any)?.submitElapsedMs ?? null, receiptElapsedMs: (rsp as any)?.receiptElapsedMs ?? null, totalElapsedMs: (rsp as any)?.totalElapsedMs ?? null, elapsedMs: Date.now() - start }, ts: Date.now() }) }).catch(() => { });
+              // #endregion
+              // #region debug-point D:bg-sell-success
+              if (msg.input.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'D', location: 'background.ts:bgSellSuccess', msg: '[DEBUG] bg broadcasting tradeSuccess sell', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: (rsp as any)?.txHash, submitElapsedMs: (rsp as any)?.submitElapsedMs, receiptElapsedMs: (rsp as any)?.receiptElapsedMs, totalElapsedMs: (rsp as any)?.totalElapsedMs, broadcastVia: (rsp as any)?.broadcastVia, broadcastUrl: (rsp as any)?.broadcastUrl, confirmUrl: (rsp as any)?.confirmUrl, tabId: sender?.tab?.id ?? null }, ts: Date.now() }) }).catch(() => { });
+              // #endregion
               broadcastTradeSuccess(
                 {
                   type: 'bg:tradeSuccess',
@@ -1834,6 +2091,7 @@ export default defineBackground(() => {
                   totalElapsedMs: (rsp as any)?.totalElapsedMs,
                   broadcastVia: (rsp as any)?.broadcastVia,
                   broadcastUrl: (rsp as any)?.broadcastUrl,
+                  confirmUrl: (rsp as any)?.confirmUrl,
                   isBundle: (rsp as any)?.isBundle,
                 },
                 sender?.tab?.id ?? null,
@@ -1850,9 +2108,16 @@ export default defineBackground(() => {
                 chainId: msg.input.chainId,
                 token: msg.input.tokenAddress,
                 elapsedMs: Date.now() - start,
-                error: String(e?.shortMessage || e?.message || e || ''),
+                error: extractDisplayErrorMessageFromError(e),
               });
               const reason = extractRevertReasonFromError(e);
+              const displayErrorMessage = extractDisplayErrorMessageFromError(e);
+              // #region debug-point C:bg-sell-auto-catch-timeout-session
+              fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:tx:sellWithReceiptAuto:catch', msg: '[DEBUG] bg sellWithReceiptAuto catch', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, flowId, stage: submittedTxHash ? 'receipt' : 'submit', submittedTxHash: submittedTxHash ?? null, submittedElapsedMs: submittedElapsedMs ?? null, reason: reason ?? null, displayErrorMessage, serializedError: serializeTxError(e), aggregateErrors: Array.isArray((e as any)?.errors) ? (e as any).errors.map((item: any) => String(item?.message || item || '')) : null, elapsedMs: Date.now() - start }, ts: Date.now() }) }).catch(() => { });
+              // #endregion
+              // #region debug-point C:bg-sell-auto-catch
+              if (msg.input.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:tx:sellWithReceiptAuto:catch', msg: '[DEBUG] bg sellWithReceiptAuto catch', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, flowId, stage: submittedTxHash ? 'receipt' : 'submit', submittedTxHash: submittedTxHash ?? null, submittedElapsedMs: submittedElapsedMs ?? null, reason: reason ?? null, displayErrorMessage, serializedError: serializeTxError(e), aggregateErrors: Array.isArray((e as any)?.errors) ? (e as any).errors.map((item: any) => String(item?.message || item || '')) : null, elapsedMs: Date.now() - start, tabId: sender?.tab?.id ?? null }, ts: Date.now() }) }).catch(() => { });
+              // #endregion
               if (!reason || reason.toLowerCase().includes('zero_input')) {
                 debugLogTxError('tx:sellWithReceiptAuto failed', e, { input: msg.input as any });
               }
@@ -1866,7 +2131,7 @@ export default defineBackground(() => {
                   txHash: submittedTxHash ?? undefined,
                   submitElapsedMs: submittedElapsedMs,
                   stage: submittedTxHash ? 'receipt' : 'submit',
-                  errorMessage: String(reason || e?.shortMessage || e?.message || 'Transaction failed'),
+                  errorMessage: reason || displayErrorMessage,
                 },
                 sender?.tab?.id ?? null,
               );
@@ -1876,26 +2141,26 @@ export default defineBackground(() => {
 
           case 'tx:approve': {
             const submitChannel = await resolveTradeSubmitChannel(msg.chainId, msg.submitChannel);
-            const txHash = await TradeService.approve(msg.chainId, msg.tokenAddress, msg.spender, msg.amountWei, msg.fromAddress, submitChannel);
+            const txHash = await getTrade(msg.chainId).approve(msg.chainId, msg.tokenAddress, msg.spender, msg.amountWei, msg.fromAddress, submitChannel);
             broadcastStateChange();
             return { ok: true, txHash };
           }
 
           case 'tx:wrapNative': {
-            const sent = await TradeService.wrapNative(msg.chainId, msg.amountWei, msg.fromAddress);
+            const sent = await getTrade(msg.chainId).wrapNative(msg.chainId, msg.amountWei, msg.fromAddress);
             broadcastStateChange();
             return { ok: true, ...sent };
           }
 
           case 'tx:unwrapWrapped': {
-            const sent = await TradeService.unwrapWrapped(msg.chainId, msg.amountWei, msg.fromAddress);
+            const sent = await getTrade(msg.chainId).unwrapWrapped(msg.chainId, msg.amountWei, msg.fromAddress);
             broadcastStateChange();
             return { ok: true, ...sent };
           }
 
           case 'tx:approveMaxForSellIfNeeded': {
             const submitChannel = await resolveTradeSubmitChannel(msg.chainId, msg.submitChannel);
-            const txHash = await TradeService.approveMaxForSellIfNeeded(msg.chainId, msg.tokenAddress, msg.tokenInfo, {
+            const txHash = await getTrade(msg.chainId).approveMaxForSellIfNeeded(msg.chainId, msg.tokenAddress, msg.tokenInfo, {
               fromAddress: msg.fromAddress,
               submitChannel,
             });
@@ -1904,7 +2169,7 @@ export default defineBackground(() => {
           }
 
           case 'tx:checkSellAllowanceInsufficient': {
-            const check = await TradeService.checkSellAllowanceInsufficient(msg.chainId, msg.tokenAddress, msg.tokenInfo, {
+            const check = await getTrade(msg.chainId).checkSellAllowanceInsufficient(msg.chainId, msg.tokenAddress, msg.tokenInfo, {
               fromAddress: msg.fromAddress,
             });
             return { ok: true, insufficient: check.insufficient, checked: check.checked };
@@ -1973,13 +2238,25 @@ export default defineBackground(() => {
 
           case 'tx:waitForReceipt': {
             try {
-              const receipt = await RpcService.waitForTransactionReceiptAny(msg.hash, { chainId: msg.chainId, timeoutMs: 20_000 });
+              if (msg.chainId === ChainId.SOL) {
+                const result = await SolanaRpcService.waitForSignature(msg.hash, { timeoutMs: 20_000 });
+                buyInputByTxHash.delete(msg.hash);
+                broadcastStateChange();
+                return {
+                  ok: true,
+                  blockNumber: typeof result.slot === 'number' ? result.slot : undefined,
+                  txHash: msg.hash,
+                  status: 'success' as const,
+                };
+              }
+              const evmHash = msg.hash as `0x${string}`;
+              const receipt = await RpcService.waitForTransactionReceiptAny(evmHash, { chainId: msg.chainId, timeoutMs: 20_000 });
               const ok = receipt.status === 'success';
               let finalTxHash = receipt.transactionHash;
               let finalStatus = receipt.status;
               let finalBlockNumber = Number(receipt.blockNumber);
               const client = await RpcService.getClient(msg.chainId);
-              let revertReason = !ok ? await tryGetReceiptRevertReason(client, msg.hash, receipt.blockNumber) : null;
+              let revertReason = !ok ? await tryGetReceiptRevertReason(client, evmHash, receipt.blockNumber) : null;
 
               if (!ok) {
                 const tracked = buyInputByTxHash.get(msg.hash);
@@ -1996,9 +2273,9 @@ export default defineBackground(() => {
                 if (tracked && !tracked.receiptRetried && isNonceLike) {
                   tracked.receiptRetried = true;
                   buyInputByTxHash.set(msg.hash, tracked);
-                  const refreshedNonce = await TradeService.refreshNonce({
+                  const refreshedNonce = await getTrade(tracked.input.chainId).refreshNonce({
                     chainId: tracked.input.chainId,
-                    fromAddress: tracked.input.fromAddress,
+                    fromAddress: isAddress(tracked.input.fromAddress ?? '') ? tracked.input.fromAddress as `0x${string}` : undefined,
                     txSide: 'buy',
                     error: reasonText,
                   });
@@ -2007,21 +2284,21 @@ export default defineBackground(() => {
                     oldTxHash: msg.hash,
                     refreshedNonce,
                   });
-                  const retryRsp = await TradeService.buy(tracked.input, { forceRefreshHyperState: true });
-                  const retryHash = retryRsp.txHash as `0x${string}`;
+                  const retryRsp = await getTrade(tracked.input.chainId).buy(tracked.input, { forceRefreshHyperState: true });
+                  const retryHash = retryRsp.txHash as ChainTxId;
                   console.info('[nonce.repair][buy.receipt.retry.sent]', {
                     chainId: tracked.input.chainId,
                     oldTxHash: msg.hash,
                     retryHash,
                   });
                   buyInputByTxHash.set(retryHash, { input: tracked.input, receiptRetried: true });
-                  const retryReceipt = await RpcService.waitForTransactionReceiptAny(retryHash, { chainId: tracked.input.chainId, timeoutMs: 20_000, txSide: 'buy' });
+                  const retryReceipt = await RpcService.waitForTransactionReceiptAny(retryHash as `0x${string}`, { chainId: tracked.input.chainId, timeoutMs: 20_000, txSide: 'buy' });
                   finalTxHash = retryReceipt.transactionHash;
                   finalStatus = retryReceipt.status;
                   finalBlockNumber = Number(retryReceipt.blockNumber);
                   revertReason = retryReceipt.status === 'success'
                     ? null
-                    : await tryGetReceiptRevertReason(client, retryHash, retryReceipt.blockNumber);
+                    : await tryGetReceiptRevertReason(client, retryHash as `0x${string}`, retryReceipt.blockNumber);
                 }
               }
 

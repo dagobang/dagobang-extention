@@ -5,16 +5,19 @@ import { formatUnits, parseUnits, zeroAddress } from 'viem';
 import type { Account, BgGetStateResponse, QuickBuyPresetOverride, Settings, SubmitChannel, TradeSuccessSoundPreset } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
-import { formatBroadcastProvider, formatPriceValue } from '@/utils/format';
+import { formatBroadcastProvider, formatPriceValue, formatRpcEndpointLabel } from '@/utils/format';
 import { parseCurrentUrl, parseCurrentUrlFull, type SiteInfo } from '@/utils/sites';
 import { call } from '@/utils/messaging';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import GmgnAPI, { type GmgnTokenHolding } from '@/hooks/GmgnAPI';
 import { getChainIdByName, getNativeSymbol } from '@/constants/chains';
-import { getChainRuntime } from '@/constants/chains/runtime';
+import { ChainId } from '@/constants/chains/chainId';
+import { getChainRuntimeBase, isSolanaChain } from '@/constants/chains/runtime';
+import { getEvmChainRuntime } from '@/constants/chains/evmRuntime';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
+import type { ChainAddress } from '@/types/chain/address';
 import {
   buildStrategyRollingTakeProfitOrderInputs,
   buildStrategySellOrderInputs,
@@ -33,6 +36,8 @@ import { QuickTradePanel } from './components/QuickTradePanel';
 import { FloatingToolbar } from './components/FloatingToolbar';
 import { CookingPanel } from './components/CookingPanel';
 import { useDynamicGasPreview } from './components/QuickTradePanel/useDynamicGasPreview';
+import type { ChannelSwitcherItem } from './components/QuickTradePanel/ChannelSwitcher';
+import { resolveKnownSolanaDirectSource, resolveSolanaSourceAlias, SOLANA_ROUTE_LABELS } from '../../packages/solana-dex-core/src/constants';
 
 type NewPoolMonitorDisplayMode = 'floating' | 'tab';
 type XTradeTab = 'xmonitor' | 'xsniper' | 'xtokensniper' | 'xnewcoinsniper' | 'xnewpoolmonitor';
@@ -78,11 +83,35 @@ const DEFAULT_PRIORITY_FEE_PRESET_VALUES = {
   fast: '0.0001',
 } as const;
 const DEFAULT_QUICK_BUY_PRESET_OVERRIDES: QuickBuyPresetOverride[] = [{}, {}, {}, {}];
-
+const SOLANA_WRAPPED_NATIVE_MINT = 'So11111111111111111111111111111111111111112';
+const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const SOLANA_USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYDutLCRa14Q6gttxyPjdvV';
 function normalizeAddr(addr: string): `0x${string}` | null {
   const trimmed = typeof addr === 'string' ? addr.trim() : '';
   if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return null;
   return trimmed as `0x${string}`;
+}
+
+function isLikelySolanaAddress(addr: string): boolean {
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
+}
+
+function normalizeWalletAddress(chainId: number, addr: string): ChainAddress | null {
+  const trimmed = typeof addr === 'string' ? addr.trim() : '';
+  if (!trimmed) return null;
+  if (isSolanaChain(chainId)) {
+    return isLikelySolanaAddress(trimmed) ? trimmed : null;
+  }
+  return normalizeAddr(trimmed);
+}
+
+function normalizeSiteTokenAddress(chainId: number, addr: string): ChainAddress | null {
+  const trimmed = typeof addr === 'string' ? addr.trim() : '';
+  if (!trimmed) return null;
+  if (isSolanaChain(chainId)) {
+    return isLikelySolanaAddress(trimmed) ? trimmed : null;
+  }
+  return /^0x[a-fA-F0-9]{40}$/.test(trimmed) ? trimmed : null;
 }
 
 function normalizeQuickBuyPresetOverrides(raw: QuickBuyPresetOverride[] | null | undefined): QuickBuyPresetOverride[] {
@@ -104,10 +133,24 @@ function getTokenInfoWarmFingerprint(tokenInfo: TokenInfo | null | undefined): s
   return [
     String(tokenInfo.launchpad_platform || '').toLowerCase(),
     String(tokenInfo.launchpad_status ?? ''),
-    String(tokenInfo.pool_pair || '').toLowerCase(),
-    String(tokenInfo.dex_type || '').toLowerCase(),
     String(tokenInfo.quote_token_address || '').toLowerCase(),
   ].join('|');
+}
+
+function getSolPrewarmCacheKey(input: {
+  chainId: number;
+  sitePlatform?: string | null;
+  tokenAddress: string;
+  address?: string | null;
+  tokenInfo?: TokenInfo | null;
+}) {
+  const platform = String(input.sitePlatform || '');
+  const tokenAddress = input.tokenAddress.toLowerCase();
+  const fingerprint = getTokenInfoWarmFingerprint(input.tokenInfo);
+  if (input.address) {
+    return `${input.chainId}:sol-owner:${input.address.toLowerCase()}:${platform}:${tokenAddress}:${fingerprint}`;
+  }
+  return `${input.chainId}:sol-base:${platform}:${tokenAddress}:${fingerprint}`;
 }
 
 function parseGmgnUsdValue(value: unknown): number {
@@ -127,6 +170,88 @@ function resolveHoldingBalanceUsd(detail: GmgnTokenHolding): number {
   const balance = parseGmgnNullableNumber(detail.balance) ?? 0;
   const price = parseGmgnNullableNumber(detail.price) ?? 0;
   return balance * price;
+}
+
+function resolveHoldingUnitPriceUsd(detail: GmgnTokenHolding): number | null {
+  const directUsdValue = parseGmgnNullableNumber(detail.usd_value);
+  const balance = parseGmgnNullableNumber(detail.balance);
+  if (directUsdValue != null && balance != null && balance > 0) {
+    const unitPrice = directUsdValue / balance;
+    return Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : null;
+  }
+  const directPrice = parseGmgnNullableNumber(detail.price)
+    ?? parseGmgnNullableNumber(detail.token?.price)
+    ?? parseGmgnNullableNumber((detail as any)?.token_basic_stats?.price);
+  if (directPrice != null && directPrice > 0) return directPrice;
+  return null;
+}
+
+function resolveHoldingTokenSymbol(detail: GmgnTokenHolding | null | undefined): string | null {
+  const symbol = String(
+    detail?.symbol
+    || detail?.token_symbol
+    || detail?.token?.symbol
+    || detail?.token_basic_stats?.symbol
+    || ''
+  ).trim();
+  return symbol || null;
+}
+
+function resolveHoldingTokenDecimals(detail: GmgnTokenHolding | null | undefined): number | null {
+  const decimals = Number(
+    detail?.token?.decimals
+    ?? detail?.token_basic_stats?.decimals
+    ?? NaN
+  );
+  return Number.isFinite(decimals) && decimals >= 0 && decimals <= 36 ? decimals : null;
+}
+
+function resolveHoldingBalanceWei(detail: GmgnTokenHolding | null | undefined): string | null {
+  const balanceText = String(detail?.balance ?? '').trim();
+  if (!balanceText) return null;
+  const decimals = resolveHoldingTokenDecimals(detail);
+  if (decimals == null) return null;
+  try {
+    return parseUnits(balanceText, decimals).toString();
+  } catch {
+    return null;
+  }
+}
+
+function mapHoldingDetailToHolding(
+  walletAddress: string,
+  tokenAddress: string,
+  detail: Awaited<ReturnType<typeof GmgnAPI.getTokenHoldingDetail>>
+): GmgnTokenHolding | null {
+  if (!detail) return null;
+  return {
+    chain_wallet: '',
+    token_address: String(detail.token?.token_address || tokenAddress || '').toLowerCase(),
+    wallet_address: String(walletAddress || '').trim().toLowerCase(),
+    symbol: String(detail.token?.symbol || ''),
+    token_symbol: String(detail.token?.symbol || ''),
+    balance: String(detail.balance ?? '0'),
+    price: String(detail.token?.price ?? ''),
+    usd_value: String(detail.usd_value ?? ''),
+    total_profit: String(detail.total_profit ?? ''),
+    unrealized_profit: String(detail.unrealized_profit ?? ''),
+    realized_profit: String(detail.realized_profit ?? ''),
+    total_profit_pnl: detail.total_profit_pnl ?? null,
+    unrealized_profit_pnl: detail.unrealized_profit_pnl ?? null,
+    accu_amount: String(detail.accu_amount ?? ''),
+    accu_cost: String(detail.accu_cost ?? ''),
+    sold_income: String(detail.history_sold_income ?? ''),
+    history_bought_cost: String(detail.history_bought_cost ?? ''),
+    history_sold_income: String(detail.history_sold_income ?? ''),
+    history_realized_profit: String(detail.realized_profit ?? ''),
+    token: detail.token,
+    token_basic_stats: {
+      symbol: detail.token?.symbol,
+      decimals: detail.token?.decimals,
+      launchpad: detail.token?.launchpad,
+      launchpad_platform: detail.token?.launchpad_platform,
+    },
+  } as GmgnTokenHolding;
 }
 
 function aggregateGmgnHoldings(details: Array<GmgnTokenHolding | null | undefined>): GmgnHoldingStats | null {
@@ -172,13 +297,6 @@ function aggregateGmgnHoldings(details: Array<GmgnTokenHolding | null | undefine
   };
 }
 
-type SubmitChannelStatusView = {
-  channel: SubmitChannel;
-  configured: boolean;
-  available: boolean;
-  reason: string;
-};
-
 type WalletApproveState = {
   approved?: boolean;
   pendingSince?: number;
@@ -208,9 +326,24 @@ function collectSubmitChannelUrls(settings: Settings | null | undefined, chainId
   return { blockrazorUrls, protectUrls };
 }
 
-function resolveTradeBaseTokenAddress(settings: Settings | null | undefined, chainIdOverride?: number): `0x${string}` {
+function formatSolanaSwqosProviders(settings: Settings['chains'][number]['solanaSwqos'] | null | undefined) {
+  const providers = Array.isArray(settings?.providers)
+    ? settings.providers.filter((item) => item?.enabled)
+    : [];
+  return providers.map((item) => {
+    const type = String(item.type || '').trim().toLowerCase();
+    if (type === 'jito') return 'Jito';
+    if (type === 'nextblock') return 'NextBlock';
+    if (type === 'temporal') return 'Temporal';
+    if (type === 'blox') return 'Blox';
+    return type || 'Provider';
+  });
+}
+
+function resolveTradeBaseTokenAddress(settings: Settings | null | undefined, chainIdOverride?: number): ChainAddress {
   const chainId = chainIdOverride ?? settings?.chainId ?? 56;
-  const runtime = getChainRuntime(chainId);
+  if (isSolanaChain(chainId)) return zeroAddress;
+  const runtime = getEvmChainRuntime(chainId);
   const baseToken = String(settings?.chains?.[chainId]?.tradeBaseToken ?? settings?.tradeBaseToken ?? 'BNB').toUpperCase();
   if (baseToken === 'WBNB') return runtime.wrappedNativeAddress;
   if (baseToken === 'USDC') return (USDC[chainId as keyof typeof USDC]?.address ?? zeroAddress) as `0x${string}`;
@@ -219,15 +352,28 @@ function resolveTradeBaseTokenAddress(settings: Settings | null | undefined, cha
   return zeroAddress;
 }
 
-function resolveTradeBaseTokenMeta(chainId: number, tradeBaseTokenAddress: `0x${string}`) {
-  const runtime = getChainRuntime(chainId);
+function resolveTradeBaseTokenMeta(chainId: number, tradeBaseTokenAddress: ChainAddress) {
+  const runtime = getChainRuntimeBase(chainId);
   const target = tradeBaseTokenAddress.toLowerCase();
   if (target === zeroAddress.toLowerCase()) {
-    return { symbol: runtime.nativeSymbol, decimals: runtime.viemChain.nativeCurrency.decimals };
+    return { symbol: runtime.nativeSymbol, decimals: runtime.kind === 'evm' ? getEvmChainRuntime(chainId).viemChain.nativeCurrency.decimals : 9 };
   }
 
-  if (target === runtime.wrappedNativeAddress.toLowerCase()) {
-    return { symbol: `W${runtime.nativeSymbol}`, decimals: runtime.viemChain.nativeCurrency.decimals };
+  if (runtime.kind === 'evm' && target === getEvmChainRuntime(chainId).wrappedNativeAddress.toLowerCase()) {
+    return { symbol: `W${runtime.nativeSymbol}`, decimals: getEvmChainRuntime(chainId).viemChain.nativeCurrency.decimals };
+  }
+
+  if (isSolanaChain(chainId)) {
+    if (target === SOLANA_WRAPPED_NATIVE_MINT.toLowerCase()) {
+      return { symbol: 'WSOL', decimals: 9 };
+    }
+    if (target === SOLANA_USDC_MINT.toLowerCase()) {
+      return { symbol: 'USDC', decimals: 6 };
+    }
+    if (target === SOLANA_USDT_MINT.toLowerCase()) {
+      return { symbol: 'USDT', decimals: 6 };
+    }
+    return { symbol: 'TOKEN', decimals: 9 };
   }
 
   const usdc = USDC[chainId as keyof typeof USDC];
@@ -244,12 +390,12 @@ function resolveTradeBaseTokenMeta(chainId: number, tradeBaseTokenAddress: `0x${
     return { symbol: bscTokens.usd1.symbol, decimals: bscTokens.usd1.decimals };
   }
 
-  return { symbol: 'TOKEN', decimals: runtime.viemChain.nativeCurrency.decimals };
+  return { symbol: 'TOKEN', decimals: runtime.kind === 'evm' ? getEvmChainRuntime(chainId).viemChain.nativeCurrency.decimals : 9 };
 }
 
 function deriveUsdFromBaseAmount(
   amount: number,
-  tradeBaseTokenAddress: `0x${string}`,
+  tradeBaseTokenAddress: ChainAddress,
   tradeBaseTokenMeta: { symbol: string },
   baseTokenPriceUsd: number | null,
 ): number | null {
@@ -289,24 +435,41 @@ function formatTokenAmountForDisplay(rawAmountWei: string | null | undefined, de
 
 function resolveSelectedTradeWallets(
   wallet: BgGetStateResponse['wallet'] | null | undefined,
-  settings: Settings | null | undefined
-): `0x${string}`[] {
+  settings: Settings | null | undefined,
+  chainId: number
+): ChainAddress[] {
   if (!wallet?.isUnlocked) return [];
   const allAccounts = Array.isArray(wallet.accounts) ? wallet.accounts : [];
-  const byLower = new Map<string, `0x${string}`>();
+  const byLower = new Map<string, ChainAddress>();
   for (const acc of allAccounts) {
-    const normalized = normalizeAddr(String(acc.address || ''));
+    const normalized = normalizeWalletAddress(chainId, String(acc.address || ''));
     if (!normalized) continue;
     byLower.set(normalized.toLowerCase(), normalized);
   }
   const selectedRaw = Array.isArray(settings?.selectedTradeWallets) ? settings!.selectedTradeWallets : [];
   const picked = selectedRaw
     .map((x) => byLower.get(String(x).toLowerCase()))
-    .filter(Boolean) as `0x${string}`[];
+    .filter(Boolean) as ChainAddress[];
   const deduped = Array.from(new Set(picked.map((x) => x.toLowerCase()))).map((x) => byLower.get(x)!).filter(Boolean);
   if (deduped.length > 0) return deduped;
-  const fallback = normalizeAddr(String(wallet.address || ''));
+  const fallback = normalizeWalletAddress(chainId, String(wallet.address || ''));
   return fallback ? [fallback] : [];
+}
+
+const SOL_PENDING_TOKEN_DELTA_TTL_MS = 15_000;
+
+type PendingSolTokenDeltaEntry = {
+  id: string;
+  deltaWei: string;
+  expiresAt: number;
+};
+
+function getPendingTokenDeltaKey(tokenAddress: string, walletAddress: string) {
+  return `${String(tokenAddress || '').trim().toLowerCase()}:${String(walletAddress || '').trim().toLowerCase()}`;
+}
+
+function getPendingTradeBaseDeltaKey(baseTokenAddress: string, walletAddress: string) {
+  return `${String(baseTokenAddress || '').trim().toLowerCase()}:${String(walletAddress || '').trim().toLowerCase()}`;
 }
 
 export default function App() {
@@ -341,6 +504,10 @@ export default function App() {
   const [marketCapDisplay, setMarketCapDisplay] = useState<string | null>(null);
   const [liquidityDisplay, setLiquidityDisplay] = useState<string | null>(null);
   const [gmgnHoldingStats, setGmgnHoldingStats] = useState<GmgnHoldingStats | null>(null);
+  const [gmgnHoldingTokenPriceUsd, setGmgnHoldingTokenPriceUsd] = useState<number | null>(null);
+  const [gmgnHoldingTokenBalanceWei, setGmgnHoldingTokenBalanceWei] = useState<string | null>(null);
+  const [gmgnHoldingTokenDecimals, setGmgnHoldingTokenDecimals] = useState<number | null>(null);
+  const [gmgnHoldingTokenSymbol, setGmgnHoldingTokenSymbol] = useState<string | null>(null);
   const [walletApproveStates, setWalletApproveStates] = useState<Record<string, WalletApproveState>>({});
   const [gmgnHoldingPollingEnabled, setGmgnHoldingPollingEnabled] = useState(false);
   const [pendingQuickBuy, setPendingQuickBuy] = useState<{ tokenAddress: string; amount: string } | null>(null);
@@ -353,6 +520,12 @@ export default function App() {
 
   const siteInfoRef = useRef<SiteInfo | null>(siteInfo);
   const pendingQuickBuyRef = useRef<{ tokenAddress: string; amount: string } | null>(pendingQuickBuy);
+  const actualWalletTokenBalancesRef = useRef<Record<string, string>>({});
+  const effectiveWalletTokenBalancesRef = useRef<Record<string, string>>({});
+  const pendingSolTokenDeltasRef = useRef<Record<string, PendingSolTokenDeltaEntry[]>>({});
+  const actualWalletTradeBaseBalancesRef = useRef<Record<string, string>>({});
+  const effectiveWalletTradeBaseBalancesRef = useRef<Record<string, string>>({});
+  const pendingSolTradeBaseDeltasRef = useRef<Record<string, PendingSolTokenDeltaEntry[]>>({});
   const settingsRef = useRef<Settings | null>(null);
   const effectiveChainIdRef = useRef<number>(56);
   const minimizedRef = useRef(false);
@@ -363,10 +536,14 @@ export default function App() {
   const handleSellRef = useRef<(pct: number) => void>(() => { });
   const prewarmedTurboRef = useRef<Set<string>>(new Set());
   const prewarmedRpcRef = useRef<Set<string>>(new Set());
+  const prewarmTurboInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
+  const solSubmitKickoffQueuesRef = useRef<Map<string, Promise<void>>>(new Map());
   const fastPollingRef = useRef<any>(null);
   const approveStatusRefreshSeqRef = useRef(0);
   const tokenRefreshSeqRef = useRef(0);
   const gmgnHoldingRefreshSeqRef = useRef(0);
+  const solBaseBalanceRefreshSeqRef = useRef(0);
+  const solTokenBalanceRefreshSeqRef = useRef(0);
   const gmgnHoldingPollingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bgStateChangedSeqRef = useRef(0);
   const bgStateChangedHandledAtRef = useRef(0);
@@ -409,6 +586,7 @@ export default function App() {
     return Number.isFinite(resolved) && resolved > 0 ? resolved : null;
   }, [siteInfo?.chain]);
   const chainId = siteChainId ?? settings?.chainId ?? 56;
+  const isSolana = isSolanaChain(chainId);
   const effectiveChainSettings = settings?.chains?.[chainId] ?? null;
   const effectiveScopedSettings = useMemo(
     () => (settings ? { ...settings, chainId } : null),
@@ -422,13 +600,39 @@ export default function App() {
   }>({ checked: false, loading: false, reachable: false });
   const [rpcPrewarmState, setRpcPrewarmState] = useState<'idle' | 'warming' | 'done'>('idle');
   const [turboPrewarmState, setTurboPrewarmState] = useState<'idle' | 'warming' | 'done'>('idle');
+  const SOL_PREWARM_KEEPWARM_INTERVAL_MS = 2_000;
   const submitChannel = (effectiveChainSettings?.submitChannel ?? 'protectRpcs') as SubmitChannel;
-  const submitChannelStatuses = useMemo<SubmitChannelStatusView[]>(() => {
+  const channelOptions = useMemo<ChannelSwitcherItem[]>(() => {
+    if (isSolana) {
+      const swqos = effectiveChainSettings?.solanaSwqos;
+      const enabledProviders = formatSolanaSwqosProviders(swqos);
+      const swqosConfigured = enabledProviders.length > 0;
+      const strategyLabel = (swqos?.strategy ?? 'concurrent') === 'single' ? '单路' : '并发';
+      return [
+        {
+          key: 'rpc',
+          label: 'RPC',
+          configured: true,
+          available: true,
+          reason: '标准 RPC 广播',
+        },
+        {
+          key: 'swqos',
+          label: 'SWQoS',
+          configured: swqosConfigured,
+          available: swqosConfigured,
+          reason: swqosConfigured
+            ? `${strategyLabel} · ${enabledProviders.join('+')}`
+            : '未配置 Provider',
+        },
+      ];
+    }
     const authHeader = String(settings?.bloxrouteAuthHeader ?? '').trim();
     const { blockrazorUrls, protectUrls } = collectSubmitChannelUrls(settings, chainId);
     const bloxReady = !!authHeader && bloxProbeState.reachable;
-    const bloxStatus: SubmitChannelStatusView = {
-      channel: 'blox',
+    const bloxStatus: ChannelSwitcherItem = {
+      key: 'blox',
+      label: 'Blox',
       configured: !!authHeader,
       available: bloxReady,
       reason: !authHeader
@@ -441,20 +645,23 @@ export default function App() {
     };
     const blockrazorReady = blockrazorUrls.length > 0;
     const protectReady = protectUrls.length > 0;
-    const blockrazorStatus: SubmitChannelStatusView = {
-      channel: 'blockrazor',
+    const blockrazorStatus: ChannelSwitcherItem = {
+      key: 'blockrazor',
+      label: 'Razor',
       configured: blockrazorReady,
       available: blockrazorReady,
       reason: blockrazorReady ? '已就绪' : '未配置',
     };
-    const protectStatus: SubmitChannelStatusView = {
-      channel: 'protectRpcs',
+    const protectStatus: ChannelSwitcherItem = {
+      key: 'protectRpcs',
+      label: 'Protect',
       configured: protectReady,
       available: protectReady,
       reason: protectReady ? '已就绪' : '未配置',
     };
-    const mixedStatus: SubmitChannelStatusView = {
-      channel: 'mixed',
+    const mixedStatus: ChannelSwitcherItem = {
+      key: 'mixed',
+      label: '混合',
       configured: bloxStatus.configured && protectReady,
       available: bloxReady && protectReady,
       reason: !bloxStatus.configured
@@ -464,10 +671,14 @@ export default function App() {
           : (bloxReady ? '已就绪' : '待检测'),
     };
     return [bloxStatus, blockrazorStatus, protectStatus, mixedStatus];
-  }, [settings, chainId, bloxProbeState]);
+  }, [settings, chainId, bloxProbeState, effectiveChainSettings?.solanaSwqos, isSolana]);
+  const channelActiveKey = useMemo(
+    () => (isSolana ? (effectiveChainSettings?.solanaSwqos?.enabled ? 'swqos' : 'rpc') : submitChannel),
+    [effectiveChainSettings?.solanaSwqos?.enabled, isSolana, submitChannel]
+  );
   const selectedTradeWallets = useMemo(
-    () => resolveSelectedTradeWallets(state?.wallet, settings),
-    [state?.wallet, settings]
+    () => resolveSelectedTradeWallets(state?.wallet, settings, chainId),
+    [state?.wallet, settings, chainId]
   );
   const selectedTradeWalletsKey = useMemo(
     () => selectedTradeWallets.map((item) => item.toLowerCase()).sort().join(','),
@@ -475,9 +686,9 @@ export default function App() {
   );
   const gmgnHoldingWallets = useMemo(() => {
     if (selectedTradeWallets.length > 0) return selectedTradeWallets;
-    const fallback = normalizeAddr(String(address || ''));
+    const fallback = normalizeWalletAddress(chainId, String(address || ''));
     return fallback ? [fallback] : [];
-  }, [selectedTradeWallets, address]);
+  }, [selectedTradeWallets, address, chainId]);
   const gmgnHoldingWalletsKey = useMemo(
     () => gmgnHoldingWallets.map((item) => item.toLowerCase()).sort().join(','),
     [gmgnHoldingWallets]
@@ -547,9 +758,10 @@ export default function App() {
   const tradeBaseTokenSymbol = tradeBaseTokenMeta.symbol;
   const tokenAddressNormalized = useMemo(() => {
     if (!siteInfo?.tokenAddress) return null;
-    const t = siteInfo.tokenAddress.trim();
-    return /^0x[a-fA-F0-9]{40}$/.test(t) ? (t as `0x${string}`) : null;
-  }, [siteInfo]);
+    return normalizeSiteTokenAddress(chainId, siteInfo.tokenAddress);
+  }, [chainId, siteInfo]);
+  const gmgnHoldingChain = isSolana ? 'sol' : String(siteInfo?.chain || '').trim().toLowerCase();
+  const shouldEnableHoldingStats = isSolana && !!tokenAddressNormalized && gmgnHoldingWallets.length > 0;
   useEffect(() => {
     approveStatusRefreshSeqRef.current += 1;
     setWalletApproveStates({});
@@ -650,6 +862,16 @@ export default function App() {
     isEditingRef.current = isEditing;
     posRef.current = pos;
   }, [siteInfo, pendingQuickBuy, settings, chainId, minimized, isEditing, pos]);
+
+  useEffect(() => {
+    if (!isSolana) {
+      effectiveWalletTokenBalancesRef.current = walletTokenBalancesWei;
+    }
+  }, [isSolana, walletTokenBalancesWei]);
+
+  useEffect(() => {
+    effectiveWalletTradeBaseBalancesRef.current = walletTradeBaseBalancesWei;
+  }, [walletTradeBaseBalancesWei]);
 
   useEffect(() => {
     if (settings) {
@@ -1063,6 +1285,11 @@ export default function App() {
     || limitTradePanelVisible
     || showCookingPanel
   );
+  const normalizedSitePlatform = useMemo(
+    () => String(siteInfo?.platform || '').trim().toLowerCase(),
+    [siteInfo?.platform]
+  );
+  const shouldKeepSolPrewarmWarm = !!tokenAddressNormalized && (!minimized || limitTradePanelVisible || showCookingPanel);
 
   useEffect(() => {
     if (!settingsReady) return;
@@ -1115,6 +1342,10 @@ export default function App() {
 
   useEffect(() => {
     if (!settings) return;
+    if (isSolana) {
+      setRpcPrewarmState('done');
+      return;
+    }
     const chain = settings.chains[chainId];
     if (!chain) {
       setRpcPrewarmState('idle');
@@ -1145,18 +1376,113 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [settings, chainId]);
+  }, [settings, chainId, isSolana]);
+
+  const startSolTurboPrewarm = useCallback((input: {
+    key: string;
+    fromAddress?: string;
+    debugStartLocation?: string;
+    debugDoneLocation?: string;
+    debugMsgPrefix?: string;
+    onDone?: () => void;
+  }) => {
+    if (!tokenAddressNormalized) return Promise.resolve();
+    const existing = prewarmTurboInFlightRef.current.get(input.key);
+    if (existing) return existing;
+    if (input.debugStartLocation && input.debugMsgPrefix) {
+      fetch('http://127.0.0.1:7777/event', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: 'solana-trade-latency',
+          runId: 'pre-fix',
+          hypothesisId: 'A',
+          location: input.debugStartLocation,
+          msg: `[DEBUG] ${input.debugMsgPrefix} start`,
+          data: {
+            chainId,
+            key: input.key,
+            tokenAddress: tokenAddressNormalized,
+            address: input.fromAddress ?? null,
+            platform: normalizedSitePlatform || null,
+          },
+          ts: Date.now(),
+        }),
+      }).catch(() => { });
+    }
+    const inflight = call({
+      type: 'trade:prewarmTurbo',
+      input: {
+        chainId,
+        tokenAddress: tokenAddressNormalized,
+        tokenInfo: tokenInfo ?? undefined,
+        fromAddress: input.fromAddress,
+        submitChannel,
+        platform: normalizedSitePlatform || undefined,
+      },
+    } as const)
+      .then(() => { })
+      .catch(() => { })
+      .finally(() => {
+        prewarmTurboInFlightRef.current.delete(input.key);
+        if (input.debugDoneLocation && input.debugMsgPrefix) {
+          fetch('http://127.0.0.1:7777/event', {
+            method: 'POST',
+            body: JSON.stringify({
+              sessionId: 'solana-trade-latency',
+              runId: 'pre-fix',
+              hypothesisId: 'A',
+              location: input.debugDoneLocation,
+              msg: `[DEBUG] ${input.debugMsgPrefix} done`,
+              data: {
+                chainId,
+                key: input.key,
+                tokenAddress: tokenAddressNormalized,
+                address: input.fromAddress ?? null,
+                platform: normalizedSitePlatform || null,
+              },
+              ts: Date.now(),
+            }),
+          }).catch(() => { });
+        }
+        input.onDone?.();
+      });
+    prewarmTurboInFlightRef.current.set(input.key, inflight);
+    return inflight;
+  }, [chainId, normalizedSitePlatform, submitChannel, tokenAddressNormalized, tokenInfo]);
 
   useEffect(() => {
     if (!tokenAddressNormalized) {
       setTurboPrewarmState('idle');
       return;
     }
-    if (!isUnlocked || !address || !settings) {
+    if (isSolana) {
+      const key = getSolPrewarmCacheKey({
+        chainId,
+        sitePlatform: normalizedSitePlatform,
+        tokenAddress: tokenAddressNormalized,
+        tokenInfo: tokenInfo as TokenInfo | null | undefined,
+      });
+      if (prewarmedTurboRef.current.has(key)) {
+        setTurboPrewarmState('done');
+        return;
+      }
+      let cancelled = false;
       setTurboPrewarmState('warming');
-      return;
+      prewarmedTurboRef.current.add(key);
+      void startSolTurboPrewarm({
+        key,
+        debugStartLocation: 'App.tsx:solBasePrewarmStart',
+        debugDoneLocation: 'App.tsx:solBasePrewarmDone',
+        debugMsgPrefix: 'ui sol base prewarm',
+        onDone: () => {
+          if (!cancelled) setTurboPrewarmState('done');
+        },
+      });
+      return () => {
+        cancelled = true;
+      };
     }
-    if (!tokenInfo) {
+    if (!isUnlocked || !address || !tokenInfo) {
       setTurboPrewarmState('warming');
       return;
     }
@@ -1168,18 +1494,121 @@ export default function App() {
     let cancelled = false;
     setTurboPrewarmState('warming');
     prewarmedTurboRef.current.add(key);
-    void call({
-      type: 'trade:prewarmTurbo',
-      input: { chainId, tokenAddress: tokenAddressNormalized, tokenInfo: tokenInfo ?? undefined, submitChannel },
-    } as const)
-      .catch(() => { })
-      .finally(() => {
+    void startSolTurboPrewarm({
+      key,
+      fromAddress: address,
+      onDone: () => {
         if (!cancelled) setTurboPrewarmState('done');
-      });
+      },
+    });
     return () => {
       cancelled = true;
     };
-  }, [isUnlocked, address, settings, tokenAddressNormalized, tokenInfo, chainId, submitChannel]);
+  }, [isUnlocked, address, tokenAddressNormalized, tokenInfo, chainId, submitChannel, isSolana, normalizedSitePlatform, startSolTurboPrewarm]);
+
+  useEffect(() => {
+    if (!isSolana || !tokenAddressNormalized || !address) return;
+    const key = getSolPrewarmCacheKey({
+      chainId,
+      sitePlatform: normalizedSitePlatform,
+      tokenAddress: tokenAddressNormalized,
+      address,
+      tokenInfo: tokenInfo as TokenInfo | null | undefined,
+    });
+    if (prewarmedTurboRef.current.has(key)) return;
+    prewarmedTurboRef.current.add(key);
+    void startSolTurboPrewarm({
+      key,
+      fromAddress: address,
+      debugStartLocation: 'App.tsx:solOwnerPrewarmStart',
+      debugDoneLocation: 'App.tsx:solOwnerPrewarmDone',
+      debugMsgPrefix: 'ui sol owner prewarm',
+    });
+  }, [isSolana, tokenAddressNormalized, address, chainId, normalizedSitePlatform, startSolTurboPrewarm, tokenInfo]);
+
+  useEffect(() => {
+    if (!isSolana || !tokenAddressNormalized || !shouldKeepSolPrewarmWarm) return;
+    let disposed = false;
+    const tick = () => {
+      if (disposed || document.hidden) return;
+      const baseKey = getSolPrewarmCacheKey({
+        chainId,
+        sitePlatform: normalizedSitePlatform,
+        tokenAddress: tokenAddressNormalized,
+        tokenInfo: tokenInfo as TokenInfo | null | undefined,
+      });
+      void startSolTurboPrewarm({
+        key: baseKey,
+        debugStartLocation: 'App.tsx:solKeepWarmBaseStart',
+        debugDoneLocation: 'App.tsx:solKeepWarmBaseDone',
+        debugMsgPrefix: 'ui sol keepwarm base',
+      });
+      if (!address) return;
+      const ownerKey = getSolPrewarmCacheKey({
+        chainId,
+        sitePlatform: normalizedSitePlatform,
+        tokenAddress: tokenAddressNormalized,
+        address,
+        tokenInfo: tokenInfo as TokenInfo | null | undefined,
+      });
+      void startSolTurboPrewarm({
+        key: ownerKey,
+        fromAddress: address,
+        debugStartLocation: 'App.tsx:solKeepWarmOwnerStart',
+        debugDoneLocation: 'App.tsx:solKeepWarmOwnerDone',
+        debugMsgPrefix: 'ui sol keepwarm owner',
+      });
+    };
+    const onVisibilityChange = () => {
+      if (!document.hidden) tick();
+    };
+    const timer = window.setInterval(tick, SOL_PREWARM_KEEPWARM_INTERVAL_MS);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [
+    isSolana,
+    tokenAddressNormalized,
+    shouldKeepSolPrewarmWarm,
+    chainId,
+    address,
+    normalizedSitePlatform,
+    tokenInfo,
+    startSolTurboPrewarm,
+    SOL_PREWARM_KEEPWARM_INTERVAL_MS,
+  ]);
+
+  const waitForSolPumpBasePrewarm = useCallback(async () => {
+    if (!isSolana || !tokenAddressNormalized) return;
+    const pending: Promise<void>[] = [];
+    const baseKey = getSolPrewarmCacheKey({
+      chainId,
+      sitePlatform: normalizedSitePlatform,
+      tokenAddress: tokenAddressNormalized,
+      tokenInfo: tokenInfo as TokenInfo | null | undefined,
+    });
+    const basePromise = prewarmTurboInFlightRef.current.get(baseKey);
+    if (basePromise) pending.push(basePromise);
+    if (address) {
+      const ownerKey = getSolPrewarmCacheKey({
+        chainId,
+        sitePlatform: normalizedSitePlatform,
+        tokenAddress: tokenAddressNormalized,
+        address,
+        tokenInfo: tokenInfo as TokenInfo | null | undefined,
+      });
+      const ownerPromise = prewarmTurboInFlightRef.current.get(ownerKey);
+      if (ownerPromise) pending.push(ownerPromise);
+    }
+    if (pending.length <= 0) return;
+    await Promise.race([
+      Promise.allSettled(pending),
+      new Promise((resolve) => setTimeout(resolve, 450)),
+    ]);
+  }, [isSolana, tokenAddressNormalized, chainId, address, normalizedSitePlatform, tokenInfo]);
 
   const shouldShowPrewarmIndicator = !!tokenAddressNormalized;
   const prewarmIndicatorState = useMemo<'hidden' | 'warming' | 'done'>(() => {
@@ -1195,43 +1624,51 @@ export default function App() {
       const parts: string[] = [];
       if (rpcPrewarmState === 'warming') parts.push('RPC');
       if (!!isUnlocked && !!address && turboPrewarmState !== 'done') {
-        parts.push(tokenInfo ? '交易路由' : '代币信息');
+        parts.push(isSolana ? '交易预取' : (tokenInfo ? '交易路由' : '代币信息'));
       }
       return parts.length
         ? `预热中：正在查询${parts.join('和')}`
         : '预热中：正在初始化交易预热';
     }
-    return '预热完成：当前代币详情页已完成预热';
-  }, [shouldShowPrewarmIndicator, prewarmIndicatorState, rpcPrewarmState, turboPrewarmState, isUnlocked, address, tokenInfo]);
+    return isSolana
+      ? '预热完成：当前代币详情页已完成 SOL 交易预取'
+      : '预热完成：当前代币详情页已完成预热';
+  }, [shouldShowPrewarmIndicator, prewarmIndicatorState, rpcPrewarmState, turboPrewarmState, isUnlocked, address, tokenInfo, isSolana]);
 
   const formattedNativeBalance = useMemo(
     () => formatTokenAmountForDisplay(tradeBaseBalanceWei, tradeBaseTokenMeta.decimals),
     [tradeBaseBalanceWei, tradeBaseTokenMeta.decimals]
   );
+  const resolvedTokenDecimals = useMemo(() => {
+    if (Number.isFinite(tokenDecimals as number) && (tokenDecimals as number) >= 0) {
+      return Number(tokenDecimals);
+    }
+    if (Number.isFinite(gmgnHoldingTokenDecimals as number) && (gmgnHoldingTokenDecimals as number) >= 0) {
+      return Number(gmgnHoldingTokenDecimals);
+    }
+    return isSolana ? 9 : 18;
+  }, [tokenDecimals, gmgnHoldingTokenDecimals, isSolana]);
+
+  const displayTokenBalanceWei = useMemo(() => {
+    if (chainId === ChainId.SOL && String(tokenBalanceWei || '0') === '0' && gmgnHoldingTokenBalanceWei && gmgnHoldingTokenBalanceWei !== '0') {
+      return gmgnHoldingTokenBalanceWei;
+    }
+    return tokenBalanceWei;
+  }, [chainId, tokenBalanceWei, gmgnHoldingTokenBalanceWei]);
 
   const formattedTokenBalance = useMemo(() => {
-    if (!tokenBalanceWei) return '0';
-    const val = BigInt(tokenBalanceWei);
-    const decimals = Number.isFinite(tokenDecimals as number) && (tokenDecimals as number) >= 0
-      ? Number(tokenDecimals)
-      : 18;
-    // Simple formatting for display
-    if (val === 0n) return '0';
-    return val > 1000n ? (val / (10n ** BigInt(decimals))).toString() : '>0';
-  }, [tokenBalanceWei, tokenDecimals]);
+    return formatTokenAmountForDisplay(displayTokenBalanceWei, resolvedTokenDecimals);
+  }, [displayTokenBalanceWei, resolvedTokenDecimals]);
 
   const numericTokenBalance = useMemo(() => {
-    if (!tokenBalanceWei) return null;
+    if (!displayTokenBalanceWei) return null;
     try {
-      const decimals = Number.isFinite(tokenDecimals as number) && (tokenDecimals as number) >= 0
-        ? Number(tokenDecimals)
-        : 18;
-      const normalized = Number(formatUnits(BigInt(tokenBalanceWei), decimals));
+      const normalized = Number(formatUnits(BigInt(displayTokenBalanceWei), resolvedTokenDecimals));
       return Number.isFinite(normalized) && normalized >= 0 ? normalized : null;
     } catch {
       return null;
     }
-  }, [tokenBalanceWei, tokenDecimals]);
+  }, [displayTokenBalanceWei, resolvedTokenDecimals]);
 
   const quoteSymbol = useMemo(() => {
     if (!tokenInfo) return null;
@@ -1242,22 +1679,446 @@ export default function App() {
     if (tokenPriceUsd && Number.isFinite(tokenPriceUsd) && tokenPriceUsd > 0) {
       return tokenPriceUsd;
     }
+    if (chainId === ChainId.SOL && gmgnHoldingTokenPriceUsd && Number.isFinite(gmgnHoldingTokenPriceUsd) && gmgnHoldingTokenPriceUsd > 0) {
+      return gmgnHoldingTokenPriceUsd;
+    }
     return null;
-  }, [tokenPriceUsd]);
+  }, [chainId, gmgnHoldingTokenPriceUsd, tokenPriceUsd]);
+
+  const getPendingSolTokenDeltaEntries = useCallback((tokenAddress: string, walletAddress: string) => {
+    const key = getPendingTokenDeltaKey(tokenAddress, walletAddress);
+    const entries = pendingSolTokenDeltasRef.current[key];
+    if (!Array.isArray(entries) || entries.length <= 0) {
+      delete pendingSolTokenDeltasRef.current[key];
+      return [] as PendingSolTokenDeltaEntry[];
+    }
+    const now = Date.now();
+    const activeEntries = entries.filter((entry) => !(entry.expiresAt > 0 && entry.expiresAt <= now));
+    if (activeEntries.length > 0) {
+      pendingSolTokenDeltasRef.current[key] = activeEntries;
+    } else {
+      delete pendingSolTokenDeltasRef.current[key];
+    }
+    return activeEntries;
+  }, []);
+
+  const getPendingSolTradeBaseDeltaEntries = useCallback((baseTokenAddress: string, walletAddress: string) => {
+    const key = getPendingTradeBaseDeltaKey(baseTokenAddress, walletAddress);
+    const entries = pendingSolTradeBaseDeltasRef.current[key];
+    if (!Array.isArray(entries) || entries.length <= 0) {
+      delete pendingSolTradeBaseDeltasRef.current[key];
+      return [] as PendingSolTokenDeltaEntry[];
+    }
+    const now = Date.now();
+    const activeEntries = entries.filter((entry) => !(entry.expiresAt > 0 && entry.expiresAt <= now));
+    if (activeEntries.length > 0) {
+      pendingSolTradeBaseDeltasRef.current[key] = activeEntries;
+    } else {
+      delete pendingSolTradeBaseDeltasRef.current[key];
+    }
+    return activeEntries;
+  }, []);
+
+  const getPendingSolTokenDeltaWei = useCallback((tokenAddress: string, walletAddress: string) => {
+    let total = 0n;
+    for (const entry of getPendingSolTokenDeltaEntries(tokenAddress, walletAddress)) {
+      try {
+        total += BigInt(entry.deltaWei || '0');
+      } catch {
+      }
+    }
+    return total;
+  }, [getPendingSolTokenDeltaEntries]);
+
+  const getPendingSolTokenNegativeDeltaWei = useCallback((tokenAddress: string, walletAddress: string) => {
+    let total = 0n;
+    for (const entry of getPendingSolTokenDeltaEntries(tokenAddress, walletAddress)) {
+      try {
+        const delta = BigInt(entry.deltaWei || '0');
+        if (delta < 0n) total += delta;
+      } catch {
+      }
+    }
+    return total;
+  }, [getPendingSolTokenDeltaEntries]);
+
+  const getPendingSolTradeBaseDeltaWei = useCallback((baseTokenAddress: string, walletAddress: string) => {
+    let total = 0n;
+    for (const entry of getPendingSolTradeBaseDeltaEntries(baseTokenAddress, walletAddress)) {
+      try {
+        total += BigInt(entry.deltaWei || '0');
+      } catch {
+      }
+    }
+    return total;
+  }, [getPendingSolTradeBaseDeltaEntries]);
+
+  const getPendingSolTokenDeltaSummary = useCallback((tokenAddress: string, walletAddress: string) => {
+    const entries = getPendingSolTokenDeltaEntries(tokenAddress, walletAddress);
+    let positiveTotal = 0n;
+    let negativeTotal = 0n;
+    const items = entries.map((entry) => {
+      let deltaWei = 0n;
+      try {
+        deltaWei = BigInt(entry.deltaWei || '0');
+      } catch {
+        deltaWei = 0n;
+      }
+      if (deltaWei > 0n) positiveTotal += deltaWei;
+      if (deltaWei < 0n) negativeTotal += deltaWei;
+      return {
+        id: entry.id,
+        deltaWei: deltaWei.toString(),
+        expiresInMs: Math.max(0, entry.expiresAt - Date.now()),
+      };
+    });
+    return {
+      count: items.length,
+      positiveTotalWei: positiveTotal.toString(),
+      negativeTotalWei: negativeTotal.toString(),
+      netTotalWei: (positiveTotal + negativeTotal).toString(),
+      items,
+    };
+  }, [getPendingSolTokenDeltaEntries]);
+
+  const addPendingSolTokenDeltaWei = useCallback((tokenAddress: string, walletAddress: string, deltaWeiLike: string) => {
+    let deltaWei = 0n;
+    try {
+      deltaWei = BigInt(String(deltaWeiLike || '0'));
+    } catch {
+      deltaWei = 0n;
+    }
+    if (deltaWei === 0n) return null;
+    const key = getPendingTokenDeltaKey(tokenAddress, walletAddress);
+    const entry: PendingSolTokenDeltaEntry = {
+      id: `${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      deltaWei: deltaWei.toString(),
+      expiresAt: Date.now() + SOL_PENDING_TOKEN_DELTA_TTL_MS,
+    };
+    const current = getPendingSolTokenDeltaEntries(tokenAddress, walletAddress);
+    pendingSolTokenDeltasRef.current[key] = [...current, entry];
+    return entry.id;
+  }, [getPendingSolTokenDeltaEntries]);
+
+  const addPendingSolTradeBaseDeltaWei = useCallback((baseTokenAddress: string, walletAddress: string, deltaWeiLike: string) => {
+    let deltaWei = 0n;
+    try {
+      deltaWei = BigInt(String(deltaWeiLike || '0'));
+    } catch {
+      deltaWei = 0n;
+    }
+    if (deltaWei === 0n) return null;
+    const key = getPendingTradeBaseDeltaKey(baseTokenAddress, walletAddress);
+    const entry: PendingSolTokenDeltaEntry = {
+      id: `${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      deltaWei: deltaWei.toString(),
+      expiresAt: Date.now() + SOL_PENDING_TOKEN_DELTA_TTL_MS,
+    };
+    const current = getPendingSolTradeBaseDeltaEntries(baseTokenAddress, walletAddress);
+    pendingSolTradeBaseDeltasRef.current[key] = [...current, entry];
+    return entry.id;
+  }, [getPendingSolTradeBaseDeltaEntries]);
+
+  const removePendingSolTokenDeltaWei = useCallback((tokenAddress: string, walletAddress: string, entryId: string | null | undefined) => {
+    const id = String(entryId || '').trim();
+    if (!id) return;
+    const key = getPendingTokenDeltaKey(tokenAddress, walletAddress);
+    const current = getPendingSolTokenDeltaEntries(tokenAddress, walletAddress);
+    const next = current.filter((entry) => entry.id !== id);
+    if (next.length > 0) {
+      pendingSolTokenDeltasRef.current[key] = next;
+    } else {
+      delete pendingSolTokenDeltasRef.current[key];
+    }
+  }, [getPendingSolTokenDeltaEntries]);
+
+  const removePendingSolTradeBaseDeltaWei = useCallback((baseTokenAddress: string, walletAddress: string, entryId: string | null | undefined) => {
+    const id = String(entryId || '').trim();
+    if (!id) return;
+    const key = getPendingTradeBaseDeltaKey(baseTokenAddress, walletAddress);
+    const current = getPendingSolTradeBaseDeltaEntries(baseTokenAddress, walletAddress);
+    const next = current.filter((entry) => entry.id !== id);
+    if (next.length > 0) {
+      pendingSolTradeBaseDeltasRef.current[key] = next;
+    } else {
+      delete pendingSolTradeBaseDeltasRef.current[key];
+    }
+  }, [getPendingSolTradeBaseDeltaEntries]);
+
+  const consumePendingSolTokenDeltaWei = useCallback((tokenAddress: string, walletAddress: string, observedChangeWei: bigint) => {
+    if (observedChangeWei === 0n) return;
+    const key = getPendingTokenDeltaKey(tokenAddress, walletAddress);
+    const current = getPendingSolTokenDeltaEntries(tokenAddress, walletAddress);
+    if (current.length <= 0) return;
+    let remainingObserved = observedChangeWei > 0n ? observedChangeWei : -observedChangeWei;
+    const consumePositive = observedChangeWei > 0n;
+    const next: PendingSolTokenDeltaEntry[] = [];
+    for (const entry of current) {
+      let entryDelta = 0n;
+      try {
+        entryDelta = BigInt(entry.deltaWei || '0');
+      } catch {
+        entryDelta = 0n;
+      }
+      const matchesDirection = consumePositive ? entryDelta > 0n : entryDelta < 0n;
+      if (!matchesDirection || remainingObserved <= 0n) {
+        next.push(entry);
+        continue;
+      }
+      const entryAbs = entryDelta > 0n ? entryDelta : -entryDelta;
+      if (entryAbs <= remainingObserved) {
+        remainingObserved -= entryAbs;
+        continue;
+      }
+      const leftoverAbs = entryAbs - remainingObserved;
+      remainingObserved = 0n;
+      next.push({
+        ...entry,
+        deltaWei: consumePositive ? leftoverAbs.toString() : `-${leftoverAbs.toString()}`,
+      });
+    }
+    if (next.length > 0) {
+      pendingSolTokenDeltasRef.current[key] = next;
+    } else {
+      delete pendingSolTokenDeltasRef.current[key];
+    }
+  }, [getPendingSolTokenDeltaEntries]);
+
+  const consumePendingSolTradeBaseDeltaWei = useCallback((baseTokenAddress: string, walletAddress: string, observedChangeWei: bigint) => {
+    if (observedChangeWei >= 0n) return;
+    const key = getPendingTradeBaseDeltaKey(baseTokenAddress, walletAddress);
+    const current = getPendingSolTradeBaseDeltaEntries(baseTokenAddress, walletAddress);
+    if (current.length <= 0) return;
+    let remainingObserved = -observedChangeWei;
+    const next: PendingSolTokenDeltaEntry[] = [];
+    for (const entry of current) {
+      let entryDelta = 0n;
+      try {
+        entryDelta = BigInt(entry.deltaWei || '0');
+      } catch {
+        entryDelta = 0n;
+      }
+      if (!(entryDelta < 0n) || remainingObserved <= 0n) {
+        next.push(entry);
+        continue;
+      }
+      const entryAbs = -entryDelta;
+      if (entryAbs <= remainingObserved) {
+        remainingObserved -= entryAbs;
+        continue;
+      }
+      const leftoverAbs = entryAbs - remainingObserved;
+      remainingObserved = 0n;
+      next.push({
+        ...entry,
+        deltaWei: `-${leftoverAbs.toString()}`,
+      });
+    }
+    if (next.length > 0) {
+      pendingSolTradeBaseDeltasRef.current[key] = next;
+    } else {
+      delete pendingSolTradeBaseDeltasRef.current[key];
+    }
+  }, [getPendingSolTradeBaseDeltaEntries]);
+
+  const applyPendingSolTokenDeltaWei = useCallback((tokenAddress: string, walletAddress: string, actualWei: string) => {
+    let actual = 0n;
+    try {
+      actual = BigInt(String(actualWei || '0'));
+    } catch {
+      actual = 0n;
+    }
+    const pending = getPendingSolTokenDeltaWei(tokenAddress, walletAddress);
+    const effective = actual + pending;
+    return effective > 0n ? effective.toString() : '0';
+  }, [getPendingSolTokenDeltaWei]);
+
+  const applyPendingSolTradeBaseDeltaWei = useCallback((baseTokenAddress: string, walletAddress: string, actualWei: string) => {
+    let actual = 0n;
+    try {
+      actual = BigInt(String(actualWei || '0'));
+    } catch {
+      actual = 0n;
+    }
+    const pending = getPendingSolTradeBaseDeltaWei(baseTokenAddress, walletAddress);
+    const effective = actual + pending;
+    return effective > 0n ? effective.toString() : '0';
+  }, [getPendingSolTradeBaseDeltaWei]);
+
+  const getTrackedSolWalletTokenBalanceWei = useCallback((walletAddress: string) => {
+    const walletKey = String(walletAddress || '').trim().toLowerCase();
+    if (!walletKey) return null;
+    if (!Object.prototype.hasOwnProperty.call(effectiveWalletTokenBalancesRef.current, walletKey)) return null;
+    try {
+      return BigInt(effectiveWalletTokenBalancesRef.current[walletKey] || '0');
+    } catch {
+      return 0n;
+    }
+  }, []);
+
+  const getTrackedSolWalletSellableTokenBalanceWei = useCallback((tokenAddress: string, walletAddress: string) => {
+    const walletKey = String(walletAddress || '').trim().toLowerCase();
+    if (!walletKey) return null;
+    if (!Object.prototype.hasOwnProperty.call(actualWalletTokenBalancesRef.current, walletKey)) return null;
+    let actual = 0n;
+    try {
+      actual = BigInt(actualWalletTokenBalancesRef.current[walletKey] || '0');
+    } catch {
+      actual = 0n;
+    }
+    const negativePending = getPendingSolTokenNegativeDeltaWei(tokenAddress, walletAddress);
+    const sellable = actual + negativePending;
+    return sellable > 0n ? sellable : 0n;
+  }, [getPendingSolTokenNegativeDeltaWei]);
+
+  const getSolWalletTokenSellableBalanceWei = useCallback((tokenAddress: string, walletAddress: string, actualWeiLike: string) => {
+    let actual = 0n;
+    try {
+      actual = BigInt(String(actualWeiLike || '0'));
+    } catch {
+      actual = 0n;
+    }
+    const negativePending = getPendingSolTokenNegativeDeltaWei(tokenAddress, walletAddress);
+    const sellable = actual + negativePending;
+    return sellable > 0n ? sellable.toString() : '0';
+  }, [getPendingSolTokenNegativeDeltaWei]);
+
+  const getTrackedSolWalletTradeBaseBalanceWei = useCallback((walletAddress: string) => {
+    const walletKey = String(walletAddress || '').trim().toLowerCase();
+    if (!walletKey) return null;
+    if (!Object.prototype.hasOwnProperty.call(effectiveWalletTradeBaseBalancesRef.current, walletKey)) return null;
+    try {
+      return BigInt(effectiveWalletTradeBaseBalancesRef.current[walletKey] || '0');
+    } catch {
+      return 0n;
+    }
+  }, []);
+
+  const applyOptimisticSolWalletTokenDeltaWei = useCallback((walletAddress: string, deltaWei: bigint) => {
+    if (!isSolana || deltaWei === 0n) return;
+    const walletKey = String(walletAddress || '').trim().toLowerCase();
+    if (!walletKey) return;
+    const currentRaw = effectiveWalletTokenBalancesRef.current[walletKey];
+    if (typeof currentRaw !== 'string') return;
+    let current = 0n;
+    try {
+      current = BigInt(currentRaw || '0');
+    } catch {
+      current = 0n;
+    }
+    const next = current + deltaWei;
+    const nextByWallet = {
+      ...effectiveWalletTokenBalancesRef.current,
+      [walletKey]: next > 0n ? next.toString() : '0',
+    };
+    effectiveWalletTokenBalancesRef.current = nextByWallet;
+    const actualRaw = actualWalletTokenBalancesRef.current[walletKey] || '0';
+    const nextDisplayWei = tokenAddressNormalized
+      ? getSolWalletTokenSellableBalanceWei(tokenAddressNormalized, walletAddress, actualRaw)
+      : '0';
+    setWalletTokenBalancesWei((prev) => ({
+      ...prev,
+      [walletKey]: nextDisplayWei,
+    }));
+    if (selectedTradeWallets.some((wallet) => wallet.toLowerCase() === walletKey)) {
+      let total = 0n;
+      for (const selectedWalletAddress of selectedTradeWallets) {
+        const addrLower = selectedWalletAddress.toLowerCase();
+        const actualSelectedRaw = actualWalletTokenBalancesRef.current[addrLower] || '0';
+        const displayWei = tokenAddressNormalized
+          ? getSolWalletTokenSellableBalanceWei(tokenAddressNormalized, selectedWalletAddress, actualSelectedRaw)
+          : '0';
+        try {
+          total += BigInt(displayWei || '0');
+        } catch {
+        }
+      }
+      setTokenBalanceWei(total.toString());
+    }
+  }, [getSolWalletTokenSellableBalanceWei, isSolana, selectedTradeWallets, tokenAddressNormalized]);
+
+  const applyOptimisticSolWalletTradeBaseDeltaWei = useCallback((walletAddress: string, deltaWei: bigint) => {
+    if (!isSolana || deltaWei === 0n) return;
+    const walletKey = String(walletAddress || '').trim().toLowerCase();
+    if (!walletKey) return;
+    const currentRaw = effectiveWalletTradeBaseBalancesRef.current[walletKey];
+    if (typeof currentRaw !== 'string') return;
+    let current = 0n;
+    try {
+      current = BigInt(currentRaw || '0');
+    } catch {
+      current = 0n;
+    }
+    const next = current + deltaWei;
+    const nextByWallet = {
+      ...effectiveWalletTradeBaseBalancesRef.current,
+      [walletKey]: next > 0n ? next.toString() : '0',
+    };
+    effectiveWalletTradeBaseBalancesRef.current = nextByWallet;
+    setWalletTradeBaseBalancesWei(nextByWallet);
+    if (selectedTradeWallets.some((wallet) => wallet.toLowerCase() === walletKey)) {
+      setTradeBaseBalanceWei((prev) => {
+        let currentTotal = 0n;
+        try {
+          currentTotal = BigInt(String(prev || '0'));
+        } catch {
+          currentTotal = 0n;
+        }
+        const nextTotal = currentTotal + deltaWei;
+        return nextTotal > 0n ? nextTotal.toString() : '0';
+      });
+    }
+  }, [isSolana, selectedTradeWallets]);
+
+  const reconcilePendingSolTokenDeltaWei = useCallback((
+    tokenAddress: string,
+    walletAddress: string,
+    prevActualWei: string,
+    nextActualWei: string,
+  ) => {
+    let prevActual = 0n;
+    let nextActual = 0n;
+    try {
+      prevActual = BigInt(String(prevActualWei || '0'));
+      nextActual = BigInt(String(nextActualWei || '0'));
+    } catch {
+      return;
+    }
+    const observedChange = nextActual - prevActual;
+    if (observedChange === 0n) return;
+    consumePendingSolTokenDeltaWei(tokenAddress, walletAddress, observedChange);
+  }, [consumePendingSolTokenDeltaWei]);
+
+  const resolvedTokenSymbol = useMemo(() => {
+    const candidates = [
+      tokenSymbol,
+      gmgnHoldingTokenSymbol,
+      tokenInfo?.symbol,
+      tokenInfo?.name,
+    ];
+    for (const candidate of candidates) {
+      const text = typeof candidate === 'string' ? candidate.trim() : '';
+      if (text) return text;
+    }
+    if (tokenAddressNormalized) {
+      return `${tokenAddressNormalized.slice(0, 6)}...${tokenAddressNormalized.slice(-4)}`;
+    }
+    return null;
+  }, [gmgnHoldingTokenSymbol, tokenAddressNormalized, tokenInfo?.name, tokenInfo?.symbol, tokenSymbol]);
 
   useEffect(() => {
     let canceled = false;
     if (!settings || !siteInfo) return;
 
-    const runtime = getChainRuntime(chainId);
+    const runtime = getChainRuntimeBase(chainId);
     const priceTokenAddress = tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase()
-      ? runtime.wrappedNativeAddress
+      ? (runtime.kind === 'evm' ? getEvmChainRuntime(chainId).wrappedNativeAddress : SOLANA_WRAPPED_NATIVE_MINT)
       : tradeBaseTokenAddress;
-    const priceTokenMeta = priceTokenAddress.toLowerCase() === runtime.wrappedNativeAddress.toLowerCase()
+    const priceTokenMeta = priceTokenAddress.toLowerCase() === (runtime.kind === 'evm' ? getEvmChainRuntime(chainId).wrappedNativeAddress.toLowerCase() : SOLANA_WRAPPED_NATIVE_MINT.toLowerCase())
       ? {
           address: priceTokenAddress,
-          symbol: `W${runtime.nativeSymbol}`,
-          decimals: runtime.viemChain.nativeCurrency.decimals,
+          symbol: runtime.kind === 'evm' ? `W${runtime.nativeSymbol}` : 'WSOL',
+          decimals: runtime.kind === 'evm' ? getEvmChainRuntime(chainId).viemChain.nativeCurrency.decimals : 9,
         } as TokenInfo
       : null;
     const stableSymbol = tradeBaseTokenMeta.symbol.toUpperCase();
@@ -1284,7 +2145,7 @@ export default function App() {
 
   const quickTradePreviewRoutes = useMemo(() => {
     if (siteInfo?.platform === 'altfun' && chainId === 999) {
-      const token = tokenSymbol || 'TOKEN';
+      const token = resolvedTokenSymbol || 'TOKEN';
       const base = tradeBaseTokenMeta.symbol;
       if (base.toUpperCase() === 'USDC') {
         return {
@@ -1297,8 +2158,27 @@ export default function App() {
         sell: `${token} -> USDC -> ${base}`,
       };
     }
+    if (chainId === ChainId.SOL) {
+      const directSource = resolveKnownSolanaDirectSource(tokenInfo as any, tokenAddressNormalized)
+        ?? resolveSolanaSourceAlias(
+          String(
+            tokenInfo?.launchpad_platform
+            || tokenInfo?.launchpad
+            || (tokenInfo as any)?.tpool_exchange
+            || siteInfo?.platform
+            || ''
+          )
+        );
+      const routeLabel = directSource
+        ? (SOLANA_ROUTE_LABELS[directSource] ?? directSource)
+        : 'Jup';
+      return {
+        buy: routeLabel,
+        sell: routeLabel,
+      };
+    }
     return { buy: null, sell: null };
-  }, [siteInfo?.platform, chainId, tokenSymbol, tradeBaseTokenMeta.symbol]);
+  }, [siteInfo?.platform, chainId, resolvedTokenSymbol, tradeBaseTokenMeta.symbol, tokenInfo, tokenAddressNormalized]);
 
   useEffect(() => {
     if (!tokenAddressNormalized || !settings || !siteInfo || chainId !== 999 || siteInfo.platform !== 'altfun') {
@@ -1318,8 +2198,8 @@ export default function App() {
       }
       const usdAmount = deriveUsdFromBaseAmount(amount, tradeBaseTokenAddress, tradeBaseTokenMeta, tradeBasePriceUsd);
       nextBuyUsd[idx] = usdAmount;
-      nextBuyTokens[idx] = usdAmount != null && tokenPriceUsd && tokenPriceUsd > 0
-        ? usdAmount / tokenPriceUsd
+      nextBuyTokens[idx] = usdAmount != null && tokenPrice && tokenPrice > 0
+        ? usdAmount / tokenPrice
         : null;
     });
 
@@ -1334,7 +2214,7 @@ export default function App() {
     tradeBaseTokenAddress,
     tradeBaseTokenMeta,
     tradeBasePriceUsd,
-    tokenPriceUsd,
+    tokenPrice,
   ]);
 
   useEffect(() => {
@@ -1347,6 +2227,9 @@ export default function App() {
     const nextSellUsd: Array<number | null> = [null, null, null, null];
     const nextSellBase: Array<number | null> = [null, null, null, null];
     const balanceAmount = numericTokenBalance ?? null;
+    // #region debug-point A:sell-preview-input
+    if (isSolana) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'A', location: 'App.tsx:sellPreview', msg: '[DEBUG] sol sell preview input', data: { chainId, tokenAddress: tokenAddressNormalized, tokenBalanceWei, balanceAmount, tokenDecimals, rawTokenPriceUsd: tokenPriceUsd, effectiveTokenPriceUsd: tokenPrice, gmgnHoldingTokenPriceUsd, tradeBasePriceUsd, tradeBaseSymbol: tradeBaseTokenMeta.symbol, sellPresets: displayedSellPresets.slice(0, 4) }, ts: Date.now() }) }).catch(() => { });
+    // #endregion
 
     displayedSellPresets.slice(0, 4).forEach((raw, idx) => {
       const pct = Number(String(raw || '').replace(/,/g, '').trim());
@@ -1354,7 +2237,7 @@ export default function App() {
         return;
       }
       const tokenAmount = (balanceAmount * pct) / 100;
-      const usdAmount = tokenPriceUsd && tokenPriceUsd > 0 ? tokenAmount * tokenPriceUsd : null;
+      const usdAmount = tokenPrice && tokenPrice > 0 ? tokenAmount * tokenPrice : null;
       const baseAmount = usdAmount != null ? deriveBaseAmountFromUsd(usdAmount, tradeBaseTokenMeta, tradeBasePriceUsd) : null;
       nextSellUsd[idx] = usdAmount;
       nextSellBase[idx] = baseAmount;
@@ -1362,6 +2245,9 @@ export default function App() {
 
     setSellPreviewQuotedUsd(nextSellUsd);
     setSellPreviewQuotedBaseAmounts(nextSellBase);
+    // #region debug-point B:sell-preview-output
+    if (isSolana) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'B', location: 'App.tsx:sellPreview', msg: '[DEBUG] sol sell preview output', data: { tokenAddress: tokenAddressNormalized, quotedUsd: nextSellUsd, quotedBase: nextSellBase }, ts: Date.now() }) }).catch(() => { });
+    // #endregion
   }, [
     tokenAddressNormalized,
     settings,
@@ -1371,6 +2257,8 @@ export default function App() {
     numericTokenBalance,
     tradeBaseTokenMeta,
     tradeBasePriceUsd,
+    gmgnHoldingTokenPriceUsd,
+    tokenPrice,
     tokenPriceUsd,
   ]);
 
@@ -1398,9 +2286,10 @@ export default function App() {
     const tokenInfoPrice = safeTokenInfo && typeof safeTokenInfo.tokenPrice?.price === 'string'
       ? Number(safeTokenInfo.tokenPrice.price)
       : 0;
+    const shouldBypassTokenInfoPriceShortcut = siteInfo.platform === 'gmgn' && chainId === ChainId.SOL;
     const seq = tokenPriceReqSeq.current + 1;
     tokenPriceReqSeq.current = seq;
-    if (!force && Number.isFinite(tokenInfoPrice) && tokenInfoPrice > 0) {
+    if (!force && !shouldBypassTokenInfoPriceShortcut && Number.isFinite(tokenInfoPrice) && tokenInfoPrice > 0) {
       if (reqCtxKey !== tokenContextKeyRef.current) return;
       setTokenPriceUsd(tokenInfoPrice);
       return;
@@ -1443,17 +2332,19 @@ export default function App() {
     queryAllWallets = false,
   ) {
     if (!siteInfo || !res.wallet.isUnlocked) return null;
+    const solRefreshSeq = isSolana ? ++solBaseBalanceRefreshSeqRef.current : 0;
     const resolvedChainId = siteInfo?.chain ? (getChainIdByName(siteInfo.chain) || (res.settings?.chainId ?? 56)) : (res.settings?.chainId ?? 56);
     const tradeBaseAddress = resolveTradeBaseTokenAddress(res.settings, resolvedChainId);
     const allWallets = ((res.wallet.accounts ?? []) as Account[])
-      .map((acc) => normalizeAddr(String(acc.address || '')))
-      .filter(Boolean) as `0x${string}`[];
-    const selectedWallets = resolveSelectedTradeWallets(res.wallet, res.settings);
+      .map((acc) => normalizeWalletAddress(resolvedChainId, String(acc.address || '')))
+      .filter(Boolean) as ChainAddress[];
+    const selectedWallets = resolveSelectedTradeWallets(res.wallet, res.settings, resolvedChainId);
     const targetWallets = selectedWallets.length > 0 ? selectedWallets : allWallets.slice(0, 1);
     const queryWallets = queryAllWallets ? allWallets : targetWallets;
     const allBalances = await Promise.all(
       queryWallets.map((addr) => TokenAPI.getBalance(siteInfo.platform, siteInfo.chain, addr, zeroAddress, { cacheTtlMs: 2000 }))
     );
+    if (isSolana && solRefreshSeq !== solBaseBalanceRefreshSeqRef.current) return null;
     const byWallet: Record<string, string> = {};
     allWallets.forEach((addr) => {
       byWallet[addr.toLowerCase()] = '0';
@@ -1470,6 +2361,7 @@ export default function App() {
           TokenAPI.getBalance(siteInfo.platform, siteInfo.chain, addr, tradeBaseAddress, { cacheTtlMs: 2000 })
         )
       );
+      if (isSolana && solRefreshSeq !== solBaseBalanceRefreshSeqRef.current) return null;
       const mapped: Record<string, string> = {};
       allWallets.forEach((addr) => {
         mapped[addr.toLowerCase()] = '0';
@@ -1479,9 +2371,40 @@ export default function App() {
       });
       byTradeBaseWallet = mapped;
     }
-    setWalletTradeBaseBalancesWei(byTradeBaseWallet);
+    if (isSolana && solRefreshSeq !== solBaseBalanceRefreshSeqRef.current) return null;
+    const prevActualTradeBaseByWallet = actualWalletTradeBaseBalancesRef.current;
+    if (isSolana) {
+      queryWallets.forEach((addr) => {
+        const addrLower = addr.toLowerCase();
+        const prevActualWei = prevActualTradeBaseByWallet[addrLower] || '0';
+        const nextActualWei = byTradeBaseWallet[addrLower] || '0';
+        let prevActual = 0n;
+        let nextActual = 0n;
+        try {
+          prevActual = BigInt(prevActualWei);
+          nextActual = BigInt(nextActualWei);
+        } catch {
+          prevActual = 0n;
+          nextActual = 0n;
+        }
+        const observedChange = nextActual - prevActual;
+        if (observedChange !== 0n) {
+          consumePendingSolTradeBaseDeltaWei(tradeBaseAddress, addr, observedChange);
+        }
+      });
+    }
+    actualWalletTradeBaseBalancesRef.current = { ...byTradeBaseWallet };
+    const effectiveTradeBaseByWallet: Record<string, string> = {};
+    allWallets.forEach((addr) => {
+      const addrLower = addr.toLowerCase();
+      effectiveTradeBaseByWallet[addrLower] = isSolana
+        ? applyPendingSolTradeBaseDeltaWei(tradeBaseAddress, addr, byTradeBaseWallet[addrLower] || '0')
+        : (byTradeBaseWallet[addrLower] || '0');
+    });
+    effectiveWalletTradeBaseBalancesRef.current = { ...effectiveTradeBaseByWallet };
+    setWalletTradeBaseBalancesWei(effectiveTradeBaseByWallet);
 
-    const total = targetWallets.reduce((sum, addr) => sum + BigInt(byTradeBaseWallet[addr.toLowerCase()] || '0'), 0n);
+    const total = targetWallets.reduce((sum, addr) => sum + BigInt(effectiveTradeBaseByWallet[addr.toLowerCase()] || '0'), 0n);
     setTradeBaseBalanceWei(total.toString());
     return {
       selectedWalletCount: selectedWallets.length,
@@ -1531,6 +2454,7 @@ export default function App() {
   const lastTokenRefresh = useRef(0);
   async function refreshToken(force = false, queryAllWallets = false, source = 'unknown') {
     const seq = tokenRefreshSeqRef.current;
+    const solRefreshSeq = isSolana ? ++solTokenBalanceRefreshSeqRef.current : 0;
     if (document.hidden && !force) return;
     if (!tokenAddressNormalized || !siteInfo) {
       setTokenInfo(null);
@@ -1565,17 +2489,35 @@ export default function App() {
       const meta = await TokenAPI.getTokenInfo(siteInfo.platform, siteInfo.chain, tokenAddressNormalized, {
         cacheTtlMs: tokenInfoCacheTtlMs,
       });
+      if (isSolana && solRefreshSeq !== solTokenBalanceRefreshSeqRef.current) return;
       const metaElapsedMs = Date.now() - metaStartedAt;
       if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
       if (meta) {
-        const normalizedDecimals =
+        let normalizedDecimals =
           Number.isFinite(meta.decimals)
             && Number(meta.decimals) > 0
             && Number(meta.decimals) <= 36
             ? Number(meta.decimals)
-            : 18;
+            : (isSolana ? 9 : 18);
+        let normalizedSymbol = meta.symbol;
+        if (isSolana && (!Number.isFinite(meta.decimals) || Number(meta.decimals) <= 0 || Number(meta.decimals) > 36)) {
+          try {
+            const chainMeta = await call({
+              type: 'token:getMeta',
+              tokenAddress: tokenAddressNormalized,
+              chainId,
+            } as const);
+            if (Number.isFinite(chainMeta.decimals) && Number(chainMeta.decimals) >= 0 && Number(chainMeta.decimals) <= 36) {
+              normalizedDecimals = Number(chainMeta.decimals);
+            }
+            if (typeof chainMeta.symbol === 'string' && chainMeta.symbol.trim()) {
+              normalizedSymbol = chainMeta.symbol.trim();
+            }
+          } catch {
+          }
+        }
         setTokenInfo(meta);
-        setTokenSymbol(meta.symbol);
+        setTokenSymbol(normalizedSymbol);
         setTokenDecimals(normalizedDecimals);
 
         if ((meta as any).tokenPrice) {
@@ -1588,10 +2530,10 @@ export default function App() {
         }
       }
 
-      const selectedWalletsForToken = resolveSelectedTradeWallets(state?.wallet, settings);
+      const selectedWalletsForToken = resolveSelectedTradeWallets(state?.wallet, settings, chainId);
       const allWalletsForToken = ((state?.wallet.accounts ?? []) as Account[])
-        .map((acc) => normalizeAddr(String(acc.address || '')))
-        .filter(Boolean) as `0x${string}`[];
+        .map((acc) => normalizeWalletAddress(chainId, String(acc.address || '')))
+        .filter(Boolean) as ChainAddress[];
       const targetWalletsForToken = selectedWalletsForToken.length > 0 ? selectedWalletsForToken : allWalletsForToken.slice(0, 1);
       const queryWalletsForToken = queryAllWallets ? allWalletsForToken : targetWalletsForToken;
       let holdingsElapsedMs = 0;
@@ -1600,10 +2542,11 @@ export default function App() {
         const holdings = await Promise.all(
           queryWalletsForToken.map((walletAddr) =>
             TokenAPI.getTokenHolding(siteInfo.platform, siteInfo.chain, walletAddr, tokenAddressNormalized, {
-              cacheTtlMs: tokenBalanceRefreshThrottleMs,
+              cacheTtlMs: force ? 0 : tokenBalanceRefreshThrottleMs,
             })
           )
         );
+        if (isSolana && solRefreshSeq !== solTokenBalanceRefreshSeqRef.current) return;
         holdingsElapsedMs = Date.now() - holdingsStartedAt;
         if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
         const byWallet: Record<string, string> = {};
@@ -1613,16 +2556,42 @@ export default function App() {
         queryWalletsForToken.forEach((addr, i) => {
           byWallet[addr.toLowerCase()] = holdings[i] ?? '0';
         });
-        setWalletTokenBalancesWei(byWallet);
-        const total = targetWalletsForToken.reduce((sum, addr) => sum + BigInt(byWallet[addr.toLowerCase()] || '0'), 0n);
+        const prevActualByWallet = actualWalletTokenBalancesRef.current;
+        queryWalletsForToken.forEach((addr) => {
+          const addrLower = addr.toLowerCase();
+          reconcilePendingSolTokenDeltaWei(
+            tokenAddressNormalized,
+            addr,
+            prevActualByWallet[addrLower] || '0',
+            byWallet[addrLower] || '0',
+          );
+        });
+        actualWalletTokenBalancesRef.current = { ...byWallet };
+        const effectiveByWallet: Record<string, string> = {};
+        const displayByWallet: Record<string, string> = {};
+        allWalletsForToken.forEach((addr) => {
+          const addrLower = addr.toLowerCase();
+          effectiveByWallet[addrLower] = isSolana
+            ? applyPendingSolTokenDeltaWei(tokenAddressNormalized, addr, byWallet[addrLower] || '0')
+            : (byWallet[addrLower] || '0');
+          displayByWallet[addrLower] = isSolana
+            ? getSolWalletTokenSellableBalanceWei(tokenAddressNormalized, addr, byWallet[addrLower] || '0')
+            : effectiveByWallet[addrLower];
+        });
+        effectiveWalletTokenBalancesRef.current = { ...effectiveByWallet };
+        setWalletTokenBalancesWei(displayByWallet);
+        const total = targetWalletsForToken.reduce((sum, addr) => sum + BigInt(displayByWallet[addr.toLowerCase()] || '0'), 0n);
         setTokenBalanceWei(total.toString());
       } else {
+        actualWalletTokenBalancesRef.current = {};
+        effectiveWalletTokenBalancesRef.current = {};
         setTokenBalanceWei('0');
         setWalletTokenBalancesWei({});
       }
 
       const priceStartedAt = Date.now();
       await refreshTokenPrice(force, meta ?? null);
+      if (isSolana && solRefreshSeq !== solTokenBalanceRefreshSeqRef.current) return;
       const priceElapsedMs = Date.now() - priceStartedAt;
       logHyperReadDebug('refreshToken.done', {
         source,
@@ -1637,9 +2606,12 @@ export default function App() {
         queriedWalletCount: queryWalletsForToken.length,
       });
     } catch (e: any) {
+      if (isSolana && solRefreshSeq !== solTokenBalanceRefreshSeqRef.current) return;
       if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
       setTokenSymbol(null);
       setTokenDecimals(null);
+      actualWalletTokenBalancesRef.current = {};
+      effectiveWalletTokenBalancesRef.current = {};
       setTokenBalanceWei('0');
       setWalletTokenBalancesWei({});
       setTokenStat(null);
@@ -1660,17 +2632,59 @@ export default function App() {
   async function refreshGmgnHoldingStats(force = false, source = 'unknown') {
     const seq = ++gmgnHoldingRefreshSeqRef.current;
     if (document.hidden && !force) return;
-    if (siteInfo?.platform !== 'gmgn' || !tokenAddressNormalized || gmgnHoldingWallets.length <= 0) {
+    if (!shouldEnableHoldingStats || !gmgnHoldingChain) {
       setGmgnHoldingStats(null);
+      setGmgnHoldingTokenPriceUsd(null);
+      setGmgnHoldingTokenBalanceWei(null);
+      setGmgnHoldingTokenDecimals(null);
+      setGmgnHoldingTokenSymbol(null);
       setGmgnHoldingPollingEnabled(false);
       return;
     }
 
     try {
-      const holdings = await GmgnAPI.getWalletsHolding(siteInfo.chain, tokenAddressNormalized, gmgnHoldingWallets);
+      const detailHoldings = (await Promise.all(
+        gmgnHoldingWallets.map(async (walletAddress) => {
+          try {
+            const detail = await GmgnAPI.getTokenHoldingDetail(gmgnHoldingChain, walletAddress, tokenAddressNormalized);
+            return mapHoldingDetailToHolding(walletAddress, tokenAddressNormalized, detail);
+          } catch {
+            return null;
+          }
+        })
+      )).filter((item): item is GmgnTokenHolding => !!item);
+      const holdings = detailHoldings.length > 0
+        ? detailHoldings
+        : await GmgnAPI.getWalletsHolding(gmgnHoldingChain, tokenAddressNormalized, gmgnHoldingWallets) as GmgnTokenHolding[];
       if (seq !== gmgnHoldingRefreshSeqRef.current) return;
       const nextStats = aggregateGmgnHoldings(holdings);
+      const derivedPrices = holdings
+        .map((item) => resolveHoldingUnitPriceUsd(item))
+        .filter((item): item is number => item != null && Number.isFinite(item) && item > 0)
+        .sort((a, b) => a - b);
+      const derivedPrice = derivedPrices.length > 0
+        ? derivedPrices[Math.floor(derivedPrices.length / 2)]
+        : null;
+      const derivedSymbol = holdings
+        .map((item) => resolveHoldingTokenSymbol(item))
+        .find((item): item is string => !!item) ?? null;
+      const derivedDecimals = holdings
+        .map((item) => resolveHoldingTokenDecimals(item))
+        .find((item): item is number => item != null && Number.isFinite(item) && item >= 0) ?? null;
+      const derivedBalanceWei = holdings.reduce((sum, item) => {
+        const raw = resolveHoldingBalanceWei(item);
+        if (!raw) return sum;
+        try {
+          return sum + BigInt(raw);
+        } catch {
+          return sum;
+        }
+      }, 0n).toString();
       setGmgnHoldingStats(nextStats);
+      setGmgnHoldingTokenPriceUsd(derivedPrice);
+      setGmgnHoldingTokenBalanceWei(derivedBalanceWei);
+      setGmgnHoldingTokenDecimals(derivedDecimals);
+      setGmgnHoldingTokenSymbol(derivedSymbol);
       setGmgnHoldingPollingEnabled(holdings.some((item) => (parseGmgnNullableNumber(item.balance) ?? 0) > 0));
     } catch (e: any) {
       if (seq !== gmgnHoldingRefreshSeqRef.current) return;
@@ -1679,6 +2693,10 @@ export default function App() {
         error: String(e?.message || e || ''),
       });
       setGmgnHoldingStats(null);
+      setGmgnHoldingTokenPriceUsd(null);
+      setGmgnHoldingTokenBalanceWei(null);
+      setGmgnHoldingTokenDecimals(null);
+      setGmgnHoldingTokenSymbol(null);
       setGmgnHoldingPollingEnabled(false);
     }
   }
@@ -1696,19 +2714,21 @@ export default function App() {
   }, [siteInfo, shouldKeepTokenWarm]);
 
   useEffect(() => {
-    if (siteInfo?.platform !== 'gmgn' || !tokenAddressNormalized || gmgnHoldingWallets.length <= 0) {
+    if (!shouldEnableHoldingStats || !gmgnHoldingChain) {
       clearGmgnHoldingPollingTimer();
       setGmgnHoldingStats(null);
+      setGmgnHoldingTokenBalanceWei(null);
+      setGmgnHoldingTokenDecimals(null);
       setGmgnHoldingPollingEnabled(false);
       return;
     }
     void refreshGmgnHoldingStats(true, 'gmgnHolding:init');
-  }, [siteInfo?.platform, siteInfo?.chain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
+  }, [shouldEnableHoldingStats, gmgnHoldingChain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
 
   useEffect(() => {
     clearGmgnHoldingPollingTimer();
     if (!gmgnHoldingPollingEnabled) return;
-    if (siteInfo?.platform !== 'gmgn' || !tokenAddressNormalized || gmgnHoldingWallets.length <= 0) return;
+    if (!shouldEnableHoldingStats || !gmgnHoldingChain) return;
     let cancelled = false;
     const scheduleNext = () => {
       if (cancelled) return;
@@ -1725,13 +2745,13 @@ export default function App() {
       cancelled = true;
       clearGmgnHoldingPollingTimer();
     };
-  }, [gmgnHoldingPollingEnabled, siteInfo?.platform, siteInfo?.chain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
+  }, [gmgnHoldingPollingEnabled, shouldEnableHoldingStats, gmgnHoldingChain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
 
   useEffect(() => {
     if (!txHash) return;
-    if (siteInfo?.platform !== 'gmgn' || !tokenAddressNormalized || gmgnHoldingWallets.length <= 0) return;
+    if (!shouldEnableHoldingStats || !gmgnHoldingChain) return;
     void refreshGmgnHoldingStats(true, 'txHash');
-  }, [txHash, siteInfo?.platform, siteInfo?.chain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
+  }, [txHash, shouldEnableHoldingStats, gmgnHoldingChain, tokenAddressNormalized, gmgnHoldingWalletsKey]);
 
   useEffect(() => {
     if (!siteInfo) return;
@@ -1916,25 +2936,38 @@ export default function App() {
         if (!isSupportedSource) return;
         const side = message?.side === 'sell' ? 'sell' : 'buy';
         const rawAddr = typeof message?.tokenAddress === 'string' ? message.tokenAddress : '';
-        const symbol = tokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
+        const symbol = resolvedTokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
         const providerRaw = formatBroadcastProvider(message?.broadcastVia, message?.broadcastUrl, message?.isBundle);
         const provider = providerRaw === '-' ? 'RPC' : providerRaw;
+        const submitNode = message?.chainId === ChainId.SOL ? formatRpcEndpointLabel(message?.broadcastUrl) : null;
+        const confirmNode = message?.chainId === ChainId.SOL ? formatRpcEndpointLabel((message as any)?.confirmUrl) : null;
         const timing = formatTradeTiming({
           submitElapsedMs: Number(message?.submitElapsedMs ?? 0),
           receiptElapsedMs: Number(message?.receiptElapsedMs ?? 0),
         });
+        if (
+          message?.chainId === ChainId.SOL
+          && side === 'buy'
+          && rawAddr
+          && rawAddr.toLowerCase() === String(tokenAddressNormalized || '').toLowerCase()
+        ) {
+          void refreshGmgnHoldingStats(true, 'tradeSuccess');
+          startFastPolling();
+        }
         const eventToastId = getTradeEventToastId(side, rawAddr, String(message?.txHash || ''));
-        toast.success(renderTradeSuccessToast({ side, symbol, provider, timing, stage: 'confirmed' }), {
-          id: eventToastId,
+        toast.dismiss(eventToastId);
+        toast.dismiss(getTradeToastId(side, rawAddr));
+        toast.success(renderTradeSuccessToast({ side, symbol, provider, timing, submitNode, confirmNode, stage: 'confirmed' }), {
+          id: `${eventToastId}:confirmed`,
           icon: '✅',
-          duration: 3000,
+          duration: 5000,
         });
         return;
       }
       if (message.type === 'bg:tradeFailed') {
         const side = message?.side === 'sell' ? 'sell' : 'buy';
         const rawAddr = typeof message?.tokenAddress === 'string' ? message.tokenAddress : '';
-        const symbol = tokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
+        const symbol = resolvedTokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
         const errorMessage = String(message?.errorMessage || '');
         const stage = message?.stage === 'receipt'
           ? (locale === 'en' ? 'On-chain failed' : '上链失败')
@@ -1943,13 +2976,14 @@ export default function App() {
           ? `[${symbol}] ${side === 'buy' ? 'Buy' : 'Sell'} failed (${stage})`
           : `[${symbol}] ${side === 'buy' ? '买入失败' : '卖出失败'}（${stage}）`;
         const eventToastId = getTradeEventToastId(side, rawAddr, String(message?.txHash || ''));
+        toast.dismiss(eventToastId);
         toast.error(
           <div className="space-y-1">
             <div className="font-medium">{title}</div>
             {errorMessage ? <div className="text-[12px] opacity-90">{errorMessage}</div> : null}
           </div>,
           {
-            id: eventToastId,
+            id: `${eventToastId}:failed`,
             icon: '❌',
             duration: 5000,
           }
@@ -1964,13 +2998,24 @@ export default function App() {
         else playTradeSellSound();
         const side = message?.side === 'sell' ? 'sell' : 'buy';
         const rawAddr = typeof message?.tokenAddress === 'string' ? message.tokenAddress : '';
-        const symbol = tokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
-        const provider = locale === 'en' ? 'Submitted' : '已提交';
+        const symbol = resolvedTokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
+        const providerRaw = formatBroadcastProvider(message?.broadcastVia, message?.broadcastUrl, message?.isBundle);
+        const provider = providerRaw === '-' ? (locale === 'en' ? 'Submitted' : '已提交') : providerRaw;
+        const submitNode = message?.chainId === ChainId.SOL ? formatRpcEndpointLabel(message?.broadcastUrl) : null;
         const timing = formatTradeTiming({ submitElapsedMs: Number(message?.submitElapsedMs ?? 0) }, true);
+        if (
+          message?.chainId === ChainId.SOL
+          && side === 'buy'
+          && rawAddr
+          && rawAddr.toLowerCase() === String(tokenAddressNormalized || '').toLowerCase()
+        ) {
+          void refreshGmgnHoldingStats(true, 'tradeSubmitted');
+          startFastPolling();
+        }
         const eventToastId = getTradeEventToastId(side, rawAddr, String(message?.txHash || ''));
         // Replace the initial "交易执行中..." flow toast as soon as tx hash is submitted.
         toast.dismiss(getTradeToastId(side, rawAddr));
-        toast.success(renderTradeSuccessToast({ side, symbol, provider, timing, stage: 'submitted' }), {
+        toast.success(renderTradeSuccessToast({ side, symbol, provider, timing, submitNode, stage: 'submitted' }), {
           id: eventToastId,
           icon: <SatelliteDish size={14} className="text-cyan-300" />,
           // Keep this visible until replaced by confirmed/failed event.
@@ -2022,7 +3067,7 @@ export default function App() {
     playTradeSellSound,
     tokenBalanceRefreshThrottleMs,
     locale,
-    tokenSymbol,
+    resolvedTokenSymbol,
     shouldKeepBaseBalancesWarm,
     shouldKeepTokenWarm,
   ]);
@@ -2166,12 +3211,17 @@ export default function App() {
     };
   }, []);
 
-  async function withBusy(fn: () => Promise<void>) {
-
+  async function withBusy(fn: () => Promise<void>, options?: { trackBusy?: boolean; label?: string }) {
+    const trackBusy = options?.trackBusy ?? true;
+    const label = options?.label ?? 'unknown';
+    if (trackBusy) setBusy(true);
     setError(null);
     try {
       await fn();
     } catch (e: any) {
+      // #region debug-point sell-timeout-withbusy-catch
+      fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'E', location: 'App.tsx:withBusy:catch', msg: '[DEBUG] withBusy caught error', data: { label, trackBusy, chainId, tokenAddress: tokenAddressNormalized, errorMessage: String(e?.message || e || ''), errorName: String(e?.name || '') }, ts: Date.now() }) }).catch(() => { });
+      // #endregion
       const message = (() => {
         const raw = e?.message ? String(e.message) : t('popup.error.unknown', locale);
         if (raw === 'Settings not ready') return t('contentUi.error.settingsNotReady', locale);
@@ -2186,6 +3236,20 @@ export default function App() {
       })();
       setError(message);
       toast.error(message, { icon: '❌' });
+    } finally {
+      if (trackBusy) setBusy(false);
+    }
+  }
+
+  async function enqueueSolSubmitKickoff(scopeKey: string, kickoff: () => Promise<void>) {
+    const queues = solSubmitKickoffQueuesRef.current;
+    const previous = queues.get(scopeKey) ?? Promise.resolve();
+    const next = previous.catch(() => { }).then(kickoff);
+    queues.set(scopeKey, next);
+    try {
+      await next;
+    } finally {
+      if (queues.get(scopeKey) === next) queues.delete(scopeKey);
     }
   }
 
@@ -2198,6 +3262,7 @@ export default function App() {
       count++;
       refreshAll(false, 'fastPolling');
       refreshToken(true, false, 'fastPolling'); // force refresh
+      void refreshGmgnHoldingStats(true, 'fastPolling');
       void refreshApproveStatuses('fastPolling');
       if (count >= 15) {
         if (fastPollingRef.current) clearInterval(fastPollingRef.current);
@@ -2206,22 +3271,55 @@ export default function App() {
     }, 500);
   };
 
+  const triggerPostTradeRefresh = useCallback((side: 'buy' | 'sell') => {
+    startFastPolling();
+    void Promise.all([
+      refreshToken(true, false, `postTrade:${side}`),
+      refreshAll(false, `postTrade:${side}`),
+    ]).catch((e: any) => {
+      // #region debug-point sell-timeout-post-refresh-catch
+      fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'E', location: 'App.tsx:triggerPostTradeRefresh:catch', msg: '[DEBUG] post trade refresh failed', data: { side, chainId, tokenAddress: tokenAddressNormalized, errorMessage: String(e?.message || e || '') }, ts: Date.now() }) }).catch(() => { });
+      // #endregion
+      warnUiDebug('[ui.trade.postRefresh.failed]', {
+        side,
+        chainId,
+        token: tokenAddressNormalized,
+        error: String(e?.message || e || ''),
+        ts: Date.now(),
+      });
+    });
+  }, [chainId, tokenAddressNormalized]);
+
   const refreshApproveStatuses = useCallback(async (_source = 'unknown') => {
     if (!tokenAddressNormalized || !tokenInfo || selectedTradeWallets.length <= 0) {
       return;
     }
+    if (isSolana) {
+      setWalletApproveStates((prev) => {
+        const next = { ...prev };
+        for (const walletAddress of selectedTradeWallets) {
+          next[walletAddress.toLowerCase()] = { approved: true };
+        }
+        return next;
+      });
+      return;
+    }
+    const evmTokenAddress = normalizeAddr(tokenAddressNormalized);
+    if (!evmTokenAddress) return;
     const seq = ++approveStatusRefreshSeqRef.current;
-    const wallets = selectedTradeWallets;
+    const wallets = selectedTradeWallets
+      .map((walletAddress) => normalizeAddr(walletAddress))
+      .filter(Boolean) as `0x${string}`[];
     const now = Date.now();
     const results = await Promise.allSettled(
       wallets.map(async (walletAddress) => {
         const res = await call({
           type: 'tx:checkSellAllowanceInsufficient',
           chainId,
-          tokenAddress: tokenAddressNormalized,
+          tokenAddress: evmTokenAddress,
           tokenInfo,
           fromAddress: walletAddress,
-        } as const);
+        } as const) as { insufficient?: boolean };
         return {
           walletAddress,
           approved: !res.insufficient,
@@ -2248,19 +3346,35 @@ export default function App() {
       }
       return next;
     });
-  }, [chainId, selectedTradeWallets, tokenAddressNormalized, tokenInfo]);
+  }, [chainId, isSolana, selectedTradeWallets, tokenAddressNormalized, tokenInfo]);
 
   const requestApproveForWallets = useCallback(async (
-    wallets: `0x${string}`[],
+    wallets: ChainAddress[],
     opts?: { silent?: boolean },
   ) => {
     if (!tokenAddressNormalized) throw new Error('Invalid token');
     if (!tokenInfo) throw new Error('Token info required');
     if (wallets.length <= 0) return [];
+    if (isSolana) {
+      setWalletApproveStates((prev) => {
+        const next = { ...prev };
+        for (const walletAddress of wallets) {
+          next[walletAddress.toLowerCase()] = { approved: true };
+        }
+        return next;
+      });
+      return [];
+    }
+    const evmTokenAddress = normalizeAddr(tokenAddressNormalized);
+    if (!evmTokenAddress) throw new Error('Invalid token');
+    const evmWallets = wallets
+      .map((walletAddress) => normalizeAddr(walletAddress))
+      .filter(Boolean) as `0x${string}`[];
+    if (evmWallets.length <= 0) return [];
     const pendingSince = Date.now();
     setWalletApproveStates((prev) => {
       const next = { ...prev };
-      for (const walletAddress of wallets) {
+      for (const walletAddress of evmWallets) {
         const key = walletAddress.toLowerCase();
         next[key] = {
           approved: prev[key]?.approved,
@@ -2270,12 +3384,12 @@ export default function App() {
       return next;
     });
     const results = await Promise.allSettled(
-      wallets.map(async (walletAddress) => ({
+      evmWallets.map(async (walletAddress) => ({
         walletAddress,
         res: await call({
           type: 'tx:approveMaxForSellIfNeeded',
           chainId,
-          tokenAddress: tokenAddressNormalized,
+          tokenAddress: evmTokenAddress,
           tokenInfo,
           fromAddress: walletAddress,
         } as const),
@@ -2292,7 +3406,7 @@ export default function App() {
             : { approved: true };
           continue;
         }
-        const failedWallet = wallets[results.indexOf(result)];
+        const failedWallet = evmWallets[results.indexOf(result)];
         if (!failedWallet) continue;
         const key = failedWallet.toLowerCase();
         next[key] = { approved: prev[key]?.approved ?? false };
@@ -2321,7 +3435,7 @@ export default function App() {
     startFastPolling();
     void refreshApproveStatuses(opts?.silent ? 'autoApprove' : 'manualApprove');
     return results;
-  }, [chainId, refreshAll, refreshApproveStatuses, refreshToken, startFastPolling, tokenAddressNormalized, tokenInfo]);
+  }, [chainId, isSolana, refreshAll, refreshApproveStatuses, refreshToken, startFastPolling, tokenAddressNormalized, tokenInfo]);
 
   useEffect(() => {
     if (!tokenAddressNormalized || !tokenInfo || selectedTradeWallets.length <= 0) return;
@@ -2333,6 +3447,7 @@ export default function App() {
   }, [refreshApproveStatuses, selectedTradeWallets.length, tokenAddressNormalized, tokenInfo]);
 
   const selectedApproveStatus = useMemo<'ready' | 'approving' | 'approved'>(() => {
+    if (isSolana) return 'approved';
     if (!tokenAddressNormalized || !tokenInfo || selectedTradeWallets.length <= 0) return 'ready';
     const now = Date.now();
     let allApproved = true;
@@ -2343,8 +3458,10 @@ export default function App() {
       if (state?.approved !== true) allApproved = false;
     }
     return allApproved ? 'approved' : 'ready';
-  }, [selectedTradeWallets, tokenAddressNormalized, tokenInfo, walletApproveStates]);
-  const approveStatusTitle = selectedApproveStatus === 'approved'
+  }, [isSolana, selectedTradeWallets, tokenAddressNormalized, tokenInfo, walletApproveStates]);
+  const approveStatusTitle = isSolana
+    ? (locale === 'en' ? 'Solana token sells do not require ERC-20 approval' : 'Solana 卖出不需要 ERC-20 授权')
+    : selectedApproveStatus === 'approved'
     ? (locale === 'en' ? 'Selected wallets are approved' : '已选钱包已完成授权')
     : selectedApproveStatus === 'approving'
       ? (locale === 'en' ? 'Approval submitted and waiting on-chain' : '授权已提交，等待上链生效')
@@ -2419,6 +3536,8 @@ export default function App() {
     symbol: string;
     provider: string;
     timing: { submitLabel: string; submitValue: string; receiptLabel: string; receiptValue: string };
+    submitNode?: string | null;
+    confirmNode?: string | null;
     stage?: 'submitted' | 'confirmed';
   }) => {
     const isSubmitted = input.stage === 'submitted';
@@ -2438,6 +3557,12 @@ export default function App() {
           <span className="opacity-50">|</span>
           <span>⛓️ {input.timing.receiptLabel} <span className="font-semibold text-emerald-300">{input.timing.receiptValue}</span></span>
         </div>
+        {(input.submitNode || input.confirmNode) ? (
+          <div className="space-y-0.5 text-[11px] opacity-80">
+            {input.submitNode ? <div>{locale === 'en' ? 'Submit RPC' : '提交节点'}: <span className="font-medium">{input.submitNode}</span></div> : null}
+            {input.confirmNode ? <div>{locale === 'en' ? 'Confirm RPC' : '确认节点'}: <span className="font-medium">{input.confirmNode}</span></div> : null}
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -2460,7 +3585,7 @@ export default function App() {
         if (activeLower && wallets.some((w) => w.toLowerCase() === activeLower)) return activeLower;
         return wallets[0].toLowerCase();
       })();
-      const parseAmountWei = (rawAmount: string, walletAddress: `0x${string}`) => {
+      const parseAmountWei = (rawAmount: string, walletAddress: ChainAddress) => {
         const normalized = String(rawAmount || '').trim();
         if (!normalized) throw new Error(`钱包 ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)} 金额为空`);
         const wei = parseUnits(normalized, tradeBaseTokenMeta.decimals);
@@ -2468,8 +3593,8 @@ export default function App() {
         return wei;
       };
       const hasValidPresetIndex = Number.isInteger(presetIndex) && presetIndex >= 0 && presetIndex < 4;
-      const buyPlan: Array<{ walletAddress: `0x${string}`; amountWei: bigint }> = [];
-      const skippedByPreset: `0x${string}`[] = [];
+      const buyPlan: Array<{ walletAddress: ChainAddress; amountWei: bigint }> = [];
+      const skippedByPreset: ChainAddress[] = [];
       for (const walletAddress of wallets) {
         const lower = walletAddress.toLowerCase();
         const isMainWallet = lower === mainWalletLower;
@@ -2495,10 +3620,12 @@ export default function App() {
       if (skippedByPreset.length > 0) {
         toast(`子钱包金额为 0，已跳过 ${skippedByPreset.length} 个钱包`, { icon: 'ℹ️', duration: 1800 });
       }
-      const executablePlan: Array<{ walletAddress: `0x${string}`; amountWei: bigint }> = [];
-      const insufficientWallets: `0x${string}`[] = [];
+      const executablePlan: Array<{ walletAddress: ChainAddress; amountWei: bigint }> = [];
+      const insufficientWallets: ChainAddress[] = [];
       for (const item of buyPlan) {
-        const walletBal = BigInt(walletTradeBaseBalancesWei[item.walletAddress.toLowerCase()] || '0');
+        const walletBal = isSolana
+          ? (getTrackedSolWalletTradeBaseBalanceWei(item.walletAddress) ?? BigInt(walletTradeBaseBalancesWei[item.walletAddress.toLowerCase()] || '0'))
+          : BigInt(walletTradeBaseBalancesWei[item.walletAddress.toLowerCase()] || '0');
         if (walletBal < item.amountWei) {
           insufficientWallets.push(item.walletAddress);
         } else {
@@ -2509,41 +3636,90 @@ export default function App() {
       if (insufficientWallets.length > 0) {
         toast.error(`余额不足，已跳过 ${insufficientWallets.length} 个钱包`, { icon: '⚠️' });
       }
+      await waitForSolPumpBasePrewarm();
       ensureTradeSuccessAudioReady();
-      const sym = tokenSymbol ?? '';
+      const sym = resolvedTokenSymbol ?? '';
       const flowToastId = getTradeToastId('buy', tokenAddressNormalized);
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
       let buyLoadingClosed = false;
       const buyGasPreset = hasValidPresetIndex ? resolveBuyGasPresetForPreset(presetIndex) : (effectiveChainSettings?.buyGasPreset ?? effectiveChainSettings?.gasPreset ?? 'standard');
+      const buyExecutionMode = effectiveChainSettings?.executionMode === 'turbo' ? 'turbo' : 'default';
       const buyPriorityFeePreset = hasValidPresetIndex ? resolveBuyPriorityFeePresetForPreset(presetIndex) : ((effectiveChainSettings?.buyPriorityFeePreset ?? 'standard') as PriorityFeePreset);
 
       const mainTrade = (async () => {
+        const tradePromises: Array<Promise<{ walletAddress: ChainAddress; res: any }>> = [];
+        const launchPromises = executablePlan.map(async ({ walletAddress, amountWei }) => {
+          const launchTrade = async () => {
+            let pendingTradeBaseDeltaId: string | null = null;
+            const tradePromise = (async () => {
+              const uiRequestStartedAt = Date.now();
+              if (chainId === ChainId.SOL) {
+                pendingTradeBaseDeltaId = addPendingSolTradeBaseDeltaWei(tradeBaseTokenAddress, walletAddress, `-${amountWei.toString()}`);
+                applyOptimisticSolWalletTradeBaseDeltaWei(walletAddress, -amountWei);
+              }
+              // #region debug-point A:ui-buy-request-start
+              if (chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'A', location: 'App.tsx:buyRequestStart', msg: '[DEBUG] ui buy request start', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, amountWei: amountWei.toString(), submitChannel, executionMode: buyExecutionMode }, ts: Date.now() }) }).catch(() => { });
+              // #endregion
+              const buyInput = {
+                chainId,
+                tokenAddress: tokenAddressNormalized,
+                nativeAmountWei: amountWei.toString(),
+                baseTokenAddress: tradeBaseTokenAddress,
+                fromAddress: walletAddress,
+                submitChannel,
+                executionModeOverride: buyExecutionMode,
+                priorityFeeNative: resolvePriorityFee('buy', buyPriorityFeePreset),
+                gasPreset: buyGasPreset,
+                tokenInfo: tokenInfo ?? undefined,
+              } as const;
+              const res = await call({
+                type: 'tx:buyWithReceiptAuto',
+                input: buyInput,
+              } as const);
+              const buyMetrics = res as any;
+              // #region debug-point A:ui-buy-request-done
+              if (chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'A', location: 'App.tsx:buyRequestDone', msg: '[DEBUG] ui buy request done', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, elapsedMs: Date.now() - uiRequestStartedAt, ok: !!buyMetrics?.ok, submitElapsedMs: buyMetrics?.submitElapsedMs ?? null, receiptElapsedMs: buyMetrics?.receiptElapsedMs ?? null, totalElapsedMs: buyMetrics?.totalElapsedMs ?? null }, ts: Date.now() }) }).catch(() => { });
+              // #endregion
+              if (!res.ok) {
+                const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
+                throw new Error(detail || 'Transaction failed');
+              }
+              if (chainId === ChainId.SOL) {
+                const boughtTokenWei = String(res.tokenMinOutWei || '0');
+                addPendingSolTokenDeltaWei(tokenAddressNormalized, walletAddress, boughtTokenWei);
+                try {
+                  applyOptimisticSolWalletTokenDeltaWei(walletAddress, BigInt(boughtTokenWei));
+                } catch {
+                }
+              }
+              return { walletAddress, res };
+            })().catch((error: any) => {
+              if (chainId === ChainId.SOL) {
+                removePendingSolTradeBaseDeltaWei(tradeBaseTokenAddress, walletAddress, pendingTradeBaseDeltaId);
+                try {
+                  applyOptimisticSolWalletTradeBaseDeltaWei(walletAddress, amountWei);
+                } catch {
+                }
+              }
+              throw error;
+            });
+            tradePromises.push(tradePromise);
+          };
+          if (chainId === ChainId.SOL) {
+            await enqueueSolSubmitKickoff(
+              `sol:buy:${walletAddress.toLowerCase()}:${String(tradeBaseTokenAddress || '').toLowerCase()}`,
+              launchTrade,
+            );
+            return;
+          }
+          await launchTrade();
+        });
+        await Promise.all(launchPromises);
         const results = await Promise.allSettled(
-          executablePlan.map(async ({ walletAddress, amountWei }) => {
-            const buyInput = {
-              chainId,
-              tokenAddress: tokenAddressNormalized,
-              nativeAmountWei: amountWei.toString(),
-              baseTokenAddress: tradeBaseTokenAddress,
-              fromAddress: walletAddress,
-              submitChannel,
-              priorityFeeNative: resolvePriorityFee('buy', buyPriorityFeePreset),
-              gasPreset: buyGasPreset,
-              tokenInfo: tokenInfo ?? undefined,
-            } as const;
-            const res = await call({
-              type: 'tx:buyWithReceiptAuto',
-              input: buyInput,
-            } as const);
-            if (!res.ok) {
-              const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
-              throw new Error(detail || 'Transaction failed');
-            }
-            return { walletAddress, res };
-          })
+          tradePromises
         );
         const successes = results
-          .filter((item): item is PromiseFulfilledResult<{ walletAddress: `0x${string}`; res: any }> => item.status === 'fulfilled')
+          .filter((item): item is PromiseFulfilledResult<{ walletAddress: ChainAddress; res: any }> => item.status === 'fulfilled')
           .map((item) => item.value);
         const failures = results
           .filter((item): item is PromiseRejectedResult => item.status === 'rejected')
@@ -2568,8 +3744,7 @@ export default function App() {
           ).catch(() => { });
         }
 
-        await Promise.all([refreshToken(true), refreshAll()]);
-        startFastPolling();
+        triggerPostTradeRefresh('buy');
         setPendingBuyTokenMinOutWei(null);
 
         try {
@@ -2587,7 +3762,7 @@ export default function App() {
             config,
             chainId,
             tokenAddress: tokenAddressNormalized,
-            tokenSymbol: tokenSymbol ?? null,
+            tokenSymbol: resolvedTokenSymbol ?? null,
             tokenInfo,
             basePriceUsd,
             entryPriceUsd: basePriceUsd,
@@ -2600,7 +3775,7 @@ export default function App() {
                 config,
                 chainId,
                 tokenAddress: tokenAddressNormalized,
-                tokenSymbol: tokenSymbol ?? null,
+                tokenSymbol: resolvedTokenSymbol ?? null,
                 tokenInfo,
                 basePriceUsd,
                 entryPriceUsd: basePriceUsd,
@@ -2611,7 +3786,7 @@ export default function App() {
                 config,
                 chainId,
                 tokenAddress: tokenAddressNormalized,
-                tokenSymbol: tokenSymbol ?? null,
+                tokenSymbol: resolvedTokenSymbol ?? null,
                 tokenInfo,
                 basePriceUsd,
               });
@@ -2660,7 +3835,7 @@ export default function App() {
       } else {
         await mainTrade;
       }
-    });
+    }, { trackBusy: !isSolana, label: 'buy' });
   };
 
   const handleSell = (pct: number) => {
@@ -2680,12 +3855,14 @@ export default function App() {
       const isInnerFourMeme = !!tokenInfo?.launchpad && (platform.includes('four')) && tokenInfo.launchpad_status !== 1;
 
       ensureTradeSuccessAudioReady();
-      const sym = tokenSymbol ?? '';
+      const sym = resolvedTokenSymbol ?? '';
       const flowToastId = getTradeToastId('sell', tokenAddressNormalized);
       const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
       let sellLoadingClosed = false;
+      const sellGasPreset = effectiveChainSettings?.sellGasPreset ?? effectiveChainSettings?.gasPreset ?? 'standard';
 
       const percentBps = Math.max(1, Math.min(10000, Math.floor(pct * 100)));
+      await waitForSolPumpBasePrewarm();
       const sellReqStartedAt = Date.now();
       logUiDebug('[ui.sell.auto][request.start]', {
         chainId,
@@ -2695,42 +3872,157 @@ export default function App() {
         ts: sellReqStartedAt,
       });
       const mainTrade = (async () => {
-        const results = await Promise.allSettled(
-          wallets.map(async (walletAddress) => {
+        const tradePromises: Array<Promise<{ walletAddress: ChainAddress; res: any }>> = [];
+        const launchPromises = wallets.map(async (walletAddress) => {
+          const launchTrade = async () => {
             let tokenAmountWei = '0';
-            if (!isTurbo) {
-              const holding = await TokenAPI.getTokenHolding(siteInfo?.platform || 'gmgn', siteInfo?.chain || String(chainId), walletAddress, tokenAddressNormalized, {
-                cacheTtlMs: 0,
-              });
-              const bal = BigInt(holding || '0');
-              if (bal <= 0n) throw new Error('No balance');
-              let amountWei = (bal * BigInt(pct)) / 100n;
+            let expectedTokenInWeiHint: string | undefined;
+            let pendingSellDeltaId: string | null = null;
+            const shouldResolveSellAmountBeforeSubmit = !isTurbo || chainId === ChainId.SOL;
+            const sellPrepStartedAt = Date.now();
+            if (shouldResolveSellAmountBeforeSubmit) {
+              const trackedSolSellableBalanceWei = chainId === ChainId.SOL
+                ? getTrackedSolWalletSellableTokenBalanceWei(tokenAddressNormalized, walletAddress)
+                : null;
+              const usingTrackedSolBalance = chainId === ChainId.SOL && trackedSolSellableBalanceWei != null;
+              const walletAddrLower = String(walletAddress || '').toLowerCase();
+              const displayedSolSellableBalanceWei = chainId === ChainId.SOL
+                ? (walletTokenBalancesWei[walletAddrLower] ?? null)
+                : null;
+              let usingDisplayedSolBalanceFallback = false;
+              const holding = usingTrackedSolBalance
+                ? null
+                : await (async () => {
+                  if (chainId === ChainId.SOL && displayedSolSellableBalanceWei != null) {
+                    usingDisplayedSolBalanceFallback = true;
+                    // #region debug-point sell-timeout-balance-local-first
+                    fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'post-fix', hypothesisId: 'B', location: 'App.tsx:handleSell:displayedBalanceLocalFirst', msg: '[DEBUG] ui sell displayed balance local-first', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, balanceWei: displayedSolSellableBalanceWei }, ts: Date.now() }) }).catch(() => { });
+                    // #endregion
+                    return displayedSolSellableBalanceWei;
+                  }
+                  try {
+                    return await TokenAPI.getTokenHolding(siteInfo?.platform || 'gmgn', siteInfo?.chain || String(chainId), walletAddress, tokenAddressNormalized, {
+                      cacheTtlMs: 0,
+                    });
+                  } catch (e: any) {
+                    if (chainId === ChainId.SOL && displayedSolSellableBalanceWei != null) {
+                      usingDisplayedSolBalanceFallback = true;
+                      // #region debug-point sell-timeout-balance-fallback
+                      fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'post-fix', hypothesisId: 'B', location: 'App.tsx:handleSell:displayedBalanceFallback', msg: '[DEBUG] ui sell displayed balance fallback', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, fallbackBalanceWei: displayedSolSellableBalanceWei, errorMessage: String(e?.message || e || '') }, ts: Date.now() }) }).catch(() => { });
+                      // #endregion
+                      return displayedSolSellableBalanceWei;
+                    }
+                    throw e;
+                  }
+                })();
+              const bal = usingTrackedSolBalance ? (trackedSolSellableBalanceWei ?? 0n) : BigInt(holding || '0');
+              const pendingDeltaWei = chainId === ChainId.SOL && !usingTrackedSolBalance && !usingDisplayedSolBalanceFallback
+                ? getPendingSolTokenNegativeDeltaWei(tokenAddressNormalized, walletAddress)
+                : 0n;
+              const effectiveBal = usingTrackedSolBalance ? bal : (chainId === ChainId.SOL ? (bal + pendingDeltaWei) : bal);
+              const availableBal = effectiveBal > 0n ? effectiveBal : 0n;
+              if (chainId === ChainId.SOL) expectedTokenInWeiHint = availableBal.toString();
+              if (availableBal <= 0n) throw new Error('No balance');
+              let amountWei = (availableBal * BigInt(pct)) / 100n;
+              if (pct >= 100) amountWei = availableBal;
               if (isInnerFourMeme && amountWei > 0n) amountWei = (amountWei / 1000000000n) * 1000000000n;
               if (amountWei <= 0n) throw new Error('Invalid amount');
               tokenAmountWei = amountWei.toString();
+              if (chainId === ChainId.SOL) {
+                pendingSellDeltaId = addPendingSolTokenDeltaWei(tokenAddressNormalized, walletAddress, `-${tokenAmountWei}`);
+                applyOptimisticSolWalletTokenDeltaWei(walletAddress, -amountWei);
+              }
+              const pendingDeltaSummary = chainId === ChainId.SOL
+                ? getPendingSolTokenDeltaSummary(tokenAddressNormalized, walletAddress)
+                : null;
+              logUiDebug('[ui.sell.auto][amount.resolved]', {
+                chainId,
+                token: tokenAddressNormalized,
+                walletAddress,
+                balanceWei: bal.toString(),
+                pendingDeltaWei: pendingDeltaWei.toString(),
+                pendingDeltaSummary,
+                effectiveBalanceWei: effectiveBal.toString(),
+                availableBalanceWei: availableBal.toString(),
+                balanceSource: usingTrackedSolBalance ? 'tracked' : 'holding',
+                tokenAmountWei,
+                percentBps,
+                ts: Date.now(),
+              });
+              // #region debug-point B:ui-sell-balance-resolved
+              fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'B', location: 'App.tsx:handleSell:balanceResolved', msg: '[DEBUG] ui sell balance resolved', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, usingTrackedSolBalance, holding: holding ?? null, balanceWei: bal.toString(), pendingDeltaWei: pendingDeltaWei.toString(), availableBalanceWei: availableBal.toString(), tokenAmountWei, percentBps, prepElapsedMs: Date.now() - sellPrepStartedAt }, ts: Date.now() }) }).catch(() => { });
+              // #endregion
             }
-            const sellInput = {
-              chainId,
-              tokenAddress: tokenAddressNormalized,
-              tokenAmountWei: isTurbo ? '0' : tokenAmountWei,
-              baseTokenAddress: tradeBaseTokenAddress,
-              sellPercentBps: isTurbo ? percentBps : undefined,
-              expectedTokenInWei: isTurbo ? (pendingBuyTokenMinOutWei ?? undefined) : undefined,
-              fromAddress: walletAddress,
-              submitChannel,
-              priorityFeeNative: resolvePriorityFee('sell'),
-              tokenInfo: tokenInfo ?? undefined
-            } as const;
-            const res = await call({
-              type: 'tx:sellWithReceiptAuto',
-              input: sellInput,
-            } as const);
-            if (!res.ok) {
-              const detail = res.revertReason || res.error?.shortMessage || res.error?.message || 'Transaction failed';
-              throw new Error(detail);
-            }
-            return { walletAddress, res };
-          })
+            // #region debug-point A:ui-sell-prepare-done
+            if (chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'A', location: 'App.tsx:sellPrepareDone', msg: '[DEBUG] ui sell amount prepared', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, executionMode: isTurbo ? 'turbo' : 'default', shouldResolveSellAmountBeforeSubmit, percentBps, tokenAmountWei, prepElapsedMs: Date.now() - sellPrepStartedAt, pendingDeltaSummary: getPendingSolTokenDeltaSummary(tokenAddressNormalized, walletAddress) }, ts: Date.now() }) }).catch(() => { });
+            // #endregion
+            const tradePromise = (async () => {
+              const uiRequestStartedAt = Date.now();
+              // #region debug-point A:ui-sell-request-start
+              if (chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'A', location: 'App.tsx:sellRequestStart', msg: '[DEBUG] ui sell request start', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, tokenAmountWei, submitChannel, executionMode: isTurbo ? 'turbo' : 'default' }, ts: Date.now() }) }).catch(() => { });
+              // #endregion
+              const sellInput = {
+                chainId,
+                tokenAddress: tokenAddressNormalized,
+                tokenAmountWei: chainId === ChainId.SOL ? '0' : tokenAmountWei,
+                baseTokenAddress: tradeBaseTokenAddress,
+                sellPercentBps: chainId === ChainId.SOL ? percentBps : (isTurbo && chainId !== ChainId.SOL ? percentBps : undefined),
+                expectedTokenInWei: chainId === ChainId.SOL ? expectedTokenInWeiHint : (isTurbo && chainId !== ChainId.SOL ? (pendingBuyTokenMinOutWei ?? undefined) : undefined),
+                fromAddress: walletAddress,
+                submitChannel,
+                executionModeOverride: isTurbo ? 'turbo' : 'default',
+                priorityFeeNative: resolvePriorityFee('sell'),
+                gasPreset: sellGasPreset,
+                tokenInfo: tokenInfo ?? undefined
+              } as const;
+              try {
+                // #region debug-point B:ui-sell-call-start
+                fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'B', location: 'App.tsx:handleSell:callStart', msg: '[DEBUG] ui sell call start', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, tokenAmountWei, sellPercentBps: sellInput.sellPercentBps ?? null, expectedTokenInWei: sellInput.expectedTokenInWei ?? null, submitChannel: sellInput.submitChannel ?? null, executionMode: sellInput.executionModeOverride ?? null }, ts: Date.now() }) }).catch(() => { });
+                // #endregion
+                const res = await call({
+                  type: 'tx:sellWithReceiptAuto',
+                  input: sellInput,
+                } as const);
+                const sellMetrics = res as any;
+                // #region debug-point B:ui-sell-call-done
+                fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'B', location: 'App.tsx:handleSell:callDone', msg: '[DEBUG] ui sell call done', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, ok: !!sellMetrics?.ok, submitElapsedMs: sellMetrics?.submitElapsedMs ?? null, receiptElapsedMs: sellMetrics?.receiptElapsedMs ?? null, totalElapsedMs: sellMetrics?.totalElapsedMs ?? null, txHash: sellMetrics?.txHash ?? null }, ts: Date.now() }) }).catch(() => { });
+                // #endregion
+                // #region debug-point A:ui-sell-request-done
+                if (chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'A', location: 'App.tsx:sellRequestDone', msg: '[DEBUG] ui sell request done', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, elapsedMs: Date.now() - uiRequestStartedAt, ok: !!sellMetrics?.ok, submitElapsedMs: sellMetrics?.submitElapsedMs ?? null, receiptElapsedMs: sellMetrics?.receiptElapsedMs ?? null, totalElapsedMs: sellMetrics?.totalElapsedMs ?? null }, ts: Date.now() }) }).catch(() => { });
+                // #endregion
+                if (!res.ok) {
+                  const detail = res.revertReason || res.error?.shortMessage || res.error?.message || 'Transaction failed';
+                  throw new Error(detail);
+                }
+                return { walletAddress, res };
+              } catch (e) {
+                // #region debug-point B:ui-sell-call-catch
+                fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'B', location: 'App.tsx:handleSell:callCatch', msg: '[DEBUG] ui sell call catch', data: { chainId, walletAddress, tokenAddress: tokenAddressNormalized, tokenAmountWei, errorMessage: String((e as any)?.message || e || '') }, ts: Date.now() }) }).catch(() => { });
+                // #endregion
+                if (chainId === ChainId.SOL && tokenAmountWei && tokenAmountWei !== '0') {
+                  removePendingSolTokenDeltaWei(tokenAddressNormalized, walletAddress, pendingSellDeltaId);
+                  try {
+                    applyOptimisticSolWalletTokenDeltaWei(walletAddress, BigInt(tokenAmountWei));
+                  } catch {
+                  }
+                }
+                throw e;
+              }
+            })();
+            tradePromises.push(tradePromise);
+          };
+          if (chainId === ChainId.SOL) {
+            await enqueueSolSubmitKickoff(
+              `sol:sell:${walletAddress.toLowerCase()}:${tokenAddressNormalized.toLowerCase()}`,
+              launchTrade,
+            );
+            return;
+          }
+          await launchTrade();
+        });
+        await Promise.all(launchPromises);
+        const results = await Promise.allSettled(
+          tradePromises
         );
         const successes = results
           .filter((item): item is PromiseFulfilledResult<{ walletAddress: `0x${string}`; res: any }> => item.status === 'fulfilled')
@@ -2756,8 +4048,7 @@ export default function App() {
           toast.error(`卖出失败 ${failures.length} 个钱包`, { icon: '⚠️' });
         }
         sellLoadingClosed = true;
-        await Promise.all([refreshToken(true), refreshAll()]);
-        startFastPolling();
+        triggerPostTradeRefresh('sell');
         setPendingBuyTokenMinOutWei(null);
 
         // Cancel limit order if exists
@@ -2797,7 +4088,7 @@ export default function App() {
       } else {
         await mainTrade;
       }
-    });
+    }, { trackBusy: !isSolana, label: 'sell' });
   };
 
   useEffect(() => {
@@ -2813,10 +4104,11 @@ export default function App() {
       if (!settings) throw new Error('Settings not ready');
       if (!tokenAddressNormalized) throw new Error('Invalid token');
       if (!tokenInfo) throw new Error('Token info required');
+      if (isSolana) return;
       const wallets = selectedTradeWallets;
       if (wallets.length <= 0) throw new Error('No wallet selected');
       await requestApproveForWallets(wallets);
-    });
+    }, { label: 'approve' });
   };
 
   const handleToggleBuyGas = () => {
@@ -2954,13 +4246,36 @@ export default function App() {
     }).then(() => refreshAll());
   };
 
-  const handleSelectSubmitChannel = (next: SubmitChannel) => {
+  const handleSelectChannel = (next: string) => {
     if (!settings) return;
     const currentChainSettings = effectiveChainSettings;
     if (!currentChainSettings) return;
-    const target = submitChannelStatuses.find((item) => item.channel === next);
+    const target = channelOptions.find((item) => item.key === next);
     if (!target?.available) return;
-    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === next) return;
+    if (isSolana) {
+      const nextSwqosEnabled = next === 'swqos';
+      if (!!currentChainSettings.solanaSwqos?.enabled === nextSwqosEnabled) return;
+      void call({
+        type: 'settings:set',
+        settings: {
+          ...settings,
+          chains: {
+            ...settings.chains,
+            [chainId]: {
+              ...currentChainSettings,
+              solanaSwqos: {
+                ...(currentChainSettings.solanaSwqos ?? {}),
+                enabled: nextSwqosEnabled,
+              },
+            },
+          },
+        },
+      } as const).then(() => refreshAll());
+      return;
+    }
+    if (!['blox', 'blockrazor', 'protectRpcs', 'mixed'].includes(next)) return;
+    const submitChannelNext = next as SubmitChannel;
+    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === submitChannelNext) return;
     const buyPriorityPresets = currentChainSettings.buyPriorityFeePresets ?? DEFAULT_PRIORITY_FEE_PRESET_VALUES;
     const sellPriorityPresets = currentChainSettings.sellPriorityFeePresets ?? DEFAULT_PRIORITY_FEE_PRESET_VALUES;
     const buyPriorityPreset = (['none', 'slow', 'standard', 'fast'] as const).includes((currentChainSettings as any)?.buyPriorityFeePreset)
@@ -2972,11 +4287,11 @@ export default function App() {
     const buyPriorityEnabled = Number(buyPriorityPresets[buyPriorityPreset] ?? '0') > 0;
     const sellPriorityEnabled = Number(sellPriorityPresets[sellPriorityPreset] ?? '0') > 0;
     const nextExecutionMode = (currentChainSettings.executionMode ?? 'turbo') === 'turbo' ? 'turbo' : 'default';
-    const channelToast = next === 'protectRpcs' && nextExecutionMode === 'turbo'
+    const channelToast = submitChannelNext === 'protectRpcs' && nextExecutionMode === 'turbo'
       ? (locale === 'en'
           ? 'Protect + Turbo may expose large buys. Use Default mode + slippage protection; for stronger MEV protection, use Blox/Razor + PF.'
           : 'Protect + 极速模式下，大额买入仍可能被夹；建议使用默认模式 + 滑点保护，若更重视防夹可切到 Blox/Razor + PF。')
-      : next === 'mixed'
+      : submitChannelNext === 'mixed'
         ? (locale === 'en'
             ? 'Mixed mode races Blox private and Protect raw routes. PF is hidden and disabled in this mode.'
             : '混合模式会让 Blox private 与 Protect 路由并发竞速；此模式下 PF 会被隐藏并禁用。')
@@ -2993,7 +4308,7 @@ export default function App() {
           ...settings.chains,
           [chainId]: {
             ...currentChainSettings,
-            submitChannel: next,
+            submitChannel: submitChannelNext,
           },
         },
       },
@@ -3001,7 +4316,7 @@ export default function App() {
       refreshAll();
       if (channelToast) {
         toast(channelToast, {
-          icon: next === 'protectRpcs' || next === 'mixed' ? '⚠️' : 'ℹ️',
+          icon: submitChannelNext === 'protectRpcs' || submitChannelNext === 'mixed' ? '⚠️' : 'ℹ️',
           duration: 2800,
         });
       }
@@ -3095,12 +4410,12 @@ export default function App() {
     void call({ type: 'settings:set', settings: { ...settings, advancedAutoSell: next } } as const).then(() => refreshAll());
   };
 
-  const handleToggleTradeWallet = (walletAddress: `0x${string}`) => {
+  const handleToggleTradeWallet = (walletAddress: ChainAddress) => {
     if (!settings || !state?.wallet) return;
     const allAccounts = (state.wallet.accounts ?? []) as Account[];
-    const lowerToCanonical = new Map<string, `0x${string}`>();
+    const lowerToCanonical = new Map<string, ChainAddress>();
     for (const acc of allAccounts) {
-      const normalized = normalizeAddr(String(acc.address || ''));
+      const normalized = normalizeWalletAddress(chainId, String(acc.address || ''));
       if (!normalized) continue;
       lowerToCanonical.set(normalized.toLowerCase(), normalized);
     }
@@ -3110,12 +4425,12 @@ export default function App() {
     if (current.has(targetLower)) current.delete(targetLower);
     else current.add(targetLower);
     if (current.size === 0) {
-      const fallback = normalizeAddr(String(state.wallet.address || ''));
+      const fallback = normalizeWalletAddress(chainId, String(state.wallet.address || ''));
       if (fallback) current.add(fallback.toLowerCase());
     }
     const nextSelected = Array.from(current)
       .map((x) => lowerToCanonical.get(x))
-      .filter(Boolean) as `0x${string}`[];
+      .filter(Boolean) as ChainAddress[];
     void call({
       type: 'settings:set',
       settings: {
@@ -3136,7 +4451,7 @@ export default function App() {
     } as const).then(() => refreshAll());
   };
 
-  const handleUpdateChildWalletBuyPresetAmount = (walletAddress: `0x${string}`, presetIndex: number, amountNative: string) => {
+  const handleUpdateChildWalletBuyPresetAmount = (walletAddress: ChainAddress, presetIndex: number, amountNative: string) => {
     if (!settings) return;
     if (!Number.isInteger(presetIndex) || presetIndex < 0 || presetIndex > 3) return;
     const key = walletAddress.toLowerCase();
@@ -3318,7 +4633,7 @@ export default function App() {
               keyboardShortcutsEnabled={keyboardShortcutsEnabled}
               onToggleKeyboardShortcuts={handleToggleKeyboardShortcuts}
               walletAccounts={walletAccounts}
-              activeWalletAddress={address as `0x${string}` | null}
+              activeWalletAddress={address}
               selectedTradeWallets={selectedTradeWallets}
               onToggleTradeWallet={handleToggleTradeWallet}
               multiWalletBuyMode={multiWalletBuyMode}
@@ -3329,8 +4644,9 @@ export default function App() {
               onUpdateChildWalletBuyPresetAmount={handleUpdateChildWalletBuyPresetAmount}
               walletNativeBalancesWei={walletNativeBalancesWei}
               walletTokenBalancesWei={walletTokenBalancesWei}
-              tokenDecimals={tokenDecimals}
+              tokenDecimals={resolvedTokenDecimals}
               nativeSymbol={nativeSymbol}
+              nativeDecimals={tradeBaseTokenMeta.decimals}
               holdingStats={gmgnHoldingStats}
               onOpenWalletSelector={handleWalletSelectorOpen}
               formattedNativeBalance={formattedNativeBalance}
@@ -3342,9 +4658,9 @@ export default function App() {
               isUnlocked={isUnlocked}
               onBuy={handleBuy}
               settings={effectiveScopedSettings}
-              submitChannel={submitChannel}
-              submitChannelStatuses={submitChannelStatuses}
-              onSelectSubmitChannel={handleSelectSubmitChannel}
+              channelActiveKey={channelActiveKey}
+              channelOptions={channelOptions}
+              onSelectChannel={handleSelectChannel}
               prewarmIndicatorState={prewarmIndicatorState}
               prewarmIndicatorTitle={prewarmIndicatorTitle}
               dynamicGasBasePriceWei={dynamicGasBasePriceWei}
@@ -3377,7 +4693,7 @@ export default function App() {
               tokenPriceUsd={tokenPrice}
               sellPreviewQuotedUsd={sellPreviewQuotedUsd}
               sellPreviewQuotedBaseAmounts={sellPreviewQuotedBaseAmounts}
-              tokenSymbol={tokenSymbol}
+              tokenSymbol={resolvedTokenSymbol}
               buyPreviewRoute={quickTradePreviewRoutes.buy}
               sellPreviewRoute={quickTradePreviewRoutes.sell}
               approveStatus={selectedApproveStatus}
@@ -3397,18 +4713,18 @@ export default function App() {
             isUnlocked={isUnlocked}
             address={address}
             walletAccounts={walletAccounts}
-            activeWalletAddress={address as `0x${string}` | null}
+            activeWalletAddress={address}
             selectedTradeWallets={selectedTradeWallets}
             onToggleTradeWallet={handleToggleTradeWallet}
             walletTradeBaseBalancesWei={walletTradeBaseBalancesWei}
             walletTokenBalancesWei={walletTokenBalancesWei}
-            tokenDecimals={tokenDecimals}
+            tokenDecimals={resolvedTokenDecimals}
             formattedTradeBaseBalance={formattedNativeBalance}
             tradeBaseTokenAddress={tradeBaseTokenAddress}
             tradeBaseTokenSymbol={tradeBaseTokenSymbol}
             tradeBaseTokenDecimals={tradeBaseTokenMeta.decimals}
             formattedTokenBalance={formattedTokenBalance}
-            tokenSymbol={tokenSymbol}
+            tokenSymbol={resolvedTokenSymbol}
             tokenPrice={tokenPrice}
             tokenAddress={tokenAddressNormalized}
             tokenInfo={tokenInfo}
@@ -3434,7 +4750,7 @@ export default function App() {
             settings={effectiveScopedSettings}
             address={siteInfo?.walletAddress ?? address}
             tokenAddress={tokenAddressNormalized}
-            tokenSymbol={tokenSymbol}
+            tokenSymbol={resolvedTokenSymbol}
           />
 
           <CookingPanel
@@ -3442,10 +4758,10 @@ export default function App() {
             onVisibleChange={setShowCookingPanel}
             address={effectiveCookingSiteInfo?.walletAddress ?? address}
             walletAccounts={walletAccounts}
-            activeWalletAddress={address as `0x${string}` | null}
+            activeWalletAddress={address}
             siteInfo={effectiveCookingSiteInfo}
             currentTokenName={effectiveCookingTokenInfo?.name ?? (cookingSiteInfoOverride ? null : tokenInfo?.name ?? null)}
-            currentTokenSymbol={effectiveCookingTokenInfo?.symbol ?? (cookingSiteInfoOverride ? null : tokenSymbol ?? tokenInfo?.symbol ?? null)}
+            currentTokenSymbol={effectiveCookingTokenInfo?.symbol ?? (cookingSiteInfoOverride ? null : resolvedTokenSymbol ?? tokenInfo?.symbol ?? null)}
             currentTokenInfo={effectiveCookingTokenInfo}
             tokenInfoLoading={cookingTokenInfoLoading}
           />

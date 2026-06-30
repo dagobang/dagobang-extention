@@ -1,5 +1,6 @@
 import { useState, type PointerEvent as ReactPointerEvent } from 'react';
-import type { Account, QuickBuyPresetOverride, Settings, SubmitChannel } from '@/types/extention';
+import type { Account, QuickBuyPresetOverride, Settings } from '@/types/extention';
+import type { ChainAddress } from '@/types/chain/address';
 import type { SiteInfo } from '@/utils/sites';
 import type { Locale } from '@/utils/i18n';
 import { Header } from './Header';
@@ -9,13 +10,7 @@ import { Overlays } from './Overlays';
 import { FooterStats, type FooterHoldingStats } from './FooterStats';
 import { Logo } from '@/components/Logo';
 import { WalletSelectorDropdown } from '@/entrypoints/content-ui/components/WalletSelector';
-
-type SubmitChannelStatusView = {
-  channel: SubmitChannel;
-  configured: boolean;
-  available: boolean;
-  reason: string;
-};
+import type { ChannelSwitcherItem } from './ChannelSwitcher';
 
 type QuickTradePanelProps = {
   minimized: boolean;
@@ -49,9 +44,9 @@ type QuickTradePanelProps = {
   isUnlocked: boolean;
   onBuy: (amountStr: string, presetIndex: number) => void;
   settings: Settings | null;
-  submitChannel: SubmitChannel;
-  submitChannelStatuses: SubmitChannelStatusView[];
-  onSelectSubmitChannel: (channel: SubmitChannel) => void;
+  channelActiveKey: string;
+  channelOptions: ChannelSwitcherItem[];
+  onSelectChannel: (key: string) => void;
   prewarmIndicatorState?: 'hidden' | 'warming' | 'done';
   prewarmIndicatorTitle?: string;
   dynamicGasBasePriceWei: bigint | null;
@@ -94,19 +89,20 @@ type QuickTradePanelProps = {
   siteInfo: SiteInfo;
   onUnlock: () => void;
   walletAccounts: Account[];
-  activeWalletAddress: `0x${string}` | null;
-  selectedTradeWallets: `0x${string}`[];
-  onToggleTradeWallet: (address: `0x${string}`) => void;
+  activeWalletAddress: ChainAddress | null;
+  selectedTradeWallets: ChainAddress[];
+  onToggleTradeWallet: (address: ChainAddress) => void;
   multiWalletBuyMode: 'uniform' | 'child_custom';
   childWalletBuyPresetAmountsNative: Record<string, string[]>;
   childPresetActiveWalletCounts: [number, number, number, number];
   childPresetTooltipTexts: [string, string, string, string];
   onChangeMultiWalletBuyMode: (mode: 'uniform' | 'child_custom') => void;
-  onUpdateChildWalletBuyPresetAmount: (address: `0x${string}`, presetIndex: number, amountNative: string) => void;
+  onUpdateChildWalletBuyPresetAmount: (address: ChainAddress, presetIndex: number, amountNative: string) => void;
   walletNativeBalancesWei: Record<string, string>;
   walletTokenBalancesWei: Record<string, string>;
   tokenDecimals: number | null;
   nativeSymbol: string;
+  nativeDecimals?: number;
   holdingStats?: FooterHoldingStats | null;
   onOpenWalletSelector?: () => void;
 };
@@ -143,9 +139,9 @@ export function QuickTradePanel({
   isUnlocked,
   onBuy,
   settings,
-  submitChannel,
-  submitChannelStatuses,
-  onSelectSubmitChannel,
+  channelActiveKey,
+  channelOptions,
+  onSelectChannel,
   prewarmIndicatorState,
   prewarmIndicatorTitle,
   dynamicGasBasePriceWei,
@@ -201,6 +197,7 @@ export function QuickTradePanel({
   walletTokenBalancesWei,
   tokenDecimals,
   nativeSymbol,
+  nativeDecimals = 18,
   holdingStats,
   onOpenWalletSelector,
 }: QuickTradePanelProps) {
@@ -239,6 +236,7 @@ export function QuickTradePanel({
     gmgnVisible: false,
     gmgnEnabled: gmgnSellEnabled,
     onToggleGmgn: onToggleGmgnSell,
+    showApproveAction: settings?.chainId !== 501,
   };
   const handleToggleWalletSelector = () => {
     setWalletSelectorOpen((prev) => {
@@ -309,6 +307,7 @@ export function QuickTradePanel({
               walletTokenBalancesWei={walletTokenBalancesWei}
               tokenDecimals={tokenDecimals}
               nativeSymbol={nativeSymbol}
+              nativeDecimals={nativeDecimals}
               onRequestClose={() => setWalletSelectorOpen(false)}
             />
           )}
@@ -349,9 +348,10 @@ export function QuickTradePanel({
             onToggleGmgn={onToggleGmgnBuy}
             advancedAutoSell={advancedAutoSell}
             onUpdateAdvancedAutoSell={onUpdateAdvancedAutoSell}
-            submitChannel={submitChannel}
-            submitChannelStatuses={submitChannelStatuses}
-            onSelectSubmitChannel={onSelectSubmitChannel}
+            channelActiveKey={channelActiveKey}
+            channelOptions={channelOptions}
+            channelRouteTagLabel={buyPreviewRoute}
+            onSelectChannel={onSelectChannel}
             prewarmIndicatorState={prewarmIndicatorState}
             prewarmIndicatorTitle={prewarmIndicatorTitle}
           />
@@ -362,7 +362,7 @@ export function QuickTradePanel({
             <SellSection {...sellSectionProps} />
           </div>
 
-          {siteInfo.platform === 'gmgn' && (
+          {(siteInfo.platform === 'gmgn' || settings?.chainId === 501) && (
             <div className="border-t border-zinc-800/80 bg-zinc-950/10">
               <FooterStats
                 holdingStats={holdingStats}

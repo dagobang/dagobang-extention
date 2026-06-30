@@ -55,6 +55,41 @@ export const HYPECoinIcon = ({
   </svg>
 );
 
+export const SOLCoinIcon = ({
+  size = DefaultSize,
+  className,
+}: {
+  size?: IconSize;
+  className?: any;
+}) => (
+  <svg
+    className={className}
+    width={size.width}
+    height={size.height}
+    viewBox="0 0 398 311"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <defs>
+      <linearGradient id="solana-gradient-a" x1="360" y1="18" x2="141" y2="255" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#00FFA3" />
+        <stop offset="1" stopColor="#DC1FFF" />
+      </linearGradient>
+      <linearGradient id="solana-gradient-b" x1="264" y1="91" x2="45" y2="328" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#00FFA3" />
+        <stop offset="1" stopColor="#DC1FFF" />
+      </linearGradient>
+      <linearGradient id="solana-gradient-c" x1="312" y1="54" x2="93" y2="291" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#00FFA3" />
+        <stop offset="1" stopColor="#DC1FFF" />
+      </linearGradient>
+    </defs>
+    <path d="M64.6 236.7C67 234.3 70.2 233 73.6 233H384.3C390 233 392.8 239.9 388.8 243.9L333.4 299.3C331 301.7 327.8 303 324.4 303H13.7C8 303 5.2 296.1 9.2 292.1L64.6 236.7Z" fill="url(#solana-gradient-a)" />
+    <path d="M64.6 8.6C67.1 6.2 70.3 4.9 73.6 4.9H384.3C390 4.9 392.8 11.8 388.8 15.8L333.4 71.2C331 73.6 327.8 74.9 324.4 74.9H13.7C8 74.9 5.2 68 9.2 64L64.6 8.6Z" fill="url(#solana-gradient-b)" />
+    <path d="M333.4 122.1C331 119.7 327.8 118.4 324.4 118.4H13.7C8 118.4 5.2 125.3 9.2 129.3L64.6 184.7C67 187.1 70.2 188.4 73.6 188.4H384.3C390 188.4 392.8 181.5 388.8 177.5L333.4 122.1Z" fill="url(#solana-gradient-c)" />
+  </svg>
+);
+
 export const USDCCoinIcon = ({
   size = DefaultSize,
   className,
@@ -96,6 +131,9 @@ export const ChainCoinIcon = ({
     case "999":
       icon = <HYPECoinIcon size={size} />;
       break;
+    case "501":
+      icon = <SOLCoinIcon size={size} />;
+      break;
     case "56":
     case "204":
     case "5611":
@@ -128,6 +166,10 @@ export const SymbolCoinIcon = ({
 
   if (normalized === 'HYPE' || normalized === 'WHYPE') {
     return <HYPECoinIcon size={size} className={className} />;
+  }
+
+  if (normalized === 'SOL' || normalized === 'WSOL') {
+    return <SOLCoinIcon size={size} className={className} />;
   }
 
   if (normalized === 'BNB' || normalized === 'WBNB') {

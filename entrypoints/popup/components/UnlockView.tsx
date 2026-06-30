@@ -9,9 +9,10 @@ type UnlockViewProps = {
   onError: (msg: string) => void;
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
+  chainId: number;
 };
 
-export function UnlockView({ onRefresh, onError, locale, onLocaleChange }: UnlockViewProps) {
+export function UnlockView({ onRefresh, onError, locale, onLocaleChange, chainId }: UnlockViewProps) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
@@ -30,7 +31,7 @@ export function UnlockView({ onRefresh, onError, locale, onLocaleChange }: Unloc
 
   const handleUnlock = () =>
     withBusy(async () => {
-      await call({ type: 'wallet:unlock', input: { password } });
+      await call({ type: 'wallet:unlock', input: { password, chainId } });
       setPassword('');
       await onRefresh();
     });

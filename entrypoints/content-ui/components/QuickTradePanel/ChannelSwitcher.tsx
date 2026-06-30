@@ -1,18 +1,19 @@
 import { AlertTriangle, ChevronDown, CircleCheckBig, LoaderCircle } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import type { SubmitChannel } from '@/types/extention';
 
-type SubmitChannelStatusView = {
-  channel: SubmitChannel;
+export type ChannelSwitcherItem = {
+  key: string;
+  label: string;
   configured: boolean;
   available: boolean;
   reason: string;
 };
 
 type ChannelSwitcherProps = {
-  submitChannel: SubmitChannel;
-  submitChannelStatuses: SubmitChannelStatusView[];
-  onSelectSubmitChannel: (channel: SubmitChannel) => void;
+  activeKey: string;
+  items: ChannelSwitcherItem[];
+  onSelect: (key: string) => void;
+  routeTagLabel?: string | null;
   prewarmIndicatorState?: 'hidden' | 'warming' | 'done';
   prewarmIndicatorTitle?: string;
   warningHint?: {
@@ -23,17 +24,11 @@ type ChannelSwitcherProps = {
   menuPlacement?: 'up' | 'down';
 };
 
-const CHANNEL_LABELS: Record<SubmitChannel, string> = {
-  blox: 'Blox',
-  blockrazor: 'Razor',
-  protectRpcs: 'Protect',
-  mixed: '混合',
-};
-
 export function ChannelSwitcher({
-  submitChannel,
-  submitChannelStatuses,
-  onSelectSubmitChannel,
+  activeKey,
+  items,
+  onSelect,
+  routeTagLabel,
   prewarmIndicatorState,
   prewarmIndicatorTitle,
   warningHint,
@@ -43,8 +38,8 @@ export function ChannelSwitcher({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const activeStatus = useMemo(
-    () => submitChannelStatuses.find((item) => item.channel === submitChannel) ?? submitChannelStatuses[0],
-    [submitChannel, submitChannelStatuses]
+    () => items.find((item) => item.key === activeKey) ?? items[0],
+    [activeKey, items]
   );
   const prewarmToneClass = prewarmIndicatorState === 'done'
     ? 'text-emerald-300 hover:text-emerald-200'
@@ -78,84 +73,96 @@ export function ChannelSwitcher({
   return (
     <div className={wrapperClassName}>
       <div className={contentClassName}>
-        <div ref={rootRef} className="relative min-w-0">
-          <button
-            type="button"
-            className={inline
-              ? 'inline-flex h-5 items-center gap-0.5 rounded-md px-1 text-left text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200'
-              : 'inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-left text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200'}
-            onPointerDown={(e: ReactPointerEvent<HTMLButtonElement>) => {
-              e.stopPropagation();
-            }}
-            onClick={(e: ReactPointerEvent<HTMLButtonElement>) => {
-              e.stopPropagation();
-              setOpen((prev) => !prev);
-            }}
-            title={activeStatus ? `${CHANNEL_LABELS[activeStatus.channel]}: ${activeStatus.reason}` : undefined}
-          >
-            <span className={inline ? 'truncate text-[10px] font-medium text-zinc-200' : 'truncate text-[11px] font-semibold text-zinc-100'}>
-              {activeStatus ? CHANNEL_LABELS[activeStatus.channel] : CHANNEL_LABELS[submitChannel]}
-            </span>
-            {warningHint ? (
-              <span
-                className={[
-                  'inline-flex items-center justify-center rounded-full animate-pulse',
-                  inline ? 'ml-0.5 h-5 w-5 bg-amber-500/14' : 'ml-1 h-6 w-6 bg-amber-500/14',
-                  warningHint.tone === 'warning'
-                    ? 'text-amber-200 hover:text-amber-100'
-                    : 'text-amber-200 hover:text-amber-100',
-                ].join(' ')}
-                title={warningHint.title}
-              >
-                <AlertTriangle size={inline ? 12 : 14} />
-              </span>
-            ) : null}
-            {!warningHint && prewarmIndicatorState && prewarmIndicatorState !== 'hidden' && (
-              <span
-                className={`inline-flex items-center justify-center rounded-sm ${inline ? 'ml-0.5 h-4 w-4' : 'ml-1 h-5 w-5'} ${prewarmToneClass}`}
-                title={prewarmHint}
-              >
-                {prewarmIndicatorState === 'done'
-                  ? <CircleCheckBig size={inline ? 9 : 11} />
-                  : <LoaderCircle size={inline ? 9 : 11} className={prewarmIndicatorState === 'warming' ? 'animate-spin' : ''} />}
-              </span>
-            )}
-            <ChevronDown size={inline ? 10 : 12} className={open ? 'shrink-0 rotate-180 text-zinc-500 transition-transform' : 'shrink-0 text-zinc-500 transition-transform'} />
-          </button>
-          {open && (
-            <div
-              className={`absolute z-40 w-44 rounded-lg border border-zinc-700 bg-[#141416] p-1.5 shadow-xl ${menuPositionClassName}`}
-              onPointerDown={(e: ReactPointerEvent<HTMLDivElement>) => e.stopPropagation()}
+        <div className="inline-flex items-center gap-1.5">
+          <div ref={rootRef} className="relative min-w-0">
+            <button
+              type="button"
+              className={inline
+                ? 'inline-flex h-5 items-center gap-0.5 rounded-md px-1 text-left text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200'
+                : 'inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-left text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200'}
+              onPointerDown={(e: ReactPointerEvent<HTMLButtonElement>) => {
+                e.stopPropagation();
+              }}
+              onClick={(e: ReactPointerEvent<HTMLButtonElement>) => {
+                e.stopPropagation();
+                setOpen((prev) => !prev);
+              }}
+              title={activeStatus ? `${activeStatus.label}: ${activeStatus.reason}` : undefined}
             >
-              {submitChannelStatuses.map((item) => {
-                const active = submitChannel === item.channel;
-                const disabled = !item.available;
-                return (
-                  <button
-                    key={item.channel}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => {
-                      if (disabled) return;
-                      onSelectSubmitChannel(item.channel);
-                      setOpen(false);
-                    }}
-                    className={[
-                      'mb-1 flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left transition-colors last:mb-0',
-                      active
-                        ? 'bg-emerald-500/15 text-emerald-300'
-                        : 'text-zinc-200 hover:bg-zinc-800',
-                      disabled ? 'cursor-not-allowed opacity-50 hover:bg-transparent' : '',
-                    ].join(' ')}
-                    title={item.reason}
-                  >
-                    <span className="text-[12px] font-medium">{CHANNEL_LABELS[item.channel]}</span>
-                    <span className="text-[10px] text-zinc-500">{item.reason}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+              <span className={inline ? 'truncate text-[10px] font-medium text-zinc-200' : 'truncate text-[11px] font-semibold text-zinc-100'}>
+                {activeStatus?.label ?? ''}
+              </span>
+              {warningHint ? (
+                <span
+                  className={[
+                    'inline-flex items-center justify-center rounded-full animate-pulse',
+                    inline ? 'ml-0.5 h-5 w-5 bg-amber-500/14' : 'ml-1 h-6 w-6 bg-amber-500/14',
+                    warningHint.tone === 'warning'
+                      ? 'text-amber-200 hover:text-amber-100'
+                      : 'text-amber-200 hover:text-amber-100',
+                  ].join(' ')}
+                  title={warningHint.title}
+                >
+                  <AlertTriangle size={inline ? 12 : 14} />
+                </span>
+              ) : null}
+              {!warningHint && prewarmIndicatorState && prewarmIndicatorState !== 'hidden' && (
+                <span
+                  className={`inline-flex items-center justify-center rounded-sm ${inline ? 'ml-0.5 h-4 w-4' : 'ml-1 h-5 w-5'} ${prewarmToneClass}`}
+                  title={prewarmHint}
+                >
+                  {prewarmIndicatorState === 'done'
+                    ? <CircleCheckBig size={inline ? 9 : 11} />
+                    : <LoaderCircle size={inline ? 9 : 11} className={prewarmIndicatorState === 'warming' ? 'animate-spin' : ''} />}
+                </span>
+              )}
+              <ChevronDown size={inline ? 10 : 12} className={open ? 'shrink-0 rotate-180 text-zinc-500 transition-transform' : 'shrink-0 text-zinc-500 transition-transform'} />
+            </button>
+            {open && (
+              <div
+                className={`absolute z-40 w-44 rounded-lg border border-zinc-700 bg-[#141416] p-1.5 shadow-xl ${menuPositionClassName}`}
+                onPointerDown={(e: ReactPointerEvent<HTMLDivElement>) => e.stopPropagation()}
+              >
+                {items.map((item) => {
+                  const active = activeKey === item.key;
+                  const disabled = !item.available;
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => {
+                        if (disabled) return;
+                        onSelect(item.key);
+                        setOpen(false);
+                      }}
+                      className={[
+                        'mb-1 flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left transition-colors last:mb-0',
+                        active
+                          ? 'bg-emerald-500/15 text-emerald-300'
+                          : 'text-zinc-200 hover:bg-zinc-800',
+                        disabled ? 'cursor-not-allowed opacity-50 hover:bg-transparent' : '',
+                      ].join(' ')}
+                      title={item.reason}
+                    >
+                      <span className="text-[12px] font-medium">{item.label}</span>
+                      <span className="text-[10px] text-zinc-500">{item.reason}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          {routeTagLabel ? (
+            <span
+              className={inline
+                ? 'inline-flex h-5 items-center rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 text-[10px] font-medium text-emerald-300/90'
+                : 'inline-flex h-6 items-center rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 text-[11px] font-medium text-emerald-300/90'}
+              title={routeTagLabel}
+            >
+              {routeTagLabel}
+            </span>
+          ) : null}
         </div>
       </div>
     </div>

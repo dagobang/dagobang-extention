@@ -69,6 +69,31 @@ export class RpcReadBalancer {
     this.lastTradeActivityAt = Date.now();
   }
 
+  static async recordBusinessSuccess(input: {
+    chainId: number;
+    url?: string | null;
+    elapsedMs?: number;
+  }) {
+    const url = String(input.url || '').trim();
+    if (!url) return;
+    await this.ensureInitialized();
+    const state = this.getNodeState(input.chainId, url);
+    const elapsedMs = Math.max(1, Number(input.elapsedMs ?? state.ewmaLatencyMs ?? DEFAULT_EWMA_MS));
+    this.learnSuccess(state, elapsedMs, 'business');
+  }
+
+  static async recordBusinessFailure(input: {
+    chainId: number;
+    url?: string | null;
+    error?: unknown;
+  }) {
+    const url = String(input.url || '').trim();
+    if (!url) return;
+    await this.ensureInitialized();
+    const state = this.getNodeState(input.chainId, url);
+    this.learnFailure(state, input.error, 'business');
+  }
+
   static async triggerCapacityProbe(input: {
     chainId: number;
     urls: string[];

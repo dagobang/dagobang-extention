@@ -119,6 +119,10 @@ export const formatShortAddress = (value: string, head = 6, tail = 4, minLength 
 
 export const formatBroadcastProvider = (via?: string, url?: string, isBundle?: boolean) => {
   if (via === 'bloxroute') return isBundle ? 'BloxRoute Bundle' : 'BloxRoute';
+  if (via === 'jito') return isBundle ? 'Jito Bundle' : 'Jito';
+  if (via === 'nextblock') return 'NextBlock';
+  if (via === 'blox') return 'Blox';
+  if (via === 'temporal') return 'Temporal';
   if (via !== 'rpc') return '-';
   if (!url) return 'RPC';
   try {
@@ -137,5 +141,27 @@ export const formatBroadcastProvider = (via?: string, url?: string, isBundle?: b
     return host;
   } catch {
     return 'RPC';
+  }
+};
+
+export const formatRpcEndpointLabel = (url?: string | null) => {
+  const raw = String(url || '').trim();
+  if (!raw) return '-';
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    if (host.includes('blxrbdn.com')) return 'BloxRoute RPC';
+    if (host.includes('publicnode.com')) return 'PublicNode';
+    if (host.includes('nodereal.io')) return 'NodeReal';
+    if (host.includes('bnbchain.org')) return 'BNB Chain';
+    if (host.includes('defibit.io')) return 'Defibit';
+    if (host.includes('nariox.org')) return 'Nariox';
+    if (host.includes('ninicoin.io')) return 'NiniCoin';
+    if (host.includes('chainstack.com')) return 'Chainstack';
+    if (host.includes('getblock')) return 'GetBlock';
+    if (host.includes('blockrazor.xyz')) return 'BlockRazor';
+    if (host.includes('drpc')) return 'dRPC';
+    return host;
+  } catch {
+    return raw;
   }
 };

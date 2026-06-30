@@ -10,7 +10,10 @@ import { RpcService } from '../rpc';
 import { TradeService } from '../trade';
 import { TokenFourmemeService } from './fourmeme';
 import { TokenFlapService } from './flap';
+import { getSolanaTokenPriceUsdFromQuote } from './solanaPrice';
 import { isHyperAltfunPlatform, quoteHyperSellToUsdc } from '../trade/tradeHyper';
+import { SolanaRpcService } from '@/services/chain/solana/rpc';
+import type { ChainAddress } from '@/types/chain/address';
 
 export class TokenService {
   private static poolPairCache = new Map<string, { token0: `0x${string}`; token1: `0x${string}` }>();
@@ -26,6 +29,9 @@ export class TokenService {
   }
 
   static async getMeta(tokenAddress: string, chainId: number) {
+    if (chainId === ChainId.SOL) {
+      return await SolanaRpcService.getMintMeta(tokenAddress);
+    }
     return await RpcService.withBalancedReadClient({
       chainId,
       caller: 'token.meta',
@@ -49,6 +55,18 @@ export class TokenService {
     const inFlight = this.tokenBalanceInFlight.get(key);
     if (inFlight) return inFlight;
     const p = (async () => {
+      if (resolvedChainId === ChainId.SOL) {
+        // #region debug-point sell-timeout-token-balance-start
+        fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'B', location: 'token/index.ts:getBalance:solStart', msg: '[DEBUG] sol token balance read start', data: { owner, tokenAddress, chainId: resolvedChainId, key }, ts: Date.now() }) }).catch(() => { });
+        // #endregion
+        const balance = await SolanaRpcService.getSplTokenBalance(owner, tokenAddress);
+        const v = balance.toString();
+        // #region debug-point sell-timeout-token-balance-done
+        fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'B', location: 'token/index.ts:getBalance:solDone', msg: '[DEBUG] sol token balance read done', data: { owner, tokenAddress, chainId: resolvedChainId, key, balanceWei: v }, ts: Date.now() }) }).catch(() => { });
+        // #endregion
+        this.tokenBalanceCache.set(key, { ts: Date.now(), value: v });
+        return v;
+      }
       const balance = await RpcService.withBalancedReadClient({
         chainId: resolvedChainId,
         caller: 'token.erc20Balance',
@@ -98,6 +116,12 @@ export class TokenService {
     if (inFlight) return inFlight;
 
     const p = (async () => {
+      if (resolvedChainId === ChainId.SOL) {
+        const balance = await SolanaRpcService.getNativeBalanceLamports(owner);
+        const v = balance.toString();
+        this.nativeBalanceCache.set(key, { ts: Date.now(), value: v });
+        return v;
+      }
       const balance = await RpcService.withBalancedReadClient({
         chainId: resolvedChainId,
         caller: 'token.nativeBalance',
@@ -147,7 +171,7 @@ export class TokenService {
 
   static async getTokenPriceUsdFromRpc(input: {
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: ChainAddress;
     tokenInfo?: TokenInfo | null;
     cacheTtlMs?: number;
     allowTokenInfoPriceFallback?: boolean;
@@ -157,7 +181,7 @@ export class TokenService {
 
   static async getPriceUsdFromRpc(input: {
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: ChainAddress;
     tokenInfo?: TokenInfo | null;
     cacheTtlMs?: number;
     allowTokenInfoPriceFallback?: boolean;
@@ -165,9 +189,41 @@ export class TokenService {
     const { chainId, tokenAddress, tokenInfo, cacheTtlMs, allowTokenInfoPriceFallback } = input;
     const now = Date.now();
     const ttl = typeof cacheTtlMs === 'number' && cacheTtlMs >= 0 ? cacheTtlMs : 0;
-    const key = `${chainId}:${tokenAddress.toLowerCase()}`;
+    const key = `${chainId}:${String(tokenAddress).toLowerCase()}`;
     const cached = this.tokenUsdCache.get(key);
     if (ttl > 0 && cached && now - cached.ts < ttl) return cached.value;
+
+    if (chainId === ChainId.SOL) {
+      let priceUsd = 0;
+      try {
+        priceUsd = await getSolanaTokenPriceUsdFromQuote({
+          tokenAddress: String(tokenAddress),
+          tokenInfo,
+          cacheTtlMs: ttl,
+        });
+      } catch (e) {
+        console.error('getTokenPriceUsdFromRpc: failed to get token price from solana quote', e);
+      }
+      if (
+        !(priceUsd > 0) &&
+        allowTokenInfoPriceFallback !== false
+      ) {
+        const fromTokenInfo = Number(
+          (tokenInfo as any)?.priceUsd
+          ?? (tokenInfo as any)?.price
+          ?? (tokenInfo as any)?.tokenPrice?.price
+          ?? 0
+        );
+        if (Number.isFinite(fromTokenInfo) && fromTokenInfo > 0) {
+          priceUsd = fromTokenInfo;
+        }
+      }
+      if (priceUsd > 0) {
+        this.tokenUsdCache.set(key, { ts: now, value: priceUsd });
+        return priceUsd;
+      }
+      throw new Error('Solana RPC price unavailable');
+    }
 
     const toNumberFromUnits = (amount: bigint, decimals: number) => {
       const s = formatUnits(amount, decimals);
@@ -233,7 +289,7 @@ export class TokenService {
 
     if (chainId === ChainId.HYPER && isHyperAltfunPlatform(platform)) {
       try {
-        const quotedUsdc = await quoteHyperSellToUsdc(tokenAddress, oneToken);
+        const quotedUsdc = await quoteHyperSellToUsdc(tokenAddress as `0x${string}`, oneToken);
         if (quotedUsdc > 0n) {
           priceUsd = toNumberFromUnits(quotedUsdc, usdcToken.decimals);
         }
@@ -311,7 +367,7 @@ export class TokenService {
       const stable = stableByAddress.get(quoteAddr.toLowerCase())!;
       const q = await TradeService.quoteBestExactIn(
         chainId,
-        tokenAddress,
+        tokenAddress as `0x${string}`,
         stable.address,
         oneToken,
         { poolPair: tokenInfo?.pool_pair }
@@ -324,7 +380,7 @@ export class TokenService {
     if (!(priceUsd > 0)) {
       const q = await TradeService.quoteBestExactIn(
         chainId,
-        tokenAddress,
+        tokenAddress as `0x${string}`,
         wNativeAddress as `0x${string}`,
         oneToken,
         { poolPair: tokenInfo?.pool_pair }

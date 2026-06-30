@@ -1,4 +1,4 @@
-import { encodeAbiParameters, encodeFunctionData, erc20Abi, formatUnits, parseAbi, parseAbiParameters } from 'viem';
+import { encodeAbiParameters, encodeFunctionData, erc20Abi, formatUnits, isAddress, parseAbi, parseAbiParameters } from 'viem';
 import { RpcService } from '../rpc';
 import { WalletService } from '../wallet';
 import { SettingsService } from '../settings';
@@ -334,7 +334,8 @@ export class TradeService {
     if (!tokenInfo) return;
 
     const client = await RpcService.getClient(input.chainId);
-    const account = await WalletService.getSigner(input.fromAddress);
+    const fromAddress = this.resolveOptionalEvmAddress(input.fromAddress, 'from address');
+    const account = await WalletService.getSigner(fromAddress);
     const warmKey = this.makeTurboWarmKey({
       chainId: input.chainId,
       owner: account.address,
@@ -454,7 +455,8 @@ export class TradeService {
     error?: any;
   }): Promise<number> {
     const client = await RpcService.getSubmitChannelClient(input.chainId, input.submitChannel, input.txSide);
-    const account = await WalletService.getSigner(input.fromAddress);
+    const fromAddress = this.resolveOptionalEvmAddress(input.fromAddress, 'from address');
+    const account = await WalletService.getSigner(fromAddress);
     const errorText = typeof input.error === 'string'
       ? input.error.toLowerCase()
       : collectErrorText(input.error, true);
@@ -824,10 +826,22 @@ export class TradeService {
     return t || undefined;
   }
 
-  private static resolveBaseTokenAddress(_chainId: number, input: { baseTokenAddress?: `0x${string}` }): Address {
+  private static resolveEvmAddress(address: string, field = 'address'): `0x${string}` {
+    const raw = String(address || '').trim();
+    if (!raw || !isAddress(raw)) throw new Error(`Invalid ${field}`);
+    return raw as `0x${string}`;
+  }
+
+  private static resolveOptionalEvmAddress(address?: string, field = 'address'): `0x${string}` | undefined {
+    const raw = typeof address === 'string' ? address.trim() : '';
+    if (!raw) return undefined;
+    return this.resolveEvmAddress(raw, field);
+  }
+
+  private static resolveBaseTokenAddress(_chainId: number, input: { baseTokenAddress?: string }): Address {
     const raw = typeof input.baseTokenAddress === 'string' ? input.baseTokenAddress.trim() : '';
     if (!raw || raw.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return ZERO_ADDRESS;
-    return raw as Address;
+    return this.resolveEvmAddress(raw, 'base token address') as Address;
   }
 
   private static resolveBaseTokenSymbol(chainId: number, baseTokenAddress: Address): string {
@@ -872,7 +886,8 @@ export class TradeService {
     if (!input.tokenInfo) throw new Error('Token info required');
     const tokenInfo = input.tokenInfo;
 
-    const account = await WalletService.getSigner(input.fromAddress);
+    const fromAddress = this.resolveOptionalEvmAddress(input.fromAddress, 'from address');
+    const account = await WalletService.getSigner(fromAddress);
     const client = await RpcService.getClient(input.chainId);
 
     const amountIn = BigInt(this.resolveNativeAmountWei(input));
@@ -888,7 +903,7 @@ export class TradeService {
       const reusedPrewarm = await this.awaitTurboPrewarmIfInFlight({
         chainId: input.chainId,
         owner: account.address,
-        tokenAddress: input.tokenAddress as Address,
+        tokenAddress: this.resolveEvmAddress(input.tokenAddress, 'token address') as Address,
         tokenInfo,
       });
       if (reusedPrewarm) {
@@ -925,12 +940,12 @@ export class TradeService {
       }
       : undefined;
 
-    const tokenOut = input.tokenAddress;
+    const tokenOut = this.resolveEvmAddress(input.tokenAddress, 'token address') as Address;
     const launchpadPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
     const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(launchpadPlatform);
     const openFourRuntime = (isHyperAltfun || !usesOpenFourRuntime(launchpadPlatform))
       ? null
-      : await this.getOpenFourRuntimeState(client, input.chainId, tokenOut as Address);
+      : await this.getOpenFourRuntimeState(client, input.chainId, tokenOut);
     const isInner = isHyperAltfun
       ? false
       : usesOpenFourRuntime(launchpadPlatform)
@@ -951,7 +966,7 @@ export class TradeService {
     let minOut = 0n;
 
     if (isHyperAltfun) {
-      const hyperState = await timeStep('hyper:state', () => getHyperTradeState(tokenOut as Address, { force: runtimeOpts?.forceRefreshHyperState === true }));
+      const hyperState = await timeStep('hyper:state', () => getHyperTradeState(tokenOut, { force: runtimeOpts?.forceRefreshHyperState === true }));
       if (!hyperState.isInner && !hyperState.isOuter) throw new Error('该代币不是有效的 alt.fun Hyper 代币');
 
       const routeBridgeToken = getHyperUsdcAddress();
@@ -1006,7 +1021,7 @@ export class TradeService {
 
       const estimatedOut = isTurbo
         ? 0n
-        : await timeStep('quote:hyper:zap:buy', () => quoteHyperBuyFromUsdc(tokenOut as Address, currentAmount));
+        : await timeStep('quote:hyper:zap:buy', () => quoteHyperBuyFromUsdc(tokenOut, currentAmount));
       if (!isTurbo && estimatedOut <= 0n) throw new Error('alt.fun 买入报价失败');
       if (estimatedOut > 0n) {
         const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
@@ -1075,7 +1090,7 @@ export class TradeService {
           if (!isTurbo) {
             try {
               const est = await timeStep('fourmeme:tryBuy', () =>
-                tryFourMemeBuyEstimatedAmount(client, input.chainId, tokenOut as Address, fundsForEstimate)
+                tryFourMemeBuyEstimatedAmount(client, input.chainId, tokenOut, fundsForEstimate)
               );
               if (est && est.estimatedAmount > 0n) {
                 const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
@@ -1090,7 +1105,7 @@ export class TradeService {
         const wantEncodedBuy = tokenInfo.aiCreator === true && currentRouterToken === ZERO_ADDRESS;
           if (wantEncodedBuy) {
             dataForDesc = encodeFourMemeBuyTokenData({
-              token: tokenOut as Address,
+              token: tokenOut,
               to,
               funds: amountIn,
               minAmount,
@@ -1108,7 +1123,7 @@ export class TradeService {
               this.estimateOpenFourBuyByBudget(
                 client,
                 input.chainId,
-                tokenOut as Address,
+                tokenOut,
                 account.address as Address,
                 currentAmount,
                 openFourOptions,
@@ -1317,7 +1332,7 @@ export class TradeService {
           allowanceLike,
           chainId: input.chainId,
           token: input.tokenAddress,
-          fromAddress: input.fromAddress,
+          fromAddress: this.resolveOptionalEvmAddress(input.fromAddress, 'from address'),
           baseTokenAddress: input.baseTokenAddress ?? '0x0000000000000000000000000000000000000000',
           amountInWei: this.resolveNativeAmountWei(input),
           error: String(e?.shortMessage || e?.message || e || ''),
@@ -1332,7 +1347,7 @@ export class TradeService {
         await opts?.onRetry?.({ side: 'buy', attempt: attempt + 1, reason: 'nonce' });
         await this.refreshNonce({
           chainId: input.chainId,
-          fromAddress: input.fromAddress,
+          fromAddress: this.resolveOptionalEvmAddress(input.fromAddress, 'from address'),
           txSide: 'buy',
           submitChannel: input.submitChannel,
           error: e,
@@ -1438,7 +1453,7 @@ export class TradeService {
             tokenAddress: input.tokenAddress,
             tokenInfo: input.tokenInfo,
             timeoutMs,
-            fromAddress: input.fromAddress,
+            fromAddress: this.resolveOptionalEvmAddress(input.fromAddress, 'from address'),
           });
         } catch (repairErr: any) {
           lastErr = repairErr;
@@ -1453,7 +1468,7 @@ export class TradeService {
         console.log('[trade.sell.auto][nonce.refresh]', { flowId, attempt: attemptNo, allowanceRepaired, nonceLike });
         await this.refreshNonce({
           chainId: input.chainId,
-          fromAddress: input.fromAddress,
+          fromAddress: this.resolveOptionalEvmAddress(input.fromAddress, 'from address'),
           txSide: 'sell',
           submitChannel: input.submitChannel,
           error: e,
@@ -1600,7 +1615,8 @@ export class TradeService {
       if (!input.tokenInfo) throw new Error('Token info required');
       const tokenInfo = input.tokenInfo;
 
-      const account = await WalletService.getSigner(input.fromAddress);
+      const fromAddress = this.resolveOptionalEvmAddress(input.fromAddress, 'from address');
+      const account = await WalletService.getSigner(fromAddress);
       const client = await RpcService.getClient(input.chainId);
 
       let amountIn = BigInt(input.tokenAmountWei);
@@ -1636,7 +1652,7 @@ export class TradeService {
         }
         : undefined;
 
-      const sellToken: Address = input.tokenAddress;
+      const sellToken = this.resolveEvmAddress(input.tokenAddress, 'token address') as Address;
       const platformLower = resolveTradeLaunchpadPlatform(tokenInfo);
       const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(platformLower);
       const openFourRuntime = (isHyperAltfun || !usesOpenFourRuntime(platformLower))

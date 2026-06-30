@@ -1,4 +1,5 @@
 import type { AdvancedAutoSellConfig, LimitOrderCreateInput, LimitOrderType } from '@/types/extention';
+import type { ChainAddress } from '@/types/chain/address';
 import type { TokenInfo } from '@/types/token';
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -11,7 +12,7 @@ export const getAdvancedAutoSellMode = (config: AdvancedAutoSellConfig | null | 
 export function buildStrategySellOrderInputs(input: {
   config: AdvancedAutoSellConfig | null | undefined;
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: ChainAddress;
   tokenSymbol?: string | null;
   tokenInfo: TokenInfo;
   basePriceUsd: number;
@@ -62,7 +63,7 @@ export function buildStrategySellOrderInputs(input: {
 export function buildStrategyTrailingSellOrderInputs(input: {
   config: AdvancedAutoSellConfig | null | undefined;
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: ChainAddress;
   tokenSymbol?: string | null;
   tokenInfo: TokenInfo;
   basePriceUsd: number;
@@ -103,7 +104,7 @@ export function buildStrategyTrailingSellOrderInputs(input: {
 export function buildStrategyRollingTakeProfitOrderInputs(input: {
   config: AdvancedAutoSellConfig | null | undefined;
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: ChainAddress;
   tokenSymbol?: string | null;
   tokenInfo: TokenInfo;
   basePriceUsd: number;
@@ -148,7 +149,7 @@ export function buildStrategyRollingTakeProfitOrderInputs(input: {
 export function buildStrategyRollingFloorOrderInputs(input: {
   config: AdvancedAutoSellConfig | null | undefined;
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: ChainAddress;
   tokenSymbol?: string | null;
   tokenInfo: TokenInfo;
   entryPriceUsd: number;

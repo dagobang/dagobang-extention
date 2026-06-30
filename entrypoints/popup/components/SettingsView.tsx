@@ -5,6 +5,7 @@ import type { Settings } from '@/types/extention';
 import { defaultSettings } from '@/utils/defaults';
 import { validateSettings } from '@/utils/validate';
 import { t, type Locale } from '@/utils/i18n';
+import { ChainId } from '@/constants/chains/chainId';
 import { SettingsHome } from './Settings/SettingsHome';
 import { NetworkSettings } from './Settings/NetworkSettings';
 import { TradeSettings } from './Settings/TradeSettings';
@@ -64,7 +65,10 @@ export function SettingsView({
   const chainId = settingsDraft.chainId;
   const validated = validateSettings(settingsDraft);
   const protectedRpcUrlsValidated = validated?.chains?.[chainId]?.protectedRpcUrls ?? [];
-  const saveDisabled = section === 'network' && protectedRpcUrlsValidated.length === 0 && !settingsDraft.bloxrouteAuthHeader;
+  const saveDisabled = section === 'network'
+    && chainId !== ChainId.SOL
+    && protectedRpcUrlsValidated.length === 0
+    && !settingsDraft.bloxrouteAuthHeader;
 
   const titleBySection: Record<SettingsSectionId, string> = {
     root: tt('popup.settings.title'),
@@ -108,7 +112,7 @@ export function SettingsView({
         {section === 'notification' && <Notification settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'telegram' && <TelegramSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
         {section === 'ui' && <SwitchSettings settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} tt={tt} busy={busy} />}
-        {section === 'security' && <SecuritySettings tt={tt} busy={busy} withBusy={withBusy} onBackup={onBackup} onRefresh={onRefresh} />}
+        {section === 'security' && <SecuritySettings tt={tt} busy={busy} withBusy={withBusy} onBackup={onBackup} onRefresh={onRefresh} chainId={chainId} />}
 
         {section !== 'root' && section !== 'security' && (
           <button

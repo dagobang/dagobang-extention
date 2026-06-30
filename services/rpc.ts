@@ -5,6 +5,7 @@ import { classifyBroadcastError } from '@/utils/txErrorClassify';
 import { isAllowanceLikeText } from '@/utils/txErrorClassify';
 import { isInFlightLimitLikeText } from '@/utils/txErrorClassify';
 import { getChainRuntime } from '@/constants/chains';
+import { isSolanaChain } from '@/constants/chains/runtime';
 import { RpcReadBalancer } from './rpcReadBalancer';
 import type { SubmitChannel } from '@/types/extention';
 
@@ -500,6 +501,37 @@ export class RpcService {
   static async measureLatency(url: string, chainId?: number): Promise<number> {
     const settings = await SettingsService.get();
     const resolvedChainId = chainId ?? settings.chainId;
+    if (isSolanaChain(resolvedChainId)) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const start = performance.now();
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getSlot',
+            params: [{ commitment: 'processed' }],
+          }),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Solana RPC responded with HTTP ${response.status}`);
+        }
+        const payload = await response.json().catch(() => null) as any;
+        if (payload?.error) {
+          throw new Error(String(payload.error?.message || payload.error));
+        }
+        const end = performance.now();
+        return end - start;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
     const chain = getChainRuntime(resolvedChainId).viemChain;
     const client = createPublicClient({
       chain,
@@ -541,8 +573,12 @@ export class RpcService {
       const lastAt = this.prewarmedAtByUrl.get(url) ?? 0;
       if (!force && now - lastAt < this.prewarmWindowMs) return;
       this.prewarmedAtByUrl.set(url, now);
-      const client = this.getClientForUrl(url, settings.chainId);
       try {
+        if (isSolanaChain(settings.chainId)) {
+          await this.measureLatency(url, settings.chainId);
+          return;
+        }
+        const client = this.getClientForUrl(url, settings.chainId);
         await Promise.race([
           client.getBlockNumber(),
           new Promise((_, reject) => {

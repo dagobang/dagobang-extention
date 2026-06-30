@@ -1,4 +1,5 @@
 import type { LimitOrder, LimitOrderCreateInput, LimitOrderType } from '@/types/extention';
+import type { ChainAddress } from '@/types/chain/address';
 import { getLimitOrders, setLimitOrders } from '@/services/storage';
 import { normalizePriceValue } from '@/utils/format';
 
@@ -74,7 +75,7 @@ export const applyTrailingStopUpdate = async (order: LimitOrder, priceUsd: numbe
   return { ...order, trailingPeakPriceUsd: nextPeakN, triggerPriceUsd: nextTrigger };
 };
 
-export const listLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
+export const listLimitOrders = async (chainId: number, tokenAddress?: ChainAddress) => {
   const all = await getLimitOrders();
   const filtered = all.filter((o) => {
     if (o.chainId !== chainId) return false;
@@ -240,7 +241,7 @@ export const cancelLimitOrder = async (id: string) => {
   return next;
 };
 
-export const cancelAllLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
+export const cancelAllLimitOrders = async (chainId: number, tokenAddress?: ChainAddress) => {
   const all = await getLimitOrders();
   const next = all.filter((o) => {
     if (o.chainId !== chainId) return true;
@@ -252,7 +253,7 @@ export const cancelAllLimitOrders = async (chainId: number, tokenAddress?: `0x${
   return next;
 };
 
-export const clearExecutedLimitOrders = async (chainId: number, tokenAddress?: `0x${string}`) => {
+export const clearExecutedLimitOrders = async (chainId: number, tokenAddress?: ChainAddress) => {
   const all = await getLimitOrders();
   const next = all.filter((o) => {
     if (o.chainId !== chainId) return true;
@@ -265,8 +266,8 @@ export const clearExecutedLimitOrders = async (chainId: number, tokenAddress?: `
 
 export const cancelAllSellLimitOrdersForToken = async (
   chainId: number,
-  tokenAddress: `0x${string}` | null | undefined,
-  fromAddress?: `0x${string}`
+  tokenAddress: ChainAddress | null | undefined,
+  fromAddress?: ChainAddress
 ) => {
   if (!tokenAddress) return getLimitOrders();
   const keyAddr = tokenAddress.toLowerCase();

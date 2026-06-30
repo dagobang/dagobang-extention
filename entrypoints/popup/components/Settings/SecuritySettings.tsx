@@ -8,9 +8,10 @@ type SecuritySettingsProps = {
   withBusy: (fn: () => Promise<void>) => Promise<void>;
   onBackup: (mnemonic: string) => void;
   onRefresh: () => Promise<void>;
+  chainId: number;
 };
 
-export function SecuritySettings({ tt, busy, withBusy, onBackup, onRefresh }: SecuritySettingsProps) {
+export function SecuritySettings({ tt, busy, withBusy, onBackup, onRefresh, chainId }: SecuritySettingsProps) {
   const [exportPassword, setExportPassword] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -36,7 +37,7 @@ export function SecuritySettings({ tt, busy, withBusy, onBackup, onRefresh }: Se
             disabled={busy || !exportPassword}
             onClick={() =>
               withBusy(async () => {
-                const res = await call({ type: 'wallet:exportPrivateKey', password: exportPassword });
+                const res = await call({ type: 'wallet:exportPrivateKey', password: exportPassword, chainId });
                 onBackup(res.privateKey);
                 setExportPassword('');
               })
@@ -50,7 +51,7 @@ export function SecuritySettings({ tt, busy, withBusy, onBackup, onRefresh }: Se
             disabled={busy || !exportPassword}
             onClick={() =>
               withBusy(async () => {
-                const res = await call({ type: 'wallet:exportMnemonic', password: exportPassword });
+                const res = await call({ type: 'wallet:exportMnemonic', password: exportPassword, chainId });
                 onBackup(res.mnemonic);
                 setExportPassword('');
               })
@@ -94,7 +95,7 @@ export function SecuritySettings({ tt, busy, withBusy, onBackup, onRefresh }: Se
             disabled={busy || !currentPassword || !passwordsMatch}
             onClick={() =>
               withBusy(async () => {
-                await call({ type: 'wallet:updatePassword', oldPassword: currentPassword, newPassword });
+                await call({ type: 'wallet:updatePassword', oldPassword: currentPassword, newPassword, chainId });
                 setCurrentPassword('');
                 setNewPassword('');
                 setConfirmPassword('');
@@ -115,7 +116,7 @@ export function SecuritySettings({ tt, busy, withBusy, onBackup, onRefresh }: Se
           onClick={() => {
             if (confirm(tt('popup.unlock.confirmWipe'))) {
               withBusy(async () => {
-                await call({ type: 'wallet:wipe' });
+                await call({ type: 'wallet:wipe', chainId });
                 await onRefresh();
               });
             }
@@ -127,4 +128,3 @@ export function SecuritySettings({ tt, busy, withBusy, onBackup, onRefresh }: Se
     </div>
   );
 }
-

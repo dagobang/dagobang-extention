@@ -2,20 +2,13 @@ import { useState } from 'react';
 import { Zap, Fuel, Sliders, Settings2 } from 'lucide-react';
 import { ChainId } from '@/constants/chains/chainId';
 import { getNativeSymbol } from '@/constants/chains/runtime';
-import type { AdvancedAutoSellConfig, QuickBuyPresetOverride, Settings, SubmitChannel } from '@/types/extention';
+import type { AdvancedAutoSellConfig, QuickBuyPresetOverride, Settings } from '@/types/extention';
 import { SymbolCoinIcon } from '@/components/Coins';
 import { formatPriceValue } from '@/utils/format';
 import { t, type Locale } from '@/utils/i18n';
 import { AutoSell } from './AutoSell';
 import { getDynamicGasPreview } from './useDynamicGasPreview';
-import { ChannelSwitcher } from './ChannelSwitcher';
-
-type SubmitChannelStatusView = {
-  channel: SubmitChannel;
-  configured: boolean;
-  available: boolean;
-  reason: string;
-};
+import { ChannelSwitcher, type ChannelSwitcherItem } from './ChannelSwitcher';
 
 type BuySectionProps = {
   formattedNativeBalance: string;
@@ -54,9 +47,10 @@ type BuySectionProps = {
   onToggleGmgn: () => void;
   advancedAutoSell: AdvancedAutoSellConfig | null;
   onUpdateAdvancedAutoSell: (next: AdvancedAutoSellConfig) => void;
-  submitChannel: SubmitChannel;
-  submitChannelStatuses: SubmitChannelStatusView[];
-  onSelectSubmitChannel: (channel: SubmitChannel) => void;
+  channelActiveKey: string;
+  channelOptions: ChannelSwitcherItem[];
+  channelRouteTagLabel?: string | null;
+  onSelectChannel: (key: string) => void;
   prewarmIndicatorState?: 'hidden' | 'warming' | 'done';
   prewarmIndicatorTitle?: string;
 };
@@ -98,9 +92,10 @@ export function BuySection({
   onToggleGmgn,
   advancedAutoSell,
   onUpdateAdvancedAutoSell,
-  submitChannel,
-  submitChannelStatuses,
-  onSelectSubmitChannel,
+  channelActiveKey,
+  channelOptions,
+  channelRouteTagLabel,
+  onSelectChannel,
   prewarmIndicatorState,
   prewarmIndicatorTitle,
 }: BuySectionProps) {
@@ -143,9 +138,10 @@ export function BuySection({
     : 'standard';
   const priorityPresetLabel = t(`contentUi.priorityFee.${priorityPreset}`, locale);
   const nativeSymbol = getNativeSymbol(settings?.chainId ?? ChainId.BNB);
+  const isSolana = settings?.chainId === ChainId.SOL;
   const currentSubmitChannel = chainSettings?.submitChannel ?? 'protectRpcs';
-  const showPriorityFee = settings?.chainId !== ChainId.HYPER && currentSubmitChannel !== 'protectRpcs' && currentSubmitChannel !== 'mixed';
-  const submitChannelRisk = currentSubmitChannel;
+  const showPriorityFee = !isSolana && settings?.chainId !== ChainId.HYPER && currentSubmitChannel !== 'protectRpcs' && currentSubmitChannel !== 'mixed';
+  const submitChannelRisk = isSolana ? null : currentSubmitChannel;
   const isHypeBaseSymbol = baseSymbol === 'HYPE' || baseSymbol === 'WHYPE';
   const activePresetOverride = quickBuyAdvancedEnabled ? quickBuyPresetOverrides[activePreviewIndex] ?? {} : {};
   const displayGasPreset = activePresetOverride.gasPreset ?? gasPreset;
@@ -236,9 +232,10 @@ export function BuySection({
         <div className="flex items-center gap-2">
           <span className={`font-bold text-zinc-200 ${isAltfunLayout ? 'text-[15px]' : 'text-sm'}`}>{t('contentUi.section.buy', locale)}</span>
           <ChannelSwitcher
-            submitChannel={submitChannel}
-            submitChannelStatuses={submitChannelStatuses}
-            onSelectSubmitChannel={onSelectSubmitChannel}
+            activeKey={channelActiveKey}
+            items={channelOptions}
+            routeTagLabel={channelRouteTagLabel}
+            onSelect={onSelectChannel}
             prewarmIndicatorState={prewarmIndicatorState}
             prewarmIndicatorTitle={prewarmIndicatorTitle}
             warningHint={submitChannelWarning}

@@ -7,12 +7,16 @@ import { ChainId } from '@/constants/chains/chainId';
 import { chainNames, getNativeSymbol } from '@/constants/chains';
 
 type NetworkSettingsProps = SettingsDraftProps;
+const SOLANA_SWQOS_STRATEGIES = ['single', 'concurrent'] as const;
+const SOLANA_SWQOS_REGIONS = ['default', 'newyork', 'frankfurt', 'amsterdam', 'slc', 'tokyo', 'london', 'losangeles'] as const;
+const SOLANA_SWQOS_PROVIDERS = ['jito', 'blox', 'nextblock', 'temporal'] as const;
 
 export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: NetworkSettingsProps) {
   const chainId = settingsDraft.chainId;
   const defaults = defaultSettings();
   const fallbackChainDraft = defaults.chains[defaults.chainId];
   const chainDraft = settingsDraft.chains[chainId] ?? defaults.chains[chainId] ?? fallbackChainDraft;
+  const isSolana = chainId === ChainId.SOL;
   const protectedRpcUrlsBuyDraft = (chainDraft.protectedRpcUrlsBuy ?? []).map((x) => String(x ?? '').trim()).filter(Boolean);
   const protectedRpcUrlsSellDraft = (chainDraft.protectedRpcUrlsSell ?? []).map((x) => String(x ?? '').trim()).filter(Boolean);
   const protectedRpcUrlsDraft = (chainDraft.protectedRpcUrls ?? []).map((x) => String(x ?? '').trim()).filter(Boolean);
@@ -23,12 +27,71 @@ export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: Network
   const hasInvalidProtectedRpcUrls = protectedRpcUrlsValidated.length < protectedRpcUrlsDraft.length && !settingsDraft.bloxrouteAuthHeader;
   const hasInvalidProtectedRpcUrlsBuy = protectedRpcUrlsBuyValidated.length < protectedRpcUrlsBuyDraft.length && !settingsDraft.bloxrouteAuthHeader;
   const hasInvalidProtectedRpcUrlsSell = protectedRpcUrlsSellValidated.length < protectedRpcUrlsSellDraft.length && !settingsDraft.bloxrouteAuthHeader;
+  const protectedRpcHint1 = isSolana
+    ? tt('popup.settings.protectedRpcUrlsSolHint1')
+    : tt('popup.settings.protectedRpcUrlsHint1');
+  const protectedRpcHint2 = isSolana
+    ? tt('popup.settings.protectedRpcUrlsSolHint2')
+    : tt('popup.settings.protectedRpcUrlsHint2');
   const [bloxProbe, setBloxProbe] = useState<null | { status: 'reachable' | 'failed'; httpStatus?: number; message?: string; hasAuthHeader: boolean }>(null);
   const [bloxProbeLoading, setBloxProbeLoading] = useState(false);
   const bloxAuthDraft = useMemo(() => String(settingsDraft.bloxrouteAuthHeader ?? '').replace(/[\r\n]+/g, '').trim(), [settingsDraft.bloxrouteAuthHeader]);
-  const showBloxrouteSettings = chainId !== ChainId.HYPER;
+  const showBloxrouteSettings = !isSolana && chainId !== ChainId.HYPER;
+  const solanaSwqosDraft = chainDraft.solanaSwqos ?? defaults.chains[ChainId.SOL]?.solanaSwqos ?? {
+    enabled: false,
+    strategy: 'concurrent',
+    timeoutMs: 10_000,
+    region: 'default',
+    providers: [],
+  };
+  const solanaSwqosProviders = SOLANA_SWQOS_PROVIDERS.map((type) => {
+    const provider = (solanaSwqosDraft.providers ?? []).find((item) => item.type === type);
+    return provider ?? { type, enabled: false, authKey: '', endpoint: '', weight: 1 };
+  });
+
+  function updateCurrentChain(mutator: (chain: typeof chainDraft) => typeof chainDraft) {
+    setSettingsDraft((s) => ({
+      ...s,
+      chains: {
+        ...s.chains,
+        [s.chainId]: mutator(s.chains[s.chainId] ?? defaults.chains[s.chainId] ?? fallbackChainDraft),
+      },
+    }));
+  }
+
+  function updateSolanaSwqos(patch: Partial<typeof solanaSwqosDraft>) {
+    updateCurrentChain((chain) => ({
+      ...chain,
+      solanaSwqos: {
+        ...(chain.solanaSwqos ?? solanaSwqosDraft),
+        ...patch,
+      },
+    }));
+  }
+
+  function updateSolanaSwqosProvider(type: (typeof SOLANA_SWQOS_PROVIDERS)[number], patch: Record<string, unknown>) {
+    updateCurrentChain((chain) => {
+      const current = chain.solanaSwqos ?? solanaSwqosDraft;
+      const providers = [...(current.providers ?? [])];
+      const index = providers.findIndex((provider) => provider.type === type);
+      const base = index >= 0
+        ? providers[index]
+        : { type, enabled: false, authKey: '', endpoint: '', weight: 1 };
+      const next = { ...base, ...patch };
+      if (index >= 0) providers[index] = next as any;
+      else providers.push(next as any);
+      return {
+        ...chain,
+        solanaSwqos: {
+          ...current,
+          providers,
+        },
+      };
+    });
+  }
 
   useEffect(() => {
+    if (isSolana) return;
     setSettingsDraft((s) => {
       const cid = s.chainId;
       const chain = s.chains[cid] ?? defaults.chains[cid] ?? fallbackChainDraft;
@@ -44,7 +107,7 @@ export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: Network
         },
       };
     });
-  }, [setSettingsDraft, chainId, defaults.chains, fallbackChainDraft]);
+  }, [setSettingsDraft, chainId, defaults.chains, fallbackChainDraft, isSolana]);
 
   return (
     <div className="space-y-6">
@@ -96,8 +159,8 @@ export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: Network
               }))
             }
           />
-          <div className="text-[11px] text-zinc-500">{tt('popup.settings.protectedRpcUrlsHint1')}</div>
-          <div className="text-[11px] text-zinc-500">{tt('popup.settings.protectedRpcUrlsHint2')}</div>
+          <div className="text-[11px] text-zinc-500">{protectedRpcHint1}</div>
+          <div className="text-[11px] text-zinc-500">{protectedRpcHint2}</div>
           {hasInvalidProtectedRpcUrls && (
             <div className="text-[11px] text-red-400">{tt('popup.settings.protectedRpcUrlsInvalidWarning')}</div>
           )}
@@ -266,6 +329,111 @@ export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: Network
               </div>
             )}
           </label>
+        ) : null}
+
+        {isSolana ? (
+          <div className="space-y-3 rounded-md border border-zinc-800 bg-zinc-900 px-3 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[14px] text-zinc-300">{tt('popup.settings.solanaSwqos')}</div>
+                <div className="text-[11px] text-zinc-500">{tt('popup.settings.solanaSwqosHint')}</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={!!solanaSwqosDraft.enabled}
+                onChange={(e) => updateSolanaSwqos({ enabled: e.target.checked })}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block space-y-1">
+                <div className="text-[12px] text-zinc-400">{tt('popup.settings.solanaSwqosStrategy')}</div>
+                <select
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-2 text-[14px] outline-none"
+                  value={solanaSwqosDraft.strategy ?? 'concurrent'}
+                  onChange={(e) => updateSolanaSwqos({ strategy: e.target.value as (typeof SOLANA_SWQOS_STRATEGIES)[number] })}
+                >
+                  {SOLANA_SWQOS_STRATEGIES.map((strategy) => (
+                    <option key={strategy} value={strategy}>{tt(`popup.settings.solanaSwqosStrategyOptions.${strategy}`)}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block space-y-1">
+                <div className="text-[12px] text-zinc-400">{tt('popup.settings.solanaSwqosRegion')}</div>
+                <select
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-2 text-[14px] outline-none"
+                  value={solanaSwqosDraft.region ?? 'default'}
+                  onChange={(e) => updateSolanaSwqos({ region: e.target.value as (typeof SOLANA_SWQOS_REGIONS)[number] })}
+                >
+                  {SOLANA_SWQOS_REGIONS.map((region) => (
+                    <option key={region} value={region}>{tt(`popup.settings.solanaSwqosRegionOptions.${region}`)}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <label className="block space-y-1">
+              <div className="text-[12px] text-zinc-400">{tt('popup.settings.solanaSwqosTimeoutMs')}</div>
+              <input
+                type="number"
+                min={1000}
+                max={30000}
+                className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-2 text-[14px] outline-none"
+                value={solanaSwqosDraft.timeoutMs ?? 10000}
+                onChange={(e) => updateSolanaSwqos({ timeoutMs: Number(e.target.value || 10000) })}
+              />
+            </label>
+
+            <div className="space-y-2">
+              <div className="text-[12px] text-zinc-400">{tt('popup.settings.solanaSwqosProviders')}</div>
+              {solanaSwqosProviders.map((provider) => (
+                <div key={provider.type} className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-3 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[13px] font-medium text-zinc-200">{tt(`popup.settings.solanaSwqosProviderLabels.${provider.type}`)}</div>
+                    <input
+                      type="checkbox"
+                      checked={!!provider.enabled}
+                      onChange={(e) => updateSolanaSwqosProvider(provider.type, { enabled: e.target.checked })}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block space-y-1">
+                      <div className="text-[11px] text-zinc-500">{tt('popup.settings.solanaSwqosWeight')}</div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-2 text-[13px] outline-none"
+                        value={provider.weight ?? 1}
+                        onChange={(e) => updateSolanaSwqosProvider(provider.type, { weight: Number(e.target.value || 1) })}
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <div className="text-[11px] text-zinc-500">{tt('popup.settings.solanaSwqosAuthKey')}</div>
+                      <input
+                        type="password"
+                        className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-2 text-[13px] outline-none"
+                        value={provider.authKey ?? ''}
+                        onChange={(e) => updateSolanaSwqosProvider(provider.type, { authKey: e.target.value })}
+                        placeholder={tt('popup.settings.solanaSwqosAuthKeyPlaceholder')}
+                      />
+                    </label>
+                  </div>
+                  <label className="block space-y-1">
+                    <div className="text-[11px] text-zinc-500">{tt('popup.settings.solanaSwqosEndpoint')}</div>
+                    <input
+                      type="text"
+                      className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-2 text-[13px] outline-none"
+                      value={provider.endpoint ?? ''}
+                      onChange={(e) => updateSolanaSwqosProvider(provider.type, { endpoint: e.target.value })}
+                      placeholder={tt('popup.settings.solanaSwqosEndpointPlaceholder')}
+                    />
+                  </label>
+                </div>
+              ))}
+            </div>
+          </div>
         ) : null}
       </div>
     </div>

@@ -417,6 +417,16 @@ export class GmgnAPI {
   private static readonly PROFIT_BASE_URL = 'https://gmgn.ai/pf/api/v1';
   private static readonly SEARCH_BASE_URL = 'https://gmgn.ai/vas/api/v1';
 
+  private static normalizeChainName(chain: string): string {
+    return String(chain || '').trim().toLowerCase();
+  }
+
+  private static normalizeQueryAddress(chain: string, address: string): string {
+    const trimmed = String(address || '').trim();
+    if (!trimmed) return '';
+    return this.normalizeChainName(chain) === 'sol' ? trimmed : trimmed.toLowerCase();
+  }
+
   /**
    * Make HTTP request using fetch API with proper headers
    */
@@ -902,51 +912,76 @@ export class GmgnAPI {
    * @param address Token address
    */
   public static async getTokenInfo(chain: string, address: string): Promise<TokenInfo | null> {
-    // try {
-    //   const latest = await this.fetchTokenInfoByEndpoint(
-    //     '/mutil_window_token_info',
-    //     this.CANDLES_BASE_URL,
-    //     chain,
-    //     address
-    //   );
-    //   if (latest) return latest;
-    // } catch (error) {
-    //   console.warn('mutil_window_token_info failed, fallback to multi_token_info:', error);
-    // }
-
     try {
       const [tokenInfo, linkInfo] = await Promise.all([
         this.fetchTokenInfoByEndpoint(
-        '/multi_token_info',
-        this.TOKEN_INFO_BASE_URL,
-        chain,
-        address
+          '/multi_token_info',
+          this.TOKEN_INFO_BASE_URL,
+          chain,
+          address
         ),
         this.fetchTokenLinkInfo(chain, address).catch((error) => {
           console.warn('Failed to fetch GMGN token link info:', error);
           return null;
         }),
       ]);
-      if (!tokenInfo) return null;
+      let mergedInfo = tokenInfo;
+      const needsLatestFallback = !mergedInfo
+        || !mergedInfo.symbol
+        || !mergedInfo.name
+        || !(mergedInfo.decimals >= 0)
+        || !mergedInfo.quote_token_address;
+      if (needsLatestFallback) {
+        const latestInfo = await this.fetchTokenInfoByEndpoint(
+          '/mutil_window_token_info',
+          this.CANDLES_BASE_URL,
+          chain,
+          address
+        ).catch((error) => {
+          console.warn('Failed to fetch GMGN latest token info:', error);
+          return null;
+        });
+        if (!mergedInfo) {
+          mergedInfo = latestInfo;
+        } else if (latestInfo) {
+          mergedInfo = {
+            ...mergedInfo,
+            symbol: mergedInfo.symbol || latestInfo.symbol,
+            name: mergedInfo.name || latestInfo.name,
+            decimals: mergedInfo.decimals > 0 ? mergedInfo.decimals : latestInfo.decimals,
+            logo: mergedInfo.logo || latestInfo.logo,
+            quote_token: mergedInfo.quote_token || latestInfo.quote_token,
+            quote_token_address: mergedInfo.quote_token_address || latestInfo.quote_token_address,
+            pool_pair: mergedInfo.pool_pair || latestInfo.pool_pair,
+            biggest_pool_address: mergedInfo.biggest_pool_address || latestInfo.biggest_pool_address,
+            tpool_exchange: mergedInfo.tpool_exchange || latestInfo.tpool_exchange,
+            tpool_launch_type: mergedInfo.tpool_launch_type || latestInfo.tpool_launch_type,
+            tpool_pool_address: mergedInfo.tpool_pool_address || latestInfo.tpool_pool_address,
+            tokenPrice: mergedInfo.tokenPrice ?? latestInfo.tokenPrice,
+            totalSupply: mergedInfo.totalSupply || latestInfo.totalSupply,
+          };
+        }
+      }
+      if (!mergedInfo) return null;
       return {
-        ...tokenInfo,
-        description: linkInfo?.description || tokenInfo.description,
-        website: linkInfo?.website || tokenInfo.website,
-        gmgnUrl: linkInfo?.gmgnUrl || tokenInfo.gmgnUrl,
-        geckoTerminalUrl: linkInfo?.geckoTerminalUrl || tokenInfo.geckoTerminalUrl,
-        twitterUrl: linkInfo?.twitterUrl || tokenInfo.twitterUrl,
-        telegramUrl: linkInfo?.telegramUrl || tokenInfo.telegramUrl,
-        discordUrl: linkInfo?.discordUrl || tokenInfo.discordUrl,
-        githubUrl: linkInfo?.githubUrl || tokenInfo.githubUrl,
-        youtubeUrl: linkInfo?.youtubeUrl || tokenInfo.youtubeUrl,
-        mediumUrl: linkInfo?.mediumUrl || tokenInfo.mediumUrl,
-        redditUrl: linkInfo?.redditUrl || tokenInfo.redditUrl,
-        linkedinUrl: linkInfo?.linkedinUrl || tokenInfo.linkedinUrl,
-        instagramUrl: linkInfo?.instagramUrl || tokenInfo.instagramUrl,
-        facebookUrl: linkInfo?.facebookUrl || tokenInfo.facebookUrl,
-        tiktokUrl: linkInfo?.tiktokUrl || tokenInfo.tiktokUrl,
-        bitbucketUrl: linkInfo?.bitbucketUrl || tokenInfo.bitbucketUrl,
-        farcasterUrl: linkInfo?.farcasterUrl || tokenInfo.farcasterUrl,
+        ...mergedInfo,
+        description: linkInfo?.description || mergedInfo.description,
+        website: linkInfo?.website || mergedInfo.website,
+        gmgnUrl: linkInfo?.gmgnUrl || mergedInfo.gmgnUrl,
+        geckoTerminalUrl: linkInfo?.geckoTerminalUrl || mergedInfo.geckoTerminalUrl,
+        twitterUrl: linkInfo?.twitterUrl || mergedInfo.twitterUrl,
+        telegramUrl: linkInfo?.telegramUrl || mergedInfo.telegramUrl,
+        discordUrl: linkInfo?.discordUrl || mergedInfo.discordUrl,
+        githubUrl: linkInfo?.githubUrl || mergedInfo.githubUrl,
+        youtubeUrl: linkInfo?.youtubeUrl || mergedInfo.youtubeUrl,
+        mediumUrl: linkInfo?.mediumUrl || mergedInfo.mediumUrl,
+        redditUrl: linkInfo?.redditUrl || mergedInfo.redditUrl,
+        linkedinUrl: linkInfo?.linkedinUrl || mergedInfo.linkedinUrl,
+        instagramUrl: linkInfo?.instagramUrl || mergedInfo.instagramUrl,
+        facebookUrl: linkInfo?.facebookUrl || mergedInfo.facebookUrl,
+        tiktokUrl: linkInfo?.tiktokUrl || mergedInfo.tiktokUrl,
+        bitbucketUrl: linkInfo?.bitbucketUrl || mergedInfo.bitbucketUrl,
+        farcasterUrl: linkInfo?.farcasterUrl || mergedInfo.farcasterUrl,
       };
     } catch (error) {
       console.error('Failed to fetch token info from fallback endpoint:', error);
@@ -1114,12 +1149,23 @@ export class GmgnAPI {
     return raw;
   }
 
+  private static normalizeOptionalNumberString(value: unknown): string | undefined {
+    const raw = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+    if (!raw) return undefined;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return undefined;
+    return raw;
+  }
+
   private static normalizeTokenInfo(tokenData: MultiTokenInfoResponse['data'][number], chain: string): TokenInfo {
     const quoteTokenAddress = tokenData.tpool?.quote_address || tokenData.pool?.quote_address;
     const quoteToken = tokenData.migration_market_cap_quote || tokenData.pool?.quote_symbol || '';
     const exchange = tokenData.tpool?.exchange;
-    const isMigrated = tokenData.tpool?.launch_type === 'migrated';
+    const launchType = String(tokenData.tpool?.launch_type || '').trim().toLowerCase();
+    const isMigrated = launchType === 'migrated' || Number(tokenData.launchpad_status || 0) === 1;
     const dexType = isMigrated ? this.getDexType(exchange) : undefined;
+    const biggestPoolAddress = tokenData.biggest_pool_address || undefined;
+    const tpoolPoolAddress = tokenData.tpool?.pool_address || tokenData.pool?.pool_address || undefined;
     const totalSupply = this.normalizeTotalSupply(
       tokenData.totalSupply
       ?? tokenData.total_supply
@@ -1191,14 +1237,54 @@ export class GmgnAPI {
       ]),
       'telegram'
     );
+    const normalizedPriceRaw =
+      tokenData.price
+      ?? tokenData.token?.price
+      ?? tokenData.base_token_info?.price
+      ?? '';
+    const normalizedLiquidityRaw =
+      tokenData.liquidity
+      ?? tokenData.token?.liquidity
+      ?? tokenData.base_token_info?.liquidity
+      ?? '';
+    const normalizedMarketCapRaw =
+      tokenData.market_cap
+      ?? tokenData.marketCap
+      ?? tokenData.base_token_info?.market_cap
+      ?? tokenData.base_token_info?.marketCap
+      ?? '';
+    const normalizedName =
+      tokenData.name
+      ?? tokenData.base_token_info?.name
+      ?? tokenData.token?.name
+      ?? tokenData.token_basic_stats?.name
+      ?? '';
+    const normalizedSymbol =
+      tokenData.symbol
+      ?? tokenData.base_token_info?.symbol
+      ?? tokenData.token?.symbol
+      ?? tokenData.token_basic_stats?.symbol
+      ?? '';
+    const normalizedDecimals =
+      tokenData.decimals
+      ?? tokenData.base_token_info?.decimals
+      ?? tokenData.token?.decimals
+      ?? tokenData.token_basic_stats?.decimals
+      ?? 0;
+    const normalizedLogo =
+      tokenData.logo
+      ?? tokenData.base_token_info?.logo
+      ?? tokenData.token?.logo
+      ?? tokenData.token_basic_stats?.logo
+      ?? '';
 
     return {
       chain: tokenData.chain || chain,
       address: tokenData.address,
-      name: tokenData.name,
-      symbol: tokenData.symbol,
-      decimals: Number(tokenData.decimals || 0),
-      logo: tokenData.logo || '',
+      name: normalizedName,
+      symbol: normalizedSymbol,
+      decimals: Number(normalizedDecimals || 0),
+      logo: normalizedLogo || '',
       description,
       website,
       twitterUrl,
@@ -1209,9 +1295,20 @@ export class GmgnAPI {
       launchpad_status: Number(tokenData.launchpad_status || 0),
       quote_token: quoteToken,
       quote_token_address: quoteTokenAddress,
-      pool_pair: tokenData.biggest_pool_address || tokenData.tpool?.pool_address || tokenData.pool?.pool_address,
+      pool_pair: isMigrated ? (biggestPoolAddress || tpoolPoolAddress) : undefined,
+      biggest_pool_address: biggestPoolAddress,
       tpool_exchange: exchange,
+      tpool_launch_type: launchType || undefined,
+      tpool_pool_address: tpoolPoolAddress,
       dex_type: dexType,
+      tokenPrice: this.normalizeOptionalNumberString(normalizedPriceRaw)
+        ? {
+            price: this.normalizeOptionalNumberString(normalizedPriceRaw)!,
+            marketCap: this.normalizeOptionalNumberString(normalizedMarketCapRaw) ?? '',
+            liquidity: this.normalizeOptionalNumberString(normalizedLiquidityRaw),
+            timestamp: Date.now(),
+          }
+        : undefined,
       totalSupply,
     };
   }
@@ -1238,7 +1335,9 @@ export class GmgnAPI {
       return [];
     }
 
-    const endpoint = `/wallet/${chain.toLowerCase()}/${walletAddress.toLowerCase()}/holdings`;
+    const normalizedChain = this.normalizeChainName(chain);
+    const normalizedWalletAddress = this.normalizeQueryAddress(normalizedChain, walletAddress);
+    const endpoint = `/wallet/${normalizedChain}/${normalizedWalletAddress}/holdings`;
     const queryParams = {
       worker: '0',
       hide_closed: true,
@@ -1271,7 +1370,7 @@ export class GmgnAPI {
           const list = (result.data as any).list as any[];
           return list
             .map((item) => {
-              const tokenAddr = String(item?.token?.token_address || item?.token_address || '').toLowerCase();
+              const tokenAddr = this.normalizeQueryAddress(chain, String(item?.token?.token_address || item?.token_address || ''));
               if (!tokenAddr) return null;
               return {
                 token_address: tokenAddr,
@@ -1314,10 +1413,13 @@ export class GmgnAPI {
       return holdings?.[0]?.balance;
     }
 
-    const endpoint = `/wallet/${chain.toLowerCase()}/${walletAddress.toLowerCase()}/holding`;
+    const normalizedChain = this.normalizeChainName(chain);
+    const normalizedWalletAddress = this.normalizeQueryAddress(normalizedChain, walletAddress);
+    const normalizedTokenAddress = this.normalizeQueryAddress(normalizedChain, tokenAddress);
+    const endpoint = `/wallet/${normalizedChain}/${normalizedWalletAddress}/holding`;
     const queryParams = {
       worker: '0',
-      token_address: tokenAddress.toLowerCase()
+      token_address: normalizedTokenAddress
     };
 
     const url = await this.buildApiUrl(endpoint, queryParams as any, this.PROFIT_BASE_URL);
@@ -1395,18 +1497,20 @@ export class GmgnAPI {
   }
 
   public static async getWalletsHolding(chain: string, tokenAddress: string, walletAddresses: string[]): Promise<GmgnTokenHolding[]> {
+    const normalizedChain = this.normalizeChainName(chain);
     const normalizedWallets = walletAddresses
-      .map((item) => String(item || '').trim().toLowerCase())
+      .map((item) => this.normalizeQueryAddress(normalizedChain, item))
       .filter(Boolean);
-    if (!chain || !tokenAddress || normalizedWallets.length <= 0) return [];
+    const normalizedTokenAddress = this.normalizeQueryAddress(normalizedChain, tokenAddress);
+    if (!normalizedChain || !normalizedTokenAddress || normalizedWallets.length <= 0) return [];
 
     const endpoint = '/wallets/holding';
     const url = await this.buildApiUrlWithArrayParams(
       endpoint,
       {
         worker: '0',
-        chain: chain.toLowerCase(),
-        token_address: tokenAddress.toLowerCase(),
+        chain: normalizedChain,
+        token_address: normalizedTokenAddress,
       },
       { wallet_addresses: normalizedWallets },
       this.HOLDINGS_BASE_URL
@@ -1426,12 +1530,12 @@ export class GmgnAPI {
       const holdings = Array.isArray(result.data?.holdings) ? result.data!.holdings! : [];
       return holdings
         .map((item) => {
-          const tokenAddr = String(item?.token_address || '').toLowerCase();
+          const tokenAddr = this.normalizeQueryAddress(normalizedChain, String(item?.token_address || ''));
           if (!tokenAddr) return null;
           return {
             chain_wallet: String(item?.chain_wallet || ''),
             token_address: tokenAddr,
-            wallet_address: String(item?.wallet_address || '').toLowerCase(),
+            wallet_address: this.normalizeQueryAddress(normalizedChain, String(item?.wallet_address || '')),
             symbol: String(item?.token_basic_stats?.symbol || ''),
             token_symbol: String(item?.token_basic_stats?.symbol || ''),
             balance: String(item?.balance ?? '0'),
@@ -1496,11 +1600,13 @@ export class GmgnAPI {
     tokenAddress: string
   ): Promise<TokenHoldingDetail | null> {
     if (!walletAddress || !tokenAddress || !chain) return null;
-    const normalizedChain = chain.toLowerCase();
-    const endpoint = `/wallet/${normalizedChain}/${walletAddress.toLowerCase()}/holding`;
+    const normalizedChain = this.normalizeChainName(chain);
+    const normalizedWalletAddress = this.normalizeQueryAddress(normalizedChain, walletAddress);
+    const normalizedTokenAddress = this.normalizeQueryAddress(normalizedChain, tokenAddress);
+    const endpoint = `/wallet/${normalizedChain}/${normalizedWalletAddress}/holding`;
     const queryParams = {
       worker: '0',
-      token_address: tokenAddress.toLowerCase()
+      token_address: normalizedTokenAddress
     };
     const url = await this.buildApiUrl(endpoint, queryParams as any, this.PROFIT_BASE_URL);
     const headers = await this.getHeaders();

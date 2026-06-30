@@ -1,9 +1,35 @@
 import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "./token";
+import type { ChainAddress, ChainTxId, EvmAddress, ChainAccountKind } from "./chain";
 
 export type GasPreset = 'slow' | 'standard' | 'fast' | 'turbo';
 export type PriorityFeePreset = 'none' | 'slow' | 'standard' | 'fast';
 export type TradeBaseToken = 'BNB' | 'WBNB' | 'USDT' | 'USDC';
 export type SubmitChannel = 'blox' | 'blockrazor' | 'protectRpcs' | 'mixed';
+export type SolanaSwqosProviderType = 'jito' | 'nextblock' | 'blox' | 'temporal';
+export type SolanaSwqosStrategy = 'single' | 'concurrent';
+export type SolanaSwqosRegion =
+  | 'default'
+  | 'newyork'
+  | 'frankfurt'
+  | 'amsterdam'
+  | 'slc'
+  | 'tokyo'
+  | 'london'
+  | 'losangeles';
+export type SolanaSwqosProviderSettings = {
+  type: SolanaSwqosProviderType;
+  enabled: boolean;
+  authKey?: string;
+  endpoint?: string;
+  weight?: number;
+};
+export type SolanaSwqosSettings = {
+  enabled: boolean;
+  strategy?: SolanaSwqosStrategy;
+  timeoutMs?: number;
+  region?: SolanaSwqosRegion;
+  providers?: SolanaSwqosProviderSettings[];
+};
 
 export type ExecutionMode = 'default' | 'turbo';
 export type GasPriceMode = 'fixed' | 'dynamic';
@@ -58,6 +84,7 @@ export type ChainSettings = {
   quickBuyPresetOverrides?: QuickBuyPresetOverride[];
   bloxrouteBuyEnabled?: boolean;
   bloxrouteSellEnabled?: boolean;
+  solanaSwqos?: SolanaSwqosSettings;
 };
 
 export type AutoTradeInteractionType = 'tweet' | 'reply' | 'quote' | 'retweet' | 'follow';
@@ -101,7 +128,7 @@ export type AutoTradeStrategyBase = {
 
 export type AutoTradeTwitterSnipeRuntimeStrategy = AutoTradeStrategyBase & {
   platforms?: string[];
-  walletAddress?: `0x${string}`;
+  walletAddress?: ChainAddress;
   dryRun?: boolean;
   dryRunBuyDelayMs?: string;
   dryRunSellDelayMs?: string;
@@ -342,7 +369,7 @@ export type Settings = {
   chains: Record<number, ChainSettings>;
   autoLockSeconds: number;
   lastSelectedAddress?: `0x${string}`;
-  selectedTradeWallets?: `0x${string}`[];
+  selectedTradeWallets?: ChainAddress[];
   multiWalletBuyMode?: 'uniform' | 'child_custom';
   childWalletBuyAmountsBnb?: Record<string, string>;
   childWalletBuyPresetAmountsNative?: Record<string, string[]>;
@@ -369,25 +396,61 @@ export type Settings = {
 };
 
 export type Account = {
-  address: `0x${string}`;
+  address: EvmAddress;
   name: string;
   type: 'mnemonic' | 'imported';
   index?: number;
-  privateKey: `0x${string}`;
+  privateKey: EvmAddress;
 };
 
 export type WalletPayload = {
   mnemonic?: string;
   accounts: Account[];
-  selectedAddress: `0x${string}`;
+  selectedAddress: EvmAddress;
+};
+
+export type MultiChainWalletGroup = {
+  kind: ChainAccountKind;
+  mnemonic?: string;
+  accounts: UniversalAccount[];
+  selectedAddress?: ChainAddress;
+};
+
+export type MultiChainWalletPayload = {
+  version: 2;
+  wallets: Partial<Record<ChainAccountKind, MultiChainWalletGroup>>;
+  activeChainId?: number;
 };
 
 export type BgWalletState = {
   hasEncrypted: boolean;
   isUnlocked: boolean;
-  address: `0x${string}` | null;
-  accounts: Account[];
+  address: EvmAddress | null;
+  accounts: Array<{ address: EvmAddress; name: string; type: 'mnemonic' | 'imported' }>;
   unlockTtlSeconds: number | null;
+};
+
+export type UniversalBgWalletState = {
+  hasEncrypted: boolean;
+  isUnlocked: boolean;
+  chainId?: number;
+  address: ChainAddress | null;
+  accounts: UniversalAccount[];
+  unlockTtlSeconds: number | null;
+};
+
+export type UniversalAccount = {
+  chainId: number;
+  address: ChainAddress;
+  name: string;
+  type: 'mnemonic' | 'imported';
+  index?: number;
+  privateKey?: string;
+};
+
+export type UniversalTxRef = {
+  chainId: number;
+  txid: ChainTxId;
 };
 
 export type BgGetStateResponse = {
@@ -400,25 +463,28 @@ export type BgGetStateResponse = {
 
 export type WalletCreateInput = {
   password: string;
+  chainId?: number;
 };
 
 export type WalletImportInput = {
   password: string;
   mnemonic?: string;
   privateKey?: string;
+  chainId?: number;
 };
 
 export type WalletUnlockInput = {
   password: string;
+  chainId?: number;
 };
 
 export type TxBuyInput = {
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: ChainAddress;
   nativeAmountWei?: string;
   bnbAmountWei?: string;
-  baseTokenAddress?: `0x${string}`;
-  fromAddress?: `0x${string}`;
+  baseTokenAddress?: ChainAddress;
+  fromAddress?: ChainAddress;
   executionModeOverride?: 'default' | 'turbo';
   poolFee?: number;
   slippageBps?: number;
@@ -435,10 +501,10 @@ export type TxBuyInput = {
 
 export type TxSellInput = {
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: ChainAddress;
   tokenAmountWei: string;
-  baseTokenAddress?: `0x${string}`;
-  fromAddress?: `0x${string}`;
+  baseTokenAddress?: ChainAddress;
+  fromAddress?: ChainAddress;
   executionModeOverride?: 'default' | 'turbo';
   sellPercentBps?: number;
   expectedTokenInWei?: string;
@@ -468,9 +534,9 @@ export type LimitOrderStatus = 'open' | 'triggered' | 'executed' | 'failed' | 'c
 export type LimitOrder = {
   id: string;
   chainId: number;
-  tokenAddress: `0x${string}`;
-  baseTokenAddress?: `0x${string}`;
-  fromAddress?: `0x${string}`;
+  tokenAddress: ChainAddress;
+  baseTokenAddress?: ChainAddress;
+  fromAddress?: ChainAddress;
   tokenSymbol?: string | null;
   side: LimitOrderSide;
   orderType?: LimitOrderType;
@@ -488,7 +554,7 @@ export type LimitOrder = {
   sellTokenAmountWei?: string;
   createdAtMs: number;
   status: LimitOrderStatus;
-  txHash?: `0x${string}`;
+  txHash?: ChainTxId;
   lastError?: string;
   retryCount?: number;
   retryAtMs?: number;
@@ -497,9 +563,9 @@ export type LimitOrder = {
 
 export type LimitOrderCreateInput = {
   chainId: number;
-  tokenAddress: `0x${string}`;
-  baseTokenAddress?: `0x${string}`;
-  fromAddress?: `0x${string}`;
+  tokenAddress: ChainAddress;
+  baseTokenAddress?: ChainAddress;
+  fromAddress?: ChainAddress;
   tokenSymbol?: string | null;
   side: LimitOrderSide;
   orderType?: LimitOrderType;
@@ -674,7 +740,7 @@ export type XSniperBuyRecord = {
   tweetUrl?: string;
   chainId: number;
   tokenAddress: string;
-  walletAddress?: `0x${string}`;
+  walletAddress?: ChainAddress;
   tokenSymbol?: string;
   tokenName?: string;
   buyAmountNative?: number;
@@ -739,23 +805,24 @@ export type BgRequest =
   | { type: 'bloxroute:probe'; authHeader?: string }
   | { type: 'bloxroute:openCertPage' }
   | { type: 'settings:set'; settings: Settings }
-  | { type: 'settings:setAccountAlias'; address: `0x${string}`; alias: string }
+  | { type: 'settings:setAccountAlias'; address: ChainAddress; alias: string }
   | { type: 'wallet:create'; input: WalletCreateInput }
   | { type: 'wallet:import'; input: WalletImportInput }
   | { type: 'wallet:unlock'; input: WalletUnlockInput }
-  | { type: 'wallet:lock' }
-  | { type: 'wallet:wipe' }
-  | { type: 'wallet:addAccount'; name?: string; password: string; privateKey?: string }
-  | { type: 'wallet:switchAccount'; address: `0x${string}` }
-  | { type: 'wallet:updatePassword'; oldPassword: string; newPassword: string }
-  | { type: 'wallet:exportPrivateKey'; password: string }
-  | { type: 'wallet:exportAccountPrivateKey'; address: `0x${string}`; password: string }
-  | { type: 'wallet:exportMnemonic'; password: string }
+  | { type: 'wallet:lock'; chainId?: number }
+  | { type: 'wallet:wipe'; chainId?: number }
+  | { type: 'wallet:addAccount'; name?: string; password: string; privateKey?: string; chainId?: number }
+  | { type: 'wallet:removeAccount'; address: ChainAddress; password: string; chainId?: number }
+  | { type: 'wallet:switchAccount'; address: ChainAddress; chainId?: number }
+  | { type: 'wallet:updatePassword'; oldPassword: string; newPassword: string; chainId?: number }
+  | { type: 'wallet:exportPrivateKey'; password: string; chainId?: number }
+  | { type: 'wallet:exportAccountPrivateKey'; address: ChainAddress; password: string; chainId?: number }
+  | { type: 'wallet:exportMnemonic'; password: string; chainId?: number }
   | { type: 'wallet:getEip7702Status'; address: `0x${string}`; chainId: number }
   | { type: 'wallet:revokeEip7702'; address: `0x${string}`; chainId: number }
-  | { type: 'chain:getBalance'; address: `0x${string}`; chainId: number }
-  | { type: 'token:getMeta'; tokenAddress: `0x${string}`; chainId: number }
-  | { type: 'token:getBalance'; tokenAddress: `0x${string}`; address: `0x${string}`; chainId: number }
+  | { type: 'chain:getBalance'; address: ChainAddress; chainId: number }
+  | { type: 'token:getMeta'; tokenAddress: ChainAddress; chainId: number }
+  | { type: 'token:getBalance'; tokenAddress: ChainAddress; address: ChainAddress; chainId: number }
   | { type: 'token:getAllowance'; tokenAddress: `0x${string}`; owner: `0x${string}`; spender: `0x${string}`; chainId: number }
   | { type: 'token:getPoolPair'; pair: `0x${string}`; chainId: number }
   | { type: 'token:getPriceUsd'; chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo | null }
@@ -789,7 +856,7 @@ export type BgRequest =
         recipientAddress: string;
         recipientRate: number;
       };
-      fromAddress?: `0x${string}`;
+      fromAddress?: ChainAddress;
       autoBuy?: {
         bundleEnabled?: boolean;
         sniperEnabled?: boolean;
@@ -802,10 +869,12 @@ export type BgRequest =
   | { type: 'ai:generateLogo'; prompt: string; size?: string; apiKey: string }
   | { type: 'google:imageSearch'; query: string; page?: number }
   | { type: 'rpc:prewarm'; input?: { urls?: string[]; force?: boolean; timeoutMs?: number } }
+  | { type: 'rpc:measureLatencies'; chainId: number; urls: string[] }
+  | { type: 'thirdParty:getTokenInfo'; platform: string; chain: string; address: string }
   | { type: 'rpc:readProfiles'; chainId: number; urls?: string[] }
   | { type: 'rpc:capacityProbe'; chainId: number; mode?: 'request' | 'force' }
   | { type: 'rpc:resetProfiles'; chainId: number; urls?: string[] }
-  | { type: 'trade:prewarmTurbo'; input: { chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo } }
+  | { type: 'trade:prewarmTurbo'; input: { chainId: number; tokenAddress: ChainAddress; tokenInfo?: TokenInfo; fromAddress?: ChainAddress; submitChannel?: SubmitChannel; platform?: string } }
   | { type: 'trade:refreshNonce'; input: { chainId: number; fromAddress?: `0x${string}` } }
   | { type: 'tx:buy'; input: TxBuyInput }
   | { type: 'tx:buyWithReceiptAuto'; input: TxBuyInput }
@@ -817,13 +886,23 @@ export type BgRequest =
   | {
     type: 'tx:transferNative';
     chainId: number;
-    fromAddress: `0x${string}`;
-    toAddress: `0x${string}`;
+    fromAddress: ChainAddress;
+    toAddress: ChainAddress;
     amountBnb?: string;
     useMax?: boolean;
     password: string;
   }
-  | { type: 'tx:waitForReceipt'; hash: `0x${string}`; chainId: number }
+  | {
+    type: 'tx:transferToken';
+    chainId: number;
+    tokenAddress: ChainAddress;
+    fromAddress: ChainAddress;
+    toAddress: ChainAddress;
+    amount?: string;
+    useMax?: boolean;
+    password: string;
+  }
+  | { type: 'tx:waitForReceipt'; hash: ChainTxId; chainId: number }
   | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo; fromAddress?: `0x${string}`; submitChannel?: SubmitChannel }
   | { type: 'tx:checkSellAllowanceInsufficient'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo; fromAddress?: `0x${string}` }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
@@ -875,13 +954,14 @@ export type BgRequest =
   | { type: 'gmgn:tokenSnapshot:upsertBatch'; payload: { items: GmgnTokenSnapshot[] } }
   | { type: 'newpool:getSnapshot' }
   | { type: 'newpool:upsertBatch'; payload: { items: NewPoolMonitorUiDetail[] } }
-  | { type: 'limitOrder:list'; chainId: number; tokenAddress?: `0x${string}` }
+  | { type: 'limitOrder:list'; chainId: number; tokenAddress?: ChainAddress }
   | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
   | { type: 'limitOrder:cancel'; id: string }
-  | { type: 'limitOrder:cancelAll'; chainId: number; tokenAddress?: `0x${string}` }
-  | { type: 'limitOrder:clearExecuted'; chainId: number; tokenAddress?: `0x${string}` }
+  | { type: 'limitOrder:cancelAll'; chainId: number; tokenAddress?: ChainAddress }
+  | { type: 'limitOrder:clearExecuted'; chainId: number; tokenAddress?: ChainAddress }
   | { type: 'limitOrder:scanStatus'; chainId: number }
-  | { type: 'limitOrder:tick'; chainId: number; tokenAddress: `0x${string}`; priceUsd: number };
+  | { type: 'limitOrder:trackPrice'; chainId: number; tokenAddress: ChainAddress; tokenInfo?: TokenInfo | null; active: boolean }
+  | { type: 'limitOrder:tick'; chainId: number; tokenAddress: ChainAddress; priceUsd: number };
 
 export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; time: number }
@@ -896,7 +976,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'settings:setAccountAlias' }
   ? { ok: true }
   : T extends { type: 'wallet:create' }
-  ? { ok: true; address: `0x${string}`; mnemonic: string }
+  ? { ok: true; address: `0x${string}`; mnemonic?: string }
   : T extends { type: 'wallet:import' }
   ? { ok: true; address: `0x${string}`; mnemonic?: string }
   : T extends { type: 'wallet:unlock' }
@@ -905,6 +985,10 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true }
   : T extends { type: 'wallet:wipe' }
   ? { ok: true }
+  : T extends { type: 'wallet:addAccount' }
+  ? { ok: true; address: `0x${string}` }
+  : T extends { type: 'wallet:removeAccount' }
+  ? { ok: true; removedAddress: ChainAddress; nextSelectedAddress: ChainAddress }
   : T extends { type: 'wallet:updatePassword' }
   ? { ok: true }
   : T extends { type: 'wallet:exportPrivateKey' }
@@ -916,7 +1000,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'wallet:getEip7702Status' }
   ? { ok: true; delegated: boolean; delegateAddress?: `0x${string}`; code: `0x${string}` }
   : T extends { type: 'wallet:revokeEip7702' }
-  ? { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+  ? { ok: true; txHash: `0x${string}`; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean }
   : T extends { type: 'chain:getBalance' }
   ? { ok: true; balanceWei: string }
   : T extends { type: 'token:getMeta' }
@@ -957,6 +1041,19 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   }
   : T extends { type: 'rpc:prewarm' }
   ? { ok: true }
+  : T extends { type: 'rpc:measureLatencies' }
+  ? {
+    ok: true;
+    results: Array<{
+      url: string;
+      latencyMs: number | null;
+      ok: boolean;
+      reason?: 'timeout' | 'rate_limit' | 'forbidden' | 'unauthorized' | 'rpc_error' | 'network' | 'unknown';
+      error?: string;
+    }>;
+  }
+  : T extends { type: 'thirdParty:getTokenInfo' }
+  ? { ok: true; tokenInfo: TokenInfo | null }
   : T extends { type: 'rpc:readProfiles' }
   ? {
     ok: true;
@@ -993,35 +1090,37 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'tx:approve' }
   ? { ok: true; txHash: `0x${string}` }
   : T extends { type: 'tx:wrapNative' }
-  ? { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+  ? { ok: true; txHash: `0x${string}`; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean }
   : T extends { type: 'tx:unwrapWrapped' }
-  ? { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+  ? { ok: true; txHash: `0x${string}`; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean }
   : T extends { type: 'tx:buy' }
   ? (
-    | { ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+    | { ok: true; txHash: ChainTxId; tokenMinOutWei: string; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean }
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
   : T extends { type: 'tx:buyWithReceiptAuto' }
   ? (
-    | ({ ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
+    | ({ ok: true; txHash: ChainTxId; tokenMinOutWei: string; broadcastVia?: string; broadcastUrl?: string; confirmUrl?: string; isBundle?: boolean } & TxTimingMetrics)
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
   : T extends { type: 'tx:sell' }
   ? (
-    | { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+    | { ok: true; txHash: ChainTxId; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean }
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
   : T extends { type: 'tx:sellWithReceiptAuto' }
   ? (
-    | ({ ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
+    | ({ ok: true; txHash: ChainTxId; broadcastVia?: string; broadcastUrl?: string; confirmUrl?: string; isBundle?: boolean } & TxTimingMetrics)
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
   : T extends { type: 'tx:transferNative' }
-  ? { ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean }
+  ? { ok: true; txHash: string; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean }
+  : T extends { type: 'tx:transferToken' }
+  ? { ok: true; txHash: string; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean }
   : T extends { type: 'tx:waitForReceipt' }
   ? {
     ok: boolean;
-    txHash: `0x${string}`;
+    txHash: ChainTxId;
     blockNumber?: number;
     status?: 'success' | 'reverted';
     revertReason?: string;
@@ -1039,12 +1138,12 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? ({ ok: true } & TelegramPollStatus)
   : T extends { type: 'telegram:quickBuy' }
   ? (
-    | ({ ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
+    | ({ ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
     | { ok: false; error?: TxWaitForReceiptError | { message: string } }
   )
   : T extends { type: 'telegram:quickSell' }
   ? (
-    | ({ ok: true; txHash: `0x${string}`; broadcastVia?: 'bloxroute' | 'rpc'; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
+    | ({ ok: true; txHash: `0x${string}`; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
     | { ok: false; error?: TxWaitForReceiptError | { message: string } }
   )
   : T extends { type: 'xsniper:manualPositionClosed' }
@@ -1083,6 +1182,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; orders: LimitOrder[] }
   : T extends { type: 'limitOrder:scanStatus' }
   ? ({ ok: true } & LimitOrderScanStatus)
+  : T extends { type: 'limitOrder:trackPrice' }
+  ? { ok: true; priceUsd: number | null }
   : T extends { type: 'limitOrder:tick' }
   ? { ok: true; triggered?: string[]; executed?: string[]; failed?: Array<{ id: string; error: string }> }
   : never;

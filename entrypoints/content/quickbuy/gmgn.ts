@@ -1,11 +1,20 @@
 export type QuickBuyCleanup = () => void;
 
 export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
-  const CARD_SELECTOR = 'div[href*="/token/0x"]';
+  const CARD_SELECTOR = 'div[href*="/token/"]';
   const CONTAINER_CLASS = 'dagobang-quickbuy-container';
   const COOKING_BADGE_CLASS = 'dagobang-quickcooking-corner';
   const isQuickBuyEnabled = () => (window as any).__DAGOBANG_SETTINGS__?.ui?.quickBuyEnabled === true;
   const isQuickCookingEnabled = () => (window as any).__DAGOBANG_SETTINGS__?.ui?.quickCookingEnabled === true;
+  const isEvmAddress = (value: string) => /^0x[a-fA-F0-9]{40}$/.test(value);
+  const isSolanaAddress = (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
+  const getNativeSymbol = (chain: string) => {
+    const normalized = String(chain || '').trim().toLowerCase();
+    if (normalized === 'sol') return 'SOL';
+    if (normalized === 'hyper') return 'HYPE';
+    if (normalized === 'bnb' || normalized === 'bsc') return 'BNB';
+    return normalized.toUpperCase() || 'NATIVE';
+  };
 
   if (!isQuickBuyEnabled() && !isQuickCookingEnabled()) {
     return () => {
@@ -18,7 +27,9 @@ export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
     if (parts.length < 3 || parts[1] !== 'token') return null;
     const chain = String(parts[0] || '').trim().toLowerCase();
     const tokenAddress = String(parts[2] || '').trim();
-    if (!chain || !/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) return null;
+    if (!chain) return null;
+    const validAddress = chain === 'sol' ? isSolanaAddress(tokenAddress) : isEvmAddress(tokenAddress);
+    if (!validAddress) return null;
     return { chain, tokenAddress };
   };
 
@@ -34,7 +45,7 @@ export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
     });
   };
 
-  const makeQuickBuyButton = (tokenAddress: string, amount: string) => {
+  const makeQuickBuyButton = (tokenAddress: string, amount: string, nativeSymbol: string) => {
     const wrapper = document.createElement('div');
     wrapper.className =
       'pointer-events-auto relative !w-full !h-full !box-border rounded-[6px] border group-btns max-w-[200px] transition-all duration-[150ms] ease-in-out BuyButton-continer';
@@ -43,7 +54,7 @@ export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
     const button = document.createElement('div');
     button.className =
       'text-primary rounded-[6px] bg-btn-secondary-buy py-1.5 px-3 text-base font-semibold flex items-center gap-1 whitespace-nowrap justify-center cursor-pointer text-primary min-w-12 QuickBuy_btnForLoading__GcvLL !h-[28px] !px-[6px] !leading-[12px] !text-[12px] rounded-6px !h-full !bg-transparent !hover:bg-transparent !justify-end !text-[var(--customize-button2-ultra-color)] hover:!text-[var(--customize-button2-ultra-color)] !items-end !pl-[8px]';
-    button.innerHTML = `<span class="mb-[40px]">${amount} BNB</span>`;
+    button.innerHTML = `<span class="mb-[40px]">${amount} ${nativeSymbol}</span>`;
     bindHover(wrapper, button);
     button.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -148,8 +159,9 @@ export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
 
           const quick1 = (window as any).__DAGOBANG_SETTINGS__?.quickBuy1Bnb;
           const quick2 = (window as any).__DAGOBANG_SETTINGS__?.quickBuy2Bnb;
-          if (Number(quick1) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick1));
-          if (Number(quick2) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick2));
+          const nativeSymbol = getNativeSymbol(tokenMeta.chain);
+          if (Number(quick1) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick1, nativeSymbol));
+          if (Number(quick2) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick2, nativeSymbol));
 
           container.appendChild(inner);
           card.appendChild(container);

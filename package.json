@@ -16,8 +16,13 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.57.4",
     "@iconify/react": "6.0.2",
+    "@meteora-ag/dynamic-bonding-curve-sdk": "^1.5.10",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "@supabase/supabase-js": "2.57.4",
+    "bn.js": "^5.2.3",
+    "bs58": "^6.0.0",
     "lucide-react": "0.562.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -28,6 +33,7 @@
     "viem": "2.43.3"
   },
   "devDependencies": {
+    "@types/bn.js": "^5.2.0",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@wxt-dev/module-react": "1.1.5",
