@@ -110,9 +110,6 @@ export const createLimitOrderScanner = (deps: {
     try {
       const all = await getLimitOrders();
       const openOrders = all.filter((o) => o.status === 'open');
-      // #region debug-point D:scan-open-orders
-      fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"D",location:"limitOrderScanner.ts:openOrders",msg:"[DEBUG] limit scan loaded open orders",data:{totalOrders:all.length,openOrders:openOrders.length,solOpenOrders:openOrders.filter((o)=>o.chainId===ChainId.SOL).map((o)=>({id:o.id,tokenAddress:o.tokenAddress,fromAddress:o.fromAddress??null,status:o.status,triggerPriceUsd:o.triggerPriceUsd,retryAtMs:o.retryAtMs??null,side:o.side,orderType:o.orderType}))},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       const walletStatusByChain = new Map<number, Awaited<ReturnType<ReturnType<typeof getWalletAdapter>['getStatus']>>>();
       for (const chainId of new Set(openOrders.map((o) => o.chainId))) {
         try {
@@ -154,9 +151,6 @@ export const createLimitOrderScanner = (deps: {
             changed = true;
           }
         }
-        // #region debug-point B:wallet-status
-        fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"B",location:"limitOrderScanner.ts:walletStatus",msg:"[DEBUG] limit scan wallet status for chain",data:{chainId,locked:walletStatus?.locked??true,address:walletStatus?.address??null},ts:Date.now()})}).catch(()=>{});
-        // #endregion
         let priceUsd = 0;
         const observedExternalPrice = (() => {
           if (chainId !== ChainId.SOL) return null;
@@ -178,29 +172,14 @@ export const createLimitOrderScanner = (deps: {
               allowTokenInfoPriceFallback: chainId === ChainId.SOL,
             });
           }
-          // #region debug-point B:scanner-price-fetched
-          fetch('http://127.0.0.1:7779/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-limit-price-flicker', runId: 'pre-fix', hypothesisId: 'B', location: 'limitOrderScanner.ts:priceFetched', msg: '[DEBUG] limit scanner fetched trigger price', data: { chainId, tokenAddress, priceUsd, priceSource: observedExternalPrice ? 'frontend_hot' : 'rpc_quote', allowTokenInfoPriceFallback: chainId === ChainId.SOL, launchpad: resolvedTokenInfo?.launchpad ?? null, launchpadPlatform: resolvedTokenInfo?.launchpad_platform ?? null, launchpadStatus: resolvedTokenInfo?.launchpad_status ?? null, quoteTokenAddress: resolvedTokenInfo?.quote_token_address ?? null, poolPair: resolvedTokenInfo?.pool_pair ?? null, biggestPoolAddress: resolvedTokenInfo?.biggest_pool_address ?? null, orders: orders.map((o) => ({ id: o.id, triggerPriceUsd: o.triggerPriceUsd, status: o.status, orderType: o.orderType })) }, ts: Date.now() }) }).catch(() => { });
-          // #endregion
-          // #region debug-point A:price-fetched
-          fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"A",location:"limitOrderScanner.ts:priceFetched",msg:"[DEBUG] limit scan fetched token price",data:{chainId,tokenAddress,priceUsd,orders:orders.map((o)=>({id:o.id,triggerPriceUsd:o.triggerPriceUsd,side:o.side,orderType:o.orderType}))},ts:Date.now()})}).catch(()=>{});
-          // #endregion
         } catch (e: any) {
           const msg = typeof e?.message === 'string' ? e.message : String(e);
-          // #region debug-point B:scanner-price-error
-          fetch('http://127.0.0.1:7779/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-limit-price-flicker', runId: 'pre-fix', hypothesisId: 'B', location: 'limitOrderScanner.ts:priceError', msg: '[DEBUG] limit scanner failed to fetch trigger price', data: { chainId, tokenAddress, error: msg, allowTokenInfoPriceFallback: chainId === ChainId.SOL, launchpad: resolvedTokenInfo?.launchpad ?? null, launchpadPlatform: resolvedTokenInfo?.launchpad_platform ?? null, poolPair: resolvedTokenInfo?.pool_pair ?? null }, ts: Date.now() }) }).catch(() => { });
-          // #endregion
-          // #region debug-point A:price-error
-          fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"A",location:"limitOrderScanner.ts:priceError",msg:"[DEBUG] limit scan failed to fetch token price",data:{chainId,tokenAddress,error:msg,allowTokenInfoPriceFallback:chainId===ChainId.SOL},ts:Date.now()})}).catch(()=>{});
-          // #endregion
           softError = msg;
           continue;
         }
         if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
         const scanPriceUsd = normalizePriceValue(priceUsd, 4, 6);
         if (!Number.isFinite(scanPriceUsd) || scanPriceUsd <= 0) continue;
-        // #region debug-point B:scanner-price-normalized
-        fetch('http://127.0.0.1:7779/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-limit-price-flicker', runId: 'pre-fix', hypothesisId: 'B', location: 'limitOrderScanner.ts:priceNormalized', msg: '[DEBUG] limit scanner normalized trigger price', data: { chainId, tokenAddress, rawPriceUsd: priceUsd, scanPriceUsd }, ts: Date.now() }) }).catch(() => { });
-        // #endregion
         if (upsertDisplayPrice(chainId, tokenAddress, priceUsd, Date.now())) changed = true;
 
         if (!base) {
@@ -225,28 +204,16 @@ export const createLimitOrderScanner = (deps: {
           }
           const orderType = normalizeLimitOrderType(prepared.orderType, prepared.side);
           const hit = hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
-          // #region debug-point A:hit-check
-          fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"A",location:"limitOrderScanner.ts:hitCheck",msg:"[DEBUG] limit scan compared price vs trigger",data:{orderId:o.id,chainId:o.chainId,tokenAddress:o.tokenAddress,priceUsd,triggerPriceUsd:prepared.triggerPriceUsd,side:prepared.side,orderType,hit,retryAtMs:o.retryAtMs??null},ts:Date.now()})}).catch(()=>{});
-          // #endregion
           if (!hit) continue;
 
           await patchLimitOrder(o.id, { status: 'triggered' as const, retryAtMs: undefined });
           changed = true;
 
           try {
-            // #region debug-point C:execute-start
-            fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"limitOrderScanner.ts:executeStart",msg:"[DEBUG] limit scan dispatching executeLimitOrder",data:{orderId:o.id,chainId:o.chainId,tokenAddress:o.tokenAddress,fromAddress:o.fromAddress??null,priceUsd,triggerPriceUsd:prepared.triggerPriceUsd},ts:Date.now()})}).catch(()=>{});
-            // #endregion
             const txHash = await deps.executeLimitOrder({ ...prepared, status: 'triggered', tokenInfo: resolvedTokenInfo ?? prepared.tokenInfo }, { priceUsd });
             await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
-            // #region debug-point C:execute-success
-            fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"limitOrderScanner.ts:executeSuccess",msg:"[DEBUG] limit scan executeLimitOrder succeeded",data:{orderId:o.id,chainId:o.chainId,tokenAddress:o.tokenAddress,txHash},ts:Date.now()})}).catch(()=>{});
-            // #endregion
           } catch (e: any) {
             const msg = typeof e?.message === 'string' ? e.message : String(e);
-            // #region debug-point C:execute-error
-            fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"limitOrderScanner.ts:executeError",msg:"[DEBUG] limit scan executeLimitOrder failed",data:{orderId:o.id,chainId:o.chainId,tokenAddress:o.tokenAddress,error:msg},ts:Date.now()})}).catch(()=>{});
-            // #endregion
             const retryCount = Number.isFinite(prepared.retryCount) ? Math.max(0, Math.floor(prepared.retryCount as number)) : 0;
             const nextRetryCount = retryCount + 1;
             const canRetry = nextRetryCount <= ORDER_EXECUTE_MAX_RETRY && isRetryableOrderError(msg);

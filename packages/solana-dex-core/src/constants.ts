@@ -35,6 +35,22 @@ export const SOLANA_ROUTE_LABELS: Record<SolanaTradeSource, string> = {
   jupiter: 'Jup',
 };
 
+export type SolanaTradeSourceResolutionInput = {
+  tokenInfo?: SolanaDexTokenInfo | null;
+  tokenAddress?: string | null;
+  platform?: string | null;
+  fallbackPlatforms?: Array<string | null | undefined>;
+};
+
+export type SolanaTradeSourceResolution = {
+  tokenPlatform: string;
+  resolvedPlatform: string;
+  knownDirectSource: SolanaTradeSource | null;
+  preferredSource: SolanaTradeSource | null;
+  directSource: SolanaTradeSource | null;
+  forceDirectOnly: boolean;
+};
+
 export function normalizeSolanaPlatform(platform?: string | null): string {
   return String(platform || '').trim().toLowerCase();
 }
@@ -64,6 +80,10 @@ function isPumpSwapPlatform(platform: string): boolean {
     || platform === 'pump amm';
 }
 
+function isDirectOnlyPlatform(platform: string): boolean {
+  return isPumpfunPlatform(platform) || isPumpSwapPlatform(platform);
+}
+
 export function resolveKnownSolanaDirectSource(
   tokenInfo?: SolanaDexTokenInfo | null,
   tokenAddress?: string | null,
@@ -81,6 +101,25 @@ export function resolveKnownSolanaDirectSource(
   if (isPumpfunPlatform(platform)) return 'pumpfun';
   if (isPumpSwapPlatform(platform)) return 'pumpswap';
   return null;
+}
+
+export function resolveSolanaTradeSource(input: SolanaTradeSourceResolutionInput): SolanaTradeSourceResolution {
+  const tokenPlatform = normalizeSolanaPlatform(input.tokenInfo?.launchpad_platform || input.tokenInfo?.launchpad);
+  const fallbackPlatform = [
+    input.platform,
+    ...(input.fallbackPlatforms ?? []),
+  ].map((item) => normalizeSolanaPlatform(item)).find(Boolean) ?? '';
+  const resolvedPlatform = tokenPlatform || fallbackPlatform;
+  const knownDirectSource = resolveKnownSolanaDirectSource(input.tokenInfo, input.tokenAddress);
+  const preferredSource = resolveSolanaSourceAlias(resolvedPlatform);
+  return {
+    tokenPlatform,
+    resolvedPlatform,
+    knownDirectSource,
+    preferredSource,
+    directSource: knownDirectSource ?? preferredSource,
+    forceDirectOnly: isDirectOnlyPlatform(resolvedPlatform),
+  };
 }
 
 export function isSolanaNativeMint(mint?: string | null): boolean {

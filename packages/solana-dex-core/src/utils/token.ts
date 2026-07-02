@@ -74,11 +74,16 @@ export function buildCloseTokenAccountInstruction(params: {
   );
 }
 
-export async function getMintProgramId(runtime: SolanaDexRuntime, mint: PublicKey): Promise<PublicKey> {
+export async function getMintProgramId(
+  runtime: SolanaDexRuntime,
+  mint: PublicKey,
+  opts?: { cacheOnly?: boolean },
+): Promise<PublicKey> {
   if (mint.toBase58() === SOLANA_NATIVE_MINT) return TOKEN_PROGRAM_ID;
   const key = mint.toBase58();
   const cached = mintProgramIdCache.get(key);
   if (cached) return await cached;
+  if (opts?.cacheOnly) throw new Error('Mint program cache not ready');
   const promise = (async () => {
     const connection = await runtime.getConnection();
     const info = await connection.getAccountInfo(mint, 'confirmed');

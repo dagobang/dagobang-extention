@@ -1,15 +1,13 @@
-import { getSolanaTokenInfoRouteFingerprint, resolveKnownSolanaDirectSource, resolveSolanaSourceAlias } from './constants';
-import { getSolanaTradeAdapter, getSolanaTradeAdapters } from './registry';
-import type { SolanaTradeAdapter, SolanaTradePlan, SolanaTradeRequest } from './types';
+import { getSolanaTokenInfoRouteFingerprint, resolveSolanaTradeSource } from './constants';
+import { getSolanaTradeAdapter } from './registry';
+import type { SolanaTradeAdapter, SolanaTradePlan, SolanaTradeRequest, SolanaTradeSource } from './types';
 
-const DIRECT_ONLY_PLATFORMS = new Set([
-  'pump',
+const LIGHTWEIGHT_DIRECT_SOURCES = new Set<SolanaTradeSource>([
   'pumpfun',
-  'pump.fun',
   'pumpswap',
-  'pump_swap',
-  'pumpamm',
-  'pump amm',
+  'bonk',
+  'raydium',
+  'meteora',
 ]);
 
 const PLAN_CACHE_TTL_MS = 15_000;
@@ -44,23 +42,11 @@ async function planSolanaTradeUncached(input: SolanaTradeRequest): Promise<{
 }> {
   const platform = resolvePlatform(input);
   const tokenAddress = input.side === 'buy' ? input.outputMint : input.inputMint;
-  const knownDirectSource = resolveKnownSolanaDirectSource(input.tokenInfo, tokenAddress);
-  const forceDirectOnly = DIRECT_ONLY_PLATFORMS.has(platform);
-  const preferredSource = resolveSolanaSourceAlias(platform);
-  // #region debug-point P4:planner-start
-  fetch('http://127.0.0.1:7778/event', {
-    method: 'POST',
-    body: JSON.stringify({
-      sessionId: 'pumpfun-legacy-route',
-      runId: 'post-fix',
-      hypothesisId: 'P4',
-      location: 'planner.ts:planSolanaTrade',
-      msg: '[DEBUG] planner start',
-      data: { platform, preferredSource, forceDirectOnly, side: input.side, inputMint: input.inputMint, outputMint: input.outputMint },
-      ts: Date.now(),
-    }),
-  }).catch(() => { });
-  // #endregion
+  const sourceResolution = resolveSolanaTradeSource({
+    tokenInfo: input.tokenInfo,
+    tokenAddress,
+  });
+  const { knownDirectSource, preferredSource, forceDirectOnly } = sourceResolution;
 
   if (knownDirectSource) {
     const knownAdapter = getSolanaTradeAdapter(knownDirectSource);
@@ -74,78 +60,19 @@ async function planSolanaTradeUncached(input: SolanaTradeRequest): Promise<{
     };
   }
 
-  if (preferredSource && preferredSource !== 'jupiter') {
+  if (preferredSource && LIGHTWEIGHT_DIRECT_SOURCES.has(preferredSource)) {
     const preferredAdapter = getSolanaTradeAdapter(preferredSource);
-    const preferredSupported = await preferredAdapter.supportsTrade(input);
-    // #region debug-point P4:planner-preferred-result
-    fetch('http://127.0.0.1:7778/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'pumpfun-legacy-route',
-        runId: 'post-fix',
-        hypothesisId: 'P4',
-        location: 'planner.ts:planSolanaTrade',
-        msg: '[DEBUG] planner preferred adapter result',
-        data: { platform, preferredSource, preferredSupported },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
-    // #endregion
-    if (preferredSupported) {
-      return {
-        plan: {
-          source: preferredSource,
-          mode: preferredAdapter.capability.mode,
-          reason: `platform:${platform}`,
-        },
-        adapter: preferredAdapter,
-      };
-    }
-  }
-
-  for (const adapter of getSolanaTradeAdapters()) {
-    if (adapter.capability.source === 'jupiter') continue;
-    const supported = await adapter.supportsTrade(input);
-    // #region debug-point P4:planner-adapter-scan
-    fetch('http://127.0.0.1:7778/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'pumpfun-legacy-route',
-        runId: 'post-fix',
-        hypothesisId: 'P4',
-        location: 'planner.ts:planSolanaTrade',
-        msg: '[DEBUG] planner adapter scan result',
-        data: { platform, adapter: adapter.capability.source, supported },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
-    // #endregion
-    if (!supported) continue;
     return {
       plan: {
-        source: adapter.capability.source,
-        mode: adapter.capability.mode,
-        reason: platform ? `platform:${platform}` : 'direct:auto',
+        source: preferredSource,
+        mode: preferredAdapter.capability.mode,
+        reason: `platform:${platform}`,
       },
-      adapter,
+      adapter: preferredAdapter,
     };
   }
 
   if (forceDirectOnly) {
-    // #region debug-point P4:planner-direct-only-fail
-    fetch('http://127.0.0.1:7778/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'pumpfun-legacy-route',
-        runId: 'post-fix',
-        hypothesisId: 'P4',
-        location: 'planner.ts:planSolanaTrade',
-        msg: '[DEBUG] planner direct-only failed',
-        data: { platform, side: input.side, inputMint: input.inputMint, outputMint: input.outputMint },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
-    // #endregion
     throw new Error(`No direct Solana adapter available for platform:${platform}`);
   }
 

@@ -102,7 +102,8 @@ export const jupiterTradeAdapter: SolanaTradeAdapter = {
     return {
       source: 'jupiter',
       transaction,
-      tokenMinOutWei: quote.otherAmountThreshold,
+      protectionMinOutWei: quote.otherAmountThreshold,
+      quotedOutWei: quote.outAmount,
       blockhash: transaction.message.recentBlockhash,
       lastValidBlockHeight: swap.lastValidBlockHeight,
       quote,

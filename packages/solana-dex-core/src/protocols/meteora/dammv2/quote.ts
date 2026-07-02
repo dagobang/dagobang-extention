@@ -27,7 +27,7 @@ function getFeeMode(poolInfo: MeteoraDammV2PoolInfo, direction: MeteoraDammV2Tra
 }
 
 export function resolveMeteoraDammV2TradeDirection(
-  poolInfo: MeteoraDammV2PoolInfo,
+  poolInfo: Pick<MeteoraDammV2PoolInfo, 'tokenAMint' | 'tokenBMint'>,
   inputMint: string,
   outputMint: string,
 ): MeteoraDammV2TradeDirection {

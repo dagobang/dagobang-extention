@@ -49,13 +49,19 @@ import {
   computePumpSwapSolAmount,
 } from './quote';
 import type { PumpSwapPoolContext } from './types';
+import {
+  getFreshWarmPromise,
+  refreshWarmPromise,
+  rememberWarmPromise,
+  SOLANA_WARM_CACHE_TTL_MS,
+  type WarmCacheEntry,
+} from '../../prewarm';
 
-const STATIC_POOL_CONTEXT_CACHE_TTL_MS = 60_000;
-const RESERVE_CACHE_TTL_MS = 1_500;
-const TURBO_RESERVE_CACHE_TTL_MS = 5_000;
-const ATA_EXISTS_CACHE_TTL_MS = 15_000;
-const ATA_EXISTS_FALSE_CACHE_TTL_MS = 1_000;
-const BLOCKHASH_CACHE_TTL_MS = 3_000;
+const STATIC_POOL_CONTEXT_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
+const RESERVE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.dynamicQuote;
+const ATA_EXISTS_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
+const ATA_EXISTS_FALSE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.missingAccount;
+const BLOCKHASH_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.blockhash;
 const PUMPSWAP_COMPUTE_UNIT_LIMIT = 300_000;
 const SOLANA_VERSIONED_TX_MAX_BYTES = 1232;
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
@@ -66,11 +72,6 @@ const TURBO_PRIORITY_FEE_SOL_BY_PRESET: Record<string, string> = {
   standard: '0.00004',
   fast: '0.0001',
   turbo: '0.00015',
-};
-
-type TimedPromiseCacheEntry<T> = {
-  promise: Promise<T>;
-  expiresAt: number;
 };
 
 type CachedBlockhashValue = {
@@ -89,11 +90,10 @@ type AccountExistsBatchOptions = {
 type PumpSwapStaticContext = Pick<PumpSwapPoolContext, 'poolAddress' | 'poolState' | 'globalState'>;
 type PumpSwapReserveSnapshot = Pick<PumpSwapPoolContext, 'baseReserve' | 'quoteReserve'>;
 
-const staticPoolContextCache = new Map<string, TimedPromiseCacheEntry<PumpSwapStaticContext>>();
-const reserveCache = new Map<string, TimedPromiseCacheEntry<PumpSwapReserveSnapshot>>();
-const reserveTurboCache = new Map<string, TimedPromiseCacheEntry<PumpSwapReserveSnapshot>>();
-const ataExistsCache = new Map<string, TimedPromiseCacheEntry<boolean>>();
-const latestBlockhashCache = new Map<string, TimedPromiseCacheEntry<CachedBlockhashValue>>();
+const staticPoolContextCache = new Map<string, WarmCacheEntry<PumpSwapStaticContext>>();
+const reserveCache = new Map<string, WarmCacheEntry<PumpSwapReserveSnapshot>>();
+const ataExistsCache = new Map<string, WarmCacheEntry<boolean>>();
+const latestBlockhashCache = new Map<string, WarmCacheEntry<CachedBlockhashValue>>();
 let turboMemoNonce = 0;
 
 function pickFirstConfiguredAddress(addresses: readonly PublicKey[]): PublicKey | null {
@@ -107,36 +107,6 @@ function pickRandomAddress(addresses: readonly PublicKey[]): PublicKey | null {
   const candidates = addresses.filter((address) => !address.equals(PublicKey.default));
   if (!candidates.length) return null;
   return candidates[Math.floor(Math.random() * candidates.length)] ?? candidates[0]!;
-}
-
-function getOrCreateTimedPromise<T>(
-  cache: Map<string, TimedPromiseCacheEntry<T>>,
-  key: string,
-  ttlMs: number,
-  loader: () => Promise<T>,
-): Promise<T> {
-  const now = Date.now();
-  const cached = cache.get(key);
-  if (cached && cached.expiresAt > now) return cached.promise;
-  const promise = loader().catch((error) => {
-    cache.delete(key);
-    throw error;
-  });
-  cache.set(key, {
-    promise,
-    expiresAt: now + ttlMs,
-  });
-  return promise;
-}
-
-function getFreshTimedPromise<T>(
-  cache: Map<string, TimedPromiseCacheEntry<T>>,
-  key: string,
-  now = Date.now(),
-): Promise<T> | null {
-  const cached = cache.get(key);
-  if (!cached || cached.expiresAt <= now) return null;
-  return cached.promise;
 }
 
 function resolvePlatform(input: SolanaTradeRequest): string {
@@ -182,7 +152,6 @@ function buildPriorityFeeInstructions(input: SolanaTradeRequest): TransactionIns
     : fallback;
   const lamports = parseSolToLamports(effectivePriorityFeeNative);
   if (!lamports || lamports <= 0n) {
-    // #region debug-point D:pumpswap-priority-fee-none
     reportPumpSwapDebug('D', 'pumpswap/adapter.ts:buildPriorityFeeInstructions:none', '[DEBUG] pumpswap priority fee skipped', {
       side: input.side,
       executionMode: resolveExecutionMode(input),
@@ -191,12 +160,10 @@ function buildPriorityFeeInstructions(input: SolanaTradeRequest): TransactionIns
       fallbackPriorityFeeNative: fallback || null,
       effectivePriorityFeeNative: effectivePriorityFeeNative || null,
     });
-    // #endregion
     return [];
   }
   let microLamports = (lamports * 1_000_000n) / BigInt(PUMPSWAP_COMPUTE_UNIT_LIMIT);
   if (microLamports <= 0n) microLamports = 1n;
-  // #region debug-point D:pumpswap-priority-fee-applied
   reportPumpSwapDebug('D', 'pumpswap/adapter.ts:buildPriorityFeeInstructions:applied', '[DEBUG] pumpswap priority fee applied', {
     side: input.side,
     executionMode: resolveExecutionMode(input),
@@ -208,7 +175,6 @@ function buildPriorityFeeInstructions(input: SolanaTradeRequest): TransactionIns
     computeUnitLimit: PUMPSWAP_COMPUTE_UNIT_LIMIT,
     microLamports: microLamports.toString(),
   });
-  // #endregion
   return [
     ComputeBudgetProgram.setComputeUnitLimit({ units: PUMPSWAP_COMPUTE_UNIT_LIMIT }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports }),
@@ -227,7 +193,6 @@ function isPumpSwapCompatiblePlatform(platform: string): boolean {
   ].includes(platform);
 }
 
-// #region debug-point A:report
 function reportPumpSwapDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
   fetch(PUMPSWAP_DEBUG_SERVER_URL, {
     method: 'POST',
@@ -276,12 +241,11 @@ function tracedFindAta(label: string, params: {
     throw error;
   }
 }
-// #endregion
 
-async function loadPoolContext(input: SolanaTradeRequest): Promise<PumpSwapPoolContext> {
+async function loadPoolContext(input: SolanaTradeRequest, opts?: { forceRefreshReserve?: boolean }): Promise<PumpSwapPoolContext> {
   const baseMint = new PublicKey(input.side === 'buy' ? input.outputMint : input.inputMint);
   const key = baseMint.toBase58();
-  const staticContext = await getOrCreateTimedPromise(
+  const staticContext = await rememberWarmPromise(
     staticPoolContextCache,
     key,
     STATIC_POOL_CONTEXT_CACHE_TTL_MS,
@@ -289,7 +253,6 @@ async function loadPoolContext(input: SolanaTradeRequest): Promise<PumpSwapPoolC
       const poolV2Address = derivePumpSwapPoolV2Pda(baseMint);
       const canonicalPoolAddress = derivePumpSwapPoolPda(baseMint);
       const quoteMint = new PublicKey(SOLANA_NATIVE_MINT);
-      // #region debug-point B:pool-candidates
       reportPumpSwapDebug('B', 'pumpswap/adapter.ts:loadPoolContext:start', '[DEBUG] pumpswap pool lookup start', {
         side: input.side,
         baseMint: baseMint.toBase58(),
@@ -301,7 +264,6 @@ async function loadPoolContext(input: SolanaTradeRequest): Promise<PumpSwapPoolC
         poolV2Address: poolV2Address.toBase58(),
         canonicalPoolAddress: canonicalPoolAddress.toBase58(),
       });
-      // #endregion
       const connection = await input.runtime.getConnection();
       const [globalInfo, poolV2Info, canonicalPoolInfo] = await connection.getMultipleAccountsInfo(
         [PUMPSWAP_GLOBAL_ACCOUNT, poolV2Address, canonicalPoolAddress],
@@ -319,7 +281,6 @@ async function loadPoolContext(input: SolanaTradeRequest): Promise<PumpSwapPoolC
         if (!candidate.info?.data) continue;
         try {
           const parsed = parsePumpSwapPoolState(candidate.info.data);
-          // #region debug-point B:pool-candidate
           reportPumpSwapDebug('B', 'pumpswap/adapter.ts:loadPoolContext:candidate', '[DEBUG] pumpswap pool candidate parsed', {
             address: candidate.address.toBase58(),
             parsedBaseMint: parsed.baseMint.toBase58(),
@@ -328,7 +289,6 @@ async function loadPoolContext(input: SolanaTradeRequest): Promise<PumpSwapPoolC
             poolQuoteTokenAccount: parsed.poolQuoteTokenAccount.toBase58(),
             coinCreator: parsed.coinCreator.toBase58(),
           });
-          // #endregion
           if (parsed.baseMint.equals(baseMint) && parsed.quoteMint.equals(quoteMint)) {
             poolAddress = candidate.address;
             poolState = parsed;
@@ -338,14 +298,12 @@ async function loadPoolContext(input: SolanaTradeRequest): Promise<PumpSwapPoolC
         }
       }
       if (!poolAddress || !poolState) throw new Error('PumpSwap pool account not found');
-      // #region debug-point B:pool-selected
       reportPumpSwapDebug('B', 'pumpswap/adapter.ts:loadPoolContext:selected', '[DEBUG] pumpswap pool selected', {
         poolAddress: poolAddress.toBase58(),
         poolBaseTokenAccount: poolState.poolBaseTokenAccount.toBase58(),
         poolQuoteTokenAccount: poolState.poolQuoteTokenAccount.toBase58(),
         coinCreator: poolState.coinCreator.toBase58(),
       });
-      // #endregion
       return {
         poolAddress,
         poolState,
@@ -353,33 +311,46 @@ async function loadPoolContext(input: SolanaTradeRequest): Promise<PumpSwapPoolC
       };
     },
   );
-  const reserves = await getOrCreateTimedPromise(
-    resolveExecutionMode(input) === 'turbo' ? reserveTurboCache : reserveCache,
-    staticContext.poolAddress.toBase58(),
-    resolveExecutionMode(input) === 'turbo' ? TURBO_RESERVE_CACHE_TTL_MS : RESERVE_CACHE_TTL_MS,
-    async () => {
-      const connection = await input.runtime.getConnection();
-      const reserveInfos = await connection.getMultipleAccountsInfo(
-        [staticContext.poolState.poolBaseTokenAccount, staticContext.poolState.poolQuoteTokenAccount],
-        'confirmed',
-      );
-      const [baseReserveInfo, quoteReserveInfo] = reserveInfos;
-      if (!baseReserveInfo?.data || !quoteReserveInfo?.data) {
-        throw new Error('PumpSwap reserve vaults not found');
-      }
-      const snapshot = {
-        baseReserve: parsePumpSwapTokenAccountBalance(baseReserveInfo.data),
-        quoteReserve: parsePumpSwapTokenAccountBalance(quoteReserveInfo.data),
-      };
-      reportPumpSwapDebug('B', 'pumpswap/adapter.ts:loadPoolContext:reserves', '[DEBUG] pumpswap reserve snapshot loaded', {
-        poolAddress: staticContext.poolAddress.toBase58(),
-        baseReserve: snapshot.baseReserve.toString(),
-        quoteReserve: snapshot.quoteReserve.toString(),
-        executionMode: resolveExecutionMode(input),
-      });
-      return snapshot;
-    },
-  );
+  const reserveLoader = async () => {
+    const connection = await input.runtime.getConnection();
+    const reserveInfos = await connection.getMultipleAccountsInfo(
+      [staticContext.poolState.poolBaseTokenAccount, staticContext.poolState.poolQuoteTokenAccount],
+      'confirmed',
+    );
+    const [baseReserveInfo, quoteReserveInfo] = reserveInfos;
+    if (!baseReserveInfo?.data || !quoteReserveInfo?.data) {
+      throw new Error('PumpSwap reserve vaults not found');
+    }
+    const snapshot = {
+      baseReserve: parsePumpSwapTokenAccountBalance(baseReserveInfo.data),
+      quoteReserve: parsePumpSwapTokenAccountBalance(quoteReserveInfo.data),
+    };
+    reportPumpSwapDebug('B', 'pumpswap/adapter.ts:loadPoolContext:reserves', '[DEBUG] pumpswap reserve snapshot loaded', {
+      poolAddress: staticContext.poolAddress.toBase58(),
+      baseReserve: snapshot.baseReserve.toString(),
+      quoteReserve: snapshot.quoteReserve.toString(),
+      executionMode: resolveExecutionMode(input),
+    });
+    return snapshot;
+  };
+  const reserves = await (opts?.forceRefreshReserve
+    ? refreshWarmPromise(reserveCache, staticContext.poolAddress.toBase58(), RESERVE_CACHE_TTL_MS, reserveLoader)
+    : rememberWarmPromise(reserveCache, staticContext.poolAddress.toBase58(), RESERVE_CACHE_TTL_MS, reserveLoader));
+  return {
+    ...staticContext,
+    ...reserves,
+  };
+}
+
+async function getPoolContextForBuild(input: SolanaTradeRequest): Promise<PumpSwapPoolContext> {
+  if (resolveExecutionMode(input) !== 'turbo') return await loadPoolContext(input);
+  const baseMint = new PublicKey(input.side === 'buy' ? input.outputMint : input.inputMint);
+  const staticContextCached = getFreshWarmPromise<PumpSwapStaticContext>(staticPoolContextCache, baseMint.toBase58());
+  if (!staticContextCached) throw new Error('PumpSwap static context not ready');
+  const staticContext = await staticContextCached;
+  const reserveCached = getFreshWarmPromise<PumpSwapReserveSnapshot>(reserveCache, staticContext.poolAddress.toBase58());
+  if (!reserveCached) throw new Error('PumpSwap reserve quote not ready');
+  const reserves = await reserveCached;
   return {
     ...staticContext,
     ...reserves,
@@ -400,16 +371,14 @@ async function loadAccountExistsBatch(
   const missingAccounts: PublicKey[] = [];
   for (const account of uniqueAccounts) {
     const key = account.toBase58();
-    const cached = !options.forceFresh ? getFreshTimedPromise(ataExistsCache, key, now) : null;
+    const cached = !options.forceFresh ? getFreshWarmPromise<boolean>(ataExistsCache, key, now) : null;
     if (cached) {
-      // #region debug-point E:ata-cache-hit
       reportPumpSwapDebug('E', 'pumpswap/adapter.ts:loadAccountExistsBatch:cacheHit', '[DEBUG] pumpswap ata existence cache hit', {
         side: input.side,
         account: key,
         ownerAddress: input.ownerAddress,
         commitment,
       });
-      // #endregion
       promises.set(key, cached);
       continue;
     }
@@ -420,7 +389,6 @@ async function loadAccountExistsBatch(
     const missingKeys = missingAccounts.map((account) => account.toBase58());
     const batchPromise = (async () => {
       const connection = await input.runtime.getConnection();
-      // #region debug-point E:ata-batch-fetch-start
       reportPumpSwapDebug('E', 'pumpswap/adapter.ts:loadAccountExistsBatch:fetchStart', '[DEBUG] pumpswap ata existence batch fetch start', {
         side: input.side,
         ownerAddress: input.ownerAddress,
@@ -428,9 +396,7 @@ async function loadAccountExistsBatch(
         forceFresh: !!options.forceFresh,
         accounts: missingKeys,
       });
-      // #endregion
       const infos = await connection.getMultipleAccountsInfo(missingAccounts, commitment);
-      // #region debug-point E:ata-batch-fetch-done
       reportPumpSwapDebug('E', 'pumpswap/adapter.ts:loadAccountExistsBatch:fetchDone', '[DEBUG] pumpswap ata existence batch fetch done', {
         side: input.side,
         ownerAddress: input.ownerAddress,
@@ -441,7 +407,6 @@ async function loadAccountExistsBatch(
           exists: !!infos[index],
         })),
       });
-      // #endregion
       return infos.map((info) => !!info);
     })().catch((error) => {
       for (const key of missingKeys) ataExistsCache.delete(key);
@@ -496,22 +461,9 @@ async function prewarmBuildAccounts(input: SolanaTradeRequest, params: {
 async function prewarmLatestBlockhash(input: SolanaTradeRequest): Promise<CachedBlockhashValue> {
   const requestId = String((input.rawInput as any)?.__debugSubmitGapId || '').trim() || null;
   if (requestId) {
-    fetch('http://127.0.0.1:7779/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'solana-submit-gap',
-        runId: 'pre-fix',
-        hypothesisId: 'D',
-        location: 'pumpswap/adapter.ts:loadLatestBlockhash:start',
-        msg: '[DEBUG] submit gap load latest blockhash start',
-        data: { requestId, side: input.side, ownerAddress: input.ownerAddress },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
   }
-  const startedAt = Date.now();
   const key = 'confirmed';
-  const result = await getOrCreateTimedPromise(
+  const result = await refreshWarmPromise(
     latestBlockhashCache,
     key,
     BLOCKHASH_CACHE_TTL_MS,
@@ -526,78 +478,24 @@ async function prewarmLatestBlockhash(input: SolanaTradeRequest): Promise<Cached
     },
   );
   if (requestId) {
-    fetch('http://127.0.0.1:7779/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'solana-submit-gap',
-        runId: 'pre-fix',
-        hypothesisId: 'D',
-        location: 'pumpswap/adapter.ts:loadLatestBlockhash:done',
-        msg: '[DEBUG] submit gap load latest blockhash done',
-        data: { requestId, side: input.side, ownerAddress: input.ownerAddress, elapsedMs: Date.now() - startedAt, blockhash: result.blockhash, lastValidBlockHeight: result.lastValidBlockHeight },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
-  }
-  return result;
-}
-
-async function loadFreshLatestBlockhash(input: SolanaTradeRequest): Promise<CachedBlockhashValue> {
-  const requestId = String((input.rawInput as any)?.__debugSubmitGapId || '').trim() || null;
-  if (requestId) {
-    fetch('http://127.0.0.1:7779/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'solana-submit-gap',
-        runId: 'pre-fix',
-        hypothesisId: 'D',
-        location: 'pumpswap/adapter.ts:loadLatestBlockhash:start',
-        msg: '[DEBUG] submit gap load latest blockhash start',
-        data: { requestId, side: input.side, ownerAddress: input.ownerAddress, fresh: true },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
-  }
-  const startedAt = Date.now();
-  const connection = await input.runtime.getConnection();
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-  const result = {
-    blockhash,
-    lastValidBlockHeight,
-    fetchedAt: Date.now(),
-  };
-  if (requestId) {
-    fetch('http://127.0.0.1:7779/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'solana-submit-gap',
-        runId: 'pre-fix',
-        hypothesisId: 'D',
-        location: 'pumpswap/adapter.ts:loadLatestBlockhash:done',
-        msg: '[DEBUG] submit gap load latest blockhash done',
-        data: { requestId, side: input.side, ownerAddress: input.ownerAddress, elapsedMs: Date.now() - startedAt, blockhash, lastValidBlockHeight, fresh: true },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
   }
   return result;
 }
 
 async function buildTransaction(input: SolanaTradeRequest): Promise<{
   transaction: VersionedTransaction;
-  tokenMinOutWei: string;
+  protectionMinOutWei: string;
+  quotedOutWei?: string | null;
   recentBlockhash: string;
   lastValidBlockHeight: number;
 }> {
   const baseMint = new PublicKey(input.side === 'buy' ? input.outputMint : input.inputMint);
   const quoteMint = new PublicKey(SOLANA_NATIVE_MINT);
   const user = new PublicKey(input.ownerAddress);
-  const blockhashPromise = resolveExecutionMode(input) === 'turbo'
-    ? prewarmLatestBlockhash(input)
-    : loadFreshLatestBlockhash(input);
+  const blockhashPromise = prewarmLatestBlockhash(input);
   const [ctx, baseTokenProgram] = await Promise.all([
-    loadPoolContext(input),
-    getMintProgramId(input.runtime, baseMint),
+    getPoolContextForBuild(input),
+    getMintProgramId(input.runtime, baseMint, { cacheOnly: true }),
   ]);
   if (!ctx.poolState.quoteMint.equals(quoteMint)) {
     throw new Error('PumpSwap pool quote mint is not WSOL');
@@ -606,7 +504,6 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
     throw new Error('PumpSwap pool base mint mismatch');
   }
 
-  // #region debug-point C:build-start
   reportPumpSwapDebug('C', 'pumpswap/adapter.ts:buildTransaction:start', '[DEBUG] pumpswap build transaction start', {
     side: input.side,
     ownerAddress: input.ownerAddress,
@@ -618,7 +515,6 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
     tokenInfoPoolPair: String((input.tokenInfo as any)?.pool_pair || ''),
     tokenInfoTpoolPoolAddress: String((input.tokenInfo as any)?.tpool_pool_address || ''),
   });
-  // #endregion
   const creatorVault = derivePumpSwapCreatorVaultPda(ctx.poolState.coinCreator);
   const creatorVaultAta = tracedFindAta('creatorVaultAta', {
     mint: quoteMint,
@@ -661,7 +557,6 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
   const poolV2Address = !ctx.poolState.coinCreator.equals(PublicKey.default)
     ? derivePumpSwapPoolV2Pda(baseMint)
     : null;
-  // #region debug-point D:pda-summary
   reportPumpSwapDebug('D', 'pumpswap/adapter.ts:buildTransaction:pdas', '[DEBUG] pumpswap pda summary', {
     creatorVault: creatorVault.toBase58(),
     creatorVaultAta: creatorVaultAta.toBase58(),
@@ -675,7 +570,6 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
     userVolumeAccumulatorQuoteAta: userVolumeAccumulatorQuoteAta?.toBase58() || null,
     poolV2Address: poolV2Address?.toBase58() || null,
   });
-  // #endregion
 
   const amountIn = BigInt(input.amount);
   const isBuy = input.side === 'buy';
@@ -709,7 +603,6 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
     ? (useExactQuoteIn ? amountIn : quoteLimitAmount)
     : quoteLimitAmount;
   const wrapAmount = isBuy ? solAmount : 0n;
-  // #region debug-point D:amount-summary
   reportPumpSwapDebug('D', 'pumpswap/adapter.ts:buildTransaction:amounts', '[DEBUG] pumpswap amount summary', {
     side: input.side,
     amountIn: amountIn.toString(),
@@ -726,85 +619,26 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
     isCashbackCoin: ctx.poolState.isCashbackCoin,
     useExactQuoteIn,
   });
-  // #endregion
 
   const preInstructions: TransactionInstruction[] = [];
   const postInstructions: TransactionInstruction[] = [];
   preInstructions.push(...buildPriorityFeeInstructions(input));
   const memoInstruction = createTurboMemoInstruction(input);
   if (memoInstruction) preInstructions.push(memoInstruction);
-  const accountExists = await loadAccountExistsBatch(input, [userBaseAta, userQuoteAta], {
-    commitment: isBuy ? 'confirmed' : 'processed',
-    cacheFalseTtlMs: isBuy ? ATA_EXISTS_FALSE_CACHE_TTL_MS : 250,
-  });
-  let userBaseAtaExists = accountExists.get(userBaseAta.toBase58()) ?? false;
-  const userQuoteAtaExists = accountExists.get(userQuoteAta.toBase58()) ?? false;
-  // #region debug-point E:sell-ata-check
-  reportPumpSwapDebug('E', 'pumpswap/adapter.ts:buildTransaction:ataCheck', '[DEBUG] pumpswap user ata existence checked', {
-    side: input.side,
-    ownerAddress: input.ownerAddress,
-    userBaseAta: userBaseAta.toBase58(),
-    userBaseAtaExists,
-    userQuoteAta: userQuoteAta.toBase58(),
-    userQuoteAtaExists,
-    baseMint: baseMint.toBase58(),
-    quoteMint: quoteMint.toBase58(),
-    baseTokenProgram: baseTokenProgram.toBase58(),
-    quoteTokenProgram: TOKEN_PROGRAM_ID.toBase58(),
-  });
-  // #endregion
-
-  if (!userBaseAtaExists) {
-    if (isBuy) {
-      preInstructions.push(createAtaIdempotentInstruction({
-        payer: user,
-        owner: user,
-        mint: baseMint,
-        associatedToken: userBaseAta,
-        tokenProgramId: baseTokenProgram,
-      }));
-    } else {
-      // #region debug-point E:sell-missing-token-account
-      reportPumpSwapDebug('E', 'pumpswap/adapter.ts:buildTransaction:sellMissingTokenAccount', '[DEBUG] pumpswap sell missing token account before submit', {
-        side: input.side,
-        ownerAddress: input.ownerAddress,
-        userBaseAta: userBaseAta.toBase58(),
-        baseMint: baseMint.toBase58(),
-        baseTokenProgram: baseTokenProgram.toBase58(),
-        tokenInfoPoolPair: String((input.tokenInfo as any)?.pool_pair || ''),
-        tokenInfoTpoolPoolAddress: String((input.tokenInfo as any)?.tpool_pool_address || ''),
-      });
-      // #endregion
-      const freshSellAccountExists = await loadAccountExistsBatch(input, [userBaseAta], {
-        forceFresh: true,
-        commitment: 'processed',
-        cacheFalseTtlMs: 250,
-      });
-      userBaseAtaExists = freshSellAccountExists.get(userBaseAta.toBase58()) ?? false;
-      // #region debug-point E:sell-fresh-recheck
-      reportPumpSwapDebug('E', 'pumpswap/adapter.ts:buildTransaction:sellFreshRecheck', '[DEBUG] pumpswap sell missing token account fresh recheck', {
-        side: input.side,
-        ownerAddress: input.ownerAddress,
-        userBaseAta: userBaseAta.toBase58(),
-        userBaseAtaExistsAfterFreshRecheck: userBaseAtaExists,
-        commitment: 'processed',
-      });
-      // #endregion
-      if (!userBaseAtaExists) {
-        throw new Error('PumpSwap sell requires existing token account');
-      }
-    }
-  }
-
-  if (!userQuoteAtaExists) {
-    preInstructions.push(createAtaIdempotentInstruction({
-      payer: user,
-      owner: user,
-      mint: quoteMint,
-      associatedToken: userQuoteAta,
-      tokenProgramId: TOKEN_PROGRAM_ID,
-    }));
-  }
+  preInstructions.push(createAtaIdempotentInstruction({
+    payer: user,
+    owner: user,
+    mint: baseMint,
+    associatedToken: userBaseAta,
+    tokenProgramId: baseTokenProgram,
+  }));
+  preInstructions.push(createAtaIdempotentInstruction({
+    payer: user,
+    owner: user,
+    mint: quoteMint,
+    associatedToken: userQuoteAta,
+    tokenProgramId: TOKEN_PROGRAM_ID,
+  }));
 
   if (isBuy) {
     preInstructions.push(...buildWrapNativeInstructions({
@@ -899,7 +733,6 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
     };
   };
   let compiled = buildCompiledTransaction(true);
-  // #region debug-point D:tx-size
   reportPumpSwapDebug('D', 'pumpswap/adapter.ts:buildTransaction:txSize', '[DEBUG] pumpswap tx size built', {
     side: input.side,
     hasMemo: !!memoInstruction,
@@ -908,10 +741,8 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
     serializedBytes: compiled.serializedBytes,
     maxBytes: SOLANA_VERSIONED_TX_MAX_BYTES,
   });
-  // #endregion
   if (memoInstruction && compiled.serializedBytes > SOLANA_VERSIONED_TX_MAX_BYTES) {
     const withoutMemo = buildCompiledTransaction(false);
-    // #region debug-point D:tx-size-memo-dropped
     reportPumpSwapDebug('D', 'pumpswap/adapter.ts:buildTransaction:memoDroppedForSize', '[DEBUG] pumpswap memo dropped for tx size', {
       side: input.side,
       beforeBytes: compiled.serializedBytes,
@@ -920,12 +751,12 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
       preInstructionCountBefore: compiled.activePreInstructions.length,
       preInstructionCountAfter: withoutMemo.activePreInstructions.length,
     });
-    // #endregion
     compiled = withoutMemo;
   }
   return {
     transaction: compiled.transaction,
-    tokenMinOutWei: isBuy ? minBaseAmountOut.toString() : solAmount.toString(),
+    protectionMinOutWei: isBuy ? minBaseAmountOut.toString() : solAmount.toString(),
+    quotedOutWei: isBuy ? quotedTokenAmount.toString() : null,
     recentBlockhash: blockhash,
     lastValidBlockHeight,
   };
@@ -943,82 +774,15 @@ export const pumpswapTradeAdapter: SolanaTradeAdapter = {
   async supportsTrade(input: SolanaTradeRequest): Promise<boolean> {
     const platform = resolvePlatform(input);
     if (platform && !isPumpSwapCompatiblePlatform(platform)) {
-      // #region debug-point P3:pumpswap-platform-reject
-      fetch('http://127.0.0.1:7778/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'pump-direct-adapter',
-          runId: 'pre-fix',
-          hypothesisId: 'P3',
-          location: 'pumpswap/adapter.ts:supportsTrade',
-          msg: '[DEBUG] pumpswap platform rejected',
-          data: { platform, side: input.side, inputMint: input.inputMint, outputMint: input.outputMint },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
-      // #endregion
       return false;
     }
     const isSupportedPair = input.side === 'buy'
       ? isSolanaNativeMint(input.inputMint) && !isSolanaNativeMint(input.outputMint)
       : !isSolanaNativeMint(input.inputMint) && isSolanaNativeMint(input.outputMint);
     if (!isSupportedPair) {
-      // #region debug-point P3:pumpswap-pair-reject
-      fetch('http://127.0.0.1:7778/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'pump-direct-adapter',
-          runId: 'pre-fix',
-          hypothesisId: 'P3',
-          location: 'pumpswap/adapter.ts:supportsTrade',
-          msg: '[DEBUG] pumpswap pair rejected',
-          data: { platform, side: input.side, inputMint: input.inputMint, outputMint: input.outputMint },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
-      // #endregion
       return false;
     }
-    try {
-      const ctx = await loadPoolContext(input);
-      // #region debug-point P3:pumpswap-pool-ok
-      fetch('http://127.0.0.1:7778/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'pump-direct-adapter',
-          runId: 'pre-fix',
-          hypothesisId: 'P3',
-          location: 'pumpswap/adapter.ts:supportsTrade',
-          msg: '[DEBUG] pumpswap pool context loaded',
-          data: {
-            platform,
-            side: input.side,
-            baseMint: ctx.poolState.baseMint.toBase58(),
-            quoteMint: ctx.poolState.quoteMint.toBase58(),
-            poolAddress: ctx.poolAddress.toBase58(),
-          },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
-      // #endregion
-      return true;
-    } catch (error: any) {
-      // #region debug-point P3:pumpswap-load-failed
-      fetch('http://127.0.0.1:7778/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'pump-direct-adapter',
-          runId: 'pre-fix',
-          hypothesisId: 'P3',
-          location: 'pumpswap/adapter.ts:supportsTrade',
-          msg: '[DEBUG] pumpswap load pool failed',
-          data: { platform, side: input.side, inputMint: input.inputMint, outputMint: input.outputMint, error: String(error?.message || error || '') },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
-      // #endregion
-      return false;
-    }
+    return true;
   },
 
   async build(input: SolanaTradeRequest): Promise<SolanaBuiltTransaction> {
@@ -1026,11 +790,12 @@ export const pumpswapTradeAdapter: SolanaTradeAdapter = {
     if (plannedSource !== 'pumpswap' && !(await this.supportsTrade(input))) {
       throw new Error('PumpSwap adapter cannot handle this trade');
     }
-    const { transaction, tokenMinOutWei, recentBlockhash, lastValidBlockHeight } = await buildTransaction(input);
+    const { transaction, protectionMinOutWei, quotedOutWei, recentBlockhash, lastValidBlockHeight } = await buildTransaction(input);
     return {
       source: 'pumpswap',
       transaction,
-      tokenMinOutWei,
+      protectionMinOutWei,
+      quotedOutWei,
       blockhash: recentBlockhash,
       lastValidBlockHeight,
     };
@@ -1061,7 +826,7 @@ export async function prewarmPumpSwapTrade(input: {
   };
   const baseMint = new PublicKey(tokenAddress);
   const baseTokenProgramPromise = getMintProgramId(request.runtime, baseMint);
-  const ctxPromise = loadPoolContext(request);
+  const ctxPromise = loadPoolContext(request, { forceRefreshReserve: true });
   const [ctx, baseTokenProgram] = await Promise.all([ctxPromise, baseTokenProgramPromise]);
   const tasks: Array<Promise<unknown>> = [
     prewarmLatestBlockhash(request),

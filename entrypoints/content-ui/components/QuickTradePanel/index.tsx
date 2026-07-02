@@ -84,6 +84,8 @@ type QuickTradePanelProps = {
   sellPreviewRoute: string | null;
   approveStatus: 'ready' | 'approving' | 'approved';
   approveStatusTitle: string;
+  sellActionReady?: boolean;
+  sellActionDisabledReason?: string;
   onSell: (pct: number) => void;
   onApprove: () => void;
   siteInfo: SiteInfo;
@@ -179,6 +181,8 @@ export function QuickTradePanel({
   sellPreviewRoute,
   approveStatus,
   approveStatusTitle,
+  sellActionReady = true,
+  sellActionDisabledReason,
   onSell,
   onApprove,
   siteInfo,
@@ -219,6 +223,8 @@ export function QuickTradePanel({
     approveStatusTitle,
     busy,
     isUnlocked,
+    actionReady: sellActionReady,
+    actionDisabledTitle: sellActionDisabledReason,
     onSell,
     settings,
     dynamicGasBasePriceWei,

@@ -23,51 +23,38 @@ import {
   computeRaydiumCpmmAmountOut,
   computeRaydiumCpmmMinimumAmountOut,
 } from './quote';
-import type { RaydiumCpmmDirection, RaydiumCpmmPoolInfo } from './types';
-
-type TimedPromiseCacheEntry<T> = {
-  promise: Promise<T>;
-  expiresAt: number;
-};
+import type { RaydiumCpmmPoolInfo } from './types';
+import {
+  getFreshWarmPromise,
+  refreshWarmPromise,
+  rememberWarmPromise,
+  SOLANA_WARM_CACHE_TTL_MS,
+  type WarmCacheEntry,
+} from '../../../prewarm';
 
 type CachedBlockhashValue = {
   blockhash: string;
 };
 
-const POOL_INFO_CACHE_TTL_MS = 10_000;
-const ATA_EXISTS_CACHE_TTL_MS = 15_000;
-const BLOCKHASH_CACHE_TTL_MS = 3_000;
+type RaydiumCpmmStaticPoolInfo = Omit<RaydiumCpmmPoolInfo, 'baseReserve' | 'quoteReserve'>;
+type RaydiumCpmmReserveSnapshot = Pick<RaydiumCpmmPoolInfo, 'baseReserve' | 'quoteReserve'>;
+type RaydiumCpmmBuildDirection = {
+  isToken0In: boolean;
+  inputVault: PublicKey;
+  outputVault: PublicKey;
+  inputTokenProgram: PublicKey;
+  outputTokenProgram: PublicKey;
+};
 
-const poolInfoCache = new Map<string, TimedPromiseCacheEntry<RaydiumCpmmPoolInfo>>();
-const ataExistsCache = new Map<string, TimedPromiseCacheEntry<boolean>>();
-const latestBlockhashCache = new Map<string, TimedPromiseCacheEntry<CachedBlockhashValue>>();
+const STATIC_POOL_INFO_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
+const RESERVE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.dynamicQuote;
+const ATA_EXISTS_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
+const BLOCKHASH_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.blockhash;
 
-function rememberTimedPromise<T>(
-  cache: Map<string, TimedPromiseCacheEntry<T>>,
-  key: string,
-  ttlMs: number,
-  factory: () => Promise<T>,
-): Promise<T> {
-  const now = Date.now();
-  const cached = cache.get(key);
-  if (cached && cached.expiresAt > now) return cached.promise;
-  const promise = factory().catch((error) => {
-    cache.delete(key);
-    throw error;
-  });
-  cache.set(key, { promise, expiresAt: now + ttlMs });
-  return promise;
-}
-
-function getFreshTimedPromise<T>(
-  cache: Map<string, TimedPromiseCacheEntry<T>>,
-  key: string,
-  now = Date.now(),
-): Promise<T> | null {
-  const cached = cache.get(key);
-  if (!cached || cached.expiresAt <= now) return null;
-  return cached.promise;
-}
+const staticPoolInfoCache = new Map<string, WarmCacheEntry<RaydiumCpmmStaticPoolInfo>>();
+const reserveCache = new Map<string, WarmCacheEntry<RaydiumCpmmReserveSnapshot>>();
+const ataExistsCache = new Map<string, WarmCacheEntry<boolean>>();
+const latestBlockhashCache = new Map<string, WarmCacheEntry<CachedBlockhashValue>>();
 
 function resolvePlatform(input: SolanaTradeRequest): string {
   return normalizeSolanaPlatform(input.tokenInfo?.launchpad_platform || input.tokenInfo?.launchpad);
@@ -77,16 +64,23 @@ function normalizeDexType(input: SolanaTradeRequest): string {
   return String(input.tokenInfo?.dex_type || '').trim().toLowerCase();
 }
 
+function resolveExecutionMode(input: SolanaTradeRequest): 'default' | 'turbo' {
+  return (input.rawInput as any)?.executionModeOverride === 'turbo' ? 'turbo' : 'default';
+}
+
 function resolvePoolAddress(input: SolanaTradeRequest): PublicKey {
   const poolPair = String(input.tokenInfo?.pool_pair || '').trim();
   if (!poolPair) throw new Error('Raydium trade requires tokenInfo.pool_pair');
   return new PublicKey(poolPair);
 }
 
-async function loadPoolInfo(input: SolanaTradeRequest): Promise<RaydiumCpmmPoolInfo> {
+async function loadStaticPoolInfo(
+  input: SolanaTradeRequest,
+  opts?: { forceRefresh?: boolean },
+): Promise<RaydiumCpmmStaticPoolInfo> {
   const poolAddress = resolvePoolAddress(input);
   const cacheKey = poolAddress.toBase58();
-  return await rememberTimedPromise(poolInfoCache, cacheKey, POOL_INFO_CACHE_TTL_MS, async () => {
+  const loader = async () => {
     const connection = await input.runtime.getConnection();
     const poolAccountInfo = await connection.getAccountInfo(poolAddress, 'confirmed');
     if (!poolAccountInfo?.data) throw new Error('Raydium pool account not found');
@@ -94,23 +88,48 @@ async function loadPoolInfo(input: SolanaTradeRequest): Promise<RaydiumCpmmPoolI
       throw new Error('tokenInfo.pool_pair is not a Raydium CPMM pool');
     }
 
-    const poolInfo = parseRaydiumCpmmPoolInfo(poolAccountInfo.data, poolAddress);
+    return parseRaydiumCpmmPoolInfo(poolAccountInfo.data, poolAddress);
+  };
+  return await (opts?.forceRefresh
+    ? refreshWarmPromise(staticPoolInfoCache, cacheKey, STATIC_POOL_INFO_CACHE_TTL_MS, loader)
+    : rememberWarmPromise(staticPoolInfoCache, cacheKey, STATIC_POOL_INFO_CACHE_TTL_MS, loader));
+}
+
+async function loadPoolReserves(
+  input: SolanaTradeRequest,
+  poolInfo: RaydiumCpmmStaticPoolInfo,
+  opts?: { forceRefresh?: boolean },
+): Promise<RaydiumCpmmReserveSnapshot> {
+  const cacheKey = poolInfo.poolState.toBase58();
+  const loader = async () => {
+    const connection = await input.runtime.getConnection();
     const [vault0Info, vault1Info] = await connection.getMultipleAccountsInfo(
       [poolInfo.tokenVault0, poolInfo.tokenVault1],
       'confirmed',
     );
     if (!vault0Info?.data || !vault1Info?.data) throw new Error('Raydium vault accounts not found');
-    poolInfo.baseReserve = parseRaydiumCpmmTokenAccountBalance(vault0Info.data);
-    poolInfo.quoteReserve = parseRaydiumCpmmTokenAccountBalance(vault1Info.data);
-    return poolInfo;
-  });
+    return {
+      baseReserve: parseRaydiumCpmmTokenAccountBalance(vault0Info.data),
+      quoteReserve: parseRaydiumCpmmTokenAccountBalance(vault1Info.data),
+    };
+  };
+  return await (opts?.forceRefresh
+    ? refreshWarmPromise(reserveCache, cacheKey, RESERVE_CACHE_TTL_MS, loader)
+    : rememberWarmPromise(reserveCache, cacheKey, RESERVE_CACHE_TTL_MS, loader));
+}
+
+async function getStaticPoolInfoForBuild(input: SolanaTradeRequest): Promise<RaydiumCpmmStaticPoolInfo> {
+  if (resolveExecutionMode(input) !== 'turbo') return await loadStaticPoolInfo(input);
+  const cached = getFreshWarmPromise<RaydiumCpmmStaticPoolInfo>(staticPoolInfoCache, resolvePoolAddress(input).toBase58());
+  if (!cached) throw new Error('Raydium pool context not ready');
+  return await cached;
 }
 
 function buildDirection(
-  poolInfo: RaydiumCpmmPoolInfo,
+  poolInfo: RaydiumCpmmStaticPoolInfo,
   inputMint: PublicKey,
   outputMint: PublicKey,
-): RaydiumCpmmDirection {
+): RaydiumCpmmBuildDirection {
   const isToken0In = inputMint.equals(poolInfo.tokenMint0) && outputMint.equals(poolInfo.tokenMint1);
   const isToken1In = inputMint.equals(poolInfo.tokenMint1) && outputMint.equals(poolInfo.tokenMint0);
   if (!isToken0In && !isToken1In) throw new Error('Input/output mint does not match Raydium pool');
@@ -120,17 +139,16 @@ function buildDirection(
     outputVault: isToken0In ? poolInfo.tokenVault1 : poolInfo.tokenVault0,
     inputTokenProgram: isToken0In ? poolInfo.tokenProgram0 : poolInfo.tokenProgram1,
     outputTokenProgram: isToken0In ? poolInfo.tokenProgram1 : poolInfo.tokenProgram0,
-    reserveIn: isToken0In ? poolInfo.baseReserve : poolInfo.quoteReserve,
-    reserveOut: isToken0In ? poolInfo.quoteReserve : poolInfo.baseReserve,
   };
 }
 
-async function loadAccountExists(input: SolanaTradeRequest, account: PublicKey): Promise<boolean> {
-  const key = account.toBase58();
-  return await rememberTimedPromise(ataExistsCache, key, ATA_EXISTS_CACHE_TTL_MS, async () => {
-    const connection = await input.runtime.getConnection();
-    return (await connection.getAccountInfo(account, 'confirmed')) != null;
-  });
+function resolveDirectionReserves(
+  direction: RaydiumCpmmBuildDirection,
+  reserves: RaydiumCpmmReserveSnapshot,
+): { reserveIn: bigint; reserveOut: bigint } {
+  return direction.isToken0In
+    ? { reserveIn: reserves.baseReserve, reserveOut: reserves.quoteReserve }
+    : { reserveIn: reserves.quoteReserve, reserveOut: reserves.baseReserve };
 }
 
 async function prewarmAtaExistence(input: SolanaTradeRequest, accounts: PublicKey[]): Promise<void> {
@@ -141,7 +159,7 @@ async function prewarmAtaExistence(input: SolanaTradeRequest, accounts: PublicKe
   const missingKeys: string[] = [];
   for (const account of accounts) {
     const key = account.toBase58();
-    if (getFreshTimedPromise(ataExistsCache, key, now)) continue;
+    if (getFreshWarmPromise<boolean>(ataExistsCache, key, now)) continue;
     missingAccounts.push(account);
     missingKeys.push(key);
   }
@@ -156,59 +174,68 @@ async function prewarmAtaExistence(input: SolanaTradeRequest, accounts: PublicKe
 }
 
 async function loadLatestBlockhash(input: SolanaTradeRequest, allowCached: boolean): Promise<CachedBlockhashValue> {
-  const key = allowCached ? 'confirmed:warm' : `confirmed:fresh:${Date.now()}`;
-  return await rememberTimedPromise(latestBlockhashCache, key, BLOCKHASH_CACHE_TTL_MS, async () => {
+  const key = 'confirmed';
+  if (allowCached) {
+    const cached = getFreshWarmPromise<CachedBlockhashValue>(latestBlockhashCache, key);
+    if (cached) return await cached;
+  }
+  const loader = async () => {
     const connection = await input.runtime.getConnection();
     const { blockhash } = await connection.getLatestBlockhash('confirmed');
     return { blockhash };
-  });
+  };
+  return await (allowCached
+    ? rememberWarmPromise(latestBlockhashCache, key, BLOCKHASH_CACHE_TTL_MS, loader)
+    : refreshWarmPromise(latestBlockhashCache, key, BLOCKHASH_CACHE_TTL_MS, loader));
 }
 
 async function buildTransaction(input: SolanaTradeRequest): Promise<{
   transaction: VersionedTransaction;
-  tokenMinOutWei: string;
+  protectionMinOutWei: string;
+  quotedOutWei?: string | null;
   recentBlockhash: string;
 }> {
+  const executionMode = resolveExecutionMode(input);
   const inputMint = new PublicKey(input.inputMint);
   const outputMint = new PublicKey(input.outputMint);
   const user = new PublicKey(input.ownerAddress);
-  const poolInfo = await loadPoolInfo(input);
+  const poolInfo = await getStaticPoolInfoForBuild(input);
   const direction = buildDirection(poolInfo, inputMint, outputMint);
   const amountIn = BigInt(input.amount);
-  const quotedAmountOut = computeRaydiumCpmmAmountOut(amountIn, direction.reserveIn, direction.reserveOut);
-  const minimumAmountOut = computeRaydiumCpmmMinimumAmountOut(quotedAmountOut, input.slippageBps);
+  let minimumAmountOut = 1n;
+  let protectionMinOutWei = '1';
+  let quotedOutWei: string | null = null;
+  if (executionMode !== 'turbo') {
+    const reserves = await loadPoolReserves(input, poolInfo);
+    const resolvedReserves = resolveDirectionReserves(direction, reserves);
+    const quotedAmountOut = computeRaydiumCpmmAmountOut(amountIn, resolvedReserves.reserveIn, resolvedReserves.reserveOut);
+    minimumAmountOut = computeRaydiumCpmmMinimumAmountOut(quotedAmountOut, input.slippageBps);
+    protectionMinOutWei = minimumAmountOut.toString();
+    quotedOutWei = quotedAmountOut.toString();
+  }
   const userInputAccount = findAta({ mint: inputMint, owner: user, tokenProgramId: direction.inputTokenProgram });
   const userOutputAccount = findAta({ mint: outputMint, owner: user, tokenProgramId: direction.outputTokenProgram });
-  const [inputAtaExists, outputAtaExists] = await Promise.all([
-    loadAccountExists(input, userInputAccount),
-    loadAccountExists(input, userOutputAccount),
-  ]);
 
   const inputIsNative = isSolanaNativeMint(input.inputMint);
   const outputIsNative = isSolanaNativeMint(input.outputMint);
   const preInstructions: TransactionInstruction[] = [];
   const postInstructions: TransactionInstruction[] = [];
 
-  if (!inputAtaExists) {
-    if (!inputIsNative) throw new Error('Raydium input token account not found');
-    preInstructions.push(createAtaIdempotentInstruction({
-      payer: user,
-      owner: user,
-      mint: inputMint,
-      associatedToken: userInputAccount,
-      tokenProgramId: direction.inputTokenProgram,
-    }));
-  }
+  preInstructions.push(createAtaIdempotentInstruction({
+    payer: user,
+    owner: user,
+    mint: inputMint,
+    associatedToken: userInputAccount,
+    tokenProgramId: direction.inputTokenProgram,
+  }));
 
-  if (!outputAtaExists) {
-    preInstructions.push(createAtaIdempotentInstruction({
-      payer: user,
-      owner: user,
-      mint: outputMint,
-      associatedToken: userOutputAccount,
-      tokenProgramId: direction.outputTokenProgram,
-    }));
-  }
+  preInstructions.push(createAtaIdempotentInstruction({
+    payer: user,
+    owner: user,
+    mint: outputMint,
+    associatedToken: userOutputAccount,
+    tokenProgramId: direction.outputTokenProgram,
+  }));
 
   if (inputIsNative) {
     preInstructions.push(...buildWrapNativeInstructions({
@@ -254,8 +281,7 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
     data: buildRaydiumCpmmSwapInstructionData(amountIn, minimumAmountOut),
   });
 
-  const allowCachedBlockhash = (input.rawInput as any)?.executionModeOverride === 'turbo';
-  const { blockhash } = await loadLatestBlockhash(input, allowCachedBlockhash);
+  const { blockhash } = await loadLatestBlockhash(input, true);
   const message = new TransactionMessage({
     payerKey: user,
     recentBlockhash: blockhash,
@@ -264,7 +290,8 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
 
   return {
     transaction: new VersionedTransaction(message),
-    tokenMinOutWei: minimumAmountOut.toString(),
+    protectionMinOutWei,
+    quotedOutWei,
     recentBlockhash: blockhash,
   };
 }
@@ -292,10 +319,13 @@ export async function prewarmRaydiumTrade(input: {
     rawInput: { executionModeOverride: input.executionMode === 'turbo' ? 'turbo' : 'default' } as any,
     runtime: input.runtime,
   };
-  const poolInfo = await loadPoolInfo(request);
+  const poolInfo = await loadStaticPoolInfo(request, { forceRefresh: true });
+  if (input.executionMode !== 'turbo') {
+    await loadPoolReserves(request, poolInfo, { forceRefresh: true });
+  }
   const direction = buildDirection(poolInfo, new PublicKey(request.inputMint), new PublicKey(request.outputMint));
   const tasks: Array<Promise<unknown>> = [
-    loadLatestBlockhash(request, true),
+    loadLatestBlockhash(request, false),
   ];
   if (ownerAddress) {
     const user = new PublicKey(ownerAddress);
@@ -321,25 +351,19 @@ export const raydiumTradeAdapter: SolanaTradeAdapter = {
     const dexType = normalizeDexType(input);
     const hinted = platform === 'raydium' || dexType.includes('raydium');
     if (!hinted) return false;
-    if (!input.tokenInfo?.pool_pair) return false;
-    try {
-      const poolInfo = await loadPoolInfo(input);
-      buildDirection(poolInfo, new PublicKey(input.inputMint), new PublicKey(input.outputMint));
-      return true;
-    } catch {
-      return false;
-    }
+    return !!input.tokenInfo?.pool_pair;
   },
 
   async build(input: SolanaTradeRequest): Promise<SolanaBuiltTransaction> {
     if (!(await this.supportsTrade(input))) {
       throw new Error('Raydium adapter cannot handle this trade');
     }
-    const { transaction, tokenMinOutWei, recentBlockhash } = await buildTransaction(input);
+    const { transaction, protectionMinOutWei, quotedOutWei, recentBlockhash } = await buildTransaction(input);
     return {
       source: 'raydium',
       transaction,
-      tokenMinOutWei,
+      protectionMinOutWei,
+      quotedOutWei,
       blockhash: recentBlockhash,
     };
   },

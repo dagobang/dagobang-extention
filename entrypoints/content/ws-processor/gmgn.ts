@@ -1128,31 +1128,12 @@ export function initGmgnWsMonitor(options: {
     }
     if (!pendingNewPoolMonitorUi.size) return;
     const items = Array.from(pendingNewPoolMonitorUi.values());
-    // #region debug-point B:newpool-ui-flush
     (() => {
       const key = '__DBG_NEWPOOL_UI_FLUSH_TS__';
       const nowTs = Date.now();
       const lastTs = typeof (window as any)[key] === 'number' ? (window as any)[key] : 0;
       (window as any)[key] = nowTs;
-      fetch('http://127.0.0.1:7777/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'newpool-v2-crash',
-          runId: 'post-fix',
-          hypothesisId: 'B',
-          location: 'gmgn.ts:flushNewPoolMonitorUi',
-          msg: '[DEBUG] newpool ui flush',
-          data: {
-            items: items.length,
-            gapMs: lastTs > 0 ? nowTs - lastTs : null,
-            withIdentity: items.filter((it) => hasTokenDisplayIdentity(it?.tokenData)).length,
-            pendingMapSize: pendingNewPoolMonitorUi.size,
-          },
-          ts: nowTs,
-        }),
-      }).catch(() => { });
     })();
-    // #endregion
     pendingNewPoolMonitorUi.clear();
     void options.call({ type: 'newpool:upsertBatch', payload: { items } }).catch(() => { });
   };
@@ -1619,7 +1600,6 @@ export function initGmgnWsMonitor(options: {
       createdAtMs: typeof tokenData?.createdAtMs === 'number' ? tokenData.createdAtMs : prev?.createdAtMs,
       receivedAtMs,
     };
-    // #region debug-point A:snapshot-age-devhold
     if (
       typeof tokenData?.ct === 'number' ||
       typeof tokenData?.createdAtMs === 'number' ||
@@ -1627,34 +1607,7 @@ export function initGmgnWsMonitor(options: {
       next.createdAtMs == null ||
       next.devHoldPercent == null
     ) {
-      fetch('http://127.0.0.1:7777/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'newpool-age-devhold',
-          runId: 'pre-fix',
-          hypothesisId: 'A',
-          location: 'gmgn.ts:updateTokenSnapshot',
-          msg: '[DEBUG] snapshot age/devhold merge',
-          data: {
-            tokenAddress: addr,
-            source: meta?.source ?? null,
-            channel: meta?.channel ?? null,
-            vch,
-            rawCt: typeof tokenData?.ct === 'number' ? tokenData.ct : null,
-            rawCreatedAtMs: typeof tokenData?.createdAtMs === 'number' ? tokenData.createdAtMs : null,
-            prevCreatedAtMs: typeof prev?.createdAtMs === 'number' ? prev.createdAtMs : null,
-            nextCreatedAtMs: typeof next.createdAtMs === 'number' ? next.createdAtMs : null,
-            rawDevBuyRatio,
-            prevDevHoldPercent: typeof prev?.devHoldPercent === 'number' ? prev.devHoldPercent : null,
-            nextDevHoldPercent: typeof next.devHoldPercent === 'number' ? next.devHoldPercent : null,
-            prevDevMaxBuyPercent: typeof prev?.devMaxBuyPercent === 'number' ? prev.devMaxBuyPercent : null,
-            nextDevMaxBuyPercent: typeof next.devMaxBuyPercent === 'number' ? next.devMaxBuyPercent : null,
-          },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
     }
-    // #endregion
     if (prev) tokenByAddress.delete(addr);
     tokenByAddress.set(addr, next);
     scheduleTokenSnapshotPersist(next);
@@ -1918,32 +1871,8 @@ export function initGmgnWsMonitor(options: {
         receivedAtMs: now,
       });
     }
-    // #region debug-point A:trenches-delta-packet
     (() => {
-      fetch('http://127.0.0.1:7777/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'newpool-v2-crash',
-          runId: 'post-fix',
-          hypothesisId: 'A',
-          location: 'gmgn.ts:handleTrenchesUpdateChannel',
-          msg: '[DEBUG] trenches packet summary',
-          data: {
-            channel,
-            stage,
-            total: debugPacket.total,
-            publishable: debugPacket.publishable,
-            suppressed: debugPacket.suppressed,
-            beforeIdentity: debugPacket.beforeIdentity,
-            beforeSnapshotIdentity: debugPacket.beforeSnapshotIdentity,
-            afterIdentity: debugPacket.afterIdentity,
-            updateTypes: debugPacket.updateTypes,
-          },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
     })();
-    // #endregion
     emitStatus();
   };
 

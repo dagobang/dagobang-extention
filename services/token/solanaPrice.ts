@@ -9,8 +9,7 @@ import {
   SOLANA_USDT_MINT,
   isSolanaNativeMint,
   isSolanaStableMint,
-  resolveKnownSolanaDirectSource,
-  resolveSolanaSourceAlias,
+  resolveSolanaTradeSource,
 } from '../../packages/solana-dex-core/src/constants';
 import type { SolanaTradeSource } from '../../packages/solana-dex-core/src/types';
 import {
@@ -103,14 +102,14 @@ function readPublicKey(data: Uint8Array, offset: number): PublicKey {
 }
 
 function resolveSolanaPriceSource(tokenInfo?: TokenInfo | null, tokenAddress?: string | null): SolanaTradeSource | null {
-  return resolveKnownSolanaDirectSource(tokenInfo as any, tokenAddress)
-    ?? resolveSolanaSourceAlias(
-      tokenInfo?.launchpad_platform
-      || tokenInfo?.launchpad
-      || tokenInfo?.tpool_exchange
-      || tokenInfo?.dex_type
-      || null
-    );
+  return resolveSolanaTradeSource({
+    tokenInfo: tokenInfo as any,
+    tokenAddress,
+    fallbackPlatforms: [
+      tokenInfo?.tpool_exchange,
+      tokenInfo?.dex_type,
+    ],
+  }).directSource;
 }
 
 async function getProgramAccountsAny(
@@ -449,9 +448,6 @@ async function getNativePriceUsd(liveCacheTtlMs = 0): Promise<number> {
       oneSolLamports,
     );
     const usd = toNumberFromUnits(quoted, SOLANA_STABLE_DECIMALS);
-    // #region debug-point C:native-usd-quote
-    fetch('http://127.0.0.1:7779/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-limit-price-flicker', runId: 'pre-fix', hypothesisId: 'C', location: 'solanaPrice.ts:getNativePriceUsd', msg: '[DEBUG] solana native usd quote resolved', data: { source: 'raydium-amm-v4-canonical', poolAddress: SOLANA_RAYDIUM_AMM_V4_SOL_USDC_POOL, stableMint: SOLANA_USDC_MINT, quotedAmountOut: quoted.toString(), usd }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
     if (Number.isFinite(usd) && usd > 0) {
       nativeUsdCache = { ts: Date.now(), value: usd };
       return usd;
@@ -462,9 +458,6 @@ async function getNativePriceUsd(liveCacheTtlMs = 0): Promise<number> {
     try {
       const quoted = await quoteBestRaydiumCpmmExactIn(SOLANA_NATIVE_MINT, stableMint, oneSolLamports, liveCacheTtlMs);
       const usd = toNumberFromUnits(quoted, SOLANA_STABLE_DECIMALS);
-      // #region debug-point C:native-usd-quote
-      fetch('http://127.0.0.1:7779/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-limit-price-flicker', runId: 'pre-fix', hypothesisId: 'C', location: 'solanaPrice.ts:getNativePriceUsd', msg: '[DEBUG] solana native usd quote resolved', data: { source: 'raydium-cpmm-search-fallback', stableMint, quotedAmountOut: quoted.toString(), usd }, ts: Date.now() }) }).catch(() => { });
-      // #endregion
       if (Number.isFinite(usd) && usd > 0) {
         nativeUsdCache = { ts: Date.now(), value: usd };
         return usd;
@@ -492,18 +485,12 @@ async function quoteDirectSourcePriceUsd(
   if (!quoted || quoted.amountOut <= 0n) return 0;
   if (isSolanaStableMint(quoted.quoteMint)) {
     const priceUsd = toNumberFromUnits(quoted.amountOut, SOLANA_STABLE_DECIMALS);
-    // #region debug-point C:direct-stable-quote
-    fetch('http://127.0.0.1:7779/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-limit-price-flicker', runId: 'pre-fix', hypothesisId: 'C', location: 'solanaPrice.ts:directStableQuote', msg: '[DEBUG] solana direct price resolved via stable quote', data: { tokenAddress, source, amountIn: amountIn.toString(), quoteMint: quoted.quoteMint, amountOut: quoted.amountOut.toString(), priceUsd, launchpad: tokenInfo.launchpad ?? null, launchpadPlatform: tokenInfo.launchpad_platform ?? null, poolPair: tokenInfo.pool_pair ?? null }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
     return priceUsd;
   }
   if (isSolanaNativeMint(quoted.quoteMint)) {
     const nativeUsd = await getNativePriceUsd(liveCacheTtlMs);
     const outNative = toNumberFromUnits(quoted.amountOut, SOLANA_NATIVE_DECIMALS);
     const priceUsd = nativeUsd > 0 && outNative > 0 ? nativeUsd * outNative : 0;
-    // #region debug-point C:direct-native-quote
-    fetch('http://127.0.0.1:7779/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-limit-price-flicker', runId: 'pre-fix', hypothesisId: 'C', location: 'solanaPrice.ts:directNativeQuote', msg: '[DEBUG] solana direct price resolved via native quote', data: { tokenAddress, source, amountIn: amountIn.toString(), quoteMint: quoted.quoteMint, amountOut: quoted.amountOut.toString(), outNative, nativeUsd, priceUsd, launchpad: tokenInfo.launchpad ?? null, launchpadPlatform: tokenInfo.launchpad_platform ?? null, poolPair: tokenInfo.pool_pair ?? null }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
     return priceUsd;
   }
   return 0;
@@ -521,9 +508,6 @@ export async function getSolanaTokenPriceUsdFromQuote(input: {
   }
   const tokenInfo = input.tokenInfo ?? null;
   const source = resolveSolanaPriceSource(tokenInfo, tokenAddress);
-  // #region debug-point C:resolver-source
-  fetch('http://127.0.0.1:7779/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-limit-price-flicker', runId: 'pre-fix', hypothesisId: 'C', location: 'solanaPrice.ts:resolverSource', msg: '[DEBUG] solana price resolver source selected', data: { tokenAddress, source, hasTokenInfo: !!tokenInfo, launchpad: tokenInfo?.launchpad ?? null, launchpadPlatform: tokenInfo?.launchpad_platform ?? null, launchpadStatus: tokenInfo?.launchpad_status ?? null, quoteTokenAddress: tokenInfo?.quote_token_address ?? null, poolPair: tokenInfo?.pool_pair ?? null }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
   if (!source || !tokenInfo) return 0;
   const decimals = Number(tokenInfo.decimals ?? NaN);
   if (!Number.isFinite(decimals) || decimals < 0 || decimals > 18) {

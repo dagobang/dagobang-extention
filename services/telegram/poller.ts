@@ -17,16 +17,16 @@ export type ParsedTelegramCommand =
   | { type: 'whoami' }
   | { type: 'switchWallet'; target: string }
   | { type: 'orders'; chain?: string }
-  | { type: 'tokenInfo'; tokenAddress: `0x${string}`; chain?: string }
+  | { type: 'tokenInfo'; tokenAddress: string; chain?: string }
   | { type: 'cancel'; orderId: string }
-  | { type: 'buy'; tokenAddress: `0x${string}`; amountBnb: string; chain?: string }
-  | { type: 'sell'; tokenAddress: `0x${string}`; sellPercent: number; chain?: string }
+  | { type: 'buy'; tokenAddress: string; amountBnb: string; chain?: string }
+  | { type: 'sell'; tokenAddress: string; sellPercent: number; chain?: string }
   | { type: 'actionOrders'; chainId?: number }
   | { type: 'actionOrdersPage'; page: number; chainId?: number }
-  | { type: 'actionTokenInfo'; tokenAddress: `0x${string}`; chainId?: number }
+  | { type: 'actionTokenInfo'; tokenAddress: string; chainId?: number }
   | { type: 'actionCancel'; orderId: string }
-  | { type: 'actionBuy'; tokenAddress: `0x${string}`; amountBnb: string; chainId?: number }
-  | { type: 'actionSell'; tokenAddress: `0x${string}`; sellPercent: number; chainId?: number }
+  | { type: 'actionBuy'; tokenAddress: string; amountBnb: string; chainId?: number }
+  | { type: 'actionSell'; tokenAddress: string; sellPercent: number; chainId?: number }
   | { type: 'actionMenu' }
   | { type: 'actionChainMenu' }
   | { type: 'actionSwitchChain'; chain: string }
@@ -55,6 +55,14 @@ export type ParsedTelegramCommand =
   | { type: 'actionInputQuickSellPresets' }
   | { type: 'actionXSniperOrder'; orderId: string }
   | { type: 'unknown'; text: string };
+
+function isLikelySolanaAddress(value: string): boolean {
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
+}
+
+function isTelegramTokenAddress(value: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(value) || isLikelySolanaAddress(value);
+}
 
 export function parseTelegramCommand(text: string): ParsedTelegramCommand {
   const raw = String(text || '').trim();
@@ -107,11 +115,11 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
     if (action === 'token') {
       const chainId = Number(arg1 || '');
       const tokenAddress = Number.isFinite(chainId) ? (arg2 || '') : (arg1 || '');
-      if (/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
+      if (isTelegramTokenAddress(tokenAddress)) {
         return {
           type: 'actionTokenInfo',
           chainId: Number.isFinite(chainId) ? chainId : undefined,
-          tokenAddress: tokenAddress as `0x${string}`,
+          tokenAddress: tokenAddress.trim(),
         };
       }
     }
@@ -122,11 +130,11 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
       const chainId = Number(arg1 || '');
       const tokenAddress = Number.isFinite(chainId) ? (arg2 || '') : (arg1 || '');
       const amountBnb = Number.isFinite(chainId) ? (arg3 || '') : (arg2 || '');
-      if (/^0x[a-fA-F0-9]{40}$/.test(tokenAddress) && amountBnb.trim()) {
+      if (isTelegramTokenAddress(tokenAddress) && amountBnb.trim()) {
         return {
           type: 'actionBuy',
           chainId: Number.isFinite(chainId) ? chainId : undefined,
-          tokenAddress: tokenAddress as `0x${string}`,
+          tokenAddress: tokenAddress.trim(),
           amountBnb: amountBnb.trim(),
         };
       }
@@ -135,11 +143,11 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
       const chainId = Number(arg1 || '');
       const tokenAddress = Number.isFinite(chainId) ? (arg2 || '') : (arg1 || '');
       const sellPercentRaw = Number.isFinite(chainId) ? (arg3 || '') : (arg2 || '');
-      if (/^0x[a-fA-F0-9]{40}$/.test(tokenAddress) && Number.isFinite(Number(sellPercentRaw))) {
+      if (isTelegramTokenAddress(tokenAddress) && Number.isFinite(Number(sellPercentRaw))) {
         return {
           type: 'actionSell',
           chainId: Number.isFinite(chainId) ? chainId : undefined,
-          tokenAddress: tokenAddress as `0x${string}`,
+          tokenAddress: tokenAddress.trim(),
           sellPercent: Number(sellPercentRaw),
         };
       }
@@ -151,8 +159,8 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
   }
   const [cmdRaw, ...rest] = raw.split(/\s+/).filter(Boolean);
   const cmd = cmdRaw?.toLowerCase() || '';
-  if (/^0x[a-fA-F0-9]{40}$/.test(raw)) {
-    return { type: 'tokenInfo', tokenAddress: raw as `0x${string}` };
+  if (isTelegramTokenAddress(raw)) {
+    return { type: 'tokenInfo', tokenAddress: raw.trim() };
   }
   if (cmd === '/start') return { type: 'start' };
   if (cmd === '/menu') return { type: 'menu' };
@@ -182,8 +190,8 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
     const hasChainArg = rest.length >= 2;
     const chain = hasChainArg ? (rest[0] || '').trim() : undefined;
     const tokenAddress = (hasChainArg ? rest[1] : rest[0] || '').trim();
-    if (!/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) return { type: 'unknown', text: raw };
-    return { type: 'tokenInfo', tokenAddress: tokenAddress as `0x${string}`, chain };
+    if (!isTelegramTokenAddress(tokenAddress)) return { type: 'unknown', text: raw };
+    return { type: 'tokenInfo', tokenAddress, chain };
   }
   if (cmd === '/cancel') {
     const orderId = (rest[0] || '').trim();
@@ -195,10 +203,10 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
     const chain = hasChainArg ? (rest[0] || '').trim() : undefined;
     const tokenAddress = (hasChainArg ? rest[1] : rest[0] || '').trim();
     const amountBnb = (hasChainArg ? rest[2] : rest[1] || '').trim();
-    if (!tokenAddress || !amountBnb || !tokenAddress.startsWith('0x')) {
+    if (!tokenAddress || !amountBnb || !isTelegramTokenAddress(tokenAddress)) {
       return { type: 'unknown', text: raw };
     }
-    return { type: 'buy', tokenAddress: tokenAddress as `0x${string}`, amountBnb, chain };
+    return { type: 'buy', tokenAddress, amountBnb, chain };
   }
   if (cmd === '/sell') {
     const hasChainArg = rest.length >= 3;
@@ -206,10 +214,10 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
     const tokenAddress = (hasChainArg ? rest[1] : rest[0] || '').trim();
     const sellPercentRaw = (hasChainArg ? rest[2] : rest[1] || '').trim();
     const sellPercent = Number(sellPercentRaw);
-    if (!tokenAddress || !tokenAddress.startsWith('0x') || !Number.isFinite(sellPercent)) {
+    if (!tokenAddress || !isTelegramTokenAddress(tokenAddress) || !Number.isFinite(sellPercent)) {
       return { type: 'unknown', text: raw };
     }
-    return { type: 'sell', tokenAddress: tokenAddress as `0x${string}`, sellPercent, chain };
+    return { type: 'sell', tokenAddress, sellPercent, chain };
   }
   return { type: 'unknown', text: raw };
 }

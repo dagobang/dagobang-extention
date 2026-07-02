@@ -272,7 +272,8 @@ async function getFallbackUnlockedState(): Promise<UnlockedSolanaState | null> {
 
 export class SolanaWalletAdapter implements WalletAdapter {
   async getStatus() {
-    const unlocked = await getUnlockedSolanaState() ?? await getFallbackUnlockedState();
+    const directUnlocked = await getUnlockedSolanaState();
+    const unlocked = directUnlocked ?? await getFallbackUnlockedState();
     if (unlocked) {
       return {
         locked: false,

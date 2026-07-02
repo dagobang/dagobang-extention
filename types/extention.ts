@@ -798,10 +798,19 @@ export type XSniperBuyRecord = {
   reason?: string;
 };
 
+export type TradeTurboPrewarmInput = {
+  chainId: number;
+  tokenAddress: ChainAddress;
+  tokenInfo?: TokenInfo;
+  fromAddress?: ChainAddress;
+  submitChannel?: SubmitChannel;
+  platform?: string;
+};
+
 export type BgRequest =
   | { type: 'bg:ping' }
   | { type: 'bg:openPopup' }
-  | { type: 'bg:getState' }
+  | { type: 'bg:getState'; chainId?: number }
   | { type: 'bloxroute:probe'; authHeader?: string }
   | { type: 'bloxroute:openCertPage' }
   | { type: 'settings:set'; settings: Settings }
@@ -874,7 +883,7 @@ export type BgRequest =
   | { type: 'rpc:readProfiles'; chainId: number; urls?: string[] }
   | { type: 'rpc:capacityProbe'; chainId: number; mode?: 'request' | 'force' }
   | { type: 'rpc:resetProfiles'; chainId: number; urls?: string[] }
-  | { type: 'trade:prewarmTurbo'; input: { chainId: number; tokenAddress: ChainAddress; tokenInfo?: TokenInfo; fromAddress?: ChainAddress; submitChannel?: SubmitChannel; platform?: string } }
+  | { type: 'trade:prewarmTurbo'; input: TradeTurboPrewarmInput }
   | { type: 'trade:refreshNonce'; input: { chainId: number; fromAddress?: `0x${string}` } }
   | { type: 'tx:buy'; input: TxBuyInput }
   | { type: 'tx:buyWithReceiptAuto'; input: TxBuyInput }
@@ -1095,12 +1104,30 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; txHash: `0x${string}`; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean }
   : T extends { type: 'tx:buy' }
   ? (
-    | { ok: true; txHash: ChainTxId; tokenMinOutWei: string; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean }
+    | {
+      ok: true;
+      txHash: ChainTxId;
+      protectionMinOutWei: string;
+      quotedOutWei?: string | null;
+      broadcastVia?: string;
+      broadcastUrl?: string;
+      isBundle?: boolean;
+    }
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
   : T extends { type: 'tx:buyWithReceiptAuto' }
   ? (
-    | ({ ok: true; txHash: ChainTxId; tokenMinOutWei: string; broadcastVia?: string; broadcastUrl?: string; confirmUrl?: string; isBundle?: boolean } & TxTimingMetrics)
+    | ({
+      ok: true;
+      txHash: ChainTxId;
+      protectionMinOutWei: string;
+      quotedOutWei?: string | null;
+      broadcastVia?: string;
+      broadcastUrl?: string;
+      confirmUrl?: string;
+      isBundle?: boolean;
+      backgroundPending?: boolean;
+    } & TxTimingMetrics)
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
   : T extends { type: 'tx:sell' }
@@ -1110,7 +1137,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   )
   : T extends { type: 'tx:sellWithReceiptAuto' }
   ? (
-    | ({ ok: true; txHash: ChainTxId; broadcastVia?: string; broadcastUrl?: string; confirmUrl?: string; isBundle?: boolean } & TxTimingMetrics)
+    | ({ ok: true; txHash: ChainTxId; broadcastVia?: string; broadcastUrl?: string; confirmUrl?: string; isBundle?: boolean; backgroundPending?: boolean } & TxTimingMetrics)
     | { ok: false; revertReason?: string; error?: TxWaitForReceiptError }
   )
   : T extends { type: 'tx:transferNative' }
@@ -1138,7 +1165,15 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? ({ ok: true } & TelegramPollStatus)
   : T extends { type: 'telegram:quickBuy' }
   ? (
-    | ({ ok: true; txHash: `0x${string}`; tokenMinOutWei: string; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
+    | ({
+      ok: true;
+      txHash: `0x${string}`;
+      protectionMinOutWei: string;
+      quotedOutWei?: string | null;
+      broadcastVia?: string;
+      broadcastUrl?: string;
+      isBundle?: boolean;
+    } & TxTimingMetrics)
     | { ok: false; error?: TxWaitForReceiptError | { message: string } }
   )
   : T extends { type: 'telegram:quickSell' }

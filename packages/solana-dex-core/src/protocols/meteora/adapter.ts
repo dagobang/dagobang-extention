@@ -12,6 +12,18 @@ const METEORA_PROTOCOL_ADAPTERS: SolanaTradeAdapter[] = [
   meteoraDammV2TradeAdapter,
 ];
 
+function resolveMeteoraAdapterCandidates(input: SolanaTradeRequest): SolanaTradeAdapter[] {
+  const platform = String(input.tokenInfo?.launchpad_platform || input.tokenInfo?.launchpad || '').trim().toLowerCase();
+  const dexType = String(input.tokenInfo?.dex_type || '').trim().toLowerCase();
+  if (platform === 'dlmm' || dexType.includes('dlmm')) {
+    return [meteoraDlmmTradeAdapter];
+  }
+  if (platform === 'damm' || platform === 'damm_v2' || dexType.includes('damm')) {
+    return [meteoraDammV2TradeAdapter];
+  }
+  return METEORA_PROTOCOL_ADAPTERS;
+}
+
 export const meteoraTradeAdapter: SolanaTradeAdapter = {
   capability: {
     source: 'meteora',
@@ -22,22 +34,27 @@ export const meteoraTradeAdapter: SolanaTradeAdapter = {
   },
 
   async supportsTrade(input: SolanaTradeRequest): Promise<boolean> {
-    for (const adapter of METEORA_PROTOCOL_ADAPTERS) {
+    for (const adapter of resolveMeteoraAdapterCandidates(input)) {
       if (await adapter.supportsTrade(input)) return true;
     }
     return false;
   },
 
   async build(input: SolanaTradeRequest): Promise<SolanaBuiltTransaction> {
-    for (const adapter of METEORA_PROTOCOL_ADAPTERS) {
-      if (!(await adapter.supportsTrade(input))) continue;
-      const built = await adapter.build(input);
-      return {
-        ...built,
-        source: 'meteora',
-      };
+    const candidates = resolveMeteoraAdapterCandidates(input);
+    let lastError: unknown = null;
+    for (const adapter of candidates) {
+      try {
+        const built = await adapter.build(input);
+        return {
+          ...built,
+          source: 'meteora',
+        };
+      } catch (error) {
+        lastError = error;
+      }
     }
-    throw new Error('Meteora adapter cannot handle this trade');
+    throw lastError instanceof Error ? lastError : new Error('Meteora adapter cannot handle this trade');
   },
 };
 

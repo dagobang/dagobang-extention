@@ -1,4 +1,4 @@
-import type { TxBuyInput, TxSellInput, SubmitChannel } from '@/types/extention';
+import type { TxBuyInput, TxSellInput, SubmitChannel, TradeTurboPrewarmInput } from '@/types/extention';
 import type { ChainAddress, EvmAddress } from '@/types/chain';
 import type { TokenInfo } from '@/types/token';
 
@@ -41,7 +41,8 @@ export type WalletStatus = {
 
 export type TradeBuyResult = {
   txHash: string;
-  tokenMinOutWei: string;
+  protectionMinOutWei: string;
+  quotedOutWei?: string | null;
   broadcastVia?: string;
   broadcastUrl?: string;
   confirmUrl?: string;
@@ -87,14 +88,7 @@ export interface WalletAdapter {
 }
 
 export interface TradeExecutor {
-  prewarmTurbo(input: {
-    chainId: number;
-    tokenAddress: ChainAddress;
-    tokenInfo?: TokenInfo;
-    fromAddress?: ChainAddress;
-    submitChannel?: SubmitChannel;
-    platform?: string;
-  }): Promise<void>;
+  prewarmTurbo(input: TradeTurboPrewarmInput): Promise<void>;
   refreshNonce(input: {
     chainId: number;
     fromAddress?: EvmAddress;

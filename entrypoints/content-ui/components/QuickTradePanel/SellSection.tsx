@@ -22,6 +22,8 @@ export type SellSectionProps = {
   approveStatusTitle: string;
   busy: boolean;
   isUnlocked: boolean;
+  actionReady?: boolean;
+  actionDisabledTitle?: string;
   onSell: (pct: number) => void;
   settings: Settings | null;
   dynamicGasBasePriceWei: bigint | null;
@@ -57,6 +59,8 @@ export function SellSection({
   approveStatusTitle,
   busy,
   isUnlocked,
+  actionReady = true,
+  actionDisabledTitle,
   onSell,
   settings,
   dynamicGasBasePriceWei,
@@ -151,9 +155,6 @@ export function SellSection({
     : null;
   const activePreviewUsd = quotedUsdValues?.[activePreviewIndex] ?? fallbackPreviewUsd;
   const activePreviewBaseAmount = quotedBaseAmounts?.[activePreviewIndex] ?? fallbackPreviewBaseAmount;
-  // #region debug-point A:sell-section-preview
-  if (settings?.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'A', location: 'SellSection.tsx:preview', msg: '[DEBUG] sell section preview values', data: { chainId: settings?.chainId ?? null, tokenSymbol, baseSymbol, formattedTokenBalance, tokenBalanceAmount, tokenPriceUsd, baseTokenPriceUsd, activePreviewIndex, activePreviewPct, activePreviewTokenAmount, fallbackPreviewUsd, fallbackPreviewBaseAmount, quotedUsdValues: quotedUsdValues?.slice(0, 4) ?? null, quotedBaseAmounts: quotedBaseAmounts?.slice(0, 4) ?? null, activePreviewUsd, activePreviewBaseAmount, previewRouteLabel }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
   const formatUsd = (value: number | null) => {
     if (value == null || !Number.isFinite(value) || value <= 0) return '--';
     const text = formatPriceValue(value, 2, 4);
@@ -180,9 +181,12 @@ export function SellSection({
     ? <CheckCircle2 size={10} />
     : <RefreshCw size={10} className={approveStatus === 'approving' ? 'animate-spin' : undefined} />;
   const sellBlockedByApproval = submitChannel === 'blox' && approveStatus === 'approving';
-  const sellDisabled = busy || !isUnlocked || sellBlockedByApproval;
+  const sellBlockedByReadiness = !actionReady;
+  const sellDisabled = busy || !isUnlocked || sellBlockedByApproval || sellBlockedByReadiness;
   const sellDisabledTitle = sellBlockedByApproval
     ? (locale === 'en' ? 'Blox sell is disabled until approval is mined.' : 'Blox 通道授权中，需等待授权生效后才能卖出')
+    : sellBlockedByReadiness
+      ? actionDisabledTitle
     : undefined;
 
   return (
@@ -203,7 +207,7 @@ export function SellSection({
           )}
         </div>
         <div className={`flex items-center gap-1 text-zinc-300 ${isAltfunLayout ? 'text-[16px]' : 'text-[14px]'}`}>
-          <span>{Number(formattedTokenBalance).toLocaleString()}</span>
+          <span>{formattedTokenBalance}</span>
           <span className={`text-amber-500 ${isAltfunLayout ? 'text-[13px]' : 'text-[12px]'}`}>{tokenSymbol || t('contentUi.common.token', locale)}</span>
         </div>
       </div>

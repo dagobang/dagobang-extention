@@ -70,7 +70,8 @@ export type SolanaTradePlan = {
 export type SolanaBuiltTransaction = {
   source: SolanaTradeSource;
   transaction: VersionedTransaction;
-  tokenMinOutWei: string;
+  protectionMinOutWei: string;
+  quotedOutWei?: string | null;
   plannerReason?: string;
   blockhash?: string;
   lastValidBlockHeight?: number;
@@ -80,7 +81,8 @@ export type SolanaBuiltTransaction = {
 export type SolanaSubmittedTrade = {
   source: SolanaTradeSource;
   txHash: string;
-  tokenMinOutWei: string;
+  protectionMinOutWei: string;
+  quotedOutWei?: string | null;
   broadcastVia: string;
   broadcastUrl?: string;
   confirmUrl?: string;

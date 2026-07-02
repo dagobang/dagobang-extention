@@ -446,9 +446,6 @@ export function LimitTradePanel({
           if (!v || typeof v.priceUsd !== 'number' || typeof v.ts !== 'number') continue;
           const old = prev[k];
           if (!old || old.ts < v.ts || old.priceUsd !== v.priceUsd) {
-            // #region debug-point A:ui-scan-status-price
-            fetch('http://127.0.0.1:7779/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-limit-price-flicker', runId: 'pre-fix', hypothesisId: 'A', location: 'LimitTradePanel.tsx:scanStatusMerge', msg: '[DEBUG] limit panel merged scanStatus price', data: { chainId, tokenKey: k, incomingPriceUsd: v.priceUsd, incomingTs: v.ts, previousPriceUsd: old?.priceUsd ?? null, previousTs: old?.ts ?? null, openOrders: (status as any)?.openOrders ?? null, lastScanAt: (status as any)?.lastScanAt ?? null }, ts: Date.now() }) }).catch(() => { });
-            // #endregion
             next[k] = { priceUsd: v.priceUsd, ts: v.ts };
             changed = true;
           }

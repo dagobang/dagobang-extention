@@ -49,13 +49,20 @@ import {
   computePumpfunBuyAmountOut,
   computePumpfunQuoteLimit,
 } from './quote';
+import {
+  getFreshWarmPromise,
+  refreshWarmPromise,
+  rememberWarmPromise,
+  SOLANA_WARM_CACHE_TTL_MS,
+  type WarmCacheEntry,
+} from '../../prewarm';
 
-const BONDING_STATE_CACHE_TTL_MS = 3_000;
-const TURBO_BONDING_STATE_CACHE_TTL_MS = 10_000;
+const BONDING_CONTEXT_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
+const BONDING_STATE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.dynamicQuote;
 // Creator vault and ATA existence change far less often than curve reserves, so keep them warm longer.
-const CREATOR_VAULT_CACHE_TTL_MS = 60_000;
-const ATA_EXISTS_CACHE_TTL_MS = 60_000;
-const BLOCKHASH_CACHE_TTL_MS = 3_000;
+const CREATOR_VAULT_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
+const ATA_EXISTS_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
+const BLOCKHASH_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.blockhash;
 const PUMPFUN_COMPUTE_UNIT_LIMIT = 250_000;
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 const TURBO_PRIORITY_FEE_SOL_BY_PRESET: Record<string, string> = {
@@ -65,23 +72,27 @@ const TURBO_PRIORITY_FEE_SOL_BY_PRESET: Record<string, string> = {
   turbo: '0.00015',
 };
 
-type TimedPromiseCacheEntry<T> = {
-  promise: Promise<T>;
-  expiresAt: number;
-};
-
 type CachedBlockhashValue = {
   blockhash: string;
   lastValidBlockHeight: number;
   fetchedAt: number;
 };
 
-const bondingStateCache = new Map<string, TimedPromiseCacheEntry<{ state: PumpfunBondingCurveState; bondingCurve: PublicKey }>>();
-const bondingStateTurboCache = new Map<string, TimedPromiseCacheEntry<{ state: PumpfunBondingCurveState; bondingCurve: PublicKey }>>();
-const creatorVaultCache = new Map<string, TimedPromiseCacheEntry<PublicKey>>();
-const sharingConfigCreatorVaultCache = new Map<string, TimedPromiseCacheEntry<PublicKey | null>>();
-const ataExistsCache = new Map<string, TimedPromiseCacheEntry<boolean>>();
-const latestBlockhashCache = new Map<string, TimedPromiseCacheEntry<CachedBlockhashValue>>();
+type PumpfunBondingCurveContext = {
+  complete: boolean;
+  creator: PublicKey;
+  isMayhemMode: boolean;
+  isCashbackCoin: boolean;
+  quoteMint: PublicKey;
+  bondingCurve: PublicKey;
+};
+
+const bondingContextCache = new Map<string, WarmCacheEntry<PumpfunBondingCurveContext>>();
+const bondingStateCache = new Map<string, WarmCacheEntry<{ state: PumpfunBondingCurveState; bondingCurve: PublicKey }>>();
+const creatorVaultCache = new Map<string, WarmCacheEntry<PublicKey>>();
+const sharingConfigCreatorVaultCache = new Map<string, WarmCacheEntry<PublicKey | null>>();
+const ataExistsCache = new Map<string, WarmCacheEntry<boolean>>();
+const latestBlockhashCache = new Map<string, WarmCacheEntry<CachedBlockhashValue>>();
 let turboMemoNonce = 0;
 
 function pickRandomAddress(addresses: readonly PublicKey[]): PublicKey {
@@ -92,23 +103,6 @@ const hasBytePrefix = (data: Uint8Array, prefix: Uint8Array) => (
   data.length >= prefix.length && prefix.every((value, index) => data[index] === value)
 );
 
-function getOrCreateTimedPromise<T>(
-  cache: Map<string, TimedPromiseCacheEntry<T>>,
-  key: string,
-  ttlMs: number,
-  loader: () => Promise<T>,
-): Promise<T> {
-  const now = Date.now();
-  const cached = cache.get(key);
-  if (cached && cached.expiresAt > now) return cached.promise;
-  const promise = loader().catch((error) => {
-    cache.delete(key);
-    throw error;
-  });
-  cache.set(key, { promise, expiresAt: now + ttlMs });
-  return promise;
-}
-
 function resolvePlatform(input: SolanaTradeRequest): string {
   return normalizeSolanaPlatform(input.tokenInfo?.launchpad_platform || input.tokenInfo?.launchpad);
 }
@@ -117,12 +111,31 @@ function resolveExecutionMode(input: SolanaTradeRequest): 'default' | 'turbo' {
   return (input.rawInput as any)?.executionModeOverride === 'turbo' ? 'turbo' : 'default';
 }
 
-function getTokenInfoWarmFingerprint(input: SolanaTradeRequest): string {
-  return [
-    String(input.tokenInfo?.launchpad_platform || input.tokenInfo?.launchpad || '').toLowerCase(),
-    String(input.tokenInfo?.launchpad_status ?? ''),
-    String(input.tokenInfo?.quote_token_address || '').toLowerCase(),
-  ].join('|');
+function toBondingCurveContext(
+  state: PumpfunBondingCurveState,
+  bondingCurve: PublicKey,
+): PumpfunBondingCurveContext {
+  return {
+    complete: state.complete,
+    creator: state.creator,
+    isMayhemMode: state.isMayhemMode,
+    isCashbackCoin: state.isCashbackCoin,
+    quoteMint: state.quoteMint,
+    bondingCurve,
+  };
+}
+
+function cacheBondingCurveContext(mint: string, context: PumpfunBondingCurveContext): void {
+  bondingContextCache.set(mint, {
+    promise: Promise.resolve(context),
+    expiresAt: Date.now() + BONDING_CONTEXT_CACHE_TTL_MS,
+  });
+}
+
+function isPumpfunRouteComplete(input: SolanaTradeRequest, fallback: boolean): boolean {
+  const launchpadStatus = input.tokenInfo?.launchpad_status;
+  if (typeof launchpadStatus === 'number') return launchpadStatus === 1;
+  return fallback;
 }
 
 function createTurboMemoInstruction(input: SolanaTradeRequest): TransactionInstruction | null {
@@ -160,55 +173,10 @@ function buildPriorityFeeInstructions(input: SolanaTradeRequest): TransactionIns
     : fallback;
   const lamports = parseSolToLamports(effectivePriorityFeeNative);
   if (!lamports || lamports <= 0n) {
-    // #region debug-point D:pumpfun-priority-fee-none
-    fetch('http://127.0.0.1:7777/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'solana-trade-latency',
-        runId: 'pre-fix',
-        hypothesisId: 'D',
-        location: 'pumpfun/adapter.ts:buildPriorityFeeInstructions:none',
-        msg: '[DEBUG] pumpfun priority fee skipped',
-        data: {
-          side: input.side,
-          executionMode: resolveExecutionMode(input),
-          gasPreset,
-          configuredPriorityFeeNative: configured || null,
-          fallbackPriorityFeeNative: fallback || null,
-          effectivePriorityFeeNative: effectivePriorityFeeNative || null,
-        },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
-    // #endregion
     return [];
   }
   let microLamports = (lamports * 1_000_000n) / BigInt(PUMPFUN_COMPUTE_UNIT_LIMIT);
   if (microLamports <= 0n) microLamports = 1n;
-  // #region debug-point D:pumpfun-priority-fee-applied
-  fetch('http://127.0.0.1:7777/event', {
-    method: 'POST',
-    body: JSON.stringify({
-      sessionId: 'solana-trade-latency',
-      runId: 'pre-fix',
-      hypothesisId: 'D',
-      location: 'pumpfun/adapter.ts:buildPriorityFeeInstructions:applied',
-      msg: '[DEBUG] pumpfun priority fee applied',
-      data: {
-        side: input.side,
-        executionMode: resolveExecutionMode(input),
-        gasPreset,
-        configuredPriorityFeeNative: configured || null,
-        fallbackPriorityFeeNative: fallback || null,
-          effectivePriorityFeeNative: effectivePriorityFeeNative || null,
-        lamports: lamports.toString(),
-        computeUnitLimit: PUMPFUN_COMPUTE_UNIT_LIMIT,
-        microLamports: microLamports.toString(),
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => { });
-  // #endregion
   return [
     ComputeBudgetProgram.setComputeUnitLimit({ units: PUMPFUN_COMPUTE_UNIT_LIMIT }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports }),
@@ -218,28 +186,62 @@ function buildPriorityFeeInstructions(input: SolanaTradeRequest): TransactionIns
 async function loadBondingCurveState(
   input: SolanaTradeRequest,
   baseMint: PublicKey,
+  opts?: { forceRefresh?: boolean },
 ): Promise<{ state: PumpfunBondingCurveState; bondingCurve: PublicKey }> {
   const mint = baseMint.toBase58();
-  const isTurbo = resolveExecutionMode(input) === 'turbo';
-  const tokenInfoFingerprint = getTokenInfoWarmFingerprint(input);
-  const cacheKey = isTurbo
-    ? `${mint}:${tokenInfoFingerprint || 'no-token-info'}`
-    : mint;
-  return await getOrCreateTimedPromise(
-    isTurbo ? bondingStateTurboCache : bondingStateCache,
-    cacheKey,
-    isTurbo ? TURBO_BONDING_STATE_CACHE_TTL_MS : BONDING_STATE_CACHE_TTL_MS,
-    async () => {
-      const bondingCurve = derivePumpfunBondingCurvePda(baseMint);
-      const connection = await input.runtime.getConnection();
-      const info = await connection.getAccountInfo(bondingCurve, 'confirmed');
-      if (!info?.data) throw new Error('Pumpfun bonding curve account not found');
-      return {
-        state: parsePumpfunBondingCurveState(info.data),
-        bondingCurve,
-      };
-    },
-  );
+  const loader = async () => {
+    const bondingCurve = derivePumpfunBondingCurvePda(baseMint);
+    const connection = await input.runtime.getConnection();
+    const info = await connection.getAccountInfo(bondingCurve, 'confirmed');
+    if (!info?.data) throw new Error('Pumpfun bonding curve account not found');
+    const state = parsePumpfunBondingCurveState(info.data);
+    cacheBondingCurveContext(mint, toBondingCurveContext(state, bondingCurve));
+    return {
+      state,
+      bondingCurve,
+    };
+  };
+  return await (opts?.forceRefresh
+    ? refreshWarmPromise(bondingStateCache, mint, BONDING_STATE_CACHE_TTL_MS, loader)
+    : rememberWarmPromise(bondingStateCache, mint, BONDING_STATE_CACHE_TTL_MS, loader));
+}
+
+async function loadBondingCurveContext(
+  input: SolanaTradeRequest,
+  baseMint: PublicKey,
+  opts?: { forceRefresh?: boolean },
+): Promise<PumpfunBondingCurveContext> {
+  const mint = baseMint.toBase58();
+  const loader = async () => {
+    const bondingCurve = derivePumpfunBondingCurvePda(baseMint);
+    const connection = await input.runtime.getConnection();
+    const info = await connection.getAccountInfo(bondingCurve, 'confirmed');
+    if (!info?.data) throw new Error('Pumpfun bonding curve account not found');
+    return toBondingCurveContext(parsePumpfunBondingCurveState(info.data), bondingCurve);
+  };
+  return await (opts?.forceRefresh
+    ? refreshWarmPromise(bondingContextCache, mint, BONDING_CONTEXT_CACHE_TTL_MS, loader)
+    : rememberWarmPromise(bondingContextCache, mint, BONDING_CONTEXT_CACHE_TTL_MS, loader));
+}
+
+async function getBondingCurveStateForBuild(
+  input: SolanaTradeRequest,
+  baseMint: PublicKey,
+): Promise<{ state: PumpfunBondingCurveState; bondingCurve: PublicKey }> {
+  return await loadBondingCurveState(input, baseMint);
+}
+
+async function getBondingCurveContextForBuild(
+  input: SolanaTradeRequest,
+  baseMint: PublicKey,
+): Promise<PumpfunBondingCurveContext> {
+  if (resolveExecutionMode(input) !== 'turbo') {
+    const { state, bondingCurve } = await loadBondingCurveState(input, baseMint);
+    return toBondingCurveContext(state, bondingCurve);
+  }
+  const cached = getFreshWarmPromise<PumpfunBondingCurveContext>(bondingContextCache, baseMint.toBase58());
+  if (!cached) throw new Error('Pumpfun bonding curve context not ready');
+  return await cached;
 }
 
 async function resolvePumpfunCreatorVault(
@@ -249,7 +251,7 @@ async function resolvePumpfunCreatorVault(
   opts?: { sharingConfigCreatorVaultPromise?: Promise<PublicKey | null> },
 ): Promise<PublicKey> {
   const key = `${baseMint.toBase58()}:${creator.toBase58()}`;
-  return await getOrCreateTimedPromise(
+  return await rememberWarmPromise(
     creatorVaultCache,
     key,
     CREATOR_VAULT_CACHE_TTL_MS,
@@ -260,12 +262,25 @@ async function resolvePumpfunCreatorVault(
   );
 }
 
+async function getCreatorVaultForBuild(
+  baseMint: PublicKey,
+  creator: PublicKey,
+): Promise<PublicKey> {
+  const creatorKey = `${baseMint.toBase58()}:${creator.toBase58()}`;
+  const cachedCreatorVault = getFreshWarmPromise<PublicKey>(creatorVaultCache, creatorKey);
+  if (cachedCreatorVault) return await cachedCreatorVault;
+  const cachedSharingConfig = getFreshWarmPromise<PublicKey | null>(sharingConfigCreatorVaultCache, baseMint.toBase58());
+  if (!cachedSharingConfig) throw new Error('Pumpfun creator vault cache not ready');
+  const sharingConfigCreatorVault = await cachedSharingConfig;
+  return sharingConfigCreatorVault ?? derivePumpfunCreatorVaultPda(creator);
+}
+
 async function loadSharingConfigCreatorVault(
   input: SolanaTradeRequest,
   baseMint: PublicKey,
 ): Promise<PublicKey | null> {
   const key = baseMint.toBase58();
-  return await getOrCreateTimedPromise(
+  return await rememberWarmPromise(
     sharingConfigCreatorVaultCache,
     key,
     CREATOR_VAULT_CACHE_TTL_MS,
@@ -292,7 +307,7 @@ async function loadAccountExists(
   account: PublicKey,
 ): Promise<boolean> {
   const key = account.toBase58();
-  return await getOrCreateTimedPromise(
+  return await rememberWarmPromise(
     ataExistsCache,
     key,
     ATA_EXISTS_CACHE_TTL_MS,
@@ -306,94 +321,21 @@ async function loadAccountExists(
 
 async function loadLatestBlockhash(
   input: SolanaTradeRequest,
-  opts?: { allowCached?: boolean },
+  opts?: { allowCached?: boolean; forceRefresh?: boolean },
 ): Promise<CachedBlockhashValue> {
-  const requestId = String((input.rawInput as any)?.__debugSubmitGapId || '').trim() || null;
-  const blockhashStartedAt = Date.now();
-  const allowCached = opts?.allowCached ?? (resolveExecutionMode(input) === 'turbo');
-  // #region debug-point G:submit-gap-blockhash-start
-  fetch('http://127.0.0.1:7779/event', {
-    method: 'POST',
-    body: JSON.stringify({
-      sessionId: 'solana-submit-gap',
-      runId: 'pre-fix',
-      hypothesisId: 'D',
-      location: 'pumpfun/adapter.ts:loadLatestBlockhash:start',
-      msg: '[DEBUG] submit gap load latest blockhash start',
-      data: {
-        requestId,
-        side: input.side,
-        ownerAddress: input.ownerAddress,
-        allowCached,
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => { });
-  // #endregion
-  if (!allowCached) {
+  void opts;
+  const loader = async () => {
     const connection = await input.runtime.getConnection();
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-    const result = { blockhash, lastValidBlockHeight, fetchedAt: Date.now() };
-    // #region debug-point G:submit-gap-blockhash-done
-    fetch('http://127.0.0.1:7779/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'solana-submit-gap',
-        runId: 'pre-fix',
-        hypothesisId: 'D',
-        location: 'pumpfun/adapter.ts:loadLatestBlockhash:done',
-        msg: '[DEBUG] submit gap load latest blockhash done',
-        data: {
-          requestId,
-          side: input.side,
-          ownerAddress: input.ownerAddress,
-          allowCached: false,
-          blockhash,
-          lastValidBlockHeight,
-          elapsedMs: Date.now() - blockhashStartedAt,
-        },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
-    // #endregion
-    return result;
-  }
-  const result = await getOrCreateTimedPromise(
-    latestBlockhashCache,
-    'confirmed',
-    BLOCKHASH_CACHE_TTL_MS,
-    async () => {
-      const connection = await input.runtime.getConnection();
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-      return {
-        blockhash,
-        lastValidBlockHeight,
-        fetchedAt: Date.now(),
-      };
-    },
-  );
-  // #region debug-point G:submit-gap-blockhash-done
-  fetch('http://127.0.0.1:7779/event', {
-    method: 'POST',
-    body: JSON.stringify({
-      sessionId: 'solana-submit-gap',
-      runId: 'pre-fix',
-      hypothesisId: 'D',
-      location: 'pumpfun/adapter.ts:loadLatestBlockhash:done',
-      msg: '[DEBUG] submit gap load latest blockhash done',
-      data: {
-        requestId,
-        side: input.side,
-        ownerAddress: input.ownerAddress,
-        allowCached: true,
-        blockhash: result.blockhash,
-        lastValidBlockHeight: result.lastValidBlockHeight,
-        elapsedMs: Date.now() - blockhashStartedAt,
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => { });
-  // #endregion
+    return {
+      blockhash,
+      lastValidBlockHeight,
+      fetchedAt: Date.now(),
+    };
+  };
+  const result = await (opts?.forceRefresh
+    ? refreshWarmPromise(latestBlockhashCache, 'confirmed', BLOCKHASH_CACHE_TTL_MS, loader)
+    : rememberWarmPromise(latestBlockhashCache, 'confirmed', BLOCKHASH_CACHE_TTL_MS, loader));
   return result;
 }
 
@@ -408,104 +350,90 @@ async function buildLegacyInstruction(input: SolanaTradeRequest): Promise<{
   preInstructions: TransactionInstruction[];
   recentBlockhash: string;
   lastValidBlockHeight: number;
-  tokenMinOutWei: string;
+  protectionMinOutWei: string;
+  quotedOutWei?: string | null;
 }> {
-  const legacyStartedAt = Date.now();
+  const executionMode = resolveExecutionMode(input);
   const blockhashPromise = loadLatestBlockhash(input);
-  // #region debug-point D:pumpfun-legacy-start
-  fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:buildLegacyInstruction:start', msg: '[DEBUG] pumpfun legacy build start', data: { side: input.side, ownerAddress: input.ownerAddress, inputMint: input.inputMint, outputMint: input.outputMint, amount: input.amount }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
   const baseMint = new PublicKey(input.side === 'buy' ? input.outputMint : input.inputMint);
   const user = new PublicKey(input.ownerAddress);
-  const sharingConfigCreatorVaultPromise = loadSharingConfigCreatorVault(input, baseMint);
-  const stateLoadStartedAt = Date.now();
-  const [{ state, bondingCurve }, baseTokenProgram] = await Promise.all([
-    loadBondingCurveState(input, baseMint),
-    getMintProgramId(input.runtime, baseMint),
+  const [curveContext, baseTokenProgram] = await Promise.all([
+    getBondingCurveContextForBuild(input, baseMint),
+    getMintProgramId(input.runtime, baseMint, { cacheOnly: true }),
   ]);
-  // #region debug-point D:pumpfun-legacy-state-done
-  fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:buildLegacyInstruction:stateDone', msg: '[DEBUG] pumpfun legacy state loaded', data: { side: input.side, baseMint: baseMint.toBase58(), elapsedMs: Date.now() - stateLoadStartedAt, complete: state.complete }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
-  if (state.complete) throw new Error('Pumpfun bonding curve is complete; use PumpSwap/AMM route instead');
+  if (isPumpfunRouteComplete(input, curveContext.complete)) {
+    throw new Error('Pumpfun bonding curve is complete; use PumpSwap/AMM route instead');
+  }
 
   const associatedBaseBondingCurve = findAta({
     mint: baseMint,
-    owner: bondingCurve,
+    owner: curveContext.bondingCurve,
     allowOwnerOffCurve: true,
     tokenProgramId: baseTokenProgram,
   });
   const associatedBaseUser = findAta({ mint: baseMint, owner: user, tokenProgramId: baseTokenProgram });
-  const creatorVaultPromise = resolvePumpfunCreatorVault(input, baseMint, state.creator, {
-    sharingConfigCreatorVaultPromise,
-  });
-  const userBaseAtaExistsPromise = input.side === 'buy'
-    ? loadAccountExists(input, associatedBaseUser)
-    : Promise.resolve(true);
-  const creatorVault = await creatorVaultPromise;
-  // #region debug-point D:pumpfun-legacy-creator-vault-done
-  fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:buildLegacyInstruction:creatorVaultDone', msg: '[DEBUG] pumpfun legacy creator vault resolved', data: { side: input.side, baseMint: baseMint.toBase58(), creatorVault: creatorVault.toBase58(), elapsedMs: Date.now() - legacyStartedAt }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
+  const creatorVault = await getCreatorVaultForBuild(baseMint, curveContext.creator);
   const globalVolumeAccumulator = derivePumpfunGlobalVolumeAccumulatorPda();
   const userVolumeAccumulator = derivePumpfunUserVolumeAccumulatorPda(user);
   const feeConfig = derivePumpfunFeeConfigPda();
   const eventAuthority = derivePumpfunEventAuthorityPda();
   const bondingCurveV2 = derivePumpfunBondingCurveV2Pda(baseMint);
   const protocolExtraFeeRecipient = PROTOCOL_EXTRA_FEE_RECIPIENTS[0];
-  const feeRecipient = state.isMayhemMode
+  const feeRecipient = curveContext.isMayhemMode
     ? pickRandomAddress(MAYHEM_FEE_RECIPIENTS)
     : NORMAL_FEE_RECIPIENT;
   const amountIn = BigInt(input.amount);
-  const hasCreatorFee = !state.creator.equals(PublicKey.default);
-  const tokenAmountOut = computePumpfunBuyAmountOut({
-    solAmountIn: amountIn,
-    virtualSolReserves: state.virtualSolReserves,
-    virtualTokenReserves: state.virtualTokenReserves,
-    realTokenReserves: state.realTokenReserves,
-    hasCreatorFee,
-  });
-  if (input.side === 'buy' && tokenAmountOut > state.realTokenReserves) {
-    throw new Error('Pumpfun trade exceeds remaining curve liquidity');
+  let protectionMinOutWei = '1';
+  let quotedOutWei: string | null = null;
+  let minTokenAmountOut = 1n;
+  let minSolAmountOut = 1n;
+  if (executionMode !== 'turbo') {
+    const { state } = await getBondingCurveStateForBuild(input, baseMint);
+    const hasCreatorFee = !curveContext.creator.equals(PublicKey.default);
+    const tokenAmountOut = computePumpfunBuyAmountOut({
+      solAmountIn: amountIn,
+      virtualSolReserves: state.virtualSolReserves,
+      virtualTokenReserves: state.virtualTokenReserves,
+      realTokenReserves: state.realTokenReserves,
+      hasCreatorFee,
+    });
+    if (input.side === 'buy' && tokenAmountOut > state.realTokenReserves) {
+      throw new Error('Pumpfun trade exceeds remaining curve liquidity');
+    }
+    minTokenAmountOut = applyBps(tokenAmountOut, BigInt(input.slippageBps), 'subtract');
+    minSolAmountOut = computePumpfunQuoteLimit({
+      side: input.side,
+      inputAmount: amountIn,
+      virtualTokenReserves: state.virtualTokenReserves,
+      virtualSolReserves: state.virtualSolReserves,
+      realTokenReserves: state.realTokenReserves,
+      hasCreatorFee,
+      slippageBps: input.slippageBps,
+    });
+    protectionMinOutWei = input.side === 'buy' ? minTokenAmountOut.toString() : minSolAmountOut.toString();
+    quotedOutWei = input.side === 'buy' ? tokenAmountOut.toString() : null;
   }
-  const minTokenAmountOut = applyBps(tokenAmountOut, BigInt(input.slippageBps), 'subtract');
-  const minSolAmountOut = computePumpfunQuoteLimit({
-    side: input.side,
-    inputAmount: amountIn,
-    virtualTokenReserves: state.virtualTokenReserves,
-    virtualSolReserves: state.virtualSolReserves,
-    realTokenReserves: state.realTokenReserves,
-    hasCreatorFee,
-    slippageBps: input.slippageBps,
-  });
 
   const preInstructions: TransactionInstruction[] = [];
   preInstructions.push(...buildPriorityFeeInstructions(input));
   const memoInstruction = createTurboMemoInstruction(input);
   if (memoInstruction) preInstructions.push(memoInstruction);
-  if (input.side === 'buy') {
-    const ataCheckStartedAt = Date.now();
-    const userBaseAtaExists = await userBaseAtaExistsPromise;
-    // #region debug-point D:pumpfun-legacy-user-ata-done
-    fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:buildLegacyInstruction:userAtaDone', msg: '[DEBUG] pumpfun legacy user ata checked', data: { side: input.side, associatedBaseUser: associatedBaseUser.toBase58(), exists: userBaseAtaExists, elapsedMs: Date.now() - ataCheckStartedAt }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
-    if (!userBaseAtaExists) {
-      preInstructions.push(
-        createAtaIdempotentInstruction({
-          payer: user,
-          owner: user,
-          mint: baseMint,
-          associatedToken: associatedBaseUser,
-          tokenProgramId: baseTokenProgram,
-        }),
-      );
-    }
-  }
+  preInstructions.push(
+    createAtaIdempotentInstruction({
+      payer: user,
+      owner: user,
+      mint: baseMint,
+      associatedToken: associatedBaseUser,
+      tokenProgramId: baseTokenProgram,
+    }),
+  );
 
   const keys = input.side === 'buy'
     ? [
       { pubkey: PUMP_GLOBAL_ACCOUNT, isSigner: false, isWritable: false },
       { pubkey: feeRecipient, isSigner: false, isWritable: true },
       { pubkey: baseMint, isSigner: false, isWritable: false },
-      { pubkey: bondingCurve, isSigner: false, isWritable: true },
+      { pubkey: curveContext.bondingCurve, isSigner: false, isWritable: true },
       { pubkey: associatedBaseBondingCurve, isSigner: false, isWritable: true },
       { pubkey: associatedBaseUser, isSigner: false, isWritable: true },
       { pubkey: user, isSigner: true, isWritable: true },
@@ -525,7 +453,7 @@ async function buildLegacyInstruction(input: SolanaTradeRequest): Promise<{
       { pubkey: PUMP_GLOBAL_ACCOUNT, isSigner: false, isWritable: false },
       { pubkey: feeRecipient, isSigner: false, isWritable: true },
       { pubkey: baseMint, isSigner: false, isWritable: false },
-      { pubkey: bondingCurve, isSigner: false, isWritable: true },
+      { pubkey: curveContext.bondingCurve, isSigner: false, isWritable: true },
       { pubkey: associatedBaseBondingCurve, isSigner: false, isWritable: true },
       { pubkey: associatedBaseUser, isSigner: false, isWritable: true },
       { pubkey: user, isSigner: true, isWritable: true },
@@ -536,12 +464,13 @@ async function buildLegacyInstruction(input: SolanaTradeRequest): Promise<{
       { pubkey: PUMP_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: feeConfig, isSigner: false, isWritable: false },
       { pubkey: PUMP_FEES_PROGRAM_ID, isSigner: false, isWritable: false },
-      ...(state.isCashbackCoin
+      ...(curveContext.isCashbackCoin
         ? [{ pubkey: userVolumeAccumulator, isSigner: false, isWritable: true }]
         : []),
       { pubkey: bondingCurveV2, isSigner: false, isWritable: false },
       { pubkey: protocolExtraFeeRecipient, isSigner: false, isWritable: true },
     ];
+
 
   const instruction = new TransactionInstruction({
     programId: PUMP_PROGRAM_ID,
@@ -550,17 +479,14 @@ async function buildLegacyInstruction(input: SolanaTradeRequest): Promise<{
       ? buildPumpfunLegacyBuyExactInInstructionData(amountIn, minTokenAmountOut)
       : buildPumpfunLegacySellInstructionData(amountIn, minSolAmountOut),
   });
-  const blockhashStartedAt = Date.now();
   const { blockhash, lastValidBlockHeight } = await blockhashPromise;
-  // #region debug-point D:pumpfun-legacy-blockhash-done
-  fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:buildLegacyInstruction:blockhashDone', msg: '[DEBUG] pumpfun legacy latest blockhash done', data: { side: input.side, blockhash, lastValidBlockHeight, elapsedMs: Date.now() - blockhashStartedAt, totalElapsedMs: Date.now() - legacyStartedAt }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
   return {
     instruction,
     preInstructions,
     recentBlockhash: blockhash,
     lastValidBlockHeight,
-    tokenMinOutWei: input.side === 'buy' ? tokenAmountOut.toString() : minSolAmountOut.toString(),
+    protectionMinOutWei,
+    quotedOutWei,
   };
 }
 
@@ -569,53 +495,39 @@ async function buildUnifiedInstruction(input: SolanaTradeRequest): Promise<{
   preInstructions: TransactionInstruction[];
   recentBlockhash: string;
   lastValidBlockHeight: number;
-  tokenMinOutWei: string;
+  protectionMinOutWei: string;
+  quotedOutWei?: string | null;
 }> {
-  const unifiedStartedAt = Date.now();
+  const executionMode = resolveExecutionMode(input);
   const blockhashPromise = loadLatestBlockhash(input);
-  // #region debug-point D:pumpfun-unified-start
-  fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:buildUnifiedInstruction:start', msg: '[DEBUG] pumpfun unified build start', data: { side: input.side, ownerAddress: input.ownerAddress, inputMint: input.inputMint, outputMint: input.outputMint, amount: input.amount }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
   const baseMint = new PublicKey(input.side === 'buy' ? input.outputMint : input.inputMint);
   const user = new PublicKey(input.ownerAddress);
-  const sharingConfigCreatorVaultPromise = loadSharingConfigCreatorVault(input, baseMint);
-  const stateLoadStartedAt = Date.now();
-  const [{ state, bondingCurve }, baseTokenProgram] = await Promise.all([
-    loadBondingCurveState(input, baseMint),
-    getMintProgramId(input.runtime, baseMint),
+  const [curveContext, baseTokenProgram] = await Promise.all([
+    getBondingCurveContextForBuild(input, baseMint),
+    getMintProgramId(input.runtime, baseMint, { cacheOnly: true }),
   ]);
-  // #region debug-point D:pumpfun-unified-state-done
-  fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:buildUnifiedInstruction:stateDone', msg: '[DEBUG] pumpfun unified state loaded', data: { side: input.side, baseMint: baseMint.toBase58(), elapsedMs: Date.now() - stateLoadStartedAt, complete: state.complete }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
-  const quoteMint = state.quoteMint.equals(PublicKey.default)
+  const quoteMint = curveContext.quoteMint.equals(PublicKey.default)
     ? new PublicKey(SOLANA_NATIVE_MINT)
-    : state.quoteMint;
-  if (state.complete) throw new Error('Pumpfun bonding curve is complete; use PumpSwap/AMM route instead');
+    : curveContext.quoteMint;
+  if (isPumpfunRouteComplete(input, curveContext.complete)) {
+    throw new Error('Pumpfun bonding curve is complete; use PumpSwap/AMM route instead');
+  }
 
   const associatedBaseBondingCurve = findAta({
     mint: baseMint,
-    owner: bondingCurve,
+    owner: curveContext.bondingCurve,
     allowOwnerOffCurve: true,
     tokenProgramId: baseTokenProgram,
   });
   const associatedQuoteBondingCurve = findAta({
     mint: quoteMint,
-    owner: bondingCurve,
+    owner: curveContext.bondingCurve,
     allowOwnerOffCurve: true,
     tokenProgramId: TOKEN_PROGRAM_ID,
   });
   const associatedBaseUser = findAta({ mint: baseMint, owner: user, tokenProgramId: baseTokenProgram });
   const associatedQuoteUser = findAta({ mint: quoteMint, owner: user, tokenProgramId: TOKEN_PROGRAM_ID });
-  const creatorVaultPromise = resolvePumpfunCreatorVault(input, baseMint, state.creator, {
-    sharingConfigCreatorVaultPromise,
-  });
-  const userBaseAtaExistsPromise = input.side === 'buy'
-    ? loadAccountExists(input, associatedBaseUser)
-    : Promise.resolve(true);
-  const creatorVault = await creatorVaultPromise;
-  // #region debug-point D:pumpfun-unified-creator-vault-done
-  fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:buildUnifiedInstruction:creatorVaultDone', msg: '[DEBUG] pumpfun unified creator vault resolved', data: { side: input.side, baseMint: baseMint.toBase58(), creatorVault: creatorVault.toBase58(), elapsedMs: Date.now() - unifiedStartedAt }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
+  const creatorVault = await getCreatorVaultForBuild(baseMint, curveContext.creator);
   const associatedCreatorVault = findAta({
     mint: quoteMint,
     owner: creatorVault,
@@ -633,7 +545,7 @@ async function buildUnifiedInstruction(input: SolanaTradeRequest): Promise<{
   });
   const feeConfig = derivePumpfunFeeConfigPda();
   const eventAuthority = derivePumpfunEventAuthorityPda();
-  const feeRecipient = state.isMayhemMode
+  const feeRecipient = curveContext.isMayhemMode
     ? pickRandomAddress(MAYHEM_FEE_RECIPIENTS)
     : NORMAL_FEE_RECIPIENT;
   const associatedQuoteFeeRecipient = findAta({
@@ -650,53 +562,63 @@ async function buildUnifiedInstruction(input: SolanaTradeRequest): Promise<{
   });
 
   const amountIn = BigInt(input.amount);
-  const hasCreatorFee = !state.creator.equals(PublicKey.default);
-  const quotedTokenAmount = input.side === 'buy'
-    ? computePumpfunBuyAmountOut({
-      solAmountIn: amountIn,
-      virtualSolReserves: state.virtualSolReserves,
+  let quotedTokenAmount = input.side === 'buy' ? 0n : amountIn;
+  let minTokenAmountOut = 1n;
+  let quoteLimit = 1n;
+  let protectionMinOutWei = '1';
+  let quotedOutWei: string | null = null;
+  if (executionMode !== 'turbo') {
+    const { state } = await getBondingCurveStateForBuild(input, baseMint);
+    const hasCreatorFee = !curveContext.creator.equals(PublicKey.default);
+    quotedTokenAmount = input.side === 'buy'
+      ? computePumpfunBuyAmountOut({
+        solAmountIn: amountIn,
+        virtualSolReserves: state.virtualSolReserves,
+        virtualTokenReserves: state.virtualTokenReserves,
+        realTokenReserves: state.realTokenReserves,
+        hasCreatorFee,
+      })
+      : amountIn;
+    if (input.side === 'buy' && quotedTokenAmount > state.realTokenReserves) {
+      throw new Error('Pumpfun trade exceeds remaining curve liquidity');
+    }
+    minTokenAmountOut = input.side === 'buy'
+      ? applyBps(quotedTokenAmount, BigInt(input.slippageBps), 'subtract')
+      : 0n;
+    quoteLimit = computePumpfunQuoteLimit({
+      side: input.side,
+      inputAmount: amountIn,
       virtualTokenReserves: state.virtualTokenReserves,
+      virtualSolReserves: state.virtualSolReserves,
       realTokenReserves: state.realTokenReserves,
       hasCreatorFee,
-    })
-    : amountIn;
-  if (input.side === 'buy' && quotedTokenAmount > state.realTokenReserves) {
-    throw new Error('Pumpfun trade exceeds remaining curve liquidity');
+      slippageBps: input.slippageBps,
+    });
+    protectionMinOutWei = input.side === 'buy' ? minTokenAmountOut.toString() : quoteLimit.toString();
+    quotedOutWei = input.side === 'buy' ? quotedTokenAmount.toString() : null;
   }
-  const minTokenAmountOut = input.side === 'buy'
-    ? applyBps(quotedTokenAmount, BigInt(input.slippageBps), 'subtract')
-    : 0n;
-  const quoteLimit = computePumpfunQuoteLimit({
-    side: input.side,
-    inputAmount: amountIn,
-    virtualTokenReserves: state.virtualTokenReserves,
-    virtualSolReserves: state.virtualSolReserves,
-    realTokenReserves: state.realTokenReserves,
-    hasCreatorFee,
-    slippageBps: input.slippageBps,
-  });
 
   const preInstructions: TransactionInstruction[] = [];
   const memoInstruction = createTurboMemoInstruction(input);
   if (memoInstruction) preInstructions.push(memoInstruction);
-  if (input.side === 'buy') {
-    const ataCheckStartedAt = Date.now();
-    const userBaseAtaExists = await userBaseAtaExistsPromise;
-    // #region debug-point D:pumpfun-unified-user-ata-done
-    fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:buildUnifiedInstruction:userAtaDone', msg: '[DEBUG] pumpfun unified user ata checked', data: { side: input.side, associatedBaseUser: associatedBaseUser.toBase58(), exists: userBaseAtaExists, elapsedMs: Date.now() - ataCheckStartedAt }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
-    if (!userBaseAtaExists) {
-      preInstructions.push(
-        createAtaIdempotentInstruction({
-          payer: user,
-          owner: user,
-          mint: baseMint,
-          associatedToken: associatedBaseUser,
-          tokenProgramId: baseTokenProgram,
-        }),
-      );
-    }
-  }
+  preInstructions.push(
+    createAtaIdempotentInstruction({
+      payer: user,
+      owner: user,
+      mint: baseMint,
+      associatedToken: associatedBaseUser,
+      tokenProgramId: baseTokenProgram,
+    }),
+  );
+  preInstructions.push(
+    createAtaIdempotentInstruction({
+      payer: user,
+      owner: user,
+      mint: quoteMint,
+      associatedToken: associatedQuoteUser,
+      tokenProgramId: TOKEN_PROGRAM_ID,
+    }),
+  );
 
   const keys = [
     { pubkey: PUMP_GLOBAL_ACCOUNT, isSigner: false, isWritable: false },
@@ -709,7 +631,7 @@ async function buildUnifiedInstruction(input: SolanaTradeRequest): Promise<{
     { pubkey: associatedQuoteFeeRecipient, isSigner: false, isWritable: true },
     { pubkey: BUYBACK_FEE_RECIPIENT, isSigner: false, isWritable: true },
     { pubkey: associatedQuoteBuybackFeeRecipient, isSigner: false, isWritable: true },
-    { pubkey: bondingCurve, isSigner: false, isWritable: true },
+    { pubkey: curveContext.bondingCurve, isSigner: false, isWritable: true },
     { pubkey: associatedBaseBondingCurve, isSigner: false, isWritable: true },
     { pubkey: associatedQuoteBondingCurve, isSigner: false, isWritable: true },
     { pubkey: user, isSigner: true, isWritable: true },
@@ -737,45 +659,14 @@ async function buildUnifiedInstruction(input: SolanaTradeRequest): Promise<{
       ? buildPumpfunBuyExactQuoteInV2InstructionData(amountIn, minTokenAmountOut)
       : buildPumpfunInstructionData(input.side, quotedTokenAmount, quoteLimit),
   });
-  // #region debug-point P2:pumpfun-build-keys
-  fetch('http://127.0.0.1:7778/event', {
-    method: 'POST',
-    body: JSON.stringify({
-      sessionId: 'pumpfun-legacy-route',
-      runId: 'post-fix',
-      hypothesisId: 'P2',
-      location: 'pumpfun/adapter.ts:buildInstruction',
-      msg: '[DEBUG] pumpfun build instruction keys',
-      data: {
-        side: input.side,
-        ownerAddress: input.ownerAddress,
-        baseMint: baseMint.toBase58(),
-        quoteMint: quoteMint.toBase58(),
-        feeRecipient: feeRecipient.toBase58(),
-        buybackFeeRecipient: BUYBACK_FEE_RECIPIENT.toBase58(),
-        isMayhemMode: state.isMayhemMode,
-        keys: instruction.keys.map((key, index) => ({
-          index,
-          pubkey: key.pubkey.toBase58(),
-          isSigner: key.isSigner,
-          isWritable: key.isWritable,
-        })),
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => { });
-  // #endregion
-  const blockhashStartedAt = Date.now();
   const { blockhash, lastValidBlockHeight } = await blockhashPromise;
-  // #region debug-point D:pumpfun-unified-blockhash-done
-  fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:buildUnifiedInstruction:blockhashDone', msg: '[DEBUG] pumpfun unified latest blockhash done', data: { side: input.side, blockhash, lastValidBlockHeight, elapsedMs: Date.now() - blockhashStartedAt, totalElapsedMs: Date.now() - unifiedStartedAt }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
   return {
     instruction,
     preInstructions,
     recentBlockhash: blockhash,
     lastValidBlockHeight,
-    tokenMinOutWei: input.side === 'buy' ? quotedTokenAmount.toString() : quoteLimit.toString(),
+    protectionMinOutWei,
+    quotedOutWei,
   };
 }
 
@@ -784,28 +675,10 @@ async function buildInstruction(input: SolanaTradeRequest): Promise<{
   preInstructions: TransactionInstruction[];
   recentBlockhash: string;
   lastValidBlockHeight: number;
-  tokenMinOutWei: string;
+  protectionMinOutWei: string;
+  quotedOutWei?: string | null;
 }> {
   const layout = shouldUseLegacyPumpfunLayout(input) ? 'legacy' : 'unified';
-  // #region debug-point H1:pumpfun-layout-select
-  fetch('http://127.0.0.1:7778/event', {
-    method: 'POST',
-    body: JSON.stringify({
-      sessionId: 'pumpfun-legacy-route',
-      runId: 'post-fix',
-      hypothesisId: 'H1',
-      location: 'pumpfun/adapter.ts:buildInstruction',
-      msg: '[DEBUG] pumpfun layout selected',
-      data: {
-        side: input.side,
-        inputMint: input.inputMint,
-        outputMint: input.outputMint,
-        layout,
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => { });
-  // #endregion
   return layout === 'legacy'
     ? buildLegacyInstruction(input)
     : buildUnifiedInstruction(input);
@@ -821,10 +694,6 @@ export async function prewarmPumpfunTrade(input: {
   const tokenAddress = String(input.tokenAddress || '').trim();
   if (!tokenAddress) return;
   const ownerAddress = String(input.ownerAddress || '').trim();
-  const prewarmStartedAt = Date.now();
-  // #region debug-point A:pumpfun-prewarm-start
-  fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'A', location: 'pumpfun/adapter.ts:prewarmPumpfunTrade:start', msg: '[DEBUG] pumpfun prewarm start', data: { tokenAddress, ownerAddress: ownerAddress || null }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
   const request: SolanaTradeRequest = {
     side: 'buy',
     chainId: 501,
@@ -840,20 +709,22 @@ export async function prewarmPumpfunTrade(input: {
   const baseMint = new PublicKey(tokenAddress);
   const user = new PublicKey(request.ownerAddress);
   const baseTokenProgramPromise = getMintProgramId(request.runtime, baseMint);
-  const statePromise = loadBondingCurveState(request, baseMint);
-  const blockhashPromise = loadLatestBlockhash(request, { allowCached: true });
-  const [{ state }, baseTokenProgram] = await Promise.all([statePromise, baseTokenProgramPromise]);
+  const blockhashPromise = loadLatestBlockhash(request, { allowCached: true, forceRefresh: true });
+  const curveContext = input.executionMode === 'turbo'
+    ? await loadBondingCurveContext(request, baseMint)
+    : await (async () => {
+      const { state, bondingCurve } = await loadBondingCurveState(request, baseMint, { forceRefresh: true });
+      return toBondingCurveContext(state, bondingCurve);
+    })();
+  const baseTokenProgram = await baseTokenProgramPromise;
   const tasks: Array<Promise<unknown>> = [
-    resolvePumpfunCreatorVault(request, baseMint, state.creator),
+    resolvePumpfunCreatorVault(request, baseMint, curveContext.creator),
     blockhashPromise,
   ];
   if (ownerAddress) {
     tasks.push(loadAccountExists(request, findAta({ mint: baseMint, owner: user, tokenProgramId: baseTokenProgram })));
   }
   await Promise.all(tasks);
-  // #region debug-point A:pumpfun-prewarm-done
-  fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'A', location: 'pumpfun/adapter.ts:prewarmPumpfunTrade:done', msg: '[DEBUG] pumpfun prewarm done', data: { tokenAddress, ownerAddress: ownerAddress || null, elapsedMs: Date.now() - prewarmStartedAt }, ts: Date.now() }) }).catch(() => { });
-  // #endregion
 }
 
 export const pumpfunTradeAdapter: SolanaTradeAdapter = {
@@ -868,136 +739,40 @@ export const pumpfunTradeAdapter: SolanaTradeAdapter = {
   async supportsTrade(input: SolanaTradeRequest): Promise<boolean> {
     const platform = resolvePlatform(input);
     if (platform !== 'pump' && platform !== 'pumpfun' && platform !== 'pump.fun') {
-      // #region debug-point P2:pumpfun-platform-reject
-      fetch('http://127.0.0.1:7778/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'pumpfun-legacy-route',
-          runId: 'post-fix',
-          hypothesisId: 'P2',
-          location: 'pumpfun/adapter.ts:supportsTrade',
-          msg: '[DEBUG] pumpfun platform rejected',
-          data: { platform, side: input.side, inputMint: input.inputMint, outputMint: input.outputMint },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
-      // #endregion
       return false;
     }
     const isSupportedPair = input.side === 'buy'
       ? isSolanaNativeMint(input.inputMint) && !isSolanaNativeMint(input.outputMint)
       : !isSolanaNativeMint(input.inputMint) && isSolanaNativeMint(input.outputMint);
     if (!isSupportedPair) {
-      // #region debug-point P2:pumpfun-pair-reject
-      fetch('http://127.0.0.1:7778/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'pumpfun-legacy-route',
-          runId: 'post-fix',
-          hypothesisId: 'P2',
-          location: 'pumpfun/adapter.ts:supportsTrade',
-          msg: '[DEBUG] pumpfun pair rejected',
-          data: { platform, side: input.side, inputMint: input.inputMint, outputMint: input.outputMint },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
-      // #endregion
       return false;
     }
-    try {
-      const baseMint = new PublicKey(input.side === 'buy' ? input.outputMint : input.inputMint);
-      const { state } = await loadBondingCurveState(input, baseMint);
-      // #region debug-point P2:pumpfun-curve-state
-      fetch('http://127.0.0.1:7778/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'pumpfun-legacy-route',
-          runId: 'post-fix',
-          hypothesisId: 'P2',
-          location: 'pumpfun/adapter.ts:supportsTrade',
-          msg: '[DEBUG] pumpfun curve state',
-          data: { platform, side: input.side, baseMint: baseMint.toBase58(), complete: state.complete },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
-      // #endregion
-      return !state.complete;
-    } catch (error: any) {
-      // #region debug-point P2:pumpfun-load-failed
-      fetch('http://127.0.0.1:7778/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'pumpfun-legacy-route',
-          runId: 'post-fix',
-          hypothesisId: 'P2',
-          location: 'pumpfun/adapter.ts:supportsTrade',
-          msg: '[DEBUG] pumpfun load curve failed',
-          data: { platform, side: input.side, inputMint: input.inputMint, outputMint: input.outputMint, error: String(error?.message || error || '') },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
-      // #endregion
-      return false;
-    }
+    return true;
   },
 
   async build(input: SolanaTradeRequest): Promise<SolanaBuiltTransaction> {
-    const buildStartedAt = Date.now();
     const plannedSource = String((input.rawInput as any)?.__plannedSource || '').trim().toLowerCase();
     if (plannedSource !== 'pumpfun' && !(await this.supportsTrade(input))) {
       throw new Error('Pumpfun adapter cannot handle this trade');
     }
-    // #region debug-point D:pumpfun-build-supports-done
-    fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:build:supportsDone', msg: '[DEBUG] pumpfun supportsTrade done', data: { side: input.side, ownerAddress: input.ownerAddress, elapsedMs: Date.now() - buildStartedAt }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
-    const buildInstructionStartedAt = Date.now();
-    const { instruction, preInstructions, recentBlockhash, lastValidBlockHeight, tokenMinOutWei } = await buildInstruction(input);
-    // #region debug-point D:pumpfun-build-instruction-done
-    fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:build:instructionDone', msg: '[DEBUG] pumpfun build instruction done', data: { side: input.side, ownerAddress: input.ownerAddress, preInstructionCount: preInstructions.length, recentBlockhash, tokenMinOutWei, elapsedMs: Date.now() - buildInstructionStartedAt }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
+    const {
+      instruction,
+      preInstructions,
+      recentBlockhash,
+      lastValidBlockHeight,
+      protectionMinOutWei,
+      quotedOutWei,
+    } = await buildInstruction(input);
     const message = new TransactionMessage({
       payerKey: new PublicKey(input.ownerAddress),
       recentBlockhash,
       instructions: [...preInstructions, instruction],
     }).compileToV0Message();
-    // #region debug-point P2:pumpfun-message-keys
-    fetch('http://127.0.0.1:7778/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'pumpfun-legacy-route',
-        runId: 'post-fix',
-        hypothesisId: 'P2',
-        location: 'pumpfun/adapter.ts:build',
-        msg: '[DEBUG] pumpfun compiled message keys',
-        data: {
-          side: input.side,
-          staticAccountKeys: message.staticAccountKeys.map((key, index) => ({
-            index,
-            pubkey: key.toBase58(),
-          })),
-          header: {
-            numRequiredSignatures: message.header.numRequiredSignatures,
-            numReadonlySignedAccounts: message.header.numReadonlySignedAccounts,
-            numReadonlyUnsignedAccounts: message.header.numReadonlyUnsignedAccounts,
-          },
-          compiledInstructions: message.compiledInstructions.map((compiled, ixIndex) => ({
-            ixIndex,
-            programIdIndex: compiled.programIdIndex,
-            accountKeyIndexes: [...compiled.accountKeyIndexes],
-            dataLength: compiled.data.length,
-          })),
-        },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
-    // #endregion
-    // #region debug-point D:pumpfun-build-done
-    fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'D', location: 'pumpfun/adapter.ts:build:done', msg: '[DEBUG] pumpfun adapter build done', data: { side: input.side, ownerAddress: input.ownerAddress, totalElapsedMs: Date.now() - buildStartedAt }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
     return {
       source: 'pumpfun',
       transaction: new VersionedTransaction(message),
-      tokenMinOutWei,
+      protectionMinOutWei,
+      quotedOutWei,
       blockhash: recentBlockhash,
       lastValidBlockHeight,
     };

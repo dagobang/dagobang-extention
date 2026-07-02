@@ -5,6 +5,7 @@ import {
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import type { RpcResponseAndContext, SignatureStatus } from '@solana/web3.js';
 import { ChainId } from '@/constants/chains/chainId';
 import { RpcReadBalancer } from '@/services/rpcReadBalancer';
 import { SettingsService } from '@/services/settings';
@@ -17,6 +18,8 @@ const KNOWN_SOLANA_MINT_META: Record<string, { symbol: string; decimals: number 
   EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: { symbol: 'USDC', decimals: 6 },
   Es9vMFrzaCERmJfrF4H2FYD4KxuxMxDPZWS9Vyuk3F8F: { symbol: 'USDT', decimals: 6 },
 };
+
+const mintProgramIdCache = new Map<string, Promise<PublicKey>>();
 
 export class SolanaRpcService {
   private static connectionCache = new Map<string, Connection>();
@@ -167,6 +170,7 @@ export class SolanaRpcService {
 
   private static async executeBalancedRead<T>(input: {
     urls: string[];
+    operationName: string;
     operation: (connection: Connection, url: string) => Promise<T>;
   }): Promise<T> {
     const urls = this.normalizeUrls(input.urls);
@@ -175,40 +179,61 @@ export class SolanaRpcService {
     }
     if (urls.length === 1) {
       const url = urls[0]!;
-      return await input.operation(this.getConnectionForUrl(url), url);
+      const startedAt = Date.now();
+      try {
+        const result = await input.operation(this.getConnectionForUrl(url), url);
+        return result;
+      } catch (error: any) {
+        const errorMessage = String(error?.message || error || '');
+        const errorCode = error?.code ?? error?.cause?.code ?? error?.statusCode ?? error?.response?.status ?? null;
+        const httpStatus = error?.statusCode ?? error?.response?.status ?? error?.cause?.status ?? null;
+        throw error;
+      }
     }
     return await RpcReadBalancer.execute({
       chainId: ChainId.SOL,
       urls,
       probe: async (url) => await this.measureReadLatency(url),
-      operation: async (url) => await input.operation(this.getConnectionForUrl(url), url),
+      operation: async (url) => {
+        const startedAt = Date.now();
+        try {
+          const result = await input.operation(this.getConnectionForUrl(url), url);
+          return result;
+        } catch (error: any) {
+          const errorMessage = String(error?.message || error || '');
+          const errorCode = error?.code ?? error?.cause?.code ?? error?.statusCode ?? error?.response?.status ?? null;
+          const httpStatus = error?.statusCode ?? error?.response?.status ?? error?.cause?.status ?? null;
+          throw error;
+        }
+      },
     });
   }
 
   private static createBalancedConnection(urls: string[], primary: Connection): Connection {
     const self = this;
-    const runBalanced = async <T>(run: (connection: Connection, url: string) => Promise<T>): Promise<T> => {
+    const runBalanced = async <T>(operationName: string, run: (connection: Connection, url: string) => Promise<T>): Promise<T> => {
       return await self.executeBalancedRead({
         urls,
+        operationName,
         operation: async (connection, url) => await run(connection, url),
       });
     };
 
     const overrides: Partial<Record<keyof Connection, any>> = {
       getBalance: async (...args: Parameters<Connection['getBalance']>) =>
-        await runBalanced((connection) => connection.getBalance(...args)),
+        await runBalanced('getBalance', (connection) => connection.getBalance(...args)),
       getAccountInfo: async (...args: Parameters<Connection['getAccountInfo']>) =>
-        await runBalanced((connection) => connection.getAccountInfo(...args)),
+        await runBalanced('getAccountInfo', (connection) => connection.getAccountInfo(...args)),
       getMultipleAccountsInfo: async (...args: Parameters<Connection['getMultipleAccountsInfo']>) =>
-        await runBalanced((connection) => connection.getMultipleAccountsInfo(...args)),
+        await runBalanced('getMultipleAccountsInfo', (connection) => connection.getMultipleAccountsInfo(...args)),
       getParsedAccountInfo: async (...args: Parameters<Connection['getParsedAccountInfo']>) =>
-        await runBalanced((connection) => connection.getParsedAccountInfo(...args)),
-      getParsedTokenAccountsByOwner: async (...args: Parameters<Connection['getParsedTokenAccountsByOwner']>) =>
-        await runBalanced((connection) => connection.getParsedTokenAccountsByOwner(...args)),
+        await runBalanced('getParsedAccountInfo', (connection) => connection.getParsedAccountInfo(...args)),
+      getTokenAccountBalance: async (...args: Parameters<Connection['getTokenAccountBalance']>) =>
+        await runBalanced('getTokenAccountBalance', (connection) => connection.getTokenAccountBalance(...args)),
       getLatestBlockhash: async (...args: Parameters<Connection['getLatestBlockhash']>) =>
-        await runBalanced((connection) => connection.getLatestBlockhash(...args)),
+        await runBalanced('getLatestBlockhash', (connection) => connection.getLatestBlockhash(...args)),
       getLatestBlockhashAndContext: async (...args: Parameters<Connection['getLatestBlockhashAndContext']>) =>
-        await runBalanced((connection) => connection.getLatestBlockhashAndContext(...args)),
+        await runBalanced('getLatestBlockhashAndContext', (connection) => connection.getLatestBlockhashAndContext(...args)),
     };
 
     return new Proxy(primary, {
@@ -250,24 +275,19 @@ export class SolanaRpcService {
     const connection = await this.getConnection();
     const owner = this.toPublicKey(ownerAddress);
     const mint = this.toPublicKey(mintAddress);
-    // #region debug-point sell-timeout-spl-balance-start
-    fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'B', location: 'rpc.ts:getSplTokenBalance:start', msg: '[DEBUG] sol spl token balance query start', data: { ownerAddress, mintAddress }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
-    const startedAt = Date.now();
-    const accounts = await connection.getParsedTokenAccountsByOwner(owner, { mint }, 'confirmed');
-    let total = 0n;
-    for (const account of accounts.value) {
-      const parsed = (account.account.data as any)?.parsed?.info?.tokenAmount?.amount;
-      if (typeof parsed !== 'string') continue;
+    const tokenProgramId = await this.getTokenProgramId(mintAddress);
+    const ata = getAssociatedTokenAddressSync(mint, owner, false, tokenProgramId);
+    const ataBalance = await connection.getTokenAccountBalance(ata, 'confirmed').catch(() => null);
+    const amount = (() => {
+      const parsed = ataBalance?.value?.amount;
+      if (typeof parsed !== 'string' || !parsed) return 0n;
       try {
-        total += BigInt(parsed);
+        return BigInt(parsed);
       } catch {
+        return 0n;
       }
-    }
-    // #region debug-point sell-timeout-spl-balance-done
-    fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'B', location: 'rpc.ts:getSplTokenBalance:done', msg: '[DEBUG] sol spl token balance query done', data: { ownerAddress, mintAddress, accountCount: accounts.value.length, total: total.toString(), elapsedMs: Date.now() - startedAt }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
-    return total;
+    })();
+    return amount;
   }
 
   static async getMintMeta(mintAddress: string): Promise<{ symbol: string; decimals: number }> {
@@ -283,10 +303,20 @@ export class SolanaRpcService {
   }
 
   private static async getTokenProgramId(mintAddress: string): Promise<PublicKey> {
-    const connection = await this.getConnection();
-    const mintInfo = await connection.getAccountInfo(this.toPublicKey(mintAddress), 'confirmed');
-    const owner = mintInfo?.owner;
-    return owner ?? TOKEN_PROGRAM_ID;
+    const key = mintAddress.toLowerCase();
+    const cached = mintProgramIdCache.get(key);
+    if (cached) return await cached;
+    const promise = (async () => {
+      const connection = await this.getConnection();
+      const mintInfo = await connection.getAccountInfo(this.toPublicKey(mintAddress), 'confirmed');
+      const owner = mintInfo?.owner;
+      return owner ?? TOKEN_PROGRAM_ID;
+    })().catch((error) => {
+      mintProgramIdCache.delete(key);
+      throw error;
+    });
+    mintProgramIdCache.set(key, promise);
+    return await promise;
   }
 
   static async sendNativeTransfer(input: {
@@ -335,43 +365,25 @@ export class SolanaRpcService {
     const startedAt = Date.now();
     const commitment = opts?.commitment ?? 'confirmed';
     let urls: string[] = [];
-    // #region debug-point C:confirm-signature-start
-    fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'C', location: 'rpc.ts:confirmSignature:start', msg: '[DEBUG] solana confirm signature start', data: { signature, commitment, timeoutMs, pollIntervalMs: opts?.pollIntervalMs ?? null, txSide: opts?.txSide ?? null, submitChannel: opts?.submitChannel ?? null }, ts: Date.now() }) }).catch(() => { });
-    // #endregion
     try {
       urls = await this.getConfirmationRpcUrls({
         txSide: opts?.txSide,
         submitChannel: opts?.submitChannel,
       });
-      // #region debug-point C:confirm-signature-urls
-      fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'C', location: 'rpc.ts:confirmSignature:urls', msg: '[DEBUG] solana confirm signature urls resolved', data: { signature, urlCount: urls.length, urls, elapsedMs: Date.now() - startedAt }, ts: Date.now() }) }).catch(() => { });
-      // #endregion
       const statusPoll = this.waitForSignature(signature, {
         timeoutMs: Math.max(timeoutMs, 20_000),
         commitment,
         pollIntervalMs: opts?.pollIntervalMs,
         urls,
       });
-      const confirmByBlockhash = blockhash && Number.isFinite(lastValidBlockHeight)
-        ? this.confirmByBlockhashAny({
-          signature,
-          blockhash,
-          lastValidBlockHeight: Number(lastValidBlockHeight),
-          commitment,
-          urls,
-        })
-        : null;
-      const result = confirmByBlockhash
-        ? await Promise.race([confirmByBlockhash, statusPoll])
-        : await statusPoll;
+      void blockhash;
+      void lastValidBlockHeight;
+      const result = await statusPoll;
       const err = (result as { value?: { err?: unknown } } | null)?.value?.err;
       if (err) {
         throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
       }
       if (Date.now() - startedAt >= Math.max(timeoutMs, 20_000)) {
-        // #region debug-point C:confirm-signature-soft-timeout
-        fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'C', location: 'rpc.ts:confirmSignature:softTimeout', msg: '[DEBUG] solana confirm signature soft timeout', data: { signature, blockhash: blockhash ?? null, lastValidBlockHeight: Number.isFinite(lastValidBlockHeight) ? Number(lastValidBlockHeight) : null, timeoutMs, commitment, txSide: opts?.txSide ?? null, submitChannel: opts?.submitChannel ?? null, urlCount: urls.length, urls, elapsedMs: Date.now() - startedAt }, ts: Date.now() }) }).catch(() => { });
-        // #endregion
         return {};
       }
       const normalized = 'context' in (result as any)
@@ -381,9 +393,6 @@ export class SolanaRpcService {
           confirmationStatus: (result as { confirmationStatus?: string | null }).confirmationStatus ?? commitment,
           confirmUrl: (result as { confirmUrl?: string }).confirmUrl,
         };
-      // #region debug-point C:confirm-signature-done
-      fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'C', location: 'rpc.ts:confirmSignature:done', msg: '[DEBUG] solana confirm signature done', data: { signature, confirmationStatus: normalized.confirmationStatus ?? null, slot: normalized.slot ?? null, confirmUrl: normalized.confirmUrl ?? null, elapsedMs: Date.now() - startedAt }, ts: Date.now() }) }).catch(() => { });
-      // #endregion
       await RpcReadBalancer.recordBusinessSuccess({
         chainId: ChainId.SOL,
         url: normalized.confirmUrl ?? null,
@@ -391,9 +400,6 @@ export class SolanaRpcService {
       });
       return normalized;
     } catch (error: any) {
-      // #region debug-point C:confirm-signature-error
-      fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'C', location: 'rpc.ts:confirmSignature:error', msg: '[DEBUG] solana confirm signature failed', data: { signature, blockhash: blockhash ?? null, lastValidBlockHeight: Number.isFinite(lastValidBlockHeight) ? Number(lastValidBlockHeight) : null, timeoutMs, commitment, txSide: opts?.txSide ?? null, submitChannel: opts?.submitChannel ?? null, urlCount: urls.length, urls, errorName: error?.name ?? null, errorMessage: String(error?.message || error || ''), aggregateErrors: Array.isArray(error?.errors) ? error.errors.map((item: any) => String(item?.message || item || '')) : null, elapsedMs: Date.now() - startedAt }, ts: Date.now() }) }).catch(() => { });
-      // #endregion
       throw error;
     }
   }
@@ -413,8 +419,12 @@ export class SolanaRpcService {
     const urls = opts?.urls?.length ? this.normalizeUrls(opts.urls) : await this.getRpcUrls();
     const startedAt = Date.now();
     while ((Date.now() - startedAt) < timeoutMs) {
-      const result = await this.executeBalancedRead({
+      const result = await this.executeBalancedRead<{
+        statusResult: RpcResponseAndContext<(SignatureStatus | null)[]>;
+        confirmUrl: string;
+      }>({
         urls,
+        operationName: 'getSignatureStatuses',
         operation: async (connection, url) => ({
           statusResult: await connection.getSignatureStatuses([signature], {
             searchTransactionHistory: true,
@@ -442,30 +452,6 @@ export class SolanaRpcService {
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
     throw new Error('Timed out waiting for Solana transaction confirmation');
-  }
-
-  private static async confirmByBlockhashAny(input: {
-    signature: string;
-    blockhash: string;
-    lastValidBlockHeight: number;
-    commitment: SolanaConfirmationCommitment;
-    urls?: string[];
-  }) {
-    const urls = input.urls?.length ? this.normalizeUrls(input.urls) : await this.getRpcUrls();
-    return await this.executeBalancedRead({
-      urls,
-      operation: async (connection, url) => {
-        const result = await connection.confirmTransaction({
-          signature: input.signature,
-          blockhash: input.blockhash,
-          lastValidBlockHeight: input.lastValidBlockHeight,
-        }, input.commitment);
-        return {
-          ...result,
-          confirmUrl: url,
-        };
-      },
-    });
   }
 
   static async sendSplTokenTransfer(input: {
@@ -514,7 +500,7 @@ export class SolanaRpcService {
         tokenProgramId,
       ),
     );
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
     const transaction = new Transaction({
       feePayer: owner,
       recentBlockhash: blockhash,
@@ -525,7 +511,10 @@ export class SolanaRpcService {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
     });
-    await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+    await this.waitForSignature(signature, {
+      timeoutMs: 20_000,
+      commitment: 'confirmed',
+    });
     return signature;
   }
 }

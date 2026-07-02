@@ -350,7 +350,6 @@ export default defineBackground(() => {
     const items = Array.from(byKey.values())
       .sort((a, b) => (a.receivedAtMs ?? 0) - (b.receivedAtMs ?? 0))
       .slice(-NEWPOOL_MONITOR_CACHE_LIMIT);
-    // #region debug-point B:getsnapshot-age-devhold
     (() => {
       const sample = items
         .filter((item) => {
@@ -368,25 +367,7 @@ export default defineBackground(() => {
           d_br: item?.tokenData?.d_br ?? null,
           receivedAtMs: item?.receivedAtMs ?? null,
         }));
-      fetch('http://127.0.0.1:7777/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'newpool-age-devhold',
-          runId: 'pre-fix',
-          hypothesisId: 'B',
-          location: 'background.ts:getNewPoolMonitorSnapshotItems',
-          msg: '[DEBUG] background snapshot items age/devhold summary',
-          data: {
-            total: items.length,
-            missingCreatedAt: items.filter((item) => item?.tokenData?.createdAtMs == null).length,
-            missingDevHoldPercent: items.filter((item) => item?.tokenData?.devHoldPercent == null).length,
-            sample,
-          },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
     })();
-    // #endregion
     return items;
   };
   const scheduleNewPoolMonitorBroadcast = () => {
@@ -394,31 +375,12 @@ export default defineBackground(() => {
     newPoolMonitorBroadcastTimer = setTimeout(() => {
       newPoolMonitorBroadcastTimer = null;
       const items = Array.from(pendingNewPoolMonitorBroadcast.values());
-      // #region debug-point B:newpool-bg-broadcast
       (() => {
         const key = '__DBG_NEWPOOL_BG_BROADCAST_TS__';
         const nowTs = Date.now();
         const lastTs = typeof (globalThis as any)[key] === 'number' ? (globalThis as any)[key] : 0;
         (globalThis as any)[key] = nowTs;
-        fetch('http://127.0.0.1:7777/event', {
-          method: 'POST',
-          body: JSON.stringify({
-            sessionId: 'newpool-v2-crash',
-            runId: 'post-fix',
-            hypothesisId: 'B',
-            location: 'background.ts:scheduleNewPoolMonitorBroadcast',
-            msg: '[DEBUG] background newpool broadcast',
-            data: {
-              items: items.length,
-              gapMs: lastTs > 0 ? nowTs - lastTs : null,
-              pendingSize: pendingNewPoolMonitorBroadcast.size,
-              storeSize: newPoolMonitorStore.size,
-            },
-            ts: nowTs,
-          }),
-        }).catch(() => { });
       })();
-      // #endregion
       pendingNewPoolMonitorBroadcast.clear();
       if (!items.length) return;
       void broadcastToTabs({ type: 'bg:newpool:batch', items });
@@ -444,27 +406,8 @@ export default defineBackground(() => {
       if (!oldestKey) break;
       newPoolMonitorStore.delete(oldestKey);
     }
-    // #region debug-point B:newpool-bg-upsert
     (() => {
-      fetch('http://127.0.0.1:7777/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'newpool-v2-crash',
-          runId: 'post-fix',
-          hypothesisId: 'B',
-          location: 'background.ts:upsertNewPoolMonitorItems',
-          msg: '[DEBUG] background newpool upsert',
-          data: {
-            incoming: items.length,
-            beforeSize,
-            afterSize: newPoolMonitorStore.size,
-            pendingBroadcast: pendingNewPoolMonitorBroadcast.size,
-          },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
     })();
-    // #endregion
     scheduleNewPoolMonitorBroadcast();
   };
   const resolveTradeSubmitChannel = async (chainId: number, preferred?: SubmitChannel): Promise<SubmitChannel> => {
@@ -528,6 +471,7 @@ export default defineBackground(() => {
   const requestGmgnHoldingsFromContent = async (chain: string, walletAddress: string): Promise<any[]> => {
     try {
       const tabs = await browser.tabs.query({});
+      let fallbackHoldings: any[] = [];
       for (const tab of tabs) {
         if (!tab.id) continue;
         try {
@@ -537,12 +481,15 @@ export default defineBackground(() => {
             walletAddress,
           });
           if (rsp?.ok && Array.isArray(rsp?.holdings)) {
-            return rsp.holdings;
+            if (rsp.holdings.length > 0) {
+              return rsp.holdings;
+            }
+            fallbackHoldings = rsp.holdings;
           }
         } catch {
         }
       }
-      return [];
+      return fallbackHoldings;
     } catch {
       return [];
     }
@@ -551,6 +498,7 @@ export default defineBackground(() => {
   const requestGmgnHoldingDetailFromContent = async (chain: string, walletAddress: string, tokenAddress: string): Promise<any | null> => {
     try {
       const tabs = await browser.tabs.query({});
+      let sawSuccessfulLookup = false;
       for (const tab of tabs) {
         if (!tab.id) continue;
         try {
@@ -560,10 +508,14 @@ export default defineBackground(() => {
             walletAddress,
             tokenAddress,
           });
-          if (rsp?.ok && rsp?.detail) return rsp.detail;
+          if (rsp?.ok) {
+            sawSuccessfulLookup = true;
+            if (rsp?.detail) return rsp.detail;
+          }
         } catch {
         }
       }
+      if (sawSuccessfulLookup) return null;
       return null;
     } catch {
       return null;
@@ -766,6 +718,7 @@ export default defineBackground(() => {
     notifier: telegramNotifier,
     fetchGmgnHoldings: requestGmgnHoldingsFromContent,
     fetchGmgnHoldingDetail: requestGmgnHoldingDetailFromContent,
+    resolveLatestTokenInfo: resolveLatestLimitOrderTokenInfo,
   });
   let telegramControllerRunning = false;
   const syncTelegramController = async (settingsOverride?: any) => {
@@ -873,6 +826,24 @@ export default defineBackground(() => {
   const TokenSniperTrade = createTokenSniperTrade({ onStateChanged: broadcastStateChange });
   const NewCoinSniperTrade = createNewCoinSniperTrade({ onStateChanged: broadcastStateChange });
   const buyInputByTxHash = new Map<ChainTxId, { input: TxBuyInput; receiptRetried: boolean }>();
+  const solanaReceiptQueues = new Map<string, Promise<void>>();
+  const enqueueSolanaReceipt = async (scopeKey: string, task: () => Promise<void>) => {
+    const previous = solanaReceiptQueues.get(scopeKey) ?? Promise.resolve();
+    const next = previous.catch(() => { }).then(task);
+    solanaReceiptQueues.set(scopeKey, next);
+    try {
+      await next;
+    } finally {
+      if (solanaReceiptQueues.get(scopeKey) === next) {
+        solanaReceiptQueues.delete(scopeKey);
+      }
+    }
+  };
+  const resolveSolanaConfirmationOptions = (executionModeOverride?: 'default' | 'turbo') => (
+    executionModeOverride === 'turbo'
+      ? { commitment: 'processed' as const, pollIntervalMs: 250 }
+      : { commitment: 'confirmed' as const, pollIntervalMs: 1000 }
+  );
 
   browser.runtime.onInstalled.addListener(() => {
     console.log('Extension installed');
@@ -912,7 +883,8 @@ export default defineBackground(() => {
 
           case 'bg:getState': {
             const settings = await SettingsService.get();
-            const status = await getWallet(settings.chainId).getStatus();
+            const walletChainId = Number.isFinite(msg.chainId) ? Number(msg.chainId) : settings.chainId;
+            const status = await getWallet(walletChainId).getStatus();
             const ttl = status.expiresAt ? Math.floor((status.expiresAt - Date.now()) / 1000) : null;
             return {
               wallet: {
@@ -923,7 +895,7 @@ export default defineBackground(() => {
                 unlockTtlSeconds: ttl && ttl > 0 ? ttl : null,
               },
               settings,
-              network: { chainId: settings.chainId }
+              network: { chainId: walletChainId }
             };
           }
 
@@ -990,7 +962,28 @@ export default defineBackground(() => {
           }
 
           case 'wallet:unlock': {
-            const resUnlock = await (await resolveWallet(msg)).unlock(msg.input.password);
+            const [evmStatus, solStatus] = await Promise.all([
+              getWallet(ChainId.BNB).getStatus().catch(() => null),
+              getWallet(ChainId.SOL).getStatus().catch(() => null),
+            ]);
+            let evmResult: { address: string } | null = null;
+            let solResult: { address: string } | null = null;
+            if (evmStatus?.hasWallet) {
+              evmResult = await getWallet(ChainId.BNB).unlock(msg.input.password);
+            }
+            if (solStatus?.hasWallet) {
+              solResult = await getWallet(ChainId.SOL).unlock(msg.input.password);
+            }
+            const activeSettings = await SettingsService.get();
+            const requestedChainId = typeof msg?.input?.chainId === 'number'
+              ? msg.input.chainId
+              : activeSettings.chainId;
+            const resUnlock = requestedChainId === ChainId.SOL
+              ? (solResult ?? evmResult)
+              : (evmResult ?? solResult);
+            if (!resUnlock) {
+              throw new Error('Wallet not found');
+            }
             try {
               const settings = await SettingsService.get();
               RpcReadBalancer.requestCapacityProbe(settings.chainId);
@@ -1787,6 +1780,7 @@ export default defineBackground(() => {
               ...msg.input,
               submitChannel: await resolveTradeSubmitChannel(msg.input.chainId, msg.input.submitChannel),
             } as TxBuyInput;
+            const flowId = `bg-buy-auto:${msg.input.chainId}:${msg.input.tokenAddress.toLowerCase()}:${Date.now().toString(36)}`;
             const startedAt = Date.now();
             let submittedTxHash: ChainTxId | null = null;
             let submittedElapsedMs: number | undefined;
@@ -1802,9 +1796,6 @@ export default defineBackground(() => {
               if (txHash) {
                 buyInputByTxHash.set(txHash, { input, receiptRetried: false });
               }
-              // #region debug-point D:bg-buy-success
-              if (msg.input.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'D', location: 'background.ts:bgBuySuccess', msg: '[DEBUG] bg broadcasting tradeSuccess buy', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: (rsp as any)?.txHash, submitElapsedMs: (rsp as any)?.submitElapsedMs, receiptElapsedMs: (rsp as any)?.receiptElapsedMs, totalElapsedMs: (rsp as any)?.totalElapsedMs, broadcastVia: (rsp as any)?.broadcastVia, broadcastUrl: (rsp as any)?.broadcastUrl, confirmUrl: (rsp as any)?.confirmUrl, tabId: sender?.tab?.id ?? null }, ts: Date.now() }) }).catch(() => { });
-              // #endregion
               await broadcastTradeSuccess(
                 {
                   type: 'bg:tradeSuccess',
@@ -1830,46 +1821,7 @@ export default defineBackground(() => {
                 totalElapsedMs: typeof rsp?.totalElapsedMs === 'number' ? rsp.totalElapsedMs : (Date.now() - startedAt),
               };
             };
-            try {
-              const rsp = await getTrade(input.chainId).buyWithReceiptAndNonceRecovery(input, {
-                maxRetry: 1,
-                timeoutMs: 5_000,
-                onSubmitted: async (ctx: BuySubmittedContext) => {
-                  submittedTxHash = ctx.txHash;
-                  submittedElapsedMs = ctx.submitElapsedMs;
-                  // #region debug-point C:bg-buy-submitted
-                  if (msg.input.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:bgBuySubmitted', msg: '[DEBUG] bg broadcasting tradeSubmitted buy', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs, broadcastVia: ctx.broadcastVia ?? null, broadcastUrl: ctx.broadcastUrl ?? null, tabId: sender?.tab?.id ?? null }, ts: Date.now() }) }).catch(() => { });
-                  // #endregion
-                  await broadcastTradeSuccess(
-                    {
-                      type: 'bg:tradeSubmitted',
-                      side: 'buy',
-                      chainId: msg.input.chainId,
-                      tokenAddress: msg.input.tokenAddress,
-                      txHash: ctx.txHash,
-                      submitElapsedMs: ctx.submitElapsedMs,
-                      broadcastVia: ctx.broadcastVia,
-                      broadcastUrl: ctx.broadcastUrl,
-                    },
-                    sender?.tab?.id ?? null,
-                  );
-                },
-                onRetry: async (ctx: BuyRetryContext) => {
-                  await broadcastTradeSuccess(
-                    {
-                      type: 'bg:tradeRetrying',
-                      side: 'buy',
-                      chainId: msg.input.chainId,
-                      tokenAddress: msg.input.tokenAddress,
-                      attempt: ctx.attempt,
-                      reason: ctx.reason,
-                    },
-                    sender?.tab?.id ?? null,
-                  );
-                },
-              });
-              return await returnBuySuccess(rsp);
-            } catch (e: any) {
+            const returnBuyFailure = async (e: any) => {
               console.error('[bg.buy.auto.failed.detail]', {
                 chainId: msg.input.chainId,
                 token: msg.input.tokenAddress,
@@ -1907,6 +1859,118 @@ export default defineBackground(() => {
                 sender?.tab?.id ?? null,
               );
               return { ok: false, revertReason: reason ?? undefined, error: serializeTxError(e) };
+            };
+            if (input.chainId === ChainId.SOL) {
+              try {
+                const submitStart = Date.now();
+                const rsp = await getTrade(input.chainId).buy(input);
+                const submitElapsedMs = Date.now() - submitStart;
+                submittedTxHash = rsp.txHash as ChainTxId;
+                submittedElapsedMs = submitElapsedMs;
+                buyInputByTxHash.set(submittedTxHash, { input, receiptRetried: false });
+                await broadcastTradeSuccess(
+                  {
+                    type: 'bg:tradeSubmitted',
+                    side: 'buy',
+                    chainId: msg.input.chainId,
+                    tokenAddress: msg.input.tokenAddress,
+                    txHash: rsp.txHash,
+                    submitElapsedMs,
+                    broadcastVia: rsp.broadcastVia,
+                    broadcastUrl: rsp.broadcastUrl,
+                  },
+                  sender?.tab?.id ?? null,
+                );
+                const receiptScopeKey = `sol:receipt:${input.chainId}`;
+                void enqueueSolanaReceipt(receiptScopeKey, async () => {
+                  const receiptStart = Date.now();
+                  try {
+                    const confirmation = resolveSolanaConfirmationOptions(input.executionModeOverride);
+                    const confirmationResult = await SolanaRpcService.confirmSignature(
+                      rsp.txHash,
+                      (rsp as any).blockhash,
+                      (rsp as any).lastValidBlockHeight,
+                      5_000,
+                      {
+                        ...confirmation,
+                        txSide: 'buy',
+                        submitChannel: input.submitChannel,
+                      },
+                    );
+                    buyInputByTxHash.delete(submittedTxHash!);
+                    await broadcastTradeSuccess(
+                      {
+                        type: 'bg:tradeSuccess',
+                        source: 'tx:buy',
+                        side: 'buy',
+                        chainId: msg.input.chainId,
+                        tokenAddress: msg.input.tokenAddress,
+                        txHash: rsp.txHash,
+                        submitElapsedMs,
+                        receiptElapsedMs: Date.now() - receiptStart,
+                        totalElapsedMs: Date.now() - startedAt,
+                        broadcastVia: rsp.broadcastVia,
+                        broadcastUrl: rsp.broadcastUrl,
+                        confirmUrl: (confirmationResult as any)?.confirmUrl,
+                        isBundle: rsp.isBundle,
+                      },
+                      sender?.tab?.id ?? null,
+                    );
+                    await broadcastStateChange();
+                  } catch (error: any) {
+                    buyInputByTxHash.delete(submittedTxHash!);
+                    await returnBuyFailure(error);
+                  }
+                }).catch(() => { });
+                return {
+                  ok: true,
+                  ...rsp,
+                  submitElapsedMs,
+                  totalElapsedMs: Date.now() - startedAt,
+                  backgroundPending: true,
+                };
+              } catch (e: any) {
+                return await returnBuyFailure(e);
+              }
+            }
+            try {
+              const rsp = await getTrade(input.chainId).buyWithReceiptAndNonceRecovery(input, {
+                maxRetry: 1,
+                timeoutMs: 5_000,
+                onSubmitted: async (ctx: BuySubmittedContext) => {
+                  submittedTxHash = ctx.txHash;
+                  submittedElapsedMs = ctx.submitElapsedMs;
+                  await broadcastTradeSuccess(
+                    {
+                      type: 'bg:tradeSubmitted',
+                      side: 'buy',
+                      chainId: msg.input.chainId,
+                      tokenAddress: msg.input.tokenAddress,
+                      txHash: ctx.txHash,
+                      submitElapsedMs: ctx.submitElapsedMs,
+                      broadcastVia: ctx.broadcastVia,
+                      broadcastUrl: ctx.broadcastUrl,
+                    },
+                    sender?.tab?.id ?? null,
+                  );
+                },
+                onRetry: async (ctx: BuyRetryContext) => {
+                  await broadcastTradeSuccess(
+                    {
+                      type: 'bg:tradeRetrying',
+                      side: 'buy',
+                      chainId: msg.input.chainId,
+                      tokenAddress: msg.input.tokenAddress,
+                      attempt: ctx.attempt,
+                      reason: ctx.reason,
+                    },
+                    sender?.tab?.id ?? null,
+                  );
+                },
+              });
+              return await returnBuySuccess(rsp);
+            } catch (e: any) {
+              return await returnBuyFailure(e);
             }
           }
 
@@ -2016,9 +2080,105 @@ export default defineBackground(() => {
             let submittedTxHash: ChainTxId | null = null;
             let submittedElapsedMs: number | undefined;
             console.log('[bg.sell.auto][start]', { flowId, chainId: msg.input.chainId, token: msg.input.tokenAddress });
-            // #region debug-point C:bg-sell-auto-start-timeout-session
-            fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:tx:sellWithReceiptAuto:start', msg: '[DEBUG] bg sellWithReceiptAuto start', data: { flowId, chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, fromAddress: msg.input.fromAddress ?? null, sellPercentBps: msg.input.sellPercentBps ?? null, expectedTokenInWei: msg.input.expectedTokenInWei ?? null, tokenAmountWei: msg.input.tokenAmountWei ?? null, submitChannel: input.submitChannel ?? null, executionMode: msg.input.executionModeOverride ?? null, launchpadPlatform: msg.input.tokenInfo?.launchpad_platform ?? msg.input.tokenInfo?.launchpad ?? null, launchpadStatus: msg.input.tokenInfo?.launchpad_status ?? null }, ts: Date.now() }) }).catch(() => { });
-            // #endregion
+            const returnSellFailure = async (e: any) => {
+              console.warn('[trade.sell.auto.failed]', {
+                flowId,
+                chainId: msg.input.chainId,
+                token: msg.input.tokenAddress,
+                elapsedMs: Date.now() - start,
+                error: extractDisplayErrorMessageFromError(e),
+              });
+              const reason = extractRevertReasonFromError(e);
+              const displayErrorMessage = extractDisplayErrorMessageFromError(e);
+              if (!reason || reason.toLowerCase().includes('zero_input')) {
+                debugLogTxError('tx:sellWithReceiptAuto failed', e, { input: msg.input as any });
+              }
+              await broadcastTradeSuccess(
+                {
+                  type: 'bg:tradeFailed',
+                  source: 'tx:sell',
+                  side: 'sell',
+                  chainId: msg.input.chainId,
+                  tokenAddress: msg.input.tokenAddress,
+                  txHash: submittedTxHash ?? undefined,
+                  submitElapsedMs: submittedElapsedMs,
+                  stage: submittedTxHash ? 'receipt' : 'submit',
+                  errorMessage: reason || displayErrorMessage,
+                },
+                sender?.tab?.id ?? null,
+              );
+              return { ok: false, revertReason: reason ?? undefined, error: serializeTxError(e) };
+            };
+            if (input.chainId === ChainId.SOL) {
+              try {
+                const submitStart = Date.now();
+                const rsp = await getTrade(input.chainId).sell(input);
+                const submitElapsedMs = Date.now() - submitStart;
+                submittedTxHash = rsp.txHash as ChainTxId;
+                submittedElapsedMs = submitElapsedMs;
+                await broadcastTradeSuccess(
+                  {
+                    type: 'bg:tradeSubmitted',
+                    side: 'sell',
+                    chainId: msg.input.chainId,
+                    tokenAddress: msg.input.tokenAddress,
+                    txHash: rsp.txHash,
+                    submitElapsedMs,
+                    broadcastVia: rsp.broadcastVia,
+                    broadcastUrl: rsp.broadcastUrl,
+                  },
+                  sender?.tab?.id ?? null,
+                );
+                const receiptScopeKey = `sol:receipt:${input.chainId}`;
+                void enqueueSolanaReceipt(receiptScopeKey, async () => {
+                  const receiptStart = Date.now();
+                  try {
+                    const confirmation = resolveSolanaConfirmationOptions(input.executionModeOverride);
+                    const confirmationResult = await SolanaRpcService.confirmSignature(
+                      rsp.txHash,
+                      (rsp as any).blockhash,
+                      (rsp as any).lastValidBlockHeight,
+                      20_000,
+                      {
+                        ...confirmation,
+                        txSide: 'sell',
+                        submitChannel: input.submitChannel,
+                      },
+                    );
+                    await broadcastTradeSuccess(
+                      {
+                        type: 'bg:tradeSuccess',
+                        source: 'tx:sell',
+                        side: 'sell',
+                        chainId: msg.input.chainId,
+                        tokenAddress: msg.input.tokenAddress,
+                        txHash: rsp.txHash,
+                        submitElapsedMs,
+                        receiptElapsedMs: Date.now() - receiptStart,
+                        totalElapsedMs: Date.now() - start,
+                        broadcastVia: rsp.broadcastVia,
+                        broadcastUrl: rsp.broadcastUrl,
+                        confirmUrl: (confirmationResult as any)?.confirmUrl,
+                        isBundle: rsp.isBundle,
+                      },
+                      sender?.tab?.id ?? null,
+                    );
+                    await broadcastStateChange();
+                  } catch (error: any) {
+                    await returnSellFailure(error);
+                  }
+                }).catch(() => { });
+                return {
+                  ok: true,
+                  ...rsp,
+                  submitElapsedMs,
+                  totalElapsedMs: Date.now() - start,
+                  backgroundPending: true,
+                };
+              } catch (e: any) {
+                return await returnSellFailure(e);
+              }
+            }
             try {
               const rsp = await getTrade(input.chainId).sellWithReceiptAndAutoRecovery(input, {
                 maxRetry: 1,
@@ -2026,12 +2186,6 @@ export default defineBackground(() => {
                 onSubmitted: async (ctx: SellSubmittedContext) => {
                   submittedTxHash = ctx.txHash;
                   submittedElapsedMs = ctx.submitElapsedMs;
-                  // #region debug-point C:bg-sell-auto-submitted-timeout-session
-                  fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:tx:sellWithReceiptAuto:submitted', msg: '[DEBUG] bg sellWithReceiptAuto submitted', data: { flowId, chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs, broadcastVia: ctx.broadcastVia ?? null, broadcastUrl: ctx.broadcastUrl ?? null, elapsedMs: Date.now() - start }, ts: Date.now() }) }).catch(() => { });
-                  // #endregion
-                  // #region debug-point C:bg-sell-submitted
-                  if (msg.input.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:bgSellSubmitted', msg: '[DEBUG] bg broadcasting tradeSubmitted sell', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs, broadcastVia: ctx.broadcastVia ?? null, broadcastUrl: ctx.broadcastUrl ?? null, tabId: sender?.tab?.id ?? null }, ts: Date.now() }) }).catch(() => { });
-                  // #endregion
                   await broadcastTradeSuccess(
                     {
                       type: 'bg:tradeSubmitted',
@@ -2072,12 +2226,6 @@ export default defineBackground(() => {
                 txHash: (rsp as any)?.txHash,
                 elapsedMs: Date.now() - start,
               });
-              // #region debug-point C:bg-sell-auto-success-timeout-session
-              fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:tx:sellWithReceiptAuto:success', msg: '[DEBUG] bg sellWithReceiptAuto success', data: { flowId, chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: (rsp as any)?.txHash ?? null, submitElapsedMs: (rsp as any)?.submitElapsedMs ?? null, receiptElapsedMs: (rsp as any)?.receiptElapsedMs ?? null, totalElapsedMs: (rsp as any)?.totalElapsedMs ?? null, elapsedMs: Date.now() - start }, ts: Date.now() }) }).catch(() => { });
-              // #endregion
-              // #region debug-point D:bg-sell-success
-              if (msg.input.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sol-toast-balance', runId: 'pre-fix', hypothesisId: 'D', location: 'background.ts:bgSellSuccess', msg: '[DEBUG] bg broadcasting tradeSuccess sell', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, txHash: (rsp as any)?.txHash, submitElapsedMs: (rsp as any)?.submitElapsedMs, receiptElapsedMs: (rsp as any)?.receiptElapsedMs, totalElapsedMs: (rsp as any)?.totalElapsedMs, broadcastVia: (rsp as any)?.broadcastVia, broadcastUrl: (rsp as any)?.broadcastUrl, confirmUrl: (rsp as any)?.confirmUrl, tabId: sender?.tab?.id ?? null }, ts: Date.now() }) }).catch(() => { });
-              // #endregion
               broadcastTradeSuccess(
                 {
                   type: 'bg:tradeSuccess',
@@ -2103,39 +2251,7 @@ export default defineBackground(() => {
                 totalElapsedMs: typeof rsp?.totalElapsedMs === 'number' ? rsp.totalElapsedMs : (Date.now() - start),
               };
             } catch (e: any) {
-              console.warn('[trade.sell.auto.failed]', {
-                flowId,
-                chainId: msg.input.chainId,
-                token: msg.input.tokenAddress,
-                elapsedMs: Date.now() - start,
-                error: extractDisplayErrorMessageFromError(e),
-              });
-              const reason = extractRevertReasonFromError(e);
-              const displayErrorMessage = extractDisplayErrorMessageFromError(e);
-              // #region debug-point C:bg-sell-auto-catch-timeout-session
-              fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:tx:sellWithReceiptAuto:catch', msg: '[DEBUG] bg sellWithReceiptAuto catch', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, flowId, stage: submittedTxHash ? 'receipt' : 'submit', submittedTxHash: submittedTxHash ?? null, submittedElapsedMs: submittedElapsedMs ?? null, reason: reason ?? null, displayErrorMessage, serializedError: serializeTxError(e), aggregateErrors: Array.isArray((e as any)?.errors) ? (e as any).errors.map((item: any) => String(item?.message || item || '')) : null, elapsedMs: Date.now() - start }, ts: Date.now() }) }).catch(() => { });
-              // #endregion
-              // #region debug-point C:bg-sell-auto-catch
-              if (msg.input.chainId === ChainId.SOL) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'solana-trade-latency', runId: 'pre-fix', hypothesisId: 'C', location: 'background.ts:tx:sellWithReceiptAuto:catch', msg: '[DEBUG] bg sellWithReceiptAuto catch', data: { chainId: msg.input.chainId, tokenAddress: msg.input.tokenAddress, flowId, stage: submittedTxHash ? 'receipt' : 'submit', submittedTxHash: submittedTxHash ?? null, submittedElapsedMs: submittedElapsedMs ?? null, reason: reason ?? null, displayErrorMessage, serializedError: serializeTxError(e), aggregateErrors: Array.isArray((e as any)?.errors) ? (e as any).errors.map((item: any) => String(item?.message || item || '')) : null, elapsedMs: Date.now() - start, tabId: sender?.tab?.id ?? null }, ts: Date.now() }) }).catch(() => { });
-              // #endregion
-              if (!reason || reason.toLowerCase().includes('zero_input')) {
-                debugLogTxError('tx:sellWithReceiptAuto failed', e, { input: msg.input as any });
-              }
-              await broadcastTradeSuccess(
-                {
-                  type: 'bg:tradeFailed',
-                  source: 'tx:sell',
-                  side: 'sell',
-                  chainId: msg.input.chainId,
-                  tokenAddress: msg.input.tokenAddress,
-                  txHash: submittedTxHash ?? undefined,
-                  submitElapsedMs: submittedElapsedMs,
-                  stage: submittedTxHash ? 'receipt' : 'submit',
-                  errorMessage: reason || displayErrorMessage,
-                },
-                sender?.tab?.id ?? null,
-              );
-              return { ok: false, revertReason: reason ?? undefined, error: serializeTxError(e) };
+              return await returnSellFailure(e);
             }
           }
 

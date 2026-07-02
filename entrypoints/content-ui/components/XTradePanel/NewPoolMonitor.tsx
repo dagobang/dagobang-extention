@@ -622,37 +622,12 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
   const tokenLogo = extractImageRef(tokenData) ?? pickString(tokenData?.tokenLogo, tokenData?.logo, tokenData?.f?.l, tokenData?.l);
   const devHoldPercentRaw = toFiniteNumber(tokenData?.devHoldPercent ?? tokenData?.d_br);
   const devMaxBuyPercentRaw = toFiniteNumber(tokenData?.devMaxBuyPercent ?? tokenData?.d_br);
-  // #region debug-point C:ui-row-age-devhold
   if (createdAtMs == null || devHoldPercentRaw == null) {
     const dbgKey = `__DBG_NEWPOOL_ROW_MISSING__:${tokenAddress}`;
     if (!(window as any)[dbgKey]) {
       (window as any)[dbgKey] = 1;
-      fetch('http://127.0.0.1:7777/event', {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: 'newpool-age-devhold',
-          runId: 'pre-fix',
-          hypothesisId: 'C',
-          location: 'NewPoolMonitor.tsx:buildMarketTokenRow',
-          msg: '[DEBUG] ui row missing age/devhold',
-          data: {
-            tokenAddress,
-            source: detail?.source ?? null,
-            channel: detail?.channel ?? null,
-            createdAtMs,
-            rawCreatedAtMs: tokenData?.createdAtMs ?? null,
-            rawCt: tokenData?.ct ?? null,
-            devHoldPercentRaw,
-            rawDevHoldPercent: tokenData?.devHoldPercent ?? null,
-            rawDevBuyRatio: tokenData?.d_br ?? null,
-            receivedAtMs: detail?.receivedAtMs ?? null,
-          },
-          ts: Date.now(),
-        }),
-      }).catch(() => { });
     }
   }
-  // #endregion
   return {
     tokenAddress,
     signalId: `${detail.source}:${detail.channel}:${tokenAddress}`,
@@ -728,37 +703,8 @@ const ingestRows = (map: Map<string, MarketTokenRow>, items: MarketTokenEventDet
     if (row.viewerCount == null) debugStats.missingViewer += 1;
     map.set(row.tokenAddress, mergeTokenRow(map.get(row.tokenAddress), row));
   }
-  // #region debug-point C:newpool-ui-ingest
   (() => {
-    fetch('http://127.0.0.1:7777/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'newpool-v2-crash',
-        runId: 'post-fix',
-        hypothesisId: 'C',
-        location: 'NewPoolMonitor.tsx:ingestRows',
-        msg: '[DEBUG] ui ingest rows',
-        data: {
-          incoming: items.length,
-          beforeSize,
-          afterSize: map.size,
-          built: debugStats.built,
-          droppedInvalidAddress: debugStats.droppedInvalidAddress,
-          droppedInvalidCreatedAt: debugStats.droppedInvalidCreatedAt,
-          builtWithIdentity: debugStats.builtWithIdentity,
-          builtWithLogo: debugStats.builtWithLogo,
-          missingIdentity: debugStats.missingIdentity,
-          missingLogo: debugStats.missingLogo,
-          missingMarketCap: debugStats.missingMarketCap,
-          missingVolume: debugStats.missingVolume,
-          missingHolders: debugStats.missingHolders,
-          missingViewer: debugStats.missingViewer,
-        },
-        ts: Date.now(),
-      }),
-    }).catch(() => { });
   })();
-  // #endregion
 };
 
 const resolveGroupInfo = (row: MarketTokenRow): Pick<MarketTokenGroup, 'key' | 'kind' | 'label' | 'tweetAuthor' | 'tweetId' | 'tweetUrl' | 'tweetType' | 'telegramUrl' | 'telegramKind' | 'website'> => {
@@ -1273,28 +1219,8 @@ export function NewPoolMonitorContent({
       const startedAt = performance.now();
       ingestRows(tokenMapRef.current, items);
       const syncInfo = syncIds();
-      // #region debug-point D:newpool-ui-batch
       (() => {
-        fetch('http://127.0.0.1:7777/event', {
-          method: 'POST',
-          body: JSON.stringify({
-            sessionId: 'newpool-v2-crash',
-            runId: 'post-fix',
-            hypothesisId: 'D',
-            location: 'NewPoolMonitor.tsx:onBatch',
-            msg: '[DEBUG] ui batch applied',
-            data: {
-              incoming: items.length,
-              ingestAndSyncMs: performance.now() - startedAt,
-              mapSize: syncInfo?.mapSize ?? tokenMapRef.current.size,
-              nextIdsSize: syncInfo?.nextIdsSize ?? 0,
-              sortMs: syncInfo?.sortMs ?? null,
-            },
-            ts: Date.now(),
-          }),
-        }).catch(() => { });
       })();
-      // #endregion
     };
     browser.runtime.onMessage.addListener(onBatch);
     void call({ type: 'newpool:getSnapshot' } as const)
@@ -1305,28 +1231,8 @@ export function NewPoolMonitorContent({
         const startedAt = performance.now();
         if (items.length) ingestRows(tokenMapRef.current, items);
         const syncInfo = syncIds();
-        // #region debug-point D:newpool-ui-snapshot
         (() => {
-          fetch('http://127.0.0.1:7777/event', {
-            method: 'POST',
-            body: JSON.stringify({
-              sessionId: 'newpool-v2-crash',
-              runId: 'post-fix',
-              hypothesisId: 'D',
-              location: 'NewPoolMonitor.tsx:getSnapshot',
-              msg: '[DEBUG] ui snapshot applied',
-              data: {
-                incoming: items.length,
-                ingestAndSyncMs: performance.now() - startedAt,
-                mapSize: syncInfo?.mapSize ?? tokenMapRef.current.size,
-                nextIdsSize: syncInfo?.nextIdsSize ?? 0,
-                sortMs: syncInfo?.sortMs ?? null,
-              },
-              ts: Date.now(),
-            }),
-          }).catch(() => { });
         })();
-        // #endregion
       })
       .catch(() => { });
     return () => {

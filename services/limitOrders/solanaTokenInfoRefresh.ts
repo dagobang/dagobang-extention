@@ -1,4 +1,4 @@
-import { normalizeSolanaPlatform, resolveKnownSolanaDirectSource } from '../../packages/solana-dex-core/src/constants';
+import { normalizeSolanaPlatform, resolveSolanaTradeSource } from '../../packages/solana-dex-core/src/constants';
 import type { GmgnTokenSnapshot } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 
@@ -15,7 +15,10 @@ export function shouldTryRefreshMigratedSolanaTokenInfo(input: {
   const tokenInfo = input.tokenInfo ?? null;
   if (!tokenInfo) return false;
   if (Number(tokenInfo.launchpad_status ?? NaN) === 1) return false;
-  return resolveKnownSolanaDirectSource(tokenInfo, input.tokenAddress) === 'pumpfun';
+  return resolveSolanaTradeSource({
+    tokenInfo,
+    tokenAddress: input.tokenAddress,
+  }).knownDirectSource === 'pumpfun';
 }
 
 export function resolveMigratedSolanaTokenInfo(input: {
@@ -48,10 +51,16 @@ export function resolveMigratedSolanaTokenInfo(input: {
     nextTokenInfo.launchpad_progress = 100;
   }
 
-  const migratedSource = resolveKnownSolanaDirectSource(nextTokenInfo, input.tokenAddress);
+  const migratedSource = resolveSolanaTradeSource({
+    tokenInfo: nextTokenInfo,
+    tokenAddress: input.tokenAddress,
+  }).directSource;
   if (!migratedSource || migratedSource === 'pumpfun') return null;
 
-  const currentPlatform = normalizeSolanaPlatform(baseTokenInfo.launchpad_platform || baseTokenInfo.launchpad);
+  const currentPlatform = resolveSolanaTradeSource({
+    tokenInfo: baseTokenInfo,
+    tokenAddress: input.tokenAddress,
+  }).resolvedPlatform;
   if (currentPlatform === nextTokenInfo.launchpad_platform && Number(baseTokenInfo.launchpad_status ?? NaN) === 1) {
     return null;
   }

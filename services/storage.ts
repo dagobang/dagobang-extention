@@ -121,7 +121,9 @@ export async function getUnlockedSolanaState(): Promise<UnlockedSolanaState | nu
   try {
     const res = await browser.storage.session.get(KEYS.unlockedSolana);
     const state = res[KEYS.unlockedSolana] as UnlockedSolanaState | undefined;
-    if (!state) return null;
+    if (!state) {
+      return null;
+    }
     if (state.expiresAt && Date.now() > state.expiresAt) {
       await clearUnlockedSolanaState();
       return null;

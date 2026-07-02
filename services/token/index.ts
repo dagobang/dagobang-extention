@@ -56,14 +56,8 @@ export class TokenService {
     if (inFlight) return inFlight;
     const p = (async () => {
       if (resolvedChainId === ChainId.SOL) {
-        // #region debug-point sell-timeout-token-balance-start
-        fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'B', location: 'token/index.ts:getBalance:solStart', msg: '[DEBUG] sol token balance read start', data: { owner, tokenAddress, chainId: resolvedChainId, key }, ts: Date.now() }) }).catch(() => { });
-        // #endregion
         const balance = await SolanaRpcService.getSplTokenBalance(owner, tokenAddress);
         const v = balance.toString();
-        // #region debug-point sell-timeout-token-balance-done
-        fetch('http://127.0.0.1:7780/event', { method: 'POST', body: JSON.stringify({ sessionId: 'sell-request-timeout', runId: 'pre-fix', hypothesisId: 'B', location: 'token/index.ts:getBalance:solDone', msg: '[DEBUG] sol token balance read done', data: { owner, tokenAddress, chainId: resolvedChainId, key, balanceWei: v }, ts: Date.now() }) }).catch(() => { });
-        // #endregion
         this.tokenBalanceCache.set(key, { ts: Date.now(), value: v });
         return v;
       }

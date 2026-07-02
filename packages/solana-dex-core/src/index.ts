@@ -1,6 +1,7 @@
 export * from './aggregators';
 export * from './constants';
 export * from './planner';
+export * from './prewarm';
 export * from './protocols';
 export * from './registry';
 export * from './stubs';

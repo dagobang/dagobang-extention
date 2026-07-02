@@ -167,9 +167,6 @@ export const createLimitOrderExecutor = (deps: {
   };
 
   const executeLimitOrder = async (order: LimitOrder, ctx?: { priceUsd?: number }) => {
-    // #region debug-point C:executor-entry
-    fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"executor.ts:executeLimitOrder:entry",msg:"[DEBUG] limit executor entered",data:{orderId:order.id,chainId:order.chainId,tokenAddress:order.tokenAddress,fromAddress:order.fromAddress??null,side:order.side,orderType:order.orderType,triggerPriceUsd:order.triggerPriceUsd,ctxPriceUsd:ctx?.priceUsd??null},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     const resolveLatestTokenInfo = async () => {
       const refreshed = order.chainId === ChainId.SOL
         ? (deps.resolveLatestTokenInfo
@@ -296,9 +293,6 @@ export const createLimitOrderExecutor = (deps: {
     }
 
     const balance = await resolveSellBalance(order);
-    // #region debug-point C:sell-balance
-    fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"executor.ts:executeLimitOrder:sellBalance",msg:"[DEBUG] limit executor resolved sell balance",data:{orderId:order.id,chainId:order.chainId,tokenAddress:order.tokenAddress,balance:balance.toString(),sellPercentBps:order.sellPercentBps??null,sellTokenAmountWei:order.sellTokenAmountWei??null},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     const fixedAmount = (() => {
       try {
         return order.sellTokenAmountWei ? BigInt(order.sellTokenAmountWei) : 0n;
@@ -319,9 +313,6 @@ export const createLimitOrderExecutor = (deps: {
       : 0n;
     const rawAmountIn = fixedAmount > 0n ? fixedAmount : amountByPercent;
     const amountIn = rawAmountIn > balance ? balance : rawAmountIn;
-    // #region debug-point C:sell-amount
-    fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"executor.ts:executeLimitOrder:sellAmount",msg:"[DEBUG] limit executor computed sell amount",data:{orderId:order.id,chainId:order.chainId,tokenAddress:order.tokenAddress,fixedAmount:fixedAmount.toString(),amountByPercent:amountByPercent.toString(),rawAmountIn:rawAmountIn.toString(),amountIn:amountIn.toString()},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     if (amountIn <= 0n) throw new Error('No balance');
 
     const sellInput = {
@@ -338,9 +329,6 @@ export const createLimitOrderExecutor = (deps: {
       maxRetry: 1,
       timeoutMs: 20_000,
       onSubmitted: (ctx) => {
-        // #region debug-point C:sell-submitted
-        fetch("http://127.0.0.1:7778/event",{method:"POST",body:JSON.stringify({sessionId:"sol-limit-not-trigger",runId:"post-fix",hypothesisId:"C",location:"executor.ts:executeLimitOrder:sellSubmitted",msg:"[DEBUG] limit executor sell submitted",data:{orderId:order.id,chainId:order.chainId,tokenAddress:order.tokenAddress,txHash:ctx.txHash,submitElapsedMs:ctx.submitElapsedMs??null},ts:Date.now()})}).catch(()=>{});
-        // #endregion
         deps.onOrderTxSubmitted?.({ order, txHash: ctx.txHash, submitElapsedMs: ctx.submitElapsedMs });
       },
     });

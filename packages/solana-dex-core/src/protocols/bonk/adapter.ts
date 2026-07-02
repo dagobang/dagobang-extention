@@ -26,56 +26,36 @@ import {
   deriveBonkPoolPda,
 } from './constants';
 import { computeBonkBuyMinimumAmountOut, computeBonkSellMinimumAmountOut } from './quote';
-
-type TimedPromiseCacheEntry<T> = {
-  promise: Promise<T>;
-  expiresAt: number;
-};
+import {
+  getFreshWarmPromise,
+  refreshWarmPromise,
+  rememberWarmPromise,
+  SOLANA_WARM_CACHE_TTL_MS,
+  type WarmCacheEntry,
+} from '../../prewarm';
 
 type BonkPoolContext = {
-  poolState: BonkPoolState;
+  poolState: BonkStaticPoolState;
   baseTokenProgram: PublicKey;
   quoteTokenProgram: PublicKey;
 };
+
+type BonkStaticPoolState = Omit<BonkPoolState, 'virtualBase' | 'virtualQuote' | 'realBase' | 'realQuote'>;
+type BonkPoolReserveSnapshot = Pick<BonkPoolState, 'virtualBase' | 'virtualQuote' | 'realBase' | 'realQuote'>;
 
 type CachedBlockhashValue = {
   blockhash: string;
 };
 
-const POOL_CONTEXT_CACHE_TTL_MS = 10_000;
-const ATA_EXISTS_CACHE_TTL_MS = 15_000;
-const BLOCKHASH_CACHE_TTL_MS = 3_000;
+const POOL_CONTEXT_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
+const POOL_RESERVE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.dynamicQuote;
+const ATA_EXISTS_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
+const BLOCKHASH_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.blockhash;
 
-const poolContextCache = new Map<string, TimedPromiseCacheEntry<BonkPoolContext>>();
-const ataExistsCache = new Map<string, TimedPromiseCacheEntry<boolean>>();
-const latestBlockhashCache = new Map<string, TimedPromiseCacheEntry<CachedBlockhashValue>>();
-
-function rememberTimedPromise<T>(
-  cache: Map<string, TimedPromiseCacheEntry<T>>,
-  key: string,
-  ttlMs: number,
-  factory: () => Promise<T>,
-): Promise<T> {
-  const now = Date.now();
-  const cached = cache.get(key);
-  if (cached && cached.expiresAt > now) return cached.promise;
-  const promise = factory().catch((error) => {
-    cache.delete(key);
-    throw error;
-  });
-  cache.set(key, { promise, expiresAt: now + ttlMs });
-  return promise;
-}
-
-function getFreshTimedPromise<T>(
-  cache: Map<string, TimedPromiseCacheEntry<T>>,
-  key: string,
-  now = Date.now(),
-): Promise<T> | null {
-  const cached = cache.get(key);
-  if (!cached || cached.expiresAt <= now) return null;
-  return cached.promise;
-}
+const poolContextCache = new Map<string, WarmCacheEntry<BonkPoolContext>>();
+const poolReserveCache = new Map<string, WarmCacheEntry<BonkPoolReserveSnapshot>>();
+const ataExistsCache = new Map<string, WarmCacheEntry<boolean>>();
+const latestBlockhashCache = new Map<string, WarmCacheEntry<CachedBlockhashValue>>();
 
 function resolvePlatform(input: SolanaTradeRequest): string {
   return normalizeSolanaPlatform(input.tokenInfo?.launchpad_platform || input.tokenInfo?.launchpad);
@@ -83,6 +63,10 @@ function resolvePlatform(input: SolanaTradeRequest): string {
 
 function normalizeDexType(input: SolanaTradeRequest): string {
   return String(input.tokenInfo?.dex_type || '').trim().toLowerCase();
+}
+
+function resolveExecutionMode(input: SolanaTradeRequest): 'default' | 'turbo' {
+  return (input.rawInput as any)?.executionModeOverride === 'turbo' ? 'turbo' : 'default';
 }
 
 function resolvePoolAddress(input: SolanaTradeRequest): PublicKey {
@@ -93,9 +77,29 @@ function resolvePoolAddress(input: SolanaTradeRequest): PublicKey {
   return deriveBonkPoolPda(baseMint, quoteMint);
 }
 
-async function loadPoolContext(input: SolanaTradeRequest): Promise<BonkPoolContext> {
+function toBonkStaticPoolState(poolState: BonkPoolState): BonkStaticPoolState {
+  const {
+    virtualBase: _virtualBase,
+    virtualQuote: _virtualQuote,
+    realBase: _realBase,
+    realQuote: _realQuote,
+    ...staticState
+  } = poolState;
+  return staticState;
+}
+
+function toBonkReserveSnapshot(poolState: BonkPoolState): BonkPoolReserveSnapshot {
+  return {
+    virtualBase: poolState.virtualBase,
+    virtualQuote: poolState.virtualQuote,
+    realBase: poolState.realBase,
+    realQuote: poolState.realQuote,
+  };
+}
+
+async function loadPoolContext(input: SolanaTradeRequest, opts?: { forceRefresh?: boolean }): Promise<BonkPoolContext> {
   const poolAddress = resolvePoolAddress(input);
-  return await rememberTimedPromise(poolContextCache, poolAddress.toBase58(), POOL_CONTEXT_CACHE_TTL_MS, async () => {
+  const loader = async () => {
     const connection = await input.runtime.getConnection();
     const poolAccountInfo = await connection.getAccountInfo(poolAddress, 'confirmed');
     if (!poolAccountInfo?.data) throw new Error('Bonk pool account not found');
@@ -103,15 +107,51 @@ async function loadPoolContext(input: SolanaTradeRequest): Promise<BonkPoolConte
       throw new Error('tokenInfo.pool_pair is not a Bonk pool');
     }
     const poolState = parseBonkPoolState(poolAccountInfo.data, poolAddress);
+    poolReserveCache.set(poolAddress.toBase58(), {
+      promise: Promise.resolve(toBonkReserveSnapshot(poolState)),
+      expiresAt: Date.now() + POOL_RESERVE_CACHE_TTL_MS,
+    });
     const [baseTokenProgram, quoteTokenProgram] = await Promise.all([
-      getMintProgramId(input.runtime, poolState.baseMint),
-      getMintProgramId(input.runtime, poolState.quoteMint),
+      getMintProgramId(input.runtime, poolState.baseMint, { cacheOnly: true }),
+      getMintProgramId(input.runtime, poolState.quoteMint, { cacheOnly: true }),
     ]);
-    return { poolState, baseTokenProgram, quoteTokenProgram };
-  });
+    return {
+      poolState: toBonkStaticPoolState(poolState),
+      baseTokenProgram,
+      quoteTokenProgram,
+    };
+  };
+  return await (opts?.forceRefresh
+    ? refreshWarmPromise(poolContextCache, poolAddress.toBase58(), POOL_CONTEXT_CACHE_TTL_MS, loader)
+    : rememberWarmPromise(poolContextCache, poolAddress.toBase58(), POOL_CONTEXT_CACHE_TTL_MS, loader));
 }
 
-function validateTradePair(input: SolanaTradeRequest, poolState: BonkPoolState): void {
+async function getPoolContextForBuild(input: SolanaTradeRequest): Promise<BonkPoolContext> {
+  if (resolveExecutionMode(input) !== 'turbo') return await loadPoolContext(input);
+  const cached = getFreshWarmPromise<BonkPoolContext>(poolContextCache, resolvePoolAddress(input).toBase58());
+  if (!cached) throw new Error('Bonk pool context not ready');
+  return await cached;
+}
+
+async function loadPoolReserveSnapshot(
+  input: SolanaTradeRequest,
+  opts?: { forceRefresh?: boolean },
+): Promise<BonkPoolReserveSnapshot> {
+  const poolAddress = resolvePoolAddress(input);
+  const cacheKey = poolAddress.toBase58();
+  const loader = async () => {
+    const connection = await input.runtime.getConnection();
+    const poolAccountInfo = await connection.getAccountInfo(poolAddress, 'confirmed');
+    if (!poolAccountInfo?.data) throw new Error('Bonk pool account not found');
+    const poolState = parseBonkPoolState(poolAccountInfo.data, poolAddress);
+    return toBonkReserveSnapshot(poolState);
+  };
+  return await (opts?.forceRefresh
+    ? refreshWarmPromise(poolReserveCache, cacheKey, POOL_RESERVE_CACHE_TTL_MS, loader)
+    : rememberWarmPromise(poolReserveCache, cacheKey, POOL_RESERVE_CACHE_TTL_MS, loader));
+}
+
+function validateTradePair(input: SolanaTradeRequest, poolState: Pick<BonkPoolState, 'baseMint' | 'quoteMint'>): void {
   const inputMint = new PublicKey(input.inputMint);
   const outputMint = new PublicKey(input.outputMint);
   const isBuyPair = inputMint.equals(poolState.quoteMint) && outputMint.equals(poolState.baseMint);
@@ -119,14 +159,6 @@ function validateTradePair(input: SolanaTradeRequest, poolState: BonkPoolState):
   if (!isBuyPair && !isSellPair) {
     throw new Error('Input/output mint does not match Bonk pool');
   }
-}
-
-async function loadAccountExists(input: SolanaTradeRequest, account: PublicKey): Promise<boolean> {
-  const key = account.toBase58();
-  return await rememberTimedPromise(ataExistsCache, key, ATA_EXISTS_CACHE_TTL_MS, async () => {
-    const connection = await input.runtime.getConnection();
-    return (await connection.getAccountInfo(account, 'confirmed')) != null;
-  });
 }
 
 async function prewarmAtaExistence(input: SolanaTradeRequest, accounts: PublicKey[]): Promise<void> {
@@ -137,7 +169,7 @@ async function prewarmAtaExistence(input: SolanaTradeRequest, accounts: PublicKe
   const missingKeys: string[] = [];
   for (const account of accounts) {
     const key = account.toBase58();
-    if (getFreshTimedPromise(ataExistsCache, key, now)) continue;
+    if (getFreshWarmPromise<boolean>(ataExistsCache, key, now)) continue;
     missingAccounts.push(account);
     missingKeys.push(key);
   }
@@ -152,12 +184,19 @@ async function prewarmAtaExistence(input: SolanaTradeRequest, accounts: PublicKe
 }
 
 async function loadLatestBlockhash(input: SolanaTradeRequest, allowCached: boolean): Promise<CachedBlockhashValue> {
-  const key = allowCached ? 'confirmed:warm' : `confirmed:fresh:${Date.now()}`;
-  return await rememberTimedPromise(latestBlockhashCache, key, BLOCKHASH_CACHE_TTL_MS, async () => {
+  const key = 'confirmed';
+  if (allowCached) {
+    const cached = getFreshWarmPromise<CachedBlockhashValue>(latestBlockhashCache, key);
+    if (cached) return await cached;
+  }
+  const loader = async () => {
     const connection = await input.runtime.getConnection();
     const { blockhash } = await connection.getLatestBlockhash('confirmed');
     return { blockhash };
-  });
+  };
+  return await (allowCached
+    ? rememberWarmPromise(latestBlockhashCache, key, BLOCKHASH_CACHE_TTL_MS, loader)
+    : refreshWarmPromise(latestBlockhashCache, key, BLOCKHASH_CACHE_TTL_MS, loader));
 }
 
 function buildInstructionData(side: 'buy' | 'sell', amountIn: bigint, minimumAmountOut: bigint): Buffer {
@@ -171,11 +210,13 @@ function buildInstructionData(side: 'buy' | 'sell', amountIn: bigint, minimumAmo
 
 async function buildTransaction(input: SolanaTradeRequest): Promise<{
   transaction: VersionedTransaction;
-  tokenMinOutWei: string;
+  protectionMinOutWei: string;
+  quotedOutWei?: string | null;
   recentBlockhash: string;
 }> {
+  const executionMode = resolveExecutionMode(input);
   const user = new PublicKey(input.ownerAddress);
-  const { poolState, baseTokenProgram, quoteTokenProgram } = await loadPoolContext(input);
+  const { poolState, baseTokenProgram, quoteTokenProgram } = await getPoolContextForBuild(input);
   validateTradePair(input, poolState);
 
   const amountIn = BigInt(input.amount);
@@ -188,51 +229,48 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
   const userQuoteTokenAccount = findAta({ mint: poolState.quoteMint, owner: user, tokenProgramId: quoteTokenProgram });
   const userInputAccount = isBuy ? userQuoteTokenAccount : userBaseTokenAccount;
   const userOutputAccount = isBuy ? userBaseTokenAccount : userQuoteTokenAccount;
-  const [inputAtaExists, outputAtaExists] = await Promise.all([
-    loadAccountExists(input, userInputAccount),
-    loadAccountExists(input, userOutputAccount),
-  ]);
   const inputIsNative = isSolanaNativeMint(inputMint.toBase58());
   const outputIsNative = isSolanaNativeMint(outputMint.toBase58());
-  const minimumAmountOut = isBuy
-    ? computeBonkBuyMinimumAmountOut({
-      amountIn,
-      virtualBase: poolState.virtualBase,
-      virtualQuote: poolState.virtualQuote,
-      realBase: poolState.realBase,
-      realQuote: poolState.realQuote,
-      slippageBps: input.slippageBps,
-    })
-    : computeBonkSellMinimumAmountOut({
-      amountIn,
-      virtualBase: poolState.virtualBase,
-      virtualQuote: poolState.virtualQuote,
-      realBase: poolState.realBase,
-      realQuote: poolState.realQuote,
-      slippageBps: input.slippageBps,
-    });
+  let minimumAmountOut = 1n;
+  let protectionMinOutWei = '1';
+  if (executionMode !== 'turbo') {
+    const reserves = await loadPoolReserveSnapshot(input);
+    minimumAmountOut = isBuy
+      ? computeBonkBuyMinimumAmountOut({
+        amountIn,
+        virtualBase: reserves.virtualBase,
+        virtualQuote: reserves.virtualQuote,
+        realBase: reserves.realBase,
+        realQuote: reserves.realQuote,
+        slippageBps: input.slippageBps,
+      })
+      : computeBonkSellMinimumAmountOut({
+        amountIn,
+        virtualBase: reserves.virtualBase,
+        virtualQuote: reserves.virtualQuote,
+        realBase: reserves.realBase,
+        realQuote: reserves.realQuote,
+        slippageBps: input.slippageBps,
+      });
+    protectionMinOutWei = minimumAmountOut.toString();
+  }
 
   const preInstructions: TransactionInstruction[] = [];
   const postInstructions: TransactionInstruction[] = [];
-  if (!inputAtaExists) {
-    if (!inputIsNative) throw new Error('Bonk input token account not found');
-    preInstructions.push(createAtaIdempotentInstruction({
-      payer: user,
-      owner: user,
-      mint: inputMint,
-      associatedToken: userInputAccount,
-      tokenProgramId: inputTokenProgram,
-    }));
-  }
-  if (!outputAtaExists) {
-    preInstructions.push(createAtaIdempotentInstruction({
-      payer: user,
-      owner: user,
-      mint: outputMint,
-      associatedToken: userOutputAccount,
-      tokenProgramId: outputTokenProgram,
-    }));
-  }
+  preInstructions.push(createAtaIdempotentInstruction({
+    payer: user,
+    owner: user,
+    mint: inputMint,
+    associatedToken: userInputAccount,
+    tokenProgramId: inputTokenProgram,
+  }));
+  preInstructions.push(createAtaIdempotentInstruction({
+    payer: user,
+    owner: user,
+    mint: outputMint,
+    associatedToken: userOutputAccount,
+    tokenProgramId: outputTokenProgram,
+  }));
   if (inputIsNative) {
     preInstructions.push(...buildWrapNativeInstructions({
       payer: user,
@@ -278,8 +316,7 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
     data: buildInstructionData(input.side, amountIn, minimumAmountOut),
   });
 
-  const allowCachedBlockhash = (input.rawInput as any)?.executionModeOverride === 'turbo';
-  const { blockhash } = await loadLatestBlockhash(input, allowCachedBlockhash);
+  const { blockhash } = await loadLatestBlockhash(input, true);
   const message = new TransactionMessage({
     payerKey: user,
     recentBlockhash: blockhash,
@@ -288,7 +325,8 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
 
   return {
     transaction: new VersionedTransaction(message),
-    tokenMinOutWei: minimumAmountOut.toString(),
+    protectionMinOutWei,
+    quotedOutWei: null,
     recentBlockhash: blockhash,
   };
 }
@@ -315,8 +353,11 @@ export async function prewarmBonkTrade(input: {
     rawInput: { executionModeOverride: input.executionMode === 'turbo' ? 'turbo' : 'default' } as any,
     runtime: input.runtime,
   };
-  const { poolState, baseTokenProgram, quoteTokenProgram } = await loadPoolContext(request);
-  const tasks: Array<Promise<unknown>> = [loadLatestBlockhash(request, true)];
+  const { poolState, baseTokenProgram, quoteTokenProgram } = await loadPoolContext(request, { forceRefresh: true });
+  if (input.executionMode !== 'turbo') {
+    await loadPoolReserveSnapshot(request, { forceRefresh: true });
+  }
+  const tasks: Array<Promise<unknown>> = [loadLatestBlockhash(request, false)];
   if (ownerAddress) {
     const user = new PublicKey(ownerAddress);
     tasks.push(prewarmAtaExistence(request, [
@@ -340,25 +381,19 @@ export const bonkTradeAdapter: SolanaTradeAdapter = {
     const platform = resolvePlatform(input);
     const dexType = normalizeDexType(input);
     const hinted = platform === 'bonk' || dexType.includes('bonk');
-    if (!hinted) return false;
-    try {
-      const { poolState } = await loadPoolContext(input);
-      validateTradePair(input, poolState);
-      return true;
-    } catch {
-      return false;
-    }
+    return hinted;
   },
 
   async build(input: SolanaTradeRequest): Promise<SolanaBuiltTransaction> {
     if (!(await this.supportsTrade(input))) {
       throw new Error('Bonk adapter cannot handle this trade');
     }
-    const { transaction, tokenMinOutWei, recentBlockhash } = await buildTransaction(input);
+    const { transaction, protectionMinOutWei, quotedOutWei, recentBlockhash } = await buildTransaction(input);
     return {
       source: 'bonk',
       transaction,
-      tokenMinOutWei,
+      protectionMinOutWei,
+      quotedOutWei,
       blockhash: recentBlockhash,
     };
   },

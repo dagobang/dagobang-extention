@@ -1267,7 +1267,14 @@ export class TradeService {
         });
       }
     }
-    return { txHash, tokenMinOutWei: minOut.toString(), broadcastVia, broadcastUrl, isBundle };
+    return {
+      txHash,
+      protectionMinOutWei: minOut.toString(),
+      quotedOutWei: null,
+      broadcastVia,
+      broadcastUrl,
+      isBundle,
+    };
   }
 
   static async buyWithReceiptAndNonceRecovery(
