@@ -157,9 +157,10 @@ const HYPER_MAINNET: ChainSettings = {
 
 const SOL_MAINNET: ChainSettings = {
   rpcUrls: [
-    'https://api.mainnet-beta.solana.com',
+    'https://public.rpc.solanavibestation.com',
+    'https://solana.api.pocket.network',
   ],
-  protectedRpcUrls: [],
+  protectedRpcUrls: ['https://solana-rpc.publicnode.com'],
   protectedRpcUrlsBuy: [],
   protectedRpcUrlsSell: [],
   submitChannel: 'protectRpcs',

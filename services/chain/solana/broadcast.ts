@@ -729,67 +729,95 @@ async function submitViaRpc(input: {
   executionMode?: 'default' | 'turbo';
 }): Promise<SolanaBroadcastResult> {
   const submitStartedAt = Date.now();
+  const effectiveSubmitChannel = await SolanaRpcService.getResolvedSubmitChannel(input.submitChannel);
   const skipPreflight = input.executionMode === 'turbo'
     && (
-      input.submitChannel === 'protectRpcs'
-      || input.submitChannel === 'mixed'
-      || input.submitChannel === 'blockrazor'
+      effectiveSubmitChannel === 'protectRpcs'
+      || effectiveSubmitChannel === 'mixed'
+      || effectiveSubmitChannel === 'blockrazor'
     );
-  const urls = await SolanaRpcService.getSubmitRpcUrls({
-    txSide: input.txSide,
-    submitChannel: input.submitChannel,
-  });
   const serialized = input.transaction.serialize();
-  const attempts = urls.map(async (url) => {
-    const attemptStartedAt = Date.now();
+  const attemptSubmit = async (urls: string[]) => {
+    const attempts = urls.map(async (url) => {
+      try {
+        const connection = SolanaRpcService.getConnectionForUrl(url);
+        const signature = await connection.sendRawTransaction(serialized, {
+          skipPreflight,
+          preflightCommitment: 'confirmed',
+        });
+        reportPumpSwapBroadcastDebug('broadcast.ts:submitViaRpc:attemptDone', '[DEBUG] pumpswap rpc submit attempt done', {
+          submitChannel: effectiveSubmitChannel,
+          txSide: input.txSide ?? null,
+          executionMode: input.executionMode ?? null,
+          skipPreflight,
+          url,
+          signature,
+        });
+        return { signature, url };
+      } catch (error: any) {
+        const errorMessage = String(error?.message || error || '');
+        reportPumpSwapBroadcastDebug('broadcast.ts:submitViaRpc:attemptError', '[DEBUG] pumpswap rpc submit attempt failed', {
+          submitChannel: effectiveSubmitChannel,
+          txSide: input.txSide ?? null,
+          executionMode: input.executionMode ?? null,
+          skipPreflight,
+          url,
+          errorName: String(error?.name || ''),
+          errorMessage,
+        });
+        throw error;
+      }
+    });
     try {
-      const connection = SolanaRpcService.getConnectionForUrl(url);
-      const signature = await connection.sendRawTransaction(serialized, {
-        skipPreflight,
-        preflightCommitment: 'confirmed',
-      });
-      reportPumpSwapBroadcastDebug('broadcast.ts:submitViaRpc:attemptDone', '[DEBUG] pumpswap rpc submit attempt done', {
-        submitChannel: input.submitChannel ?? null,
-        txSide: input.txSide ?? null,
-        executionMode: input.executionMode ?? null,
-        skipPreflight,
-        url,
-        signature,
-      });
-      return { signature, url };
+      return await Promise.any(attempts);
     } catch (error: any) {
-      const errorMessage = String(error?.message || error || '');
-      const errorCode = error?.code ?? error?.cause?.code ?? error?.statusCode ?? error?.response?.status ?? null;
-      const httpStatus = error?.statusCode ?? error?.response?.status ?? error?.cause?.status ?? null;
-      reportPumpSwapBroadcastDebug('broadcast.ts:submitViaRpc:attemptError', '[DEBUG] pumpswap rpc submit attempt failed', {
-        submitChannel: input.submitChannel ?? null,
+      reportPumpSwapBroadcastDebug('broadcast.ts:submitViaRpc:anyError', '[DEBUG] pumpswap rpc submit all attempts rejected', {
+        submitChannel: effectiveSubmitChannel,
         txSide: input.txSide ?? null,
         executionMode: input.executionMode ?? null,
         skipPreflight,
-        url,
+        urls,
         errorName: String(error?.name || ''),
-        errorMessage,
+        errorMessage: String(error?.message || error || ''),
+        errors: Array.isArray(error?.errors)
+          ? error.errors.map((item: any) => String(item?.message || item || ''))
+          : [],
       });
+      if (Array.isArray(error?.errors) && error.errors.length === 1) {
+        throw error.errors[0] instanceof Error ? error.errors[0] : new Error(String(error.errors[0] || 'Solana RPC submit failed'));
+      }
       throw error;
     }
+  };
+  const urls = await SolanaRpcService.getSubmitRpcUrls({
+    txSide: input.txSide,
+    submitChannel: effectiveSubmitChannel,
   });
-  let winner: Awaited<typeof attempts[number]>;
+  let winner: Awaited<ReturnType<typeof attemptSubmit>>;
   try {
-    winner = await Promise.any(attempts);
+    winner = await attemptSubmit(urls);
   } catch (error: any) {
-    reportPumpSwapBroadcastDebug('broadcast.ts:submitViaRpc:anyError', '[DEBUG] pumpswap rpc submit all attempts rejected', {
-      submitChannel: input.submitChannel ?? null,
+    const fallbackUrls = await SolanaRpcService.getSubmitRpcUrls({
+      txSide: input.txSide,
+      submitChannel: effectiveSubmitChannel,
+      scope: 'public',
+    });
+    const fallbackCandidates = fallbackUrls.filter((url) => !urls.includes(url));
+    const shouldFallbackToPublic =
+      (effectiveSubmitChannel === 'protectRpcs' || effectiveSubmitChannel === 'mixed' || effectiveSubmitChannel === 'blockrazor')
+      && fallbackCandidates.length > 0;
+    if (!shouldFallbackToPublic) throw error;
+    reportPumpSwapBroadcastDebug('broadcast.ts:submitViaRpc:publicFallback', '[DEBUG] pumpswap rpc submit fallback to public rpc', {
+      submitChannel: effectiveSubmitChannel,
       txSide: input.txSide ?? null,
       executionMode: input.executionMode ?? null,
       skipPreflight,
-      urls,
+      primaryUrls: urls,
+      fallbackUrls: fallbackCandidates,
       errorName: String(error?.name || ''),
       errorMessage: String(error?.message || error || ''),
-      errors: Array.isArray(error?.errors)
-        ? error.errors.map((item: any) => String(item?.message || item || ''))
-        : [],
     });
-    throw error;
+    winner = await attemptSubmit(fallbackCandidates);
   }
   await RpcReadBalancer.recordBusinessSuccess({
     chainId: ChainId.SOL,

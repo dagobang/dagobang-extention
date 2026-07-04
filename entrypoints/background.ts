@@ -41,6 +41,7 @@ import AxiomAPI from '@/hooks/AxiomAPI';
 import FlapAPI from '@/hooks/FlapAPI';
 import { resolveMigratedSolanaTokenInfo, shouldTryRefreshMigratedSolanaTokenInfo } from '@/services/limitOrders/solanaTokenInfoRefresh';
 import { SolanaBroadcastService } from '@/services/chain/solana/broadcast';
+import { ensureSolanaTradePrewarm, scheduleSolanaTradePrewarm } from '@/services/chain/solana/trade/prewarmScheduler';
 
 if (!(globalThis as any).Buffer) {
   (globalThis as any).Buffer = Buffer;
@@ -792,6 +793,22 @@ export default defineBackground(() => {
   void syncTelegramController();
 
   let limitOrderScanner: ReturnType<typeof createLimitOrderScanner> | null = null;
+  const scheduleLimitOrderPrewarm = (input: {
+    chainId: number;
+    tokenAddress: string;
+    tokenInfo?: any | null;
+    fromAddress?: string;
+  }) => {
+    if (input.chainId !== ChainId.SOL) return;
+    scheduleSolanaTradePrewarm({
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      tokenInfo: input.tokenInfo ?? undefined,
+      fromAddress: input.fromAddress,
+      platform: String(input.tokenInfo?.launchpad_platform || input.tokenInfo?.launchpad || '').trim() || undefined,
+      ttlMs: 15_000,
+    });
+  };
   const limitOrderExecutor = createLimitOrderExecutor({
     onOrdersChanged: () => {
       broadcastStateChange();
@@ -849,6 +866,15 @@ export default defineBackground(() => {
     executeLimitOrder: limitOrderExecutor.executeLimitOrder,
     resolveLatestTokenInfo: resolveLatestLimitOrderTokenInfo,
     onStateChanged: broadcastStateChange,
+    onObserveOrder: ({ order, tokenInfo }) => {
+      if (order.side !== 'buy' || order.status !== 'open') return;
+      scheduleLimitOrderPrewarm({
+        chainId: order.chainId,
+        tokenAddress: order.tokenAddress,
+        tokenInfo: tokenInfo ?? order.tokenInfo ?? null,
+        fromAddress: order.fromAddress,
+      });
+    },
     onOrderFailed: ({ order, error }) => {
       void (async () => {
         const brief = await resolveTokenBrief(order.chainId, order.tokenAddress);
@@ -1442,6 +1468,14 @@ export default defineBackground(() => {
 
           case 'limitOrder:create': {
             const order = await createLimitOrder(msg.input);
+            if (order.side === 'buy') {
+              scheduleLimitOrderPrewarm({
+                chainId: order.chainId,
+                tokenAddress: order.tokenAddress,
+                tokenInfo: order.tokenInfo ?? null,
+                fromAddress: order.fromAddress,
+              });
+            }
             broadcastStateChange();
             limitOrderScanner?.scheduleFromStorage().catch(() => { });
             return { ok: true, order };
@@ -1521,7 +1555,11 @@ export default defineBackground(() => {
 
           case 'trade:prewarmTurbo': {
             try {
-              await getTrade(msg.input.chainId).prewarmTurbo(msg.input);
+              if (msg.input.chainId === ChainId.SOL) {
+                await ensureSolanaTradePrewarm(msg.input);
+              } else {
+                await getTrade(msg.input.chainId).prewarmTurbo(msg.input);
+              }
             } catch { }
             return { ok: true };
           }

@@ -1,4 +1,6 @@
+import { parseUnits } from 'viem';
 import type { PriorityFeePreset, PriorityFeePresetConfig, SolanaSwqosProviderType } from '@/types/extention';
+import { ChainId } from '@/constants/chains/chainId';
 
 export const DEFAULT_SOLANA_TIP_PRESET_VALUES: PriorityFeePresetConfig = {
   none: '0',
@@ -170,4 +172,84 @@ export function getSolanaTipPresetValue(
     : 'standard';
   const source = presets ?? DEFAULT_SOLANA_TIP_PRESET_VALUES;
   return source[selectedPreset] ?? DEFAULT_SOLANA_TIP_PRESET_VALUES[selectedPreset];
+}
+
+type SolanaSwqosSettingsLike = {
+  enabled?: boolean;
+  providers?: Array<{ enabled?: boolean; type?: string | null | undefined }> | null | undefined;
+};
+
+type SolanaTipChainSettingsLike = {
+  solanaSwqos?: SolanaSwqosSettingsLike | null | undefined;
+  buyTipPreset?: PriorityFeePreset | null | undefined;
+  sellTipPreset?: PriorityFeePreset | null | undefined;
+  buyTipPresets?: PriorityFeePresetConfig | null | undefined;
+  sellTipPresets?: PriorityFeePresetConfig | null | undefined;
+};
+
+export function resolveEnabledSolanaSwqosProviderTypes(
+  settings: SolanaSwqosSettingsLike | null | undefined,
+): SolanaSwqosProviderType[] {
+  const providers = Array.isArray(settings?.providers)
+    ? settings.providers.filter((item) => item?.enabled)
+    : [];
+  return providers
+    .map((item) => {
+      const type = String(item?.type || '').trim().toLowerCase();
+      return type === 'jito'
+        || type === 'nextblock'
+        || type === 'blox'
+        || type === 'temporal'
+        || type === 'zeroslot'
+        || type === 'node1'
+        || type === 'flashblock'
+        || type === 'blockrazor'
+        || type === 'astralane'
+        ? type
+        : null;
+    })
+    .filter((item): item is SolanaSwqosProviderType => !!item);
+}
+
+export function resolveSingleEnabledSolanaTipProvider(
+  settings: SolanaSwqosSettingsLike | null | undefined,
+): SolanaSwqosProviderType | null {
+  const enabledProviderTypes = resolveEnabledSolanaSwqosProviderTypes(settings);
+  return enabledProviderTypes.length === 1 ? enabledProviderTypes[0] : null;
+}
+
+export function resolveSolanaTipConfig(input: {
+  chainId: number;
+  side: 'buy' | 'sell';
+  chainSettings?: SolanaTipChainSettingsLike | null | undefined;
+}): { providerType: SolanaSwqosProviderType | null; tipNative: string; tipRecipient: string } {
+  if (input.chainId !== ChainId.SOL) return { providerType: null, tipNative: '0', tipRecipient: '' };
+  const chainSettings = input.chainSettings;
+  if (!chainSettings?.solanaSwqos?.enabled) return { providerType: null, tipNative: '0', tipRecipient: '' };
+  const providerType = resolveSingleEnabledSolanaTipProvider(chainSettings.solanaSwqos);
+  if (!providerType) return { providerType: null, tipNative: '0', tipRecipient: '' };
+  const selectedPreset = (input.side === 'buy'
+    ? chainSettings.buyTipPreset
+    : chainSettings.sellTipPreset) as PriorityFeePreset | undefined;
+  const presetValues = input.side === 'buy'
+    ? (chainSettings.buyTipPresets ?? DEFAULT_SOLANA_TIP_PRESET_VALUES)
+    : (chainSettings.sellTipPresets ?? DEFAULT_SOLANA_TIP_PRESET_VALUES);
+  const rawValue = presetValues[selectedPreset ?? 'none'] ?? DEFAULT_SOLANA_TIP_PRESET_VALUES[selectedPreset ?? 'none'];
+  const tipNative = typeof rawValue === 'string' ? rawValue.trim() : '';
+  if (!tipNative || tipNative === '0') {
+    return { providerType, tipNative: '0', tipRecipient: '' };
+  }
+  const minimumTipNative = getSolanaTipMinimumNative(providerType);
+  const normalizedTipNative = (() => {
+    try {
+      return parseUnits(tipNative, 9) >= parseUnits(minimumTipNative, 9) ? tipNative : minimumTipNative;
+    } catch {
+      return minimumTipNative;
+    }
+  })();
+  return {
+    providerType,
+    tipNative: normalizedTipNative,
+    tipRecipient: getRandomSolanaTipRecipient(providerType),
+  };
 }

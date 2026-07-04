@@ -44,6 +44,12 @@ export class SolanaRpcService {
     return 'protectRpcs';
   }
 
+  static async getResolvedSubmitChannel(requested?: SubmitChannel): Promise<SubmitChannel> {
+    const settings = await SettingsService.get();
+    const chainConfig = settings.chains?.[ChainId.SOL];
+    return this.resolveSubmitChannel(chainConfig, requested);
+  }
+
   private static getRpcUrlGroups(chainConfig: any): {
     public: string[];
     protectedBase: string[];
@@ -95,12 +101,26 @@ export class SolanaRpcService {
   static async getSubmitRpcUrls(opts?: {
     txSide?: 'buy' | 'sell';
     submitChannel?: SubmitChannel;
+    scope?: 'auto' | 'protected' | 'public' | 'both';
   }): Promise<string[]> {
     const settings = await SettingsService.get();
     const chainConfig = settings.chains?.[ChainId.SOL];
     const submitChannel = this.resolveSubmitChannel(chainConfig, opts?.submitChannel);
     const protectedUrls = this.getUrlsByScope(chainConfig, opts?.txSide, 'protected');
     const publicUrls = this.getUrlsByScope(chainConfig, opts?.txSide, 'public');
+    const scope = opts?.scope ?? 'auto';
+    if (scope === 'protected') {
+      if (protectedUrls.length > 0) return protectedUrls;
+      return publicUrls.length > 0 ? publicUrls : ['https://api.mainnet-beta.solana.com'];
+    }
+    if (scope === 'public') {
+      if (publicUrls.length > 0) return publicUrls;
+      return protectedUrls.length > 0 ? protectedUrls : ['https://api.mainnet-beta.solana.com'];
+    }
+    if (scope === 'both') {
+      const bothUrls = this.normalizeUrls([...protectedUrls, ...publicUrls]);
+      return bothUrls.length > 0 ? bothUrls : ['https://api.mainnet-beta.solana.com'];
+    }
     const preferProtected = submitChannel === 'protectRpcs' || submitChannel === 'mixed' || submitChannel === 'blockrazor';
     const urls = preferProtected && protectedUrls.length > 0
       ? protectedUrls

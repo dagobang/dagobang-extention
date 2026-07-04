@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import toast from 'react-hot-toast';
 import { SatelliteDish } from 'lucide-react';
 import { formatUnits, parseUnits, zeroAddress } from 'viem';
-import type { Account, BgGetStateResponse, QuickBuyPresetOverride, Settings, SolanaSwqosProviderType, SubmitChannel, TradeSuccessSoundPreset, TradeTurboPrewarmInput } from '@/types/extention';
+import type { Account, BgGetStateResponse, QuickBuyPresetOverride, Settings, SubmitChannel, TradeSuccessSoundPreset, TradeTurboPrewarmInput } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatBroadcastProvider, formatPriceValue } from '@/utils/format';
@@ -17,11 +17,7 @@ import { getEvmChainRuntime } from '@/constants/chains/evmRuntime';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
-import {
-  DEFAULT_SOLANA_TIP_PRESET_VALUES,
-  getRandomSolanaTipRecipient,
-  getSolanaTipMinimumNative,
-} from '@/utils/solanaTip';
+import { resolveSolanaTipConfig } from '@/utils/solanaTip';
 import type { ChainAddress } from '@/types/chain/address';
 import {
   buildStrategyRollingTakeProfitOrderInputs,
@@ -344,28 +340,6 @@ function formatSolanaSwqosProviders(settings: Settings['chains'][number]['solana
     if (type === 'blox') return 'Blox';
     return type || 'Provider';
   });
-}
-
-function resolveEnabledSolanaSwqosProviderTypes(settings: Settings['chains'][number]['solanaSwqos'] | null | undefined): SolanaSwqosProviderType[] {
-  const providers = Array.isArray(settings?.providers)
-    ? settings.providers.filter((item) => item?.enabled)
-    : [];
-  return providers
-    .map((item) => {
-      const type = String(item?.type || '').trim().toLowerCase();
-      return type === 'jito'
-        || type === 'nextblock'
-        || type === 'blox'
-        || type === 'temporal'
-        || type === 'zeroslot'
-        || type === 'node1'
-        || type === 'flashblock'
-        || type === 'blockrazor'
-        || type === 'astralane'
-        ? type
-        : null;
-    })
-    .filter((item): item is SolanaSwqosProviderType => !!item);
 }
 
 function resolveTradeBaseTokenAddress(settings: Settings | null | undefined, chainIdOverride?: number): ChainAddress {
@@ -3816,43 +3790,13 @@ export default function App() {
     return normalized || '0';
   };
 
-  const resolveSingleEnabledSolanaTipProvider = useCallback((): SolanaSwqosProviderType | null => {
-    if (chainId !== ChainId.SOL) return null;
-    const enabledProviderTypes = resolveEnabledSolanaSwqosProviderTypes(effectiveChainSettings?.solanaSwqos);
-    return enabledProviderTypes.length === 1 ? enabledProviderTypes[0] : null;
-  }, [chainId, effectiveChainSettings?.solanaSwqos]);
-
   const resolveSolanaTip = useCallback((side: 'buy' | 'sell') => {
-    if (chainId !== ChainId.SOL) return { providerType: null, tipNative: '0', tipRecipient: '' };
-    const chainSettings = effectiveChainSettings;
-    if (!chainSettings?.solanaSwqos?.enabled) return { providerType: null, tipNative: '0', tipRecipient: '' };
-    const providerType = resolveSingleEnabledSolanaTipProvider();
-    if (!providerType) return { providerType: null, tipNative: '0', tipRecipient: '' };
-    const selectedPreset = (side === 'buy'
-      ? chainSettings.buyTipPreset
-      : chainSettings.sellTipPreset) as PriorityFeePreset | undefined;
-    const presetValues = side === 'buy'
-      ? (chainSettings.buyTipPresets ?? DEFAULT_SOLANA_TIP_PRESET_VALUES)
-      : (chainSettings.sellTipPresets ?? DEFAULT_SOLANA_TIP_PRESET_VALUES);
-    const rawValue = presetValues[selectedPreset ?? 'none'] ?? DEFAULT_SOLANA_TIP_PRESET_VALUES[selectedPreset ?? 'none'];
-    const tipNative = typeof rawValue === 'string' ? rawValue.trim() : '';
-    if (!tipNative || tipNative === '0') {
-      return { providerType, tipNative: '0', tipRecipient: '' };
-    }
-    const minimumTipNative = getSolanaTipMinimumNative(providerType);
-    const normalizedTipNative = (() => {
-      try {
-        return parseUnits(tipNative, 9) >= parseUnits(minimumTipNative, 9) ? tipNative : minimumTipNative;
-      } catch {
-        return minimumTipNative;
-      }
-    })();
-    return {
-      providerType,
-      tipNative: normalizedTipNative,
-      tipRecipient: getRandomSolanaTipRecipient(providerType),
-    };
-  }, [chainId, effectiveChainSettings, resolveSingleEnabledSolanaTipProvider]);
+    return resolveSolanaTipConfig({
+      chainId,
+      side,
+      chainSettings: effectiveChainSettings,
+    });
+  }, [chainId, effectiveChainSettings]);
 
   const resolveQuickBuyOverride = (presetIndex: number) => {
     const chainSettings = effectiveChainSettings;

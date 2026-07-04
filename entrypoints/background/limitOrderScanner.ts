@@ -47,6 +47,7 @@ export const createLimitOrderScanner = (deps: {
   resolveLatestTokenInfo?: (input: { chainId: number; tokenAddress: string; tokenInfo?: any | null }) => Promise<any | null>;
   onStateChanged: () => void;
   onOrderFailed?: (input: { order: LimitOrder; error: string }) => void;
+  onObserveOrder?: (input: { order: LimitOrder; tokenInfo?: any | null }) => void;
 }) => {
   let limitScanIntervalMs = LIMIT_SCAN_INTERVAL_DEFAULT_MS;
   const limitScanPricesByTokenKey = new Map<string, { priceUsd: number; ts: number }>();
@@ -143,6 +144,9 @@ export const createLimitOrderScanner = (deps: {
         const resolvedTokenInfo = deps.resolveLatestTokenInfo
           ? await deps.resolveLatestTokenInfo({ chainId, tokenAddress, tokenInfo: tokenInfo ?? null })
           : (tokenInfo ?? null);
+        for (const order of orders) {
+          deps.onObserveOrder?.({ order, tokenInfo: resolvedTokenInfo ?? order.tokenInfo ?? null });
+        }
         if (resolvedTokenInfo && JSON.stringify(tokenInfo ?? null) !== JSON.stringify(resolvedTokenInfo)) {
           entry.tokenInfo = resolvedTokenInfo;
           for (const order of orders) {

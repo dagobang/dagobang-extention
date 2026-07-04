@@ -90,6 +90,9 @@ declare global {
   const pickFiniteNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickFiniteNumber
   const pickMaxFiniteNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickMaxFiniteNumber
   const pickMaxPercentValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickMaxPercentValue
+  const resolveEnabledSolanaSwqosProviderTypes: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').resolveEnabledSolanaSwqosProviderTypes
+  const resolveSingleEnabledSolanaTipProvider: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').resolveSingleEnabledSolanaTipProvider
+  const resolveSolanaTipConfig: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').resolveSolanaTipConfig
   const resolveTrenchesStageByFid: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').resolveTrenchesStageByFid
   const shouldUseMergedTokenValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').shouldUseMergedTokenValue
   const storage: typeof import('wxt/utils/storage').storage

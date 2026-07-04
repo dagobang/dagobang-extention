@@ -34,7 +34,7 @@ declare module '#imports' {
   export { t, normalizeLocale, Locale } from '../utils/i18n';
   export { call } from '../utils/messaging';
   export { parsePlatformTokenLink, navigateToUrl, parseCurrentUrl, parseCurrentUrlFull, SiteInfo } from '../utils/sites';
-  export { DEFAULT_SOLANA_TIP_PRESET_VALUES, getSolanaTipProviderLabel, getSolanaTipMinimumNative, getSolanaTipAccounts, getRandomSolanaTipRecipient, getSolanaTipPresetValue } from '../utils/solanaTip';
+  export { DEFAULT_SOLANA_TIP_PRESET_VALUES, getSolanaTipProviderLabel, getSolanaTipMinimumNative, getSolanaTipAccounts, getRandomSolanaTipRecipient, getSolanaTipPresetValue, resolveEnabledSolanaSwqosProviderTypes, resolveSingleEnabledSolanaTipProvider, resolveSolanaTipConfig } from '../utils/solanaTip';
   export { collectErrorText, classifyBroadcastError, getNonceErrorKindFromText, extractNextNonceHintFromText, isAllowanceLikeText, isInFlightLimitLikeText, BroadcastErrorClass } from '../utils/txErrorClassify';
   export { validateSettings } from '../utils/validate';
   export { pickFiniteNumber, normalizePercentValue, pickMaxFiniteNumber, pickMaxPercentValue } from '../utils/value';

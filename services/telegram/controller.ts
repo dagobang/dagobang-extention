@@ -28,8 +28,10 @@ import { chainNames, getChainIdByName, getNativeSymbol } from '@/constants/chain
 import { ChainId } from '@/constants/chains/chainId';
 import { getTradeExecutor, getWalletAdapter } from '@/services/chain/registry';
 import { SOLANA_ZERO_ADDRESS } from '@/services/chain/solana/trade/constants';
+import { scheduleSolanaTradePrewarm } from '@/services/chain/solana/trade/prewarmScheduler';
 import type { ChainAddress } from '@/types/chain/address';
 import type { BuySubmittedContext, SellSubmittedContext } from '@/services/chain/types';
+import { resolveSolanaTipConfig } from '@/utils/solanaTip';
 
 const TG_LIMIT_ORDER_DISPLAY_MODE_KEY = 'dagobang_limit_order_price_display_mode_v1';
 const TG_DEFAULT_TOKEN_SUPPLY = 1_000_000_000;
@@ -71,6 +73,15 @@ export function createTelegramController(deps: {
   };
   const getTelegramChainId = (settings: any) => normalizeTelegramChainId((settings as any)?.telegram?.chainId, Number((settings as any)?.chainId) || 56);
   const getTelegramReceiptTimeoutMs = (_chainId: number) => 5_000;
+  const getTelegramReceiptNoticeWaitMs = (chainId: number) => (
+    chainId === ChainId.SOL
+      ? Math.max(getTelegramReceiptTimeoutMs(chainId), 20_000)
+      : getTelegramReceiptTimeoutMs(chainId)
+  );
+  const isTelegramReceiptTimeoutError = (chainId: number, message: string) => (
+    /Transaction receipt wait timeout after/i.test(message)
+    || (chainId === ChainId.SOL && /Timed out waiting for Solana transaction confirmation/i.test(message))
+  );
   const isEvmAddress = (value: string | null | undefined): value is `0x${string}` => /^0x[a-fA-F0-9]{40}$/.test(String(value || '').trim());
   const isLikelySolanaAddress = (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(value || '').trim());
   const isTelegramTokenAddress = (value: string) => /^0x[a-fA-F0-9]{40}$/.test(String(value || '').trim()) || isLikelySolanaAddress(value);
@@ -103,6 +114,30 @@ export function createTelegramController(deps: {
       ? rawPresets[preset].trim()
       : telegramPriorityFeeDefaults[preset];
     return value || '0';
+  };
+  const resolveTelegramSolanaTip = (settings: any, chainId: number, side: 'buy' | 'sell') => {
+    return resolveSolanaTipConfig({
+      chainId,
+      side,
+      chainSettings: (settings as any)?.chains?.[chainId] ?? null,
+    });
+  };
+  const prewarmTelegramTradeIfNeeded = (input: {
+    chainId: number;
+    tokenAddress: ChainAddress;
+    tokenInfo?: TokenInfo | null;
+    fromAddress?: ChainAddress;
+    submitChannel?: any;
+    platform?: string;
+  }) => {
+    scheduleSolanaTradePrewarm({
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      tokenInfo: input.tokenInfo ?? undefined,
+      fromAddress: input.fromAddress,
+      submitChannel: input.submitChannel,
+      platform: input.platform,
+    });
   };
   const updateTelegramChainId = async (settings: any, chainId: number) => {
     const telegram = {
@@ -845,6 +880,13 @@ export function createTelegramController(deps: {
         if (Number.isFinite(n)) balanceUsd = n * normalizedPriceUsd;
       }
     }
+    prewarmTelegramTradeIfNeeded({
+      chainId,
+      tokenAddress,
+      tokenInfo,
+      fromAddress: holderAddress || undefined,
+      platform: tokenInfo.launchpad_platform || tokenInfo.launchpad,
+    });
     return { chainId, tokenAddress, symbol, name, priceUsd: normalizedPriceUsd, marketCapUsd, holderAddress, balanceWei, balanceAmount, balanceUsd };
   };
   const pickNumericField = (obj: any, keys: string[]) => {
@@ -1028,6 +1070,7 @@ export function createTelegramController(deps: {
   ) => {
     const settings = await SettingsService.get();
     const chainId = typeof chainIdOrTokenAddress === 'number' ? chainIdOrTokenAddress : getTelegramChainId(settings);
+    const chainSettings = (settings as any)?.chains?.[chainId] ?? null;
     const status = await getWalletStatus(chainId);
     const trade = getTrade(chainId);
     const receiptTimeoutMs = getTelegramReceiptTimeoutMs(chainId);
@@ -1045,6 +1088,17 @@ export function createTelegramController(deps: {
     const amountWei = resolveNativeAmountWei(chainId, amountNative);
     const fromAddress = status.address || undefined;
     const priorityFeeNative = resolveTelegramPriorityFeeNative(settings, chainId, 'buy');
+    const resolvedBuyTip = resolveTelegramSolanaTip(settings, chainId, 'buy');
+    const hasBuyPriorityFee = !!priorityFeeNative && priorityFeeNative !== '0';
+    const hasBuyTip = !!resolvedBuyTip.tipNative && resolvedBuyTip.tipNative !== '0' && !!resolvedBuyTip.tipRecipient;
+    prewarmTelegramTradeIfNeeded({
+      chainId,
+      tokenAddress,
+      tokenInfo,
+      fromAddress,
+      submitChannel: (settings as any)?.chains?.[chainId]?.submitChannel,
+      platform: tokenInfo.launchpad_platform || tokenInfo.launchpad,
+    });
     let submittedTxHash: string | null = null;
     let submittedElapsedMs: number | undefined;
     let rsp: any;
@@ -1056,7 +1110,15 @@ export function createTelegramController(deps: {
         bnbAmountWei: amountWei,
         baseTokenAddress: resolveBaseTokenAddress(chainId),
         fromAddress,
+        submitChannel: chainSettings?.submitChannel,
+        executionModeOverride: chainSettings?.executionMode === 'turbo' ? 'turbo' : 'default',
         priorityFeeNative,
+        solanaFeeMode: chainId === ChainId.SOL
+          ? (hasBuyTip ? (hasBuyPriorityFee ? 'pf_and_tip' : 'tip') : 'pf')
+          : undefined,
+        solanaTipNative: chainId === ChainId.SOL && hasBuyTip ? resolvedBuyTip.tipNative : undefined,
+        solanaTipProviderType: chainId === ChainId.SOL && hasBuyTip ? resolvedBuyTip.providerType ?? undefined : undefined,
+        solanaTipRecipient: chainId === ChainId.SOL && hasBuyTip ? resolvedBuyTip.tipRecipient : undefined,
         tokenInfo,
       }, {
         timeoutMs: receiptTimeoutMs,
@@ -1069,13 +1131,13 @@ export function createTelegramController(deps: {
       });
     } catch (e: any) {
       const message = String(e?.shortMessage || e?.message || e || '');
-      const isReceiptTimeout = /Transaction receipt wait timeout after/i.test(message);
+      const isReceiptTimeout = isTelegramReceiptTimeoutError(chainId, message);
       if (isReceiptTimeout && submittedTxHash) {
         await sendTelegramReply([
           '买入已提交，但等待回执超时。',
           `链: ${formatChainLabel(chainId)}`,
           `TxHash: ${submittedTxHash}`,
-          `已等待: ${Math.floor(receiptTimeoutMs / 1000)}s`,
+          `已等待确认: ${Math.floor(getTelegramReceiptNoticeWaitMs(chainId) / 1000)}s+`,
           '说明: 链上回执偶尔会慢于 Telegram 等待窗口，这不等于提交失败。',
         ].join('\n'));
         return {
@@ -1168,6 +1230,7 @@ export function createTelegramController(deps: {
   ) => {
     const settings = await SettingsService.get();
     const chainId = typeof chainIdOrTokenAddress === 'number' ? chainIdOrTokenAddress : getTelegramChainId(settings);
+    const chainSettings = (settings as any)?.chains?.[chainId] ?? null;
     const status = await getWalletStatus(chainId);
     const trade = getTrade(chainId);
     const receiptTimeoutMs = getTelegramReceiptTimeoutMs(chainId);
@@ -1191,6 +1254,17 @@ export function createTelegramController(deps: {
     }
     const fromAddress = status.address;
     const priorityFeeNative = resolveTelegramPriorityFeeNative(settings, chainId, 'sell');
+    const resolvedSellTip = resolveTelegramSolanaTip(settings, chainId, 'sell');
+    const hasSellPriorityFee = !!priorityFeeNative && priorityFeeNative !== '0';
+    const hasSellTip = !!resolvedSellTip.tipNative && resolvedSellTip.tipNative !== '0' && !!resolvedSellTip.tipRecipient;
+    prewarmTelegramTradeIfNeeded({
+      chainId,
+      tokenAddress,
+      tokenInfo,
+      fromAddress,
+      submitChannel: (settings as any)?.chains?.[chainId]?.submitChannel,
+      platform: tokenInfo.launchpad_platform || tokenInfo.launchpad,
+    });
     let submittedTxHash: string | null = null;
     let submittedElapsedMs: number | undefined;
     let rsp: any;
@@ -1203,7 +1277,15 @@ export function createTelegramController(deps: {
         expectedTokenInWei: balanceWei.toString(),
         baseTokenAddress: resolveBaseTokenAddress(chainId),
         fromAddress,
+        submitChannel: chainSettings?.submitChannel,
+        executionModeOverride: chainSettings?.executionMode === 'turbo' ? 'turbo' : 'default',
         priorityFeeNative,
+        solanaFeeMode: chainId === ChainId.SOL
+          ? (hasSellTip ? (hasSellPriorityFee ? 'pf_and_tip' : 'tip') : 'pf')
+          : undefined,
+        solanaTipNative: chainId === ChainId.SOL && hasSellTip ? resolvedSellTip.tipNative : undefined,
+        solanaTipProviderType: chainId === ChainId.SOL && hasSellTip ? resolvedSellTip.providerType ?? undefined : undefined,
+        solanaTipRecipient: chainId === ChainId.SOL && hasSellTip ? resolvedSellTip.tipRecipient : undefined,
         tokenInfo,
       }, {
         timeoutMs: receiptTimeoutMs,
@@ -1216,13 +1298,13 @@ export function createTelegramController(deps: {
       });
     } catch (e: any) {
       const message = String(e?.shortMessage || e?.message || e || '');
-      const isReceiptTimeout = /Transaction receipt wait timeout after/i.test(message);
+      const isReceiptTimeout = isTelegramReceiptTimeoutError(chainId, message);
       if (isReceiptTimeout && submittedTxHash) {
         await sendTelegramReply([
           '卖出已提交，但等待回执超时。',
           `链: ${formatChainLabel(chainId)}`,
           `TxHash: ${submittedTxHash}`,
-          `已等待: ${Math.floor(receiptTimeoutMs / 1000)}s`,
+          `已等待确认: ${Math.floor(getTelegramReceiptNoticeWaitMs(chainId) / 1000)}s+`,
           '说明: 链上回执偶尔会慢于 Telegram 等待窗口，这不等于提交失败。',
         ].join('\n'));
         return {
