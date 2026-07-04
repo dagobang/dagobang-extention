@@ -12,6 +12,7 @@ export const SUPPORTED_LAUNCHPADS: Partial<Record<ChainId, string[]>> = ({
     [ChainId.ETH]: ["livo", "trench"],
 
     [ChainId.HYPER]: ["altfun", "alt.fun"],
+    [ChainId.SOL]: ["pumpfun", "pumpswap", "raydium", "meteora", "bonk", "bags"],
 });
 
 
@@ -40,9 +41,25 @@ export const PLATFORM_OPTIONS_HYPER = [
     { value: 'altfun', label: 'alt.fun' },
 ] as const;
 
+export const PLATFORM_OPTIONS_SOL = [
+    { value: 'pumpfun', label: 'Pump.fun' },
+    { value: 'pumpswap', label: 'PumpSwap' },
+    { value: 'raydium', label: 'Raydium' },
+    { value: 'meteora', label: 'Meteora' },
+    { value: 'bonk', label: 'Bonk' },
+    { value: 'bags', label: 'Bags' },
+] as const;
+
 
 export function getSupportedLaunchpads(chainId: ChainId): readonly string[] {
     return SUPPORTED_LAUNCHPADS[chainId] ?? []
+}
+
+export function getPlatformOptionsByChain(chainId: ChainId) {
+    if (chainId === ChainId.SOL) return PLATFORM_OPTIONS_SOL;
+    if (chainId === ChainId.HYPER) return PLATFORM_OPTIONS_HYPER;
+    if (chainId === ChainId.ETH) return PLATFORM_OPTIONS_ETH;
+    return PLATFORM_OPTIONS;
 }
 
 export function normalizeLaunchpadPlatform(value: unknown): string | undefined {
@@ -58,6 +75,12 @@ export function normalizeLaunchpadPlatform(value: unknown): string | undefined {
     if (raw === 'openfour' || raw === 'open four') return 'openfour';
     if (raw === 'likwid') return 'likwid';
     if (raw === 'alt.fun' || raw === 'altfun') return 'altfun';
+    if (raw === 'pump' || raw === 'pumpfun' || raw === 'pump.fun') return 'pumpfun';
+    if (raw === 'pumpswap' || raw === 'pump_swap' || raw === 'pumpamm' || raw === 'pump amm') return 'pumpswap';
+    if (raw === 'raydium') return 'raydium';
+    if (raw === 'meteora' || raw === 'dlmm' || raw === 'damm' || raw === 'damm_v2') return 'meteora';
+    if (raw === 'bonk') return 'bonk';
+    if (raw === 'bags') return 'bags';
     return raw;
 }
 

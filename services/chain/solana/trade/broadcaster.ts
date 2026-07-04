@@ -6,6 +6,7 @@ export async function broadcastSolanaBuiltTransaction(input: {
   signer: SolanaSignerContext;
   txSide?: 'buy' | 'sell';
   submitChannel?: import('@/types/extention').SubmitChannel;
+  solanaFeeMode?: import('@/types/extention').SolanaFeeMode;
   executionMode?: 'default' | 'turbo';
   debugRequestId?: string;
 }): Promise<SolanaSubmittedTrade> {
@@ -20,6 +21,7 @@ export async function broadcastSolanaBuiltTransaction(input: {
       transaction: built.transaction,
       txSide: input.txSide,
       submitChannel: input.submitChannel,
+      solanaFeeMode: input.solanaFeeMode,
       executionMode: input.executionMode,
     });
   } catch (error: any) {

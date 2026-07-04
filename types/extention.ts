@@ -5,7 +5,16 @@ export type GasPreset = 'slow' | 'standard' | 'fast' | 'turbo';
 export type PriorityFeePreset = 'none' | 'slow' | 'standard' | 'fast';
 export type TradeBaseToken = 'BNB' | 'WBNB' | 'USDT' | 'USDC';
 export type SubmitChannel = 'blox' | 'blockrazor' | 'protectRpcs' | 'mixed';
-export type SolanaSwqosProviderType = 'jito' | 'nextblock' | 'blox' | 'temporal';
+export type SolanaSwqosProviderType =
+  | 'jito'
+  | 'nextblock'
+  | 'blox'
+  | 'temporal'
+  | 'zeroslot'
+  | 'node1'
+  | 'flashblock'
+  | 'blockrazor'
+  | 'astralane';
 export type SolanaSwqosStrategy = 'single' | 'concurrent';
 export type SolanaSwqosRegion =
   | 'default'
@@ -30,6 +39,7 @@ export type SolanaSwqosSettings = {
   region?: SolanaSwqosRegion;
   providers?: SolanaSwqosProviderSettings[];
 };
+export type SolanaFeeMode = 'pf' | 'tip' | 'pf_and_tip';
 
 export type ExecutionMode = 'default' | 'turbo';
 export type GasPriceMode = 'fixed' | 'dynamic';
@@ -80,6 +90,10 @@ export type ChainSettings = {
   sellPriorityFeePreset?: PriorityFeePreset;
   buyPriorityFeePresets?: PriorityFeePresetConfig;
   sellPriorityFeePresets?: PriorityFeePresetConfig;
+  buyTipPreset?: PriorityFeePreset;
+  sellTipPreset?: PriorityFeePreset;
+  buyTipPresets?: PriorityFeePresetConfig;
+  sellTipPresets?: PriorityFeePresetConfig;
   quickBuyAdvancedEnabled?: boolean;
   quickBuyPresetOverrides?: QuickBuyPresetOverride[];
   bloxrouteBuyEnabled?: boolean;
@@ -492,6 +506,10 @@ export type TxBuyInput = {
   gasPriceGwei?: string;
   priorityFeeNative?: string;
   priorityFeeBnb?: string;
+  solanaFeeMode?: SolanaFeeMode;
+  solanaTipNative?: string;
+  solanaTipProviderType?: SolanaSwqosProviderType;
+  solanaTipRecipient?: string;
   submitChannel?: SubmitChannel;
   deadlineSeconds?: number;
   openFourOptions?: string;
@@ -513,6 +531,10 @@ export type TxSellInput = {
   gasPreset?: GasPreset;
   priorityFeeNative?: string;
   priorityFeeBnb?: string;
+  solanaFeeMode?: SolanaFeeMode;
+  solanaTipNative?: string;
+  solanaTipProviderType?: SolanaSwqosProviderType;
+  solanaTipRecipient?: string;
   submitChannel?: SubmitChannel;
   deadlineSeconds?: number;
   openFourOptions?: string;
@@ -812,6 +834,7 @@ export type BgRequest =
   | { type: 'bg:openPopup' }
   | { type: 'bg:getState'; chainId?: number }
   | { type: 'bloxroute:probe'; authHeader?: string }
+  | { type: 'solanaSwqos:probe'; providerType: SolanaSwqosProviderType; authKey?: string; endpoint?: string; region?: SolanaSwqosRegion; timeoutMs?: number }
   | { type: 'bloxroute:openCertPage' }
   | { type: 'settings:set'; settings: Settings }
   | { type: 'settings:setAccountAlias'; address: ChainAddress; alias: string }
@@ -963,6 +986,7 @@ export type BgRequest =
   | { type: 'gmgn:tokenSnapshot:upsertBatch'; payload: { items: GmgnTokenSnapshot[] } }
   | { type: 'newpool:getSnapshot' }
   | { type: 'newpool:upsertBatch'; payload: { items: NewPoolMonitorUiDetail[] } }
+  | { type: 'newpool:clearCache' }
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: ChainAddress }
   | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
   | { type: 'limitOrder:cancel'; id: string }
@@ -978,6 +1002,18 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? BgGetStateResponse
   : T extends { type: 'bloxroute:probe' }
   ? { ok: true; status: 'reachable' | 'failed'; httpStatus?: number; message?: string; hasAuthHeader: boolean }
+  : T extends { type: 'solanaSwqos:probe' }
+  ? {
+      ok: true;
+      status: 'reachable' | 'failed';
+      category: 'ok' | 'auth_required' | 'auth_failed' | 'bad_endpoint' | 'rate_limited' | 'payload_rejected' | 'server_error' | 'timeout' | 'network_error';
+      providerType: SolanaSwqosProviderType;
+      endpoint: string;
+      submitUrl: string;
+      httpStatus?: number;
+      message?: string;
+      hasAuthKey: boolean;
+    }
   : T extends { type: 'bloxroute:openCertPage' }
   ? { ok: true }
   : T extends { type: 'settings:set' }
@@ -1205,6 +1241,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; items: NewPoolMonitorUiDetail[] }
   : T extends { type: 'newpool:upsertBatch' }
   ? { ok: true }
+  : T extends { type: 'newpool:clearCache' }
+  ? { ok: true; clearedNewPoolCount: number; clearedSnapshotCount: number }
   : T extends { type: 'limitOrder:list' }
   ? { ok: true; orders: LimitOrder[] }
   : T extends { type: 'limitOrder:create' }

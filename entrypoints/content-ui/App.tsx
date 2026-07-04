@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import toast from 'react-hot-toast';
 import { SatelliteDish } from 'lucide-react';
 import { formatUnits, parseUnits, zeroAddress } from 'viem';
-import type { Account, BgGetStateResponse, QuickBuyPresetOverride, Settings, SubmitChannel, TradeSuccessSoundPreset, TradeTurboPrewarmInput } from '@/types/extention';
+import type { Account, BgGetStateResponse, QuickBuyPresetOverride, Settings, SolanaSwqosProviderType, SubmitChannel, TradeSuccessSoundPreset, TradeTurboPrewarmInput } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatBroadcastProvider, formatPriceValue } from '@/utils/format';
@@ -17,6 +17,11 @@ import { getEvmChainRuntime } from '@/constants/chains/evmRuntime';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { useTradeSuccessSound } from '@/hooks/useTradeSuccessSound';
+import {
+  DEFAULT_SOLANA_TIP_PRESET_VALUES,
+  getRandomSolanaTipRecipient,
+  getSolanaTipMinimumNative,
+} from '@/utils/solanaTip';
 import type { ChainAddress } from '@/types/chain/address';
 import {
   buildStrategyRollingTakeProfitOrderInputs,
@@ -341,6 +346,28 @@ function formatSolanaSwqosProviders(settings: Settings['chains'][number]['solana
   });
 }
 
+function resolveEnabledSolanaSwqosProviderTypes(settings: Settings['chains'][number]['solanaSwqos'] | null | undefined): SolanaSwqosProviderType[] {
+  const providers = Array.isArray(settings?.providers)
+    ? settings.providers.filter((item) => item?.enabled)
+    : [];
+  return providers
+    .map((item) => {
+      const type = String(item?.type || '').trim().toLowerCase();
+      return type === 'jito'
+        || type === 'nextblock'
+        || type === 'blox'
+        || type === 'temporal'
+        || type === 'zeroslot'
+        || type === 'node1'
+        || type === 'flashblock'
+        || type === 'blockrazor'
+        || type === 'astralane'
+        ? type
+        : null;
+    })
+    .filter((item): item is SolanaSwqosProviderType => !!item);
+}
+
 function resolveTradeBaseTokenAddress(settings: Settings | null | undefined, chainIdOverride?: number): ChainAddress {
   const chainId = chainIdOverride ?? settings?.chainId ?? 56;
   if (isSolanaChain(chainId)) return zeroAddress;
@@ -471,12 +498,31 @@ type PendingSolTokenDeltaEntry = {
   expiresAt: number;
 };
 
+type PendingAutoSellOrderContext = {
+  chainId: number;
+  tokenAddress: string;
+  walletAddress: ChainAddress;
+  siteInfo: SiteInfo;
+  tokenInfo: TokenInfo;
+  tokenSymbol: string | null;
+};
+
 function getPendingTokenDeltaKey(tokenAddress: string, walletAddress: string) {
   return `${String(tokenAddress || '').trim().toLowerCase()}:${String(walletAddress || '').trim().toLowerCase()}`;
 }
 
 function getPendingTradeBaseDeltaKey(baseTokenAddress: string, walletAddress: string) {
   return `${String(baseTokenAddress || '').trim().toLowerCase()}:${String(walletAddress || '').trim().toLowerCase()}`;
+}
+
+function normalizeChainScopedAddressKey(chainId: number, value: string): string {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  return isSolanaChain(chainId) ? trimmed : trimmed.toLowerCase();
+}
+
+function getPendingAutoSellOrderKey(chainId: number, tokenAddress: string, walletAddress: string) {
+  return `${chainId}:${normalizeChainScopedAddressKey(chainId, tokenAddress)}:${normalizeChainScopedAddressKey(chainId, walletAddress)}`;
 }
 
 export default function App() {
@@ -565,6 +611,7 @@ export default function App() {
   const autoTradeOrderSoundPlayedAtRef = useRef<Record<string, number>>({});
   const stickyTokenSiteInfoRef = useRef<{ siteInfo: SiteInfo | null; updatedAt: number }>({ siteInfo: null, updatedAt: 0 });
   const tokenPriceCacheRef = useRef(new Map<string, number>());
+  const pendingAutoSellOrdersRef = useRef(new Map<string, PendingAutoSellOrderContext>());
 
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
@@ -2742,7 +2789,7 @@ export default function App() {
       let holdingsElapsedMs = 0;
       if (refreshIsUnlocked && queryWalletsForToken.length > 0) {
         const holdingsStartedAt = Date.now();
-        const holdings = await Promise.all(
+        const holdingResults = await Promise.allSettled(
           queryWalletsForToken.map((walletAddr) =>
             TokenAPI.getTokenHolding(tokenContextSiteInfo.platform, tokenContextSiteInfo.chain, walletAddr, tokenAddressNormalized, {
               cacheTtlMs: force ? 0 : tokenBalanceRefreshThrottleMs,
@@ -2757,9 +2804,15 @@ export default function App() {
           byWallet[addr.toLowerCase()] = '0';
         });
         const prevActualByWallet = actualWalletTokenBalancesRef.current;
+        let resolvedHoldingCount = 0;
         queryWalletsForToken.forEach((addr, i) => {
           const addrLower = addr.toLowerCase();
-          let nextHoldingRaw = holdings[i] ?? '0';
+          const result = holdingResults[i];
+          let nextHoldingRaw = prevActualByWallet[addrLower] || '0';
+          if (result?.status === 'fulfilled') {
+            nextHoldingRaw = result.value ?? '0';
+            resolvedHoldingCount += 1;
+          }
           if (isSolana) {
             let prevActual = 0n;
             let nextActual = 0n;
@@ -2784,6 +2837,16 @@ export default function App() {
           }
           byWallet[addrLower] = nextHoldingRaw;
         });
+        if (resolvedHoldingCount <= 0 && Object.keys(prevActualByWallet).length > 0) {
+          logHyperReadDebug('refreshToken.holdingsPreserved', {
+            source,
+            force,
+            queryAllWallets,
+            elapsedMs: Date.now() - startedAt,
+            selectedWalletCount: targetWalletsForToken.length,
+            queriedWalletCount: queryWalletsForToken.length,
+          });
+        }
         queryWalletsForToken.forEach((addr) => {
           const addrLower = addr.toLowerCase();
           reconcilePendingSolTokenDeltaWei(
@@ -3191,6 +3254,23 @@ export default function App() {
           void refreshGmgnHoldingStats(true, 'tradeSuccess');
           startFastPolling();
         }
+        if (side === 'buy') {
+          const fromAddress = typeof message?.fromAddress === 'string' ? message.fromAddress : '';
+          const pendingKey = fromAddress ? getPendingAutoSellOrderKey(Number(message?.chainId || 0), rawAddr, fromAddress) : '';
+          const pendingAutoSell = pendingKey ? pendingAutoSellOrdersRef.current.get(pendingKey) : null;
+          if (pendingAutoSell) {
+            pendingAutoSellOrdersRef.current.delete(pendingKey);
+            void createAutoSellOrdersForWallet(pendingAutoSell)
+              .then((createdCount) => {
+                if (createdCount > 0) {
+                  toast.success(`已创建自动卖出挂单 ${createdCount} 个`, { icon: '✅' });
+                }
+              })
+              .catch((error) => {
+                console.error('auto sell create orders on trade success failed', error);
+              });
+          }
+        }
         const eventToastId = getTradeEventToastId(side, rawAddr, String(message?.txHash || ''));
         toast.dismiss(eventToastId);
         toast.dismiss(getTradeToastId(side, rawAddr));
@@ -3204,6 +3284,11 @@ export default function App() {
       if (message.type === 'bg:tradeFailed') {
         const side = message?.side === 'sell' ? 'sell' : 'buy';
         const rawAddr = typeof message?.tokenAddress === 'string' ? message.tokenAddress : '';
+        if (side === 'buy') {
+          const fromAddress = typeof message?.fromAddress === 'string' ? message.fromAddress : '';
+          const pendingKey = fromAddress ? getPendingAutoSellOrderKey(Number(message?.chainId || 0), rawAddr, fromAddress) : '';
+          if (pendingKey) pendingAutoSellOrdersRef.current.delete(pendingKey);
+        }
         if (message?.chainId === ChainId.SOL && rawAddr) {
           solTradeOutcomeRef.current.set(getSolTradeOutcomeKey(side, rawAddr), 'failed');
         }
@@ -3718,7 +3803,8 @@ export default function App() {
     if (!settings) return undefined;
     const chainSettings = effectiveChainSettings;
     if (!chainSettings) return undefined;
-    if ((chainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs' || (chainSettings.submitChannel ?? 'protectRpcs') === 'mixed') return '0';
+    const submitChannel = (chainSettings.submitChannel ?? 'protectRpcs');
+    if (chainId !== ChainId.SOL && (submitChannel === 'protectRpcs' || submitChannel === 'mixed')) return '0';
     const selectedPreset = overridePreset ?? (side === 'buy'
       ? ((chainSettings.buyPriorityFeePreset ?? 'standard') as PriorityFeePreset)
       : ((chainSettings.sellPriorityFeePreset ?? 'standard') as PriorityFeePreset));
@@ -3729,6 +3815,44 @@ export default function App() {
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized || '0';
   };
+
+  const resolveSingleEnabledSolanaTipProvider = useCallback((): SolanaSwqosProviderType | null => {
+    if (chainId !== ChainId.SOL) return null;
+    const enabledProviderTypes = resolveEnabledSolanaSwqosProviderTypes(effectiveChainSettings?.solanaSwqos);
+    return enabledProviderTypes.length === 1 ? enabledProviderTypes[0] : null;
+  }, [chainId, effectiveChainSettings?.solanaSwqos]);
+
+  const resolveSolanaTip = useCallback((side: 'buy' | 'sell') => {
+    if (chainId !== ChainId.SOL) return { providerType: null, tipNative: '0', tipRecipient: '' };
+    const chainSettings = effectiveChainSettings;
+    if (!chainSettings?.solanaSwqos?.enabled) return { providerType: null, tipNative: '0', tipRecipient: '' };
+    const providerType = resolveSingleEnabledSolanaTipProvider();
+    if (!providerType) return { providerType: null, tipNative: '0', tipRecipient: '' };
+    const selectedPreset = (side === 'buy'
+      ? chainSettings.buyTipPreset
+      : chainSettings.sellTipPreset) as PriorityFeePreset | undefined;
+    const presetValues = side === 'buy'
+      ? (chainSettings.buyTipPresets ?? DEFAULT_SOLANA_TIP_PRESET_VALUES)
+      : (chainSettings.sellTipPresets ?? DEFAULT_SOLANA_TIP_PRESET_VALUES);
+    const rawValue = presetValues[selectedPreset ?? 'none'] ?? DEFAULT_SOLANA_TIP_PRESET_VALUES[selectedPreset ?? 'none'];
+    const tipNative = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!tipNative || tipNative === '0') {
+      return { providerType, tipNative: '0', tipRecipient: '' };
+    }
+    const minimumTipNative = getSolanaTipMinimumNative(providerType);
+    const normalizedTipNative = (() => {
+      try {
+        return parseUnits(tipNative, 9) >= parseUnits(minimumTipNative, 9) ? tipNative : minimumTipNative;
+      } catch {
+        return minimumTipNative;
+      }
+    })();
+    return {
+      providerType,
+      tipNative: normalizedTipNative,
+      tipRecipient: getRandomSolanaTipRecipient(providerType),
+    };
+  }, [chainId, effectiveChainSettings, resolveSingleEnabledSolanaTipProvider]);
 
   const resolveQuickBuyOverride = (presetIndex: number) => {
     const chainSettings = effectiveChainSettings;
@@ -3777,6 +3901,69 @@ export default function App() {
       receiptValue,
     };
   };
+
+  const createAutoSellOrdersForWallet = useCallback(async (ctx: PendingAutoSellOrderContext) => {
+    const config = settingsRef.current?.advancedAutoSell;
+    if (!config?.enabled) return 0;
+    if (!ctx.siteInfo?.platform) return 0;
+    const tokenAddress = String(ctx.tokenAddress || '').trim();
+    if (!tokenAddress) return 0;
+    const latestTokenInfo = ctx.tokenInfo;
+    const fetchedPriceUsd = await TokenAPI.getTokenPriceUsd(ctx.siteInfo.platform, ctx.chainId, tokenAddress, latestTokenInfo);
+    const fallbackPriceUsd = Number(latestTokenInfo?.tokenPrice?.price ?? 0);
+    const basePriceUsd = fetchedPriceUsd != null && fetchedPriceUsd > 0
+      ? fetchedPriceUsd
+      : (Number.isFinite(fallbackPriceUsd) && fallbackPriceUsd > 0 ? fallbackPriceUsd : null);
+    if (basePriceUsd == null || !(basePriceUsd > 0)) return 0;
+
+    const inputs = buildStrategySellOrderInputs({
+      config,
+      chainId: ctx.chainId,
+      tokenAddress,
+      tokenSymbol: ctx.tokenSymbol ?? null,
+      tokenInfo: latestTokenInfo,
+      basePriceUsd,
+      entryPriceUsd: basePriceUsd,
+    });
+
+    const mode = (config as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
+    if (mode === 'immediate' && (config as any)?.trailingStop?.enabled) {
+      if (getAdvancedAutoSellMode(config) === 'rolling_take_profit') {
+        const rolling = buildStrategyRollingTakeProfitOrderInputs({
+          config,
+          chainId: ctx.chainId,
+          tokenAddress,
+          tokenSymbol: ctx.tokenSymbol ?? null,
+          tokenInfo: latestTokenInfo,
+          basePriceUsd,
+          entryPriceUsd: basePriceUsd,
+        });
+        if (rolling) inputs.push(rolling);
+      } else {
+        const trailing = buildStrategyTrailingSellOrderInputs({
+          config,
+          chainId: ctx.chainId,
+          tokenAddress,
+          tokenSymbol: ctx.tokenSymbol ?? null,
+          tokenInfo: latestTokenInfo,
+          basePriceUsd,
+        });
+        if (trailing) inputs.push(trailing);
+      }
+    }
+
+    if (!inputs.length) return 0;
+    for (const input of inputs) {
+      await call({
+        type: 'limitOrder:create',
+        input: {
+          ...input,
+          fromAddress: ctx.walletAddress,
+        },
+      } as const);
+    }
+    return inputs.length;
+  }, []);
 
   const renderTradeSuccessToast = (input: {
     side: 'buy' | 'sell';
@@ -3929,6 +4116,10 @@ export default function App() {
                 pendingTradeBaseDeltaId = addPendingSolTradeBaseDeltaWei(tradeBaseTokenAddress, walletAddress, `-${amountWei.toString()}`);
                 applyOptimisticSolWalletTradeBaseDeltaWei(walletAddress, -amountWei);
               }
+              const resolvedBuyPriorityFeeNative = resolvePriorityFee('buy', buyPriorityFeePreset);
+              const resolvedBuyTip = resolveSolanaTip('buy');
+              const hasBuyPriorityFee = !!resolvedBuyPriorityFeeNative && resolvedBuyPriorityFeeNative !== '0';
+              const hasBuyTip = !!resolvedBuyTip.tipNative && resolvedBuyTip.tipNative !== '0' && !!resolvedBuyTip.tipRecipient;
               const buyInput = {
                 chainId,
                 tokenAddress: tokenAddressNormalized,
@@ -3937,7 +4128,13 @@ export default function App() {
                 fromAddress: walletAddress,
                 submitChannel,
                 executionModeOverride: buyExecutionMode,
-                priorityFeeNative: resolvePriorityFee('buy', buyPriorityFeePreset),
+                priorityFeeNative: resolvedBuyPriorityFeeNative,
+                solanaFeeMode: chainId === ChainId.SOL
+                  ? (hasBuyTip ? (hasBuyPriorityFee ? 'pf_and_tip' : 'tip') : 'pf')
+                  : undefined,
+                solanaTipNative: chainId === ChainId.SOL && hasBuyTip ? resolvedBuyTip.tipNative : undefined,
+                solanaTipProviderType: chainId === ChainId.SOL && hasBuyTip ? resolvedBuyTip.providerType ?? undefined : undefined,
+                solanaTipRecipient: chainId === ChainId.SOL && hasBuyTip ? resolvedBuyTip.tipRecipient : undefined,
                 gasPreset: buyGasPreset,
                 tokenInfo: tokenInfo ?? undefined,
               } as const;
@@ -4031,62 +4228,31 @@ export default function App() {
           if (!config?.enabled) return;
           if (!siteInfo) return;
           if (!tokenInfo) return;
-          if (confirmedSuccesses.length <= 0) return;
-          const fetchedPriceUsd = await TokenAPI.getTokenPriceUsd(siteInfo.platform, chainId, tokenAddressNormalized, tokenInfo);
-          const basePriceUsd = fetchedPriceUsd != null && fetchedPriceUsd > 0
-            ? fetchedPriceUsd
-            : (tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null);
-          if (basePriceUsd == null || !(basePriceUsd > 0)) return;
-
-          const inputs = buildStrategySellOrderInputs({
-            config,
-            chainId,
-            tokenAddress: tokenAddressNormalized,
-            tokenSymbol: resolvedTokenSymbol ?? null,
-            tokenInfo,
-            basePriceUsd,
-            entryPriceUsd: basePriceUsd,
-          });
-
-          const mode = (config as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
-          if (mode === 'immediate' && (config as any)?.trailingStop?.enabled) {
-            if (getAdvancedAutoSellMode(config) === 'rolling_take_profit') {
-              const rolling = buildStrategyRollingTakeProfitOrderInputs({
-                config,
-                chainId,
-                tokenAddress: tokenAddressNormalized,
-                tokenSymbol: resolvedTokenSymbol ?? null,
-                tokenInfo,
-                basePriceUsd,
-                entryPriceUsd: basePriceUsd,
-              });
-              if (rolling) inputs.push(rolling);
-            } else {
-              const trailing = buildStrategyTrailingSellOrderInputs({
-                config,
-                chainId,
-                tokenAddress: tokenAddressNormalized,
-                tokenSymbol: resolvedTokenSymbol ?? null,
-                tokenInfo,
-                basePriceUsd,
-              });
-              if (trailing) inputs.push(trailing);
-            }
+          const autoSellContexts = successes.map(({ walletAddress, res }) => ({
+            walletAddress,
+            res,
+            ctx: {
+              chainId,
+              tokenAddress: tokenAddressNormalized,
+              walletAddress,
+              siteInfo,
+              tokenInfo,
+              tokenSymbol: resolvedTokenSymbol ?? null,
+            } satisfies PendingAutoSellOrderContext,
+          }));
+          let createdOrderCount = 0;
+          for (const item of autoSellContexts) {
+            if ((item.res as any)?.backgroundPending) continue;
+            createdOrderCount += await createAutoSellOrdersForWallet(item.ctx);
           }
-
-          if (!inputs.length) return;
-          for (const { walletAddress } of confirmedSuccesses) {
-            for (const input of inputs) {
-              await call({
-                type: 'limitOrder:create',
-                input: {
-                  ...input,
-                  fromAddress: walletAddress,
-                },
-              } as const);
-            }
+          for (const item of autoSellContexts) {
+            if (!(item.res as any)?.backgroundPending) continue;
+            const pendingKey = getPendingAutoSellOrderKey(chainId, tokenAddressNormalized, item.walletAddress);
+            pendingAutoSellOrdersRef.current.set(pendingKey, item.ctx);
           }
-          toast.success(`已创建自动卖出挂单 ${inputs.length * confirmedSuccesses.length} 个`, { icon: '✅' });
+          if (createdOrderCount > 0) {
+            toast.success(`已创建自动卖出挂单 ${createdOrderCount} 个`, { icon: '✅' });
+          }
         } catch (e) {
           console.error('auto sell xsniper create orders failed', e);
         }
@@ -4227,6 +4393,10 @@ export default function App() {
             }
             const tradePromise = (async () => {
               const uiRequestStartedAt = Date.now();
+              const resolvedSellPriorityFeeNative = resolvePriorityFee('sell');
+              const resolvedSellTip = resolveSolanaTip('sell');
+              const hasSellPriorityFee = !!resolvedSellPriorityFeeNative && resolvedSellPriorityFeeNative !== '0';
+              const hasSellTip = !!resolvedSellTip.tipNative && resolvedSellTip.tipNative !== '0' && !!resolvedSellTip.tipRecipient;
               const sellInput = {
                 chainId,
                 tokenAddress: tokenAddressNormalized,
@@ -4237,7 +4407,13 @@ export default function App() {
                 fromAddress: walletAddress,
                 submitChannel,
                 executionModeOverride: isTurbo ? 'turbo' : 'default',
-                priorityFeeNative: resolvePriorityFee('sell'),
+                priorityFeeNative: resolvedSellPriorityFeeNative,
+                solanaFeeMode: chainId === ChainId.SOL
+                  ? (hasSellTip ? (hasSellPriorityFee ? 'pf_and_tip' : 'tip') : 'pf')
+                  : undefined,
+                solanaTipNative: chainId === ChainId.SOL && hasSellTip ? resolvedSellTip.tipNative : undefined,
+                solanaTipProviderType: chainId === ChainId.SOL && hasSellTip ? resolvedSellTip.providerType ?? undefined : undefined,
+                solanaTipRecipient: chainId === ChainId.SOL && hasSellTip ? resolvedSellTip.tipRecipient : undefined,
                 gasPreset: sellGasPreset,
                 tokenInfo: tokenInfo ?? undefined
               } as const;
@@ -4450,7 +4626,8 @@ export default function App() {
     if (!settings) return;
     const currentChainSettings = effectiveChainSettings;
     if (!currentChainSettings) return;
-    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs' || (currentChainSettings.submitChannel ?? 'protectRpcs') === 'mixed') return;
+    const submitChannel = (currentChainSettings.submitChannel ?? 'protectRpcs');
+    if (chainId !== ChainId.SOL && (submitChannel === 'protectRpcs' || submitChannel === 'mixed')) return;
     const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).buyPriorityFeePreset)
       ? (currentChainSettings as any).buyPriorityFeePreset as PriorityFeePreset
       : 'standard';
@@ -4474,7 +4651,8 @@ export default function App() {
     if (!settings) return;
     const currentChainSettings = effectiveChainSettings;
     if (!currentChainSettings) return;
-    if ((currentChainSettings.submitChannel ?? 'protectRpcs') === 'protectRpcs' || (currentChainSettings.submitChannel ?? 'protectRpcs') === 'mixed') return;
+    const submitChannel = (currentChainSettings.submitChannel ?? 'protectRpcs');
+    if (chainId !== ChainId.SOL && (submitChannel === 'protectRpcs' || submitChannel === 'mixed')) return;
     const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).sellPriorityFeePreset)
       ? (currentChainSettings as any).sellPriorityFeePreset as PriorityFeePreset
       : 'standard';
@@ -4488,6 +4666,52 @@ export default function App() {
           [chainId]: {
             ...currentChainSettings,
             sellPriorityFeePreset: next,
+          },
+        },
+      },
+    }).then(() => refreshAll());
+  };
+
+  const handleToggleBuyTipPreset = () => {
+    if (!settings || chainId !== ChainId.SOL) return;
+    const currentChainSettings = effectiveChainSettings;
+    if (!currentChainSettings) return;
+    const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).buyTipPreset)
+      ? (currentChainSettings as any).buyTipPreset as PriorityFeePreset
+      : 'none';
+    const next = PRIORITY_FEE_PRESETS[(PRIORITY_FEE_PRESETS.indexOf(current) + 1) % PRIORITY_FEE_PRESETS.length];
+    call({
+      type: 'settings:set',
+      settings: {
+        ...settings,
+        chains: {
+          ...settings.chains,
+          [chainId]: {
+            ...currentChainSettings,
+            buyTipPreset: next,
+          },
+        },
+      },
+    }).then(() => refreshAll());
+  };
+
+  const handleToggleSellTipPreset = () => {
+    if (!settings || chainId !== ChainId.SOL) return;
+    const currentChainSettings = effectiveChainSettings;
+    if (!currentChainSettings) return;
+    const current = PRIORITY_FEE_PRESETS.includes((currentChainSettings as any).sellTipPreset)
+      ? (currentChainSettings as any).sellTipPreset as PriorityFeePreset
+      : 'none';
+    const next = PRIORITY_FEE_PRESETS[(PRIORITY_FEE_PRESETS.indexOf(current) + 1) % PRIORITY_FEE_PRESETS.length];
+    call({
+      type: 'settings:set',
+      settings: {
+        ...settings,
+        chains: {
+          ...settings.chains,
+          [chainId]: {
+            ...currentChainSettings,
+            sellTipPreset: next,
           },
         },
       },
@@ -4937,6 +5161,8 @@ export default function App() {
               onToggleSellGas={handleToggleSellGas}
               onToggleBuyPriorityFeePreset={handleToggleBuyPriorityFeePreset}
               onToggleSellPriorityFeePreset={handleToggleSellPriorityFeePreset}
+              onToggleBuyTipPreset={handleToggleBuyTipPreset}
+              onToggleSellTipPreset={handleToggleSellTipPreset}
               onToggleSlippage={handleToggleSlippage}
               onUpdateBuyPreset={handleUpdateBuyPreset}
               draftBuyPresets={draftBuyPresets}

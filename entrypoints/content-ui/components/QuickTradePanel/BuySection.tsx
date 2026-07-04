@@ -6,6 +6,11 @@ import type { AdvancedAutoSellConfig, QuickBuyPresetOverride, Settings } from '@
 import { SymbolCoinIcon } from '@/components/Coins';
 import { formatPriceValue } from '@/utils/format';
 import { t, type Locale } from '@/utils/i18n';
+import {
+  DEFAULT_SOLANA_TIP_PRESET_VALUES,
+  getSolanaTipMinimumNative,
+  getSolanaTipProviderLabel,
+} from '@/utils/solanaTip';
 import { AutoSell } from './AutoSell';
 import { getDynamicGasPreview } from './useDynamicGasPreview';
 import { ChannelSwitcher, type ChannelSwitcherItem } from './ChannelSwitcher';
@@ -28,6 +33,7 @@ type BuySectionProps = {
   onToggleMode: () => void;
   onToggleGas: () => void;
   onTogglePriorityFeePreset: () => void;
+  onToggleTipPreset: () => void;
   onToggleSlippage: () => void;
   isEditing: boolean;
   onUpdatePreset: (index: number, val: string) => void;
@@ -73,6 +79,7 @@ export function BuySection({
   onToggleMode,
   onToggleGas,
   onTogglePriorityFeePreset,
+  onToggleTipPreset,
   onToggleSlippage,
   isEditing,
   onUpdatePreset,
@@ -139,8 +146,31 @@ export function BuySection({
   const priorityPresetLabel = t(`contentUi.priorityFee.${priorityPreset}`, locale);
   const nativeSymbol = getNativeSymbol(settings?.chainId ?? ChainId.BNB);
   const isSolana = settings?.chainId === ChainId.SOL;
+  const priorityFeeUiLabel = 'PF';
   const currentSubmitChannel = chainSettings?.submitChannel ?? 'protectRpcs';
-  const showPriorityFee = !isSolana && settings?.chainId !== ChainId.HYPER && currentSubmitChannel !== 'protectRpcs' && currentSubmitChannel !== 'mixed';
+  const showPriorityFee = settings?.chainId !== ChainId.HYPER && (isSolana || (currentSubmitChannel !== 'protectRpcs' && currentSubmitChannel !== 'mixed'));
+  const enabledTipProviders = Array.isArray(chainSettings?.solanaSwqos?.providers)
+    ? chainSettings!.solanaSwqos!.providers.filter((item) => item?.enabled)
+    : [];
+  const activeTipProviderType = enabledTipProviders.length === 1 ? enabledTipProviders[0]?.type : null;
+  const showTip = isSolana && !!chainSettings?.solanaSwqos?.enabled && enabledTipProviders.length === 1 && !!activeTipProviderType;
+  const tipPresets = chainSettings?.buyTipPresets ?? DEFAULT_SOLANA_TIP_PRESET_VALUES;
+  const tipPreset = (['none', 'slow', 'standard', 'fast'] as const).includes((chainSettings as any)?.buyTipPreset)
+    ? (chainSettings as any).buyTipPreset as 'none' | 'slow' | 'standard' | 'fast'
+    : 'none';
+  const tipPresetLabel = t(`contentUi.priorityFee.${tipPreset}`, locale);
+  const tipValue = tipPresets[tipPreset] ?? DEFAULT_SOLANA_TIP_PRESET_VALUES[tipPreset];
+  const tipProviderLabel = showTip ? getSolanaTipProviderLabel(activeTipProviderType as any) : 'SWQoS';
+  const tipMinimumNative = showTip ? getSolanaTipMinimumNative(activeTipProviderType as any) : '0.001';
+  const tipValueNum = Number(tipValue || '0');
+  const hasTipEnabled = Number.isFinite(tipValueNum) && tipValueNum > 0;
+  const tipTitle = `${locale === 'en' ? 'Tip' : 'Tip'}: ${tipPresetLabel} ${tipValue} ${nativeSymbol}\n${locale === 'en'
+    ? (!hasTipEnabled
+        ? `Tip is disabled. Tip is only available on SWQoS with a single active provider. Current provider: ${tipProviderLabel}. Minimum recommended tip: ${tipMinimumNative} ${nativeSymbol}.`
+        : `Tip transfer is enabled and will be sent to ${tipProviderLabel}. Minimum provider tip: ${tipMinimumNative} ${nativeSymbol}.`)
+    : (!hasTipEnabled
+        ? `当前 Tip 已关闭。Tip 仅在 SWQoS 且单一 Provider 下生效。当前 Provider: ${tipProviderLabel}。该通道最低 Tip: ${tipMinimumNative} ${nativeSymbol}。`
+        : `当前已启用 Tip，会在交易里插入一笔 ${tipProviderLabel} 的 Tip transfer。该通道最低 Tip: ${tipMinimumNative} ${nativeSymbol}。`)}`;
   const submitChannelRisk = isSolana ? null : currentSubmitChannel;
   const isHypeBaseSymbol = baseSymbol === 'HYPE' || baseSymbol === 'WHYPE';
   const activePresetOverride = quickBuyAdvancedEnabled ? quickBuyPresetOverrides[activePreviewIndex] ?? {} : {};
@@ -168,12 +198,20 @@ export function BuySection({
     : `${t('contentUi.priorityFee.toggle', locale)}: ${priorityPresetLabel} ${priorityPresets[priorityPreset] ?? '0'} ${nativeSymbol}`;
   const priorityTitle = showPriorityFee
     ? `${mainPriorityTitle}\n${locale === 'en'
-        ? (!hasPriorityFeeEnabled
-            ? 'Tip: Enable PF on Blox/Razor, otherwise confirmation may be slow.'
-            : 'MEV protection is stronger when PF stays enabled on Blox/Razor.')
-        : (!hasPriorityFeeEnabled
-            ? '建议：当前通道开启 PF，否则确认可能较慢。'
-            : '当前已启用 PF，更适合防夹场景。')}`
+        ? (isSolana
+            ? (!hasPriorityFeeEnabled
+                ? 'PF: Enable a higher priority fee to improve confirmation priority on Solana.'
+                : 'PF is enabled and will be added as Solana priority fee for faster confirmation.')
+            : (!hasPriorityFeeEnabled
+                ? 'Tip: Enable PF on Blox/Razor, otherwise confirmation may be slow.'
+                : 'MEV protection is stronger when PF stays enabled on Blox/Razor.'))
+        : (isSolana
+            ? (!hasPriorityFeeEnabled
+                ? '建议：提高优先费可提升 Solana 交易确认优先级。'
+                : '当前已启用 PF，会作为 Solana 优先费参与交易确认。')
+            : (!hasPriorityFeeEnabled
+                ? '建议：当前通道开启 PF，否则确认可能较慢。'
+                : '当前已启用 PF，更适合防夹场景。'))}`
     : mainPriorityTitle;
   const slippageTitle = submitChannelRisk === 'protectRpcs' && executionMode === 'turbo'
     ? (locale === 'en'
@@ -290,7 +328,7 @@ export function BuySection({
                 ? [
                     '高级配置',
                     hasGasOverride ? `Gas: ${t(`popup.settings.gas.${override.gasPreset!}`, locale)}` : '',
-                    hasPriorityOverride ? `PF: ${t(`contentUi.priorityFee.${override.priorityFeePreset!}`, locale)}` : '',
+                    hasPriorityOverride ? `${priorityFeeUiLabel}: ${t(`contentUi.priorityFee.${override.priorityFeePreset!}`, locale)}` : '',
                   ].filter(Boolean).join('\n')
                 : '';
               const buttonTitle = [childPresetTooltipTexts?.[idx], overrideTitle].filter(Boolean).join('\n');
@@ -372,9 +410,9 @@ export function BuySection({
                         if (!showPriorityFee) return;
                         onToggleQuickBuyPresetPriorityFee(idx);
                       }}
-                      title={showPriorityFee ? '点击切换该按钮贿赂费' : '当前渠道不支持贿赂费'}
+                      title={showPriorityFee ? `点击切换该按钮${priorityFeeUiLabel}` : `当前渠道不支持${priorityFeeUiLabel}`}
                     >
-                      <span className="text-zinc-500">PF</span>
+                      <span className="text-zinc-500">{priorityFeeUiLabel}</span>
                       <span className={`truncate ${showPriorityFee ? 'text-emerald-300' : 'text-zinc-600'}`}>{showPriorityFee ? priorityText : '-'}</span>
                     </button>
                   </div>
@@ -428,8 +466,18 @@ export function BuySection({
               title={priorityTitle}
               onClick={showPriorityFee ? onTogglePriorityFeePreset : undefined}
             >
-              <span className="text-[10px] font-semibold">PF</span>
+              <span className="text-[10px] font-semibold">{priorityFeeUiLabel}</span>
               <span className="whitespace-nowrap">{priorityPresetLabel}</span>
+            </div>
+          ) : null}
+          {showTip ? (
+            <div
+              className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
+              title={tipTitle}
+              onClick={onToggleTipPreset}
+            >
+              <span className="text-[10px] font-semibold">Tip</span>
+              <span className="whitespace-nowrap">{tipPresetLabel}</span>
             </div>
           ) : null}
           <div

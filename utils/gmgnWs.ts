@@ -9,6 +9,14 @@ const isEvmAddress = (value: string): boolean => asAddress(value) != null;
 
 const isBase58Address = (value: string): boolean => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
 
+export const normalizeGmgnChainName = (value: unknown): string | undefined => {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!raw) return undefined;
+  if (raw === 'bnb') return 'bsc';
+  if (raw === 'solana') return 'sol';
+  return raw;
+};
+
 export const toArrayPayload = (payload: any): any[] => {
   if (Array.isArray(payload)) return payload;
   if (isObject(payload) && Array.isArray((payload as any).data)) return (payload as any).data;
@@ -43,7 +51,7 @@ export const normalizePublicTokenData = (tokenData: any, chain?: string) => {
     marketCapUsd: marketCapUsd ?? undefined,
     priceUsd: priceUsd ?? undefined,
     createdAtMs: createdAtMs ?? undefined,
-    chain: chain ?? undefined,
+    chain: normalizeGmgnChainName(chain),
     symbol: tokenData?.s ?? undefined,
     name: tokenData?.nm ?? undefined,
     ...(isObject(tokenData) ? tokenData : {}),
@@ -77,7 +85,7 @@ export const normalizeNewPoolTokenData = (pool: any, chain?: string) => {
     liquidityUsd: liquidityUsd ?? undefined,
     priceUsd: priceUsd ?? undefined,
     createdAtMs: createdAtMs ?? undefined,
-    chain: chain ?? undefined,
+    chain: normalizeGmgnChainName(chain),
     symbol: tokenData?.s ?? undefined,
     name: tokenData?.n ?? tokenData?.nm ?? undefined,
     ...(isObject(tokenData) ? tokenData : {}),
@@ -90,9 +98,21 @@ export type TrenchesStage = 'new_created' | 'near_complete' | 'complete' | 'unkn
 export const resolveTrenchesStageByFid = (fid: unknown): TrenchesStage => {
   const text = typeof fid === 'string' ? fid.trim().toLowerCase() : '';
   if (!text) return 'unknown';
-  if (text.startsWith('bsc_nc_')) return 'new_created';
-  if (text.startsWith('bsc_ncp_')) return 'near_complete';
-  if (text.startsWith('bsc_cp_')) return 'complete';
+  if (
+    text.startsWith('bsc_nc_') ||
+    text.startsWith('sol_nc_') ||
+    text.startsWith('solana_nc_')
+  ) return 'new_created';
+  if (
+    text.startsWith('bsc_ncp_') ||
+    text.startsWith('sol_ncp_') ||
+    text.startsWith('solana_ncp_')
+  ) return 'near_complete';
+  if (
+    text.startsWith('bsc_cp_') ||
+    text.startsWith('sol_cp_') ||
+    text.startsWith('solana_cp_')
+  ) return 'complete';
   return 'unknown';
 };
 
@@ -158,7 +178,7 @@ export const normalizeTrenchesTokenData = (item: any) => {
     top10HoldRatio: top10HoldRatio ?? undefined,
     devTokenStatus,
     tokenLogo,
-    chain: (merged as any)?.n ?? (merged as any)?.chain ?? undefined,
+    chain: normalizeGmgnChainName((merged as any)?.n ?? (merged as any)?.chain),
     symbol,
     name,
     ...(isObject(merged) ? merged : {}),
@@ -244,6 +264,12 @@ export const extractNumber = (payload: any, keys: string[]): number | null => {
   return null;
 };
 
+export const normalizeTokenAddressKey = (addr: unknown): string => {
+  const trimmed = typeof addr === 'string' ? addr.trim() : '';
+  if (!trimmed) return '';
+  return /^0x[a-fA-F0-9]{40}$/.test(trimmed) ? trimmed.toLowerCase() : trimmed;
+};
+
 export const extractTokenAddress = (payload: any, text?: string | null): string | null => {
   const fromText = text?.match(/0x[a-fA-F0-9]{40}/)?.[0];
   if (fromText) return fromText;
@@ -268,7 +294,7 @@ export const extractTokenAddresses = (payload: any, text?: string | null): strin
   const push = (addr: string) => {
     const trimmed = typeof addr === 'string' ? addr.trim() : '';
     if (!trimmed) return;
-    const key = trimmed.toLowerCase();
+    const key = normalizeTokenAddressKey(trimmed);
     if (seen.has(key)) return;
     seen.add(key);
     out.push(trimmed);

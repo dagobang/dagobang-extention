@@ -55,6 +55,8 @@ type QuickTradePanelProps = {
   onToggleSellGas: () => void;
   onToggleBuyPriorityFeePreset: () => void;
   onToggleSellPriorityFeePreset: () => void;
+  onToggleBuyTipPreset: () => void;
+  onToggleSellTipPreset: () => void;
   onToggleSlippage: () => void;
   onUpdateBuyPreset: (idx: number, value: string) => void;
   draftBuyPresets: string[];
@@ -152,6 +154,8 @@ export function QuickTradePanel({
   onToggleSellGas,
   onToggleBuyPriorityFeePreset,
   onToggleSellPriorityFeePreset,
+  onToggleBuyTipPreset,
+  onToggleSellTipPreset,
   onToggleSlippage,
   onUpdateBuyPreset,
   draftBuyPresets,
@@ -231,6 +235,7 @@ export function QuickTradePanel({
     onToggleMode,
     onToggleGas: onToggleSellGas,
     onTogglePriorityFeePreset: onToggleSellPriorityFeePreset,
+    onToggleTipPreset: onToggleSellTipPreset,
     onToggleSlippage,
     onApprove,
     isEditing,
@@ -335,6 +340,7 @@ export function QuickTradePanel({
             onToggleMode={onToggleMode}
             onToggleGas={onToggleBuyGas}
             onTogglePriorityFeePreset={onToggleBuyPriorityFeePreset}
+            onToggleTipPreset={onToggleBuyTipPreset}
             onToggleSlippage={onToggleSlippage}
             isEditing={isEditing}
             onUpdatePreset={onUpdateBuyPreset}

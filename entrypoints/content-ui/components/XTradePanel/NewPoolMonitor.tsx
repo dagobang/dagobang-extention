@@ -6,9 +6,10 @@ import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatAgeShort, formatCompactNumber } from '@/utils/format';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { pickMaxFiniteNumber } from '@/utils/value';
-import { PLATFORM_OPTIONS, extractLaunchpadPlatform } from '@/constants/launchpad';
+import { extractLaunchpadPlatform, getPlatformOptionsByChain } from '@/constants/launchpad';
+import { getChainIdByName } from '@/constants/chains';
 import { call } from '@/utils/messaging';
-import { normalizeInlineWebpData } from '@/utils/gmgnWs';
+import { normalizeGmgnChainName, normalizeInlineWebpData } from '@/utils/gmgnWs';
 import { XSniperFilterSection } from './XSniperFilterSection';
 
 type NewPoolMonitorContentProps = {
@@ -54,6 +55,7 @@ type MonitorFilterDraft = {
 
 type MarketTokenRow = {
   tokenAddress: string;
+  chain?: string;
   channel: string;
   signalId: string;
   receivedAtMs: number;
@@ -113,12 +115,11 @@ type MarketTokenGroup = {
 const MARKET_TOKEN_CACHE_LIMIT = 1200;
 const GROUP_PAGE_SIZE = 20;
 const HOT_PAGE_SIZE = 30;
-const FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_filters_v1';
+const FILTER_STORAGE_KEY_PREFIX = 'dagobang_newpool_monitor_filters_v2';
 const FILTER_OPEN_STORAGE_KEY = 'dagobang_newpool_monitor_filter_open_v1';
 const GROUP_SOURCE_FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_group_source_filter_v1';
 const VIEW_MODE_STORAGE_KEY = 'dagobang_newpool_monitor_view_mode_v1';
 const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';
-const ALL_PLATFORM_VALUES = PLATFORM_OPTIONS.map((x) => x.value);
 const MCAP_HIGHLIGHT_WINDOW_MS = 6000;
 const PANEL_MIN_HEIGHT = 420;
 const PANEL_DEFAULT_HEIGHT = 640;
@@ -340,8 +341,31 @@ const getGroupKindLabel = (kind: MarketTokenGroup['kind']) => {
 
 const formatShortAddress = (value?: string) => {
   const text = typeof value === 'string' ? value.trim() : '';
-  if (!/^0x[a-f0-9]{40}$/i.test(text)) return text || '-';
+  if (!text) return '-';
+  if (/^0x[a-f0-9]{40}$/i.test(text)) return `${text.slice(0, 6)}...${text.slice(-4)}`;
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(text)) return `${text.slice(0, 4)}...${text.slice(-4)}`;
   return `${text.slice(0, 6)}...${text.slice(-4)}`;
+};
+
+const isEvmTokenAddress = (value: string) => /^0x[a-f0-9]{40}$/i.test(value);
+
+const isSolanaTokenAddress = (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
+
+const isSupportedMonitorTokenAddress = (value: string) => isEvmTokenAddress(value) || isSolanaTokenAddress(value);
+
+const normalizeMonitorTokenAddressKey = (value: unknown) => {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) return '';
+  return isEvmTokenAddress(text) ? text.toLowerCase() : text;
+};
+
+const inferMonitorChainName = (chain: unknown, tokenAddress?: unknown) => {
+  const normalizedChain = normalizeGmgnChainName(chain);
+  if (normalizedChain) return normalizedChain;
+  const address = typeof tokenAddress === 'string' ? tokenAddress.trim() : '';
+  if (isSolanaTokenAddress(address)) return 'sol';
+  if (isEvmTokenAddress(address)) return 'bsc';
+  return undefined;
 };
 
 const extractTelegramRef = (tokenData: any): { telegramUrl?: string; telegramHandle?: string; telegramKind?: MarketTokenRow['telegramKind'] } => {
@@ -573,29 +597,30 @@ const computeTickerLen = (symbol: string) => {
   return total;
 };
 
-const createDefaultFilterDraft = (settings: Settings | null): MonitorFilterDraft => {
-  const source = ((settings as any)?.autoTrade?.newCoinSnipe ?? {}) as any;
+const buildFilterStorageKey = (chain: string) => `${FILTER_STORAGE_KEY_PREFIX}:${chain}`;
+
+const createEmptyFilterDraft = (): MonitorFilterDraft => {
   return {
-    platforms: Array.isArray(source.platforms) ? source.platforms.map((x: any) => String(x).trim().toLowerCase()).filter(Boolean) : PLATFORM_OPTIONS.map((x) => x.value),
-    minMarketCapUsd: String(source.minMarketCapUsd ?? ''),
-    maxMarketCapUsd: String(source.maxMarketCapUsd ?? ''),
-    minHolders: String(source.minHolders ?? ''),
-    maxHolders: String(source.maxHolders ?? ''),
-    minKol: String(source.minKol ?? ''),
-    maxKol: String(source.maxKol ?? ''),
-    minTickerLen: String(source.minTickerLen ?? ''),
-    maxTickerLen: String(source.maxTickerLen ?? ''),
-    minTokenAgeSeconds: String(source.minTokenAgeSeconds ?? ''),
-    maxTokenAgeSeconds: String(source.maxTokenAgeSeconds ?? ''),
-    minDevHoldPercent: String(source.minDevHoldPercent ?? ''),
-    maxDevHoldPercent: String(source.maxDevHoldPercent ?? ''),
-    minDevMaxBuyPercent: String((source as any).minDevMaxBuyPercent ?? ''),
-    maxDevMaxBuyPercent: String((source as any).maxDevMaxBuyPercent ?? ''),
-    minViewerCount: String((source as any).minViewerCount ?? ''),
-    maxViewerCount: String((source as any).maxViewerCount ?? ''),
-    minDevCreatedTokenCount: String((source as any).minDevCreatedTokenCount ?? ''),
-    maxDevCreatedTokenCount: String((source as any).maxDevCreatedTokenCount ?? ''),
-    blockIfDevSell: source.blockIfDevSell === true,
+    platforms: [],
+    minMarketCapUsd: '',
+    maxMarketCapUsd: '',
+    minHolders: '',
+    maxHolders: '',
+    minKol: '',
+    maxKol: '',
+    minTickerLen: '',
+    maxTickerLen: '',
+    minTokenAgeSeconds: '',
+    maxTokenAgeSeconds: '',
+    minDevHoldPercent: '',
+    maxDevHoldPercent: '',
+    minDevMaxBuyPercent: '',
+    maxDevMaxBuyPercent: '',
+    minViewerCount: '',
+    maxViewerCount: '',
+    minDevCreatedTokenCount: '',
+    maxDevCreatedTokenCount: '',
+    blockIfDevSell: false,
     highlightTwitterAccounts: '',
   };
 };
@@ -611,8 +636,9 @@ const extractTweetHandleForHighlight = (row: MarketTokenRow) => {
 
 const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | null => {
   const tokenData = detail.tokenData;
-  const tokenAddress = pickString(tokenData?.tokenAddress, tokenData?.address, tokenData?.a)?.toLowerCase();
-  if (!tokenAddress || !/^0x[a-f0-9]{40}$/i.test(tokenAddress)) return null;
+  const tokenAddress = pickString(tokenData?.tokenAddress, tokenData?.address, tokenData?.a);
+  if (!tokenAddress || !isSupportedMonitorTokenAddress(tokenAddress)) return null;
+  const normalizedChain = inferMonitorChainName(tokenData?.chain ?? tokenData?.c ?? tokenData?.n, tokenAddress);
   const createdAtMs = normalizeEpochMs(tokenData?.createdAtMs ?? tokenData?.ct);
   const sortAtMs = createdAtMs ?? detail.receivedAtMs;
   const updatedAtMs = normalizeEpochMs(tokenData?.updatedAtMs ?? tokenData?.ut ?? detail.receivedAtMs) ?? detail.receivedAtMs;
@@ -630,6 +656,7 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
   }
   return {
     tokenAddress,
+    chain: normalizedChain,
     signalId: `${detail.source}:${detail.channel}:${tokenAddress}`,
     channel: detail.channel,
     receivedAtMs: detail.receivedAtMs,
@@ -687,8 +714,8 @@ const ingestRows = (map: Map<string, MarketTokenRow>, items: MarketTokenEventDet
     const tokenData = item?.tokenData;
     const row = buildMarketTokenRow(item);
     if (!row) {
-      const tokenAddress = pickString(tokenData?.tokenAddress, tokenData?.address, tokenData?.a)?.toLowerCase();
-      if (!tokenAddress || !/^0x[a-f0-9]{40}$/i.test(tokenAddress)) debugStats.droppedInvalidAddress += 1;
+      const tokenAddress = pickString(tokenData?.tokenAddress, tokenData?.address, tokenData?.a);
+      if (!tokenAddress || !isSupportedMonitorTokenAddress(tokenAddress)) debugStats.droppedInvalidAddress += 1;
       else debugStats.droppedInvalidCreatedAt += 1;
       continue;
     }
@@ -701,7 +728,8 @@ const ingestRows = (map: Map<string, MarketTokenRow>, items: MarketTokenEventDet
     if (row.vol24hUsd == null) debugStats.missingVolume += 1;
     if (row.holders == null) debugStats.missingHolders += 1;
     if (row.viewerCount == null) debugStats.missingViewer += 1;
-    map.set(row.tokenAddress, mergeTokenRow(map.get(row.tokenAddress), row));
+    const key = normalizeMonitorTokenAddressKey(row.tokenAddress);
+    map.set(key, mergeTokenRow(map.get(key), row));
   }
   (() => {
   })();
@@ -770,10 +798,13 @@ const matchesTokenFilter = (row: MarketTokenRow, filterDraft: MonitorFilterDraft
   const selectedPlatforms = Array.isArray(filterDraft.platforms)
     ? filterDraft.platforms.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
     : [];
+  const allPlatformValues = Array.isArray((filterDraft as any).__allPlatformValues)
+    ? ((filterDraft as any).__allPlatformValues as string[]).map((x) => String(x).trim().toLowerCase()).filter(Boolean)
+    : [];
   const shouldFilterPlatforms =
     selectedPlatforms.length > 0 &&
-    selectedPlatforms.length < ALL_PLATFORM_VALUES.length &&
-    !ALL_PLATFORM_VALUES.every((value) => selectedPlatforms.includes(value));
+    selectedPlatforms.length < allPlatformValues.length &&
+    !allPlatformValues.every((value) => selectedPlatforms.includes(value));
   if (shouldFilterPlatforms) {
     const platform = String(row.launchpadPlatform || '').trim().toLowerCase();
     if (!platform || !selectedPlatforms.includes(platform)) return false;
@@ -1122,6 +1153,20 @@ export function NewPoolMonitorContent({
   const locale: Locale = normalizeLocale(resolvedSettings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
   const resolvedSiteInfo = siteInfo ?? { chain: 'bsc', tokenAddress: '', platform: 'gmgn', showBar: true };
+  const currentChain = normalizeGmgnChainName(resolvedSiteInfo.chain) ?? 'bsc';
+  const currentChainId = useMemo(() => getChainIdByName(currentChain), [currentChain]);
+  const currentPlatformOptions = useMemo(
+    () => [...getPlatformOptionsByChain(currentChainId)],
+    [currentChainId]
+  );
+  const currentPlatformValues = useMemo(
+    () => currentPlatformOptions.map((item) => item.value) as string[],
+    [currentPlatformOptions]
+  );
+  const currentFilterStorageKey = useMemo(
+    () => buildFilterStorageKey(currentChain),
+    [currentChain]
+  );
 
   const tokenMapRef = useRef<Map<string, MarketTokenRow>>(new Map());
   const [tokenIds, setTokenIds] = useState<string[]>([]);
@@ -1154,16 +1199,9 @@ export function NewPoolMonitorContent({
     return 'all';
   });
   const [filterDraft, setFilterDraft] = useState<MonitorFilterDraft>(() => {
-    try {
-      const raw = window.localStorage.getItem(FILTER_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object') return parsed as MonitorFilterDraft;
-      }
-    } catch {
-    }
-    return createDefaultFilterDraft(resolvedSettings);
+    return createEmptyFilterDraft();
   });
+  const [clearingCache, setClearingCache] = useState(false);
 
   useEffect(() => {
     try {
@@ -1188,10 +1226,35 @@ export function NewPoolMonitorContent({
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(filterDraft));
+      const raw = window.localStorage.getItem(currentFilterStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          const next = parsed as MonitorFilterDraft;
+          const normalizedPlatforms = Array.isArray(next.platforms)
+            ? next.platforms
+              .map((x: any) => String(x).trim().toLowerCase())
+              .filter((x: string) => currentPlatformValues.includes(x))
+            : [];
+          setFilterDraft({
+            ...createEmptyFilterDraft(),
+            ...next,
+            platforms: normalizedPlatforms,
+          });
+          return;
+        }
+      }
     } catch {
     }
-  }, [filterDraft]);
+    setFilterDraft(createEmptyFilterDraft());
+  }, [currentFilterStorageKey, currentPlatformValues]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(currentFilterStorageKey, JSON.stringify(filterDraft));
+    } catch {
+    }
+  }, [currentFilterStorageKey, filterDraft]);
 
   useEffect(() => {
     if (!active) return;
@@ -1204,7 +1267,7 @@ export function NewPoolMonitorContent({
       const nextIds = Array.from(map.values())
         .sort((a, b) => b.sortAtMs - a.sortAtMs)
         .slice(0, MARKET_TOKEN_CACHE_LIMIT)
-        .map((item) => item.tokenAddress);
+        .map((item) => normalizeMonitorTokenAddressKey(item.tokenAddress));
       setTokenIds(nextIds);
       return {
         mapSize: map.size,
@@ -1243,10 +1306,42 @@ export function NewPoolMonitorContent({
 
   const tokenList = useMemo(() => {
     const map = tokenMapRef.current;
-    return tokenIds.map((id) => map.get(id)).filter(Boolean) as MarketTokenRow[];
-  }, [tokenIds]);
+    return tokenIds
+      .map((id) => map.get(id))
+      .filter((row): row is MarketTokenRow => {
+        if (!row) return false;
+        return inferMonitorChainName(row.chain, row.tokenAddress) === currentChain;
+      });
+  }, [currentChain, tokenIds]);
 
-  const filteredTokens = useMemo(() => tokenList.filter((row) => matchesTokenFilter(row, filterDraft)), [tokenList, filterDraft]);
+  const effectiveFilterDraft = useMemo(
+    () => ({
+      ...filterDraft,
+      __allPlatformValues: currentPlatformValues,
+    }),
+    [currentPlatformValues, filterDraft]
+  );
+  const filteredTokens = useMemo(
+    () => tokenList.filter((row) => matchesTokenFilter(row, effectiveFilterDraft)),
+    [effectiveFilterDraft, tokenList]
+  );
+  const handleClearCache = async () => {
+    if (clearingCache) return;
+    const confirmed = window.confirm('确定要清空旧的新池快照缓存吗？这会立即清掉当前列表里的历史缓存数据。');
+    if (!confirmed) return;
+    setClearingCache(true);
+    try {
+      await call({ type: 'newpool:clearCache' } as const);
+      tokenMapRef.current.clear();
+      setTokenIds([]);
+      setFrozenGroupKeys(null);
+      setFrozenGlobalTokenIds(null);
+      setGroupPage(1);
+      setGlobalPage(1);
+    } finally {
+      setClearingCache(false);
+    }
+  };
   const highlightTwitterAccounts = useMemo(
     () => new Set(parseTwitterAccountList(filterDraft.highlightTwitterAccounts)),
     [filterDraft.highlightTwitterAccounts]
@@ -1401,80 +1496,88 @@ export function NewPoolMonitorContent({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b border-zinc-800/60 px-4 py-2">
-        <div className="flex items-center justify-between gap-3">
-          <div className="inline-flex shrink-0 rounded-xl border border-zinc-800 bg-zinc-950/70 p-1">
+      <div
+        className="dagobang-scrollbar min-h-0 flex-1 overflow-y-auto"
+        onMouseEnter={handleListMouseEnter}
+        onMouseLeave={handleListMouseLeave}
+      >
+        <div className="sticky top-0 z-10 border-b border-zinc-800/60 bg-[#0F0F11] px-4 py-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="inline-flex shrink-0 rounded-xl border border-zinc-800 bg-zinc-950/70 p-1">
+              {([
+                ['grouped', '分组'],
+                ['globalHot', '热榜'],
+              ] as Array<[MonitorViewMode, string]>).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={
+                    viewMode === value
+                      ? 'min-w-[58px] rounded-lg border border-sky-500/50 bg-sky-500/15 px-3 py-1.5 text-[12px] font-medium text-sky-200'
+                      : 'min-w-[58px] rounded-lg border border-transparent px-3 py-1.5 text-[12px] text-zinc-400 hover:text-zinc-200'
+                  }
+                  onClick={() => setViewMode(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {listHovered ? <div className="text-[10px] text-amber-300">暂停</div> : null}
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => void handleClearCache()}
+                disabled={clearingCache}
+              >
+                {clearingCache ? '清理中' : '清缓存'}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-700"
+                onClick={() => setFilterOpen((v) => !v)}
+              >
+                {filterOpen ? '收起' : '筛选'}
+              </button>
+            </div>
+          </div>
+          <div className="mt-2 flex items-center gap-2 overflow-x-auto">
             {([
-              ['grouped', '分组'],
-              ['globalHot', '热榜'],
-            ] as Array<[MonitorViewMode, string]>).map(([value, label]) => (
+              ['all', `全部 ${viewMode === 'grouped' ? groups.length : filteredTokens.length}`],
+              ['withTweet', `有推特 ${viewMode === 'grouped' ? groupsBySource.withTweet.length : tokensBySource.withTweet.length}`],
+              ['withoutTweet', `无推特 ${viewMode === 'grouped' ? groupsBySource.withoutTweet.length : tokensBySource.withoutTweet.length}`],
+            ] as Array<[GroupSourceFilter, string]>).map(([value, label]) => (
               <button
                 key={value}
                 type="button"
                 className={
-                  viewMode === value
-                    ? 'min-w-[58px] rounded-lg border border-sky-500/50 bg-sky-500/15 px-3 py-1.5 text-[12px] font-medium text-sky-200'
-                    : 'min-w-[58px] rounded-lg border border-transparent px-3 py-1.5 text-[12px] text-zinc-400 hover:text-zinc-200'
+                  groupSourceFilter === value
+                    ? 'rounded-full border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-200'
+                    : 'rounded-full border border-zinc-700 bg-zinc-900/40 px-2.5 py-1 text-[11px] text-zinc-400 hover:border-zinc-600'
                 }
-                onClick={() => setViewMode(value)}
+                onClick={() => setGroupSourceFilter(value)}
               >
                 {label}
               </button>
             ))}
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {listHovered ? <div className="text-[10px] text-amber-300">暂停</div> : null}
-            <button
-              type="button"
-              className="rounded-md border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-700"
-              onClick={() => setFilterOpen((v) => !v)}
-            >
-              {filterOpen ? '收起' : '筛选'}
-            </button>
-          </div>
+          {filterOpen ? (
+            <div className="mt-2">
+              <XSniperFilterSection
+                open={filterOpen}
+                canEdit
+                twitterSnipe={filterDraft}
+                tt={tt}
+                onToggle={() => setFilterOpen((v) => !v)}
+                updateTwitterSnipe={updateFilterDraft}
+                showTweetAge={false}
+                showHighlightTwitterAccounts
+                platformOptions={currentPlatformOptions}
+              />
+            </div>
+          ) : null}
         </div>
-        <div className="mt-2 flex items-center gap-2 overflow-x-auto">
-          {([
-            ['all', `全部 ${viewMode === 'grouped' ? groups.length : filteredTokens.length}`],
-            ['withTweet', `有推特 ${viewMode === 'grouped' ? groupsBySource.withTweet.length : tokensBySource.withTweet.length}`],
-            ['withoutTweet', `无推特 ${viewMode === 'grouped' ? groupsBySource.withoutTweet.length : tokensBySource.withoutTweet.length}`],
-          ] as Array<[GroupSourceFilter, string]>).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              className={
-                groupSourceFilter === value
-                  ? 'rounded-full border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-200'
-                  : 'rounded-full border border-zinc-700 bg-zinc-900/40 px-2.5 py-1 text-[11px] text-zinc-400 hover:border-zinc-600'
-              }
-              onClick={() => setGroupSourceFilter(value)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {filterOpen ? (
-          <div className="mt-2">
-            <XSniperFilterSection
-              open={filterOpen}
-              canEdit
-              twitterSnipe={filterDraft}
-              tt={tt}
-              onToggle={() => setFilterOpen((v) => !v)}
-              updateTwitterSnipe={updateFilterDraft}
-              showTweetAge={false}
-              showHighlightTwitterAccounts
-              platformOptions={[...PLATFORM_OPTIONS]}
-            />
-          </div>
-        ) : null}
-      </div>
-
-      <div
-        className="dagobang-scrollbar min-h-0 flex-1 overflow-y-auto px-2 py-2"
-        onMouseEnter={handleListMouseEnter}
-        onMouseLeave={handleListMouseLeave}
-      >
+        <div className="px-2 py-2">
         {viewMode === 'grouped' ? (
           visibleGroups.length === 0 ? (
             <div className="px-2 py-8 text-center text-[14px] text-zinc-500">暂无符合条件的新池分组</div>
@@ -1610,6 +1713,7 @@ export function NewPoolMonitorContent({
             </div>
           )
         )}
+        </div>
       </div>
     </div>
   );

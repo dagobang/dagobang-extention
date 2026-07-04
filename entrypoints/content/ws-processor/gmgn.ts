@@ -15,6 +15,7 @@ import {
   isObject,
   normalizeNewPoolTokenData,
   normalizePublicTokenData,
+  normalizeTokenAddressKey,
   normalizeTrenchesTokenData,
   resolveTrenchesStageByFid,
   shouldUseMergedTokenValue,
@@ -310,7 +311,7 @@ const pickNonEmptyString = (next: any, prev?: string): string | undefined => {
   return s ? s : prev;
 };
 
-const normalizeTokenKey = (addr: string) => addr.trim().toLowerCase();
+const normalizeTokenKey = (addr: string) => normalizeTokenAddressKey(addr);
 
 const hasTokenDisplayIdentity = (tokenData: any): boolean => {
   if (!tokenData || typeof tokenData !== 'object') return false;
@@ -781,7 +782,7 @@ export function initGmgnWsMonitor(options: {
       if (!key) continue;
       const prev = tokenByAddress.get(key);
       if (!prev || (prev.receivedAtMs ?? 0) <= (snapshot.receivedAtMs ?? 0)) {
-        tokenByAddress.set(key, { ...snapshot, tokenAddress: key });
+        tokenByAddress.set(key, { ...snapshot, tokenAddress: String(snapshot.tokenAddress || '').trim() });
       }
     }
   };
@@ -1139,7 +1140,9 @@ export function initGmgnWsMonitor(options: {
   };
   const pushNewPoolMonitorUiDetail = (detail: NewPoolMonitorUiDetail) => {
     if (!isNewPoolMonitorEnabled()) return;
-    const addr = typeof detail.tokenData?.tokenAddress === 'string' ? detail.tokenData.tokenAddress.trim().toLowerCase() : '';
+    const addr = typeof detail.tokenData?.tokenAddress === 'string'
+      ? normalizeTokenKey(detail.tokenData.tokenAddress)
+      : '';
     const key = addr || `${detail.source}:${detail.channel}:${detail.receivedAtMs}`;
     const prev = pendingNewPoolMonitorUi.get(key);
     const mergedDetail: NewPoolMonitorUiDetail = prev ? {
@@ -1187,7 +1190,7 @@ export function initGmgnWsMonitor(options: {
         ? tokenData.a
         : null;
     if (!addrRaw) return tokenData;
-    const snapshot = tokenByAddress.get(addrRaw.toLowerCase());
+    const snapshot = tokenByAddress.get(normalizeTokenKey(addrRaw));
     if (!snapshot) return tokenData;
     return {
       ...(isObject(tokenData) ? tokenData : {}),
@@ -1439,7 +1442,7 @@ export function initGmgnWsMonitor(options: {
   ) => {
     const addrRaw = typeof tokenData?.tokenAddress === 'string' ? tokenData.tokenAddress : null;
     if (!addrRaw) return;
-    const addr = addrRaw.toLowerCase();
+    const addr = normalizeTokenKey(addrRaw);
     const prev = tokenByAddress.get(addr);
     const vch = typeof tokenData?._v_ch === 'string' ? String(tokenData._v_ch).trim().toLowerCase() : '';
     const preferDevMetrics = vch === 'social' || vch === 'stat';
@@ -1532,7 +1535,7 @@ export function initGmgnWsMonitor(options: {
           : prev?.devHasSold;
 
     const next: TokenSnapshot = {
-      tokenAddress: addr,
+      tokenAddress: String(addrRaw).trim(),
       source: meta?.source ?? prev?.source,
       channel: meta?.channel ?? prev?.channel,
       chain: pickNonEmptyString(tokenData?.chain, prev?.chain),
@@ -1658,7 +1661,7 @@ export function initGmgnWsMonitor(options: {
   const linkTokenToCachedSignalsByMx = (tokenData: any, mx: unknown, now: number) => {
     const addrRaw = typeof tokenData?.tokenAddress === 'string' ? tokenData.tokenAddress : null;
     if (!addrRaw) return;
-    const addr = addrRaw.toLowerCase();
+    const addr = normalizeTokenKey(addrRaw);
     const snap = tokenByAddress.get(addr);
     if (!snap) return;
     if (typeof mx !== 'string' || !mx.trim()) return;
@@ -1797,18 +1800,18 @@ export function initGmgnWsMonitor(options: {
     const addedAddrs = new Set<string>(
       Array.isArray(deltaWrapper?.a)
         ? (deltaWrapper!.a as any[])
-          .map((x) => asAddress(x))
-          .filter((x): x is string => typeof x === 'string' && !!x)
-          .map((x) => x.toLowerCase())
+          .map((x) => (typeof x === 'string' ? String(x).trim() : ''))
+          .filter((x): x is string => !!x)
+          .map((x) => normalizeTokenKey(x))
         : [],
     );
     for (const item of list) {
       const tokenData = normalizeTrenchesTokenData(item);
       if (!tokenData.tokenAddress) continue;
       debugPacket.total += 1;
-      const tokenAddrLower = tokenData.tokenAddress.toLowerCase();
-      const prevSnapshot = tokenByAddress.get(tokenAddrLower);
-      const hasPrevSnapshot = tokenByAddress.has(tokenAddrLower);
+      const tokenAddrKey = normalizeTokenKey(tokenData.tokenAddress);
+      const prevSnapshot = tokenByAddress.get(tokenAddrKey);
+      const hasPrevSnapshot = tokenByAddress.has(tokenAddrKey);
       if (hasTokenDisplayIdentity(tokenData)) debugPacket.beforeIdentity += 1;
       if (hasTokenDisplayIdentity(prevSnapshot)) debugPacket.beforeSnapshotIdentity += 1;
       const rawF = isObject((item as any)?.f) ? (item as any).f : null;
@@ -1825,11 +1828,11 @@ export function initGmgnWsMonitor(options: {
       // bsc_nc 也可能是增量：只有首次出现或具备明显建池字段时，才回流到 new_pool。
       const isNewPoolByToken =
         stage === 'new_created' &&
-        (!hasPrevSnapshot || addedAddrs.has(tokenAddrLower) || hasCreateFields);
+        (!hasPrevSnapshot || addedAddrs.has(tokenAddrKey) || hasCreateFields);
       const signalSource = resolveMarketSignalSourceByStage(stage, isNewPoolByToken);
       updateTokenSnapshot(tokenData, now, { source: signalSource, channel });
       const uiTokenData = enrichNewPoolMonitorTokenData(tokenData);
-      const nextSnapshot = tokenByAddress.get(tokenAddrLower);
+      const nextSnapshot = tokenByAddress.get(tokenAddrKey);
       if (hasTokenDisplayIdentity(nextSnapshot)) debugPacket.afterIdentity += 1;
       const canPublishUiToken =
         hasTokenDisplayIdentity(uiTokenData) ||

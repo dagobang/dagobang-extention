@@ -19,6 +19,7 @@ import {
   findAta,
   getMintProgramId,
 } from '../../utils';
+import { buildSolanaTipTransferInstructions } from '../../utils/solanaTip';
 import { parsePumpfunBondingCurveState, type PumpfunBondingCurveState } from './codec';
 import {
   BUYBACK_FEE_RECIPIENT,
@@ -64,6 +65,7 @@ const CREATOR_VAULT_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const ATA_EXISTS_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const BLOCKHASH_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.blockhash;
 const PUMPFUN_COMPUTE_UNIT_LIMIT = 250_000;
+const SOLANA_VERSIONED_TX_MAX_BYTES = 1232;
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 const TURBO_PRIORITY_FEE_SOL_BY_PRESET: Record<string, string> = {
   slow: '0.000025',
@@ -141,8 +143,7 @@ function isPumpfunRouteComplete(input: SolanaTradeRequest, fallback: boolean): b
 function createTurboMemoInstruction(input: SolanaTradeRequest): TransactionInstruction | null {
   if (resolveExecutionMode(input) !== 'turbo') return null;
   turboMemoNonce = (turboMemoNonce + 1) % Number.MAX_SAFE_INTEGER;
-  const requestId = String((input.rawInput as any)?.__debugSubmitGapId || '').trim() || 'na';
-  const memo = `dagobang:${input.side}:${Date.now().toString(36)}:${turboMemoNonce.toString(36)}:${requestId}`;
+  const memo = `dg:${input.side === 'buy' ? 'b' : 's'}:${Date.now().toString(36)}:${turboMemoNonce.toString(36)}`;
   const data = new TextEncoder().encode(memo) as unknown as Buffer;
   return new TransactionInstruction({
     programId: MEMO_PROGRAM_ID,
@@ -416,6 +417,7 @@ async function buildLegacyInstruction(input: SolanaTradeRequest): Promise<{
 
   const preInstructions: TransactionInstruction[] = [];
   preInstructions.push(...buildPriorityFeeInstructions(input));
+  preInstructions.push(...buildSolanaTipTransferInstructions(input));
   const memoInstruction = createTurboMemoInstruction(input);
   if (memoInstruction) preInstructions.push(memoInstruction);
   preInstructions.push(
@@ -763,14 +765,33 @@ export const pumpfunTradeAdapter: SolanaTradeAdapter = {
       protectionMinOutWei,
       quotedOutWei,
     } = await buildInstruction(input);
-    const message = new TransactionMessage({
-      payerKey: new PublicKey(input.ownerAddress),
-      recentBlockhash,
-      instructions: [...preInstructions, instruction],
-    }).compileToV0Message();
+    const payerKey = new PublicKey(input.ownerAddress);
+    const memoInstruction = preInstructions.find((item) => item.programId.equals(MEMO_PROGRAM_ID));
+    const buildCompiledTransaction = (includeMemo: boolean) => {
+      const activePreInstructions = memoInstruction && !includeMemo
+        ? preInstructions.filter((item) => item !== memoInstruction)
+        : preInstructions;
+      const message = new TransactionMessage({
+        payerKey,
+        recentBlockhash,
+        instructions: [...activePreInstructions, instruction],
+      }).compileToV0Message();
+      const transaction = new VersionedTransaction(message);
+      return {
+        transaction,
+        serializedBytes: transaction.serialize().length,
+      };
+    };
+    let compiled = buildCompiledTransaction(true);
+    if (memoInstruction && compiled.serializedBytes > SOLANA_VERSIONED_TX_MAX_BYTES) {
+      compiled = buildCompiledTransaction(false);
+    }
+    if (compiled.serializedBytes > SOLANA_VERSIONED_TX_MAX_BYTES) {
+      throw new Error(`Pumpfun transaction too large: ${compiled.serializedBytes} bytes`);
+    }
     return {
       source: 'pumpfun',
-      transaction: new VersionedTransaction(message),
+      transaction: compiled.transaction,
       protectionMinOutWei,
       quotedOutWei,
       blockhash: recentBlockhash,

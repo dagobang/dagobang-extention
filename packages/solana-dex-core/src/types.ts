@@ -41,6 +41,10 @@ export type SolanaDexTokenInfo = {
 export type SolanaDexRawInput = {
   priorityFeeNative?: string;
   priorityFeeBnb?: string;
+  solanaFeeMode?: 'pf' | 'tip' | 'pf_and_tip';
+  solanaTipNative?: string;
+  solanaTipProviderType?: 'jito' | 'nextblock' | 'blox' | 'temporal' | 'zeroslot' | 'node1' | 'flashblock' | 'blockrazor' | 'astralane';
+  solanaTipRecipient?: string;
 };
 
 export type SolanaDexRuntime = {

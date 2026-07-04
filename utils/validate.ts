@@ -306,18 +306,38 @@ export function validateSettings(input: Settings): Settings | null {
         const defaultSellPriorityFeePreset = allowedPriorityFeePresets.includes((cDef as any).sellPriorityFeePreset)
           ? (cDef as any).sellPriorityFeePreset
           : 'standard';
+        const defaultBuyTipPreset = allowedPriorityFeePresets.includes((cDef as any).buyTipPreset)
+          ? (cDef as any).buyTipPreset
+          : 'none';
+        const defaultSellTipPreset = allowedPriorityFeePresets.includes((cDef as any).sellTipPreset)
+          ? (cDef as any).sellTipPreset
+          : 'none';
         const buyPriorityFeePreset = (allowedPriorityFeePresets.includes((cInput as any).buyPriorityFeePreset)
           ? (cInput as any).buyPriorityFeePreset
           : defaultBuyPriorityFeePreset) as (typeof allowedPriorityFeePresets)[number];
         const sellPriorityFeePreset = (allowedPriorityFeePresets.includes((cInput as any).sellPriorityFeePreset)
           ? (cInput as any).sellPriorityFeePreset
           : defaultSellPriorityFeePreset) as (typeof allowedPriorityFeePresets)[number];
+        const buyTipPreset = (allowedPriorityFeePresets.includes((cInput as any).buyTipPreset)
+          ? (cInput as any).buyTipPreset
+          : defaultBuyTipPreset) as (typeof allowedPriorityFeePresets)[number];
+        const sellTipPreset = (allowedPriorityFeePresets.includes((cInput as any).sellTipPreset)
+          ? (cInput as any).sellTipPreset
+          : defaultSellTipPreset) as (typeof allowedPriorityFeePresets)[number];
         const defaultBuyPriorityFeePresets = normalizePriorityFeePresetConfig(
           (cDef as any).buyPriorityFeePresets,
           defaultPriorityFeePresets,
         );
         const defaultSellPriorityFeePresets = normalizePriorityFeePresetConfig(
           (cDef as any).sellPriorityFeePresets,
+          defaultPriorityFeePresets,
+        );
+        const defaultBuyTipPresets = normalizePriorityFeePresetConfig(
+          (cDef as any).buyTipPresets,
+          defaultPriorityFeePresets,
+        );
+        const defaultSellTipPresets = normalizePriorityFeePresetConfig(
+          (cDef as any).sellTipPresets,
           defaultPriorityFeePresets,
         );
         const buyPriorityFeePresets = normalizePriorityFeePresetConfig(
@@ -329,6 +349,14 @@ export function validateSettings(input: Settings): Settings | null {
           (cInput as any).sellPriorityFeePresets,
           defaultSellPriorityFeePresets,
           inputSellPriorityFeeBnb,
+        );
+        const buyTipPresets = normalizePriorityFeePresetConfig(
+          (cInput as any).buyTipPresets,
+          defaultBuyTipPresets,
+        );
+        const sellTipPresets = normalizePriorityFeePresetConfig(
+          (cInput as any).sellTipPresets,
+          defaultSellTipPresets,
         );
         const defaultBuyGasPreset = (cDef as any).buyGasPreset ?? cDef.gasPreset;
         const defaultSellGasPreset = (cDef as any).sellGasPreset ?? cDef.gasPreset;
@@ -361,7 +389,7 @@ export function validateSettings(input: Settings): Settings | null {
         const solanaSwqosDefault = (cDef as any).solanaSwqos;
         const allowedSolanaSwqosStrategies = ['single', 'concurrent'] as const;
         const allowedSolanaSwqosRegions = ['default', 'newyork', 'frankfurt', 'amsterdam', 'slc', 'tokyo', 'london', 'losangeles'] as const;
-        const allowedSolanaSwqosProviders = ['jito', 'nextblock', 'blox', 'temporal'] as const;
+        const allowedSolanaSwqosProviders = ['jito', 'nextblock', 'blox', 'temporal', 'zeroslot', 'node1', 'flashblock', 'blockrazor', 'astralane'] as const;
         const normalizedSolanaSwqosProviders = Array.isArray(solanaSwqosInput?.providers)
           ? solanaSwqosInput.providers
           : Array.isArray(solanaSwqosDefault?.providers)
@@ -458,6 +486,10 @@ export function validateSettings(input: Settings): Settings | null {
           sellPriorityFeePreset,
           buyPriorityFeePresets,
           sellPriorityFeePresets,
+          buyTipPreset,
+          sellTipPreset,
+          buyTipPresets,
+          sellTipPresets,
           quickBuyAdvancedEnabled,
           quickBuyPresetOverrides,
           bloxrouteBuyEnabled,

@@ -55,27 +55,36 @@ export class TokenService {
     const inFlight = this.tokenBalanceInFlight.get(key);
     if (inFlight) return inFlight;
     const p = (async () => {
-      if (resolvedChainId === ChainId.SOL) {
-        const balance = await SolanaRpcService.getSplTokenBalance(owner, tokenAddress);
+      try {
+        if (resolvedChainId === ChainId.SOL) {
+          const balance = await SolanaRpcService.getSplTokenBalance(owner, tokenAddress);
+          const v = balance.toString();
+          this.tokenBalanceCache.set(key, { ts: Date.now(), value: v });
+          return v;
+        }
+        const balance = await RpcService.withBalancedReadClient({
+          chainId: resolvedChainId,
+          caller: 'token.erc20Balance',
+          run: async (client) => {
+            return await client.readContract({
+              address: tokenAddress as `0x${string}`,
+              abi: erc20Abi,
+              functionName: 'balanceOf',
+              args: [owner as `0x${string}`],
+            });
+          },
+        });
         const v = balance.toString();
         this.tokenBalanceCache.set(key, { ts: Date.now(), value: v });
         return v;
+      } catch (error) {
+        // Preserve the last successful on-chain balance during transient RPC failures
+        // so SOL sellability does not collapse to zero on a single refresh miss.
+        if (cached?.value != null) {
+          return cached.value;
+        }
+        throw error;
       }
-      const balance = await RpcService.withBalancedReadClient({
-        chainId: resolvedChainId,
-        caller: 'token.erc20Balance',
-        run: async (client) => {
-          return await client.readContract({
-            address: tokenAddress as `0x${string}`,
-            abi: erc20Abi,
-            functionName: 'balanceOf',
-            args: [owner as `0x${string}`],
-          });
-        },
-      });
-      const v = balance.toString();
-      this.tokenBalanceCache.set(key, { ts: Date.now(), value: v });
-      return v;
     })().finally(() => {
       this.tokenBalanceInFlight.delete(key);
     });

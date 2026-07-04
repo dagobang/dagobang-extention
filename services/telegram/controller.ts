@@ -342,6 +342,34 @@ export function createTelegramController(deps: {
     const fromAlias = String(byAlias || '').trim();
     return fromName || fromAlias || '-';
   };
+  const resolveSelectedHoldingWallets = (input: {
+    chainId: number;
+    status: Awaited<ReturnType<typeof getWalletStatus>>;
+    settings: any;
+  }): ChainAddress[] => {
+    const accounts = Array.isArray(input.status?.accounts) ? input.status.accounts : [];
+    const byKey = new Map<string, ChainAddress>();
+    for (const account of accounts) {
+      const normalized = normalizeChainAddressKey(account.address);
+      if (!normalized) continue;
+      byKey.set(normalized, account.address);
+    }
+    const selectedRaw = Array.isArray((input.settings as any)?.selectedTradeWallets)
+      ? (input.settings as any).selectedTradeWallets
+      : [];
+    const picked = selectedRaw
+      .map((item: unknown) => byKey.get(normalizeChainAddressKey(String(item || ''))))
+      .filter(Boolean) as ChainAddress[];
+    const seen = new Set<string>();
+    const deduped = picked.filter((item) => {
+      const key = normalizeChainAddressKey(item);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (deduped.length > 0) return deduped;
+    return input.status?.address ? [input.status.address] : [];
+  };
   const resolveNativeBalanceText = async (chainId: number, address: string | null | undefined, nativeSymbol: string) => {
     const addr = String(address || '').trim();
     const isValidAddress = chainId === ChainId.SOL ? isLikelySolanaAddress(addr) : isEvmAddress(addr);
@@ -765,7 +793,7 @@ export function createTelegramController(deps: {
       const tokenInfo = {
         chain: chainCode,
         address: tokenAddress,
-        name: meta?.symbol || tokenAddress,
+        name: '',
         symbol: meta?.symbol || 'TOKEN',
         decimals: Number(meta?.decimals ?? 18),
         logo: '',
@@ -1253,11 +1281,16 @@ export function createTelegramController(deps: {
     return Array.from(out.values()).slice(0, 80);
   };
 
-  const sendHoldings = async (chainId: number, walletAddress: ChainAddress) => {
+  const sendHoldings = async (chainId: number, walletAddressesInput: ChainAddress[]) => {
     const toNum = (v: any) => {
       const n = Number(v);
       return Number.isFinite(n) ? n : null;
     };
+    const walletAddresses = Array.from(new Map(
+      walletAddressesInput
+        .map((address) => [normalizeChainAddressKey(address), address] as const)
+        .filter(([key]) => !!key)
+    ).values());
     const calcMarketCapFromHolding = (h: any) => {
       const priceNum = toNum(h?.price ?? h?.token?.price);
       if (priceNum == null || priceNum <= 0) return null;
@@ -1265,20 +1298,97 @@ export function createTelegramController(deps: {
       if (totalSupply == null || totalSupply <= 0) return null;
       return totalSupply * priceNum;
     };
+    const aggregateHoldingRows = (
+      rows: Array<{
+        tokenAddress: ChainAddress;
+        symbol: string;
+        amountText: string;
+        usd: number;
+        marketCapUsd: number | null;
+        costUsd?: number | null;
+        pnlUsd: number | null;
+        pnlRatio: number | null;
+      }>
+    ) => {
+      const byToken = new Map<string, {
+        tokenAddress: ChainAddress;
+        symbol: string;
+        amount: number;
+        usd: number;
+        marketCapUsd: number | null;
+        costUsd: number | null;
+        pnlUsd: number | null;
+      }>();
+      for (const row of rows) {
+        const key = normalizeChainAddressKey(row.tokenAddress);
+        if (!key) continue;
+        const existing = byToken.get(key) ?? {
+          tokenAddress: row.tokenAddress,
+          symbol: row.symbol || 'TOKEN',
+          amount: 0,
+          usd: 0,
+          marketCapUsd: row.marketCapUsd ?? null,
+          costUsd: null,
+          pnlUsd: null,
+        };
+        const amountNum = Number(row.amountText);
+        existing.amount += Number.isFinite(amountNum) ? amountNum : 0;
+        existing.usd += Number.isFinite(row.usd) ? row.usd : 0;
+        if (existing.marketCapUsd == null && row.marketCapUsd != null && Number.isFinite(row.marketCapUsd)) {
+          existing.marketCapUsd = row.marketCapUsd;
+        }
+        if (row.costUsd != null && Number.isFinite(row.costUsd)) {
+          existing.costUsd = (existing.costUsd ?? 0) + row.costUsd;
+        }
+        if (row.pnlUsd != null && Number.isFinite(row.pnlUsd)) {
+          existing.pnlUsd = (existing.pnlUsd ?? 0) + row.pnlUsd;
+        }
+        if (!existing.symbol && row.symbol) existing.symbol = row.symbol;
+        byToken.set(key, existing);
+      }
+      return Array.from(byToken.values()).map((item) => ({
+        tokenAddress: item.tokenAddress,
+        symbol: item.symbol,
+        amountText: String(item.amount),
+        usd: item.usd,
+        marketCapUsd: item.marketCapUsd,
+        pnlUsd: item.pnlUsd,
+        pnlRatio: item.costUsd != null && item.costUsd > 0 && item.pnlUsd != null
+          ? item.pnlUsd / item.costUsd
+          : null,
+      }));
+    };
     const chainCode = chainNames[chainId] ?? String(chainId);
     const walletStatus = await getWalletStatus(chainId).catch(() => null);
     const walletAccounts = Array.isArray(walletStatus?.accounts)
       ? walletStatus.accounts as Array<{ address: string; name?: string }>
       : undefined;
-    const walletName = formatOrderWalletLabel({
-      fromAddress: walletAddress,
-      accounts: walletAccounts,
-      accountAliases: undefined,
-    });
+    const walletName = walletAddresses.length <= 1
+      ? formatOrderWalletLabel({
+        fromAddress: walletAddresses[0],
+        accounts: walletAccounts,
+        accountAliases: undefined,
+      })
+      : `已选钱包 x${walletAddresses.length}`;
+    const walletAddressText = walletAddresses.length <= 1
+      ? shortAddress(walletAddresses[0] || '-')
+      : walletAddresses.map((address) => shortAddress(address)).slice(0, 4).join(' | ');
+    if (walletAddresses.length <= 0) {
+      await sendTelegramReply('未找到可用于查询持仓的钱包地址。', {
+        inlineKeyboard: [[{ text: '👛 钱包列表', callbackData: 'act:wallets' }]],
+        chainId,
+      });
+      return;
+    }
     try {
-      const gmgnHoldings = await deps.fetchGmgnHoldings?.(chainCode, walletAddress);
-      if (Array.isArray(gmgnHoldings) && gmgnHoldings.length > 0) {
-        const normalized = gmgnHoldings
+      const gmgnHoldingGroups = await Promise.all(
+        walletAddresses.map(async (walletAddress) => {
+          return await deps.fetchGmgnHoldings?.(chainCode, walletAddress);
+        })
+      );
+      const gmgnHoldings = gmgnHoldingGroups.flatMap((items) => Array.isArray(items) ? items : []);
+      if (gmgnHoldings.length > 0) {
+        const normalized = aggregateHoldingRows(gmgnHoldings
           .map((h: any) => {
             const tokenAddress = String(h?.token_address || '').trim();
             if (!isTelegramTokenAddress(tokenAddress)) return null;
@@ -1302,7 +1412,7 @@ export function createTelegramController(deps: {
               pnlRatio: perf.pnlRatio,
             };
           })
-          .filter(Boolean) as Array<{ tokenAddress: ChainAddress; symbol: string; amountText: string; usd: number; marketCapUsd: number | null; costUsd: number | null; pnlUsd: number | null; pnlRatio: number | null }>;
+          .filter(Boolean) as Array<{ tokenAddress: ChainAddress; symbol: string; amountText: string; usd: number; marketCapUsd: number | null; costUsd: number | null; pnlUsd: number | null; pnlRatio: number | null }>);
 
         if (normalized.length > 0) {
           normalized.sort((a, b) => (b.usd || 0) - (a.usd || 0));
@@ -1314,7 +1424,7 @@ export function createTelegramController(deps: {
               '� 持仓面板',
               `链: ${formatChainLabel(chainId)}`,
               `钱包: ${walletName}`,
-              `地址: ${shortAddress(walletAddress)}`,
+              `地址: ${walletAddressText}`,
               `总估值: ${formatUsd(totalUsd)}`,
               `显示: ${top.length}/${normalized.length}`,
               '',
@@ -1337,16 +1447,29 @@ export function createTelegramController(deps: {
     }
     const rows = (await Promise.all(candidates.map(async (tokenAddress) => {
       try {
-        const [meta, balanceWei] = await Promise.all([
-          TokenService.getMeta(tokenAddress, chainId),
-          TokenService.getBalance(tokenAddress, walletAddress, chainId),
-        ]);
-        const bal = BigInt(balanceWei || '0');
+        const meta = await TokenService.getMeta(tokenAddress, chainId);
+        const balanceWeiList = await Promise.all(walletAddresses.map(async (walletAddress) => {
+          return await TokenService.getBalance(tokenAddress, walletAddress, chainId).catch(() => '0');
+        }));
+        const balanceWei = balanceWeiList.reduce((sum, item) => {
+          try {
+            return sum + BigInt(item || '0');
+          } catch {
+            return sum;
+          }
+        }, 0n);
+        const bal = balanceWei;
         if (bal <= 0n) return null;
-        const decimals = Number(meta?.decimals ?? 18);
-        const amountNum = Number(formatUnits(bal, decimals));
-        if (!Number.isFinite(amountNum) || amountNum <= 0) return null;
-        const tokenInfo = await resolveQuickTradeTokenInfo(tokenAddress, chainId).catch(() => null);
+        const [tokenInfo, details] = await Promise.all([
+          resolveQuickTradeTokenInfo(tokenAddress, chainId).catch(() => null),
+          Promise.all(walletAddresses.map(async (walletAddress) => {
+            try {
+              return await deps.fetchGmgnHoldingDetail?.(chainCode, walletAddress, tokenAddress);
+            } catch {
+              return null;
+            }
+          })),
+        ]);
         const px = await TokenService.getTokenPriceUsdFromRpc({
           chainId,
           tokenAddress,
@@ -1354,6 +1477,9 @@ export function createTelegramController(deps: {
           cacheTtlMs: 3000,
           allowTokenInfoPriceFallback: true,
         }).catch(() => 0);
+        const decimals = Number(meta?.decimals ?? 18);
+        const amountNum = Number(formatUnits(bal, decimals));
+        if (!Number.isFinite(amountNum) || amountNum <= 0) return null;
         const usd = Number.isFinite(px) && px > 0 ? amountNum * px : 0;
         const totalSupplyNum = resolveTokenSupplyOrDefault(tokenInfo);
         const apiPrice = Number((tokenInfo as any)?.tokenPrice?.price ?? 0);
@@ -1366,26 +1492,20 @@ export function createTelegramController(deps: {
           : (Number.isFinite(normalizedPriceUsd) && normalizedPriceUsd > 0 && Number.isFinite(totalSupplyNum) && totalSupplyNum > 0
             ? normalizedPriceUsd * totalSupplyNum
             : null);
-        const chainCode = chainNames[chainId] ?? String(chainId);
-        let pnlUsd: number | null = null;
-        let pnlRatio: number | null = null;
-        try {
-          const detail = await deps.fetchGmgnHoldingDetail?.(chainCode, walletAddress, tokenAddress);
-          if (detail) {
-            const perf = extractHoldingPerf(detail);
-            pnlUsd = perf.pnlUsd;
-            pnlRatio = perf.pnlRatio;
-          }
-        } catch {
-        }
+        const perfList = details
+          .map((detail) => detail ? extractHoldingPerf(detail) : null)
+          .filter(Boolean) as Array<{ costUsd: number | null; pnlUsd: number | null; pnlRatio: number | null }>;
+        const totalCostUsd = perfList.reduce((sum, item) => sum + (item.costUsd != null && Number.isFinite(item.costUsd) ? item.costUsd : 0), 0);
+        const totalPnlUsd = perfList.reduce((sum, item) => sum + (item.pnlUsd != null && Number.isFinite(item.pnlUsd) ? item.pnlUsd : 0), 0);
+        const hasPerf = perfList.length > 0;
         return {
           tokenAddress,
           symbol: String(meta?.symbol || 'TOKEN'),
           amountText: formatTokenAmount(bal.toString(), decimals),
           usd,
           marketCapUsd,
-          pnlUsd,
-          pnlRatio,
+          pnlUsd: hasPerf ? totalPnlUsd : null,
+          pnlRatio: hasPerf && totalCostUsd > 0 ? totalPnlUsd / totalCostUsd : null,
         };
       } catch {
         return null;
@@ -1393,7 +1513,7 @@ export function createTelegramController(deps: {
     }))).filter(Boolean) as Array<{ tokenAddress: ChainAddress; symbol: string; amountText: string; usd: number; marketCapUsd: number | null; pnlUsd: number | null; pnlRatio: number | null }>;
 
     if (!rows.length) {
-      await sendTelegramReply('当前钱包未检测到持仓（基于近期交易代币集合）。', {
+      await sendTelegramReply('当前已选钱包未检测到持仓（基于近期交易代币集合）。', {
         inlineKeyboard: [[{ text: '🔄 刷新持仓', callbackData: `act:holdings:${chainId}` }, { text: '👛 钱包列表', callbackData: 'act:wallets' }]],
         chainId,
       });
@@ -1408,7 +1528,7 @@ export function createTelegramController(deps: {
         '� 持仓面板',
         `链: ${formatChainLabel(chainId)}`,
         `钱包: ${walletName}`,
-        `地址: ${shortAddress(walletAddress)}`,
+        `地址: ${walletAddressText}`,
         `总估值: ${formatUsd(totalUsd)}`,
         `显示: ${top.length}/${rows.length}`,
         '',
@@ -1684,7 +1804,12 @@ export function createTelegramController(deps: {
             await sendTelegramReply('钱包已锁定，无法读取持仓', { inlineKeyboard: buildMainMenuKeyboard(effectiveChainId) });
             return;
           }
-          await sendHoldings(effectiveChainId, status.address);
+          const holdingWallets = resolveSelectedHoldingWallets({
+            chainId: effectiveChainId,
+            status,
+            settings,
+          });
+          await sendHoldings(effectiveChainId, holdingWallets);
           return;
         }
         if (isWalletsAction) {

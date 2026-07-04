@@ -15,6 +15,13 @@ const DEFAULT_PRIORITY_FEE_PRESETS = {
   fast: '0.0001',
 } as const;
 
+export const DEFAULT_SOLANA_TIP_PRESET_VALUES = {
+  none: '0',
+  slow: '0.001',
+  standard: '0.002',
+  fast: '0.005',
+} as const;
+
 const DEFAULT_QUICK_BUY_PRESET_OVERRIDES = [{}, {}, {}, {}];
 
 const BSC_MAINNET: ChainSettings = {
@@ -56,6 +63,10 @@ const BSC_MAINNET: ChainSettings = {
   sellPriorityFeePreset: 'standard',
   buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
   sellPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  buyTipPreset: 'none',
+  sellTipPreset: 'none',
+  buyTipPresets: DEFAULT_SOLANA_TIP_PRESET_VALUES,
+  sellTipPresets: DEFAULT_SOLANA_TIP_PRESET_VALUES,
   quickBuyAdvancedEnabled: false,
   quickBuyPresetOverrides: DEFAULT_QUICK_BUY_PRESET_OVERRIDES,
   bloxrouteBuyEnabled: true,
@@ -184,6 +195,11 @@ const SOL_MAINNET: ChainSettings = {
       { type: 'blox', enabled: false, weight: 50 },
       { type: 'nextblock', enabled: false, weight: 30 },
       { type: 'temporal', enabled: false, weight: 20 },
+      { type: 'zeroslot', enabled: false, weight: 20 },
+      { type: 'node1', enabled: false, weight: 20 },
+      { type: 'flashblock', enabled: false, weight: 20 },
+      { type: 'blockrazor', enabled: false, weight: 20 },
+      { type: 'astralane', enabled: false, weight: 20 },
     ],
   },
 };

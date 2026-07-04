@@ -2,17 +2,31 @@ import type { SettingsDraftProps } from './types';
 import { defaultSettings } from '@/utils/defaults';
 import { ChainId } from '@/constants/chains/chainId';
 import { getNativeSymbol } from '@/constants/chains';
+import { DEFAULT_SOLANA_TIP_PRESET_VALUES } from '@/utils/solanaTip';
 
 type GasSettingsProps = SettingsDraftProps;
 
 export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettingsProps) {
   const priorityDefaults = { none: '0', slow: '0.000025', standard: '0.00004', fast: '0.0001' } as const;
+  const tipDefaults = DEFAULT_SOLANA_TIP_PRESET_VALUES;
   const defaults = defaultSettings();
   const chainId = settingsDraft.chainId;
   const fallbackChainDraft = defaults.chains[defaults.chainId];
   const chainDraft = settingsDraft.chains[chainId] ?? defaults.chains[chainId] ?? fallbackChainDraft;
   const nativeSymbol = getNativeSymbol(chainId);
   const supportsPriorityFee = chainId !== ChainId.HYPER;
+  const prioritySectionTitle = 'Priority';
+  const priorityLabel = '优先费';
+  const buyPriorityLabel = `买入${priorityLabel}预设值(${nativeSymbol})`;
+  const sellPriorityLabel = `卖出${priorityLabel}预设值(${nativeSymbol})`;
+  const priorityHintLines = [
+    '优先费预设值大于 0 时，会作为交易优先费提升确认优先级。',
+    '若当前通道的广播能力或节点配置不足，交易确认可能变慢，请先检查网络设置。',
+  ];
+  const tipHintLines = [
+    'Tip 仅在 SOL 的 SWQoS 通道下生效，并且建议只启用单一 Provider。',
+    '启用后会在交易里额外插入一笔 SOL transfer，作为该 Provider 的 Tip transfer。',
+  ];
 
   return (
     <div className="space-y-6">
@@ -157,14 +171,15 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
       </div>
       {supportsPriorityFee ? (
         <div className="space-y-3 pt-4 border-t border-zinc-800">
-          <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Priority</div>
+          <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">{prioritySectionTitle}</div>
           <div className="rounded-md border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-200">
-            <div>优先费预设值大于 0 时，会进入 Bundle 专用广播轮次，不再与普通 RPC 混发。</div>
-            <div>若未配置支持 Bundle 的节点或 bloXroute 通道，交易会直接失败，请先检查网络设置。</div>
+            {priorityHintLines.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
           </div>
           <div className="space-y-3">
             <div className="space-y-1">
-              <div className="text-[14px] text-zinc-400">买入优先费预设值({nativeSymbol})</div>
+              <div className="text-[14px] text-zinc-400">{buyPriorityLabel}</div>
               <div className="grid grid-cols-2 gap-1">
                 {(['none', 'slow', 'standard', 'fast'] as const).map((k) => (
                   <div key={k} className="flex items-center gap-1">
@@ -201,7 +216,7 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
               </div>
             </div>
             <div className="space-y-1">
-              <div className="text-[14px] text-zinc-400">卖出优先费预设值({nativeSymbol})</div>
+              <div className="text-[14px] text-zinc-400">{sellPriorityLabel}</div>
               <div className="grid grid-cols-2 gap-1">
                 {(['none', 'slow', 'standard', 'fast'] as const).map((k) => (
                   <div key={k} className="flex items-center gap-1">
@@ -237,6 +252,90 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
                 ))}
               </div>
             </div>
+            {chainId === ChainId.SOL ? (
+              <div className="space-y-3 rounded-md border border-cyan-800/40 bg-cyan-950/20 px-3 py-3">
+                <div className="text-[12px] font-semibold text-cyan-200">Tip</div>
+                <div className="space-y-0.5 text-[11px] text-cyan-100/90">
+                  {tipHintLines.map((line) => (
+                    <div key={line}>{line}</div>
+                  ))}
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[14px] text-zinc-400">买入 Tip 预设值({nativeSymbol})</div>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(['none', 'slow', 'standard', 'fast'] as const).map((k) => (
+                      <div key={k} className="flex items-center gap-1">
+                        <span className="w-8 shrink-0 whitespace-nowrap text-[11px] text-zinc-500">{k === 'none' ? '无' : tt(`popup.settings.gas.${k}`)}</span>
+                        <input
+                          className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-1 py-0.5 text-[12px] outline-none"
+                          value={chainDraft.buyTipPresets?.[k] ?? tipDefaults[k]}
+                          onChange={(e) =>
+                            setSettingsDraft((s) => {
+                              const chain = s.chains[s.chainId] ?? defaults.chains[s.chainId] ?? fallbackChainDraft;
+                              const nextPresets = {
+                                none: chain.buyTipPresets?.none ?? tipDefaults.none,
+                                slow: chain.buyTipPresets?.slow ?? tipDefaults.slow,
+                                standard: chain.buyTipPresets?.standard ?? tipDefaults.standard,
+                                fast: chain.buyTipPresets?.fast ?? tipDefaults.fast,
+                                [k]: e.target.value,
+                              };
+                              return {
+                                ...s,
+                                chains: {
+                                  ...s.chains,
+                                  [s.chainId]: {
+                                    ...chain,
+                                    buyTipPresets: nextPresets,
+                                  },
+                                },
+                              };
+                            })
+                          }
+                          placeholder={k === 'none' ? '0' : tipDefaults.slow}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[14px] text-zinc-400">卖出 Tip 预设值({nativeSymbol})</div>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(['none', 'slow', 'standard', 'fast'] as const).map((k) => (
+                      <div key={k} className="flex items-center gap-1">
+                        <span className="w-8 shrink-0 whitespace-nowrap text-[11px] text-zinc-500">{k === 'none' ? '无' : tt(`popup.settings.gas.${k}`)}</span>
+                        <input
+                          className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-1 py-0.5 text-[12px] outline-none"
+                          value={chainDraft.sellTipPresets?.[k] ?? tipDefaults[k]}
+                          onChange={(e) =>
+                            setSettingsDraft((s) => {
+                              const chain = s.chains[s.chainId] ?? defaults.chains[s.chainId] ?? fallbackChainDraft;
+                              const nextPresets = {
+                                none: chain.sellTipPresets?.none ?? tipDefaults.none,
+                                slow: chain.sellTipPresets?.slow ?? tipDefaults.slow,
+                                standard: chain.sellTipPresets?.standard ?? tipDefaults.standard,
+                                fast: chain.sellTipPresets?.fast ?? tipDefaults.fast,
+                                [k]: e.target.value,
+                              };
+                              return {
+                                ...s,
+                                chains: {
+                                  ...s.chains,
+                                  [s.chainId]: {
+                                    ...chain,
+                                    sellTipPresets: nextPresets,
+                                  },
+                                },
+                              };
+                            })
+                          }
+                          placeholder={k === 'none' ? '0' : tipDefaults.slow}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

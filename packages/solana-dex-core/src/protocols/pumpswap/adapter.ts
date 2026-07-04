@@ -21,6 +21,7 @@ import {
   findAta,
   getMintProgramId,
 } from '../../utils';
+import { buildSolanaTipTransferInstructions } from '../../utils/solanaTip';
 import {
   parsePumpSwapGlobalState,
   parsePumpSwapPoolState,
@@ -120,8 +121,7 @@ function resolveExecutionMode(input: SolanaTradeRequest): 'default' | 'turbo' {
 function createTurboMemoInstruction(input: SolanaTradeRequest): TransactionInstruction | null {
   if (resolveExecutionMode(input) !== 'turbo') return null;
   turboMemoNonce = (turboMemoNonce + 1) % Number.MAX_SAFE_INTEGER;
-  const requestId = String((input.rawInput as any)?.__debugSubmitGapId || '').trim() || 'na';
-  const memo = `dagobang:${input.side}:${Date.now().toString(36)}:${turboMemoNonce.toString(36)}:${requestId}`;
+  const memo = `dg:${input.side === 'buy' ? 'b' : 's'}:${Date.now().toString(36)}:${turboMemoNonce.toString(36)}`;
   const data = new TextEncoder().encode(memo) as unknown as Buffer;
   return new TransactionInstruction({
     programId: MEMO_PROGRAM_ID,
@@ -623,6 +623,7 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
   const preInstructions: TransactionInstruction[] = [];
   const postInstructions: TransactionInstruction[] = [];
   preInstructions.push(...buildPriorityFeeInstructions(input));
+  preInstructions.push(...buildSolanaTipTransferInstructions(input));
   const memoInstruction = createTurboMemoInstruction(input);
   if (memoInstruction) preInstructions.push(memoInstruction);
   preInstructions.push(createAtaIdempotentInstruction({

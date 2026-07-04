@@ -5,7 +5,7 @@ import { SolanaRpcService, type SolanaConfirmationCommitment } from './rpc';
 import { solanaWalletAdapter } from './solanaWalletAdapter';
 import type { TradeExecutor } from '../types';
 import type { ChainAddress, EvmAddress } from '@/types/chain';
-import type { SubmitChannel, TradeTurboPrewarmInput, TxBuyInput, TxSellInput } from '@/types/extention';
+import type { SolanaFeeMode, SubmitChannel, TradeTurboPrewarmInput, TxBuyInput, TxSellInput } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { resolveSolanaTradeSource, SOLANA_NATIVE_MINT, SOLANA_ZERO_ADDRESS } from './trade/constants';
 import { broadcastSolanaBuiltTransaction } from './trade/broadcaster';
@@ -278,8 +278,12 @@ export class SolanaTradeExecutor implements TradeExecutor {
       elapsedMs: Date.now() - adapterBuildStartedAt,
     });
     built.plannerReason = plan.reason;
-    const submitChannel = (request.rawInput as TxBuyInput | TxSellInput | undefined)?.submitChannel;
-    const executionMode = (request.rawInput as TxBuyInput | TxSellInput | undefined)?.executionModeOverride === 'turbo'
+    const rawInput = (request.rawInput as TxBuyInput | TxSellInput | undefined);
+    const submitChannel = rawInput?.submitChannel;
+    const solanaFeeMode: SolanaFeeMode = rawInput?.solanaFeeMode === 'tip' || rawInput?.solanaFeeMode === 'pf_and_tip'
+      ? rawInput.solanaFeeMode
+      : 'pf';
+    const executionMode = rawInput?.executionModeOverride === 'turbo'
       ? 'turbo'
       : 'default';
     const broadcastStartedAt = Date.now();
@@ -290,6 +294,7 @@ export class SolanaTradeExecutor implements TradeExecutor {
         signer,
         txSide: request.side,
         submitChannel,
+        solanaFeeMode,
         executionMode,
         debugRequestId: requestId ?? undefined,
       });

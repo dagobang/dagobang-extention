@@ -3,7 +3,7 @@ import bs58 from 'bs58';
 import { ChainId } from '@/constants/chains/chainId';
 import { RpcReadBalancer } from '@/services/rpcReadBalancer';
 import { SettingsService } from '@/services/settings';
-import type { SubmitChannel } from '@/types/extention';
+import type { SolanaFeeMode, SubmitChannel } from '@/types/extention';
 import type { SolanaSwqosProviderSettings, SolanaSwqosRegion, SolanaSwqosSettings } from '@/types/extention';
 import type { VersionedTransaction } from '@solana/web3.js';
 import { SolanaRpcService } from './rpc';
@@ -13,6 +13,27 @@ type SolanaBroadcastResult = {
   broadcastVia: string;
   broadcastUrl?: string;
   isBundle?: boolean;
+};
+
+export type SolanaSwqosProbeResult = {
+  ok: true;
+  status: 'reachable' | 'failed';
+  category:
+    | 'ok'
+    | 'auth_required'
+    | 'auth_failed'
+    | 'bad_endpoint'
+    | 'rate_limited'
+    | 'payload_rejected'
+    | 'server_error'
+    | 'timeout'
+    | 'network_error';
+  providerType: SolanaSwqosProviderSettings['type'];
+  endpoint: string;
+  submitUrl: string;
+  httpStatus?: number;
+  message?: string;
+  hasAuthKey: boolean;
 };
 
 function reportPumpSwapBroadcastDebug(location: string, msg: string, data: Record<string, unknown>): void {
@@ -62,6 +83,61 @@ const DEFAULT_TEMPORAL_ENDPOINTS: Record<SolanaSwqosRegion, string> = {
   losangeles: 'http://pit1.nozomi.temporal.xyz',
 };
 
+const DEFAULT_ZEROSLOT_ENDPOINTS: Record<SolanaSwqosRegion, string> = {
+  default: 'http://de.0slot.trade',
+  newyork: 'http://ny.0slot.trade',
+  frankfurt: 'http://de.0slot.trade',
+  amsterdam: 'http://ams.0slot.trade',
+  slc: 'http://ny.0slot.trade',
+  tokyo: 'http://jp.0slot.trade',
+  london: 'http://ams.0slot.trade',
+  losangeles: 'http://la.0slot.trade',
+};
+
+const DEFAULT_NODE1_ENDPOINTS: Record<SolanaSwqosRegion, string> = {
+  default: 'http://fra.node1.me',
+  newyork: 'http://ny.node1.me',
+  frankfurt: 'http://fra.node1.me',
+  amsterdam: 'http://ams.node1.me',
+  slc: 'http://ny.node1.me',
+  tokyo: 'http://fra.node1.me',
+  london: 'http://ams.node1.me',
+  losangeles: 'http://ny.node1.me',
+};
+
+const DEFAULT_FLASHBLOCK_ENDPOINTS: Record<SolanaSwqosRegion, string> = {
+  default: 'http://ny.flashblock.trade',
+  newyork: 'http://ny.flashblock.trade',
+  frankfurt: 'http://fra.flashblock.trade',
+  amsterdam: 'http://ams.flashblock.trade',
+  slc: 'http://slc.flashblock.trade',
+  tokyo: 'http://singapore.flashblock.trade',
+  london: 'http://london.flashblock.trade',
+  losangeles: 'http://ny.flashblock.trade',
+};
+
+const DEFAULT_BLOCKRAZOR_ENDPOINTS: Record<SolanaSwqosRegion, string> = {
+  default: 'http://frankfurt.solana.blockrazor.xyz:443/sendTransaction',
+  newyork: 'http://newyork.solana.blockrazor.xyz:443/sendTransaction',
+  frankfurt: 'http://frankfurt.solana.blockrazor.xyz:443/sendTransaction',
+  amsterdam: 'http://amsterdam.solana.blockrazor.xyz:443/sendTransaction',
+  slc: 'http://newyork.solana.blockrazor.xyz:443/sendTransaction',
+  tokyo: 'http://tokyo.solana.blockrazor.xyz:443/sendTransaction',
+  london: 'http://frankfurt.solana.blockrazor.xyz:443/sendTransaction',
+  losangeles: 'http://newyork.solana.blockrazor.xyz:443/sendTransaction',
+};
+
+const DEFAULT_ASTRALANE_ENDPOINTS: Record<SolanaSwqosRegion, string> = {
+  default: 'http://lim.gateway.astralane.io/iris',
+  newyork: 'http://ny.gateway.astralane.io/iris',
+  frankfurt: 'http://fr.gateway.astralane.io/iris',
+  amsterdam: 'http://ams.gateway.astralane.io/iris',
+  slc: 'http://ny.gateway.astralane.io/iris',
+  tokyo: 'http://jp.gateway.astralane.io/iris',
+  london: 'http://ny.gateway.astralane.io/iris',
+  losangeles: 'http://lax.gateway.astralane.io/iris',
+};
+
 function getLocalTransactionSignature(transaction: VersionedTransaction): string {
   const signature = transaction.signatures[0];
   if (!signature || signature.length === 0) {
@@ -80,7 +156,26 @@ function resolveProviderEndpoint(provider: SolanaSwqosProviderSettings, region: 
   if (provider.type === 'nextblock') return DEFAULT_NEXTBLOCK_ENDPOINTS[region];
   if (provider.type === 'blox') return DEFAULT_BLOX_ENDPOINTS[region];
   if (provider.type === 'temporal') return DEFAULT_TEMPORAL_ENDPOINTS[region];
+  if (provider.type === 'zeroslot') return DEFAULT_ZEROSLOT_ENDPOINTS[region];
+  if (provider.type === 'node1') return DEFAULT_NODE1_ENDPOINTS[region];
+  if (provider.type === 'flashblock') return DEFAULT_FLASHBLOCK_ENDPOINTS[region];
+  if (provider.type === 'blockrazor') return DEFAULT_BLOCKRAZOR_ENDPOINTS[region];
+  if (provider.type === 'astralane') return DEFAULT_ASTRALANE_ENDPOINTS[region];
   throw new Error(`Unsupported Solana SWQoS provider: ${provider.type}`);
+}
+
+function ensureEndpointSuffix(endpoint: string, suffix: string): string {
+  const trimmed = endpoint.trim().replace(/\/+$/, '');
+  return trimmed.endsWith(suffix) ? trimmed : `${trimmed}${suffix}`;
+}
+
+function resolveProviderSubmitUrl(provider: SolanaSwqosProviderSettings, endpoint: string): string {
+  if (provider.type === 'nextblock') return ensureEndpointSuffix(endpoint, '/api/v2/submit');
+  if (provider.type === 'blox') return ensureEndpointSuffix(endpoint, '/api/v2/submit');
+  if (provider.type === 'flashblock') return ensureEndpointSuffix(endpoint, '/api/v2/submit-batch');
+  if (provider.type === 'blockrazor') return ensureEndpointSuffix(endpoint, '/sendTransaction');
+  if (provider.type === 'astralane') return ensureEndpointSuffix(endpoint, '/iris');
+  return endpoint.trim().replace(/\/+$/, '');
 }
 
 function resolveEnabledProviders(config: SolanaSwqosSettings | undefined): SolanaSwqosProviderSettings[] {
@@ -91,12 +186,18 @@ function resolveEnabledProviders(config: SolanaSwqosSettings | undefined): Solan
     .sort((left, right) => (right.weight ?? 1) - (left.weight ?? 1));
 }
 
+type JsonPostResult = {
+  status: number;
+  text: string;
+  json: any | null;
+};
+
 async function postJson(input: {
   url: string;
   headers?: Record<string, string>;
   body: unknown;
   timeoutMs: number;
-}): Promise<void> {
+}): Promise<JsonPostResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), input.timeoutMs);
   try {
@@ -109,12 +210,277 @@ async function postJson(input: {
       body: JSON.stringify(input.body),
       signal: controller.signal,
     });
+    const text = await response.text();
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(`HTTP ${response.status}${text ? `: ${text}` : ''}`);
     }
+    let json: any | null = null;
+    if (text) {
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = null;
+      }
+    }
+    return {
+      status: response.status,
+      text,
+      json,
+    };
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+async function rawPost(input: {
+  url: string;
+  headers?: Record<string, string>;
+  body: unknown;
+  timeoutMs: number;
+}): Promise<{ status: number; text: string }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), input.timeoutMs);
+  try {
+    const response = await fetch(input.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(input.headers ?? {}),
+      },
+      body: JSON.stringify(input.body),
+      signal: controller.signal,
+    });
+    return {
+      status: response.status,
+      text: await response.text(),
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function truncateProbeMessage(input: string, maxLength = 220): string {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function classifyProbeHttpResponse(input: {
+  status: number;
+  text: string;
+  hasAuthKey: boolean;
+}): SolanaSwqosProbeResult['category'] {
+  const status = Number(input.status || 0);
+  const text = String(input.text || '').toLowerCase();
+  if (status === 401) return input.hasAuthKey ? 'auth_failed' : 'auth_required';
+  if (status === 403) return input.hasAuthKey ? 'auth_failed' : 'auth_required';
+  if (status === 404) return 'bad_endpoint';
+  if (status === 408 || status === 504) return 'timeout';
+  if (status === 429) return 'rate_limited';
+  if (status >= 500) return 'server_error';
+  if (
+    text.includes('unauthorized')
+    || text.includes('forbidden')
+    || text.includes('invalid api key')
+    || text.includes('missing api key')
+    || text.includes('invalid auth')
+    || text.includes('authentication')
+  ) {
+    return input.hasAuthKey ? 'auth_failed' : 'auth_required';
+  }
+  if (
+    text.includes('invalid transaction')
+    || text.includes('failed to deserialize')
+    || text.includes('base64')
+    || text.includes('invalid params')
+    || text.includes('invalid param')
+    || text.includes('invalid request')
+    || text.includes('bad request')
+    || text.includes('signature verification failure')
+    || text.includes('signature verification failed')
+  ) {
+    return 'payload_rejected';
+  }
+  return 'ok';
+}
+
+function classifyProbeError(error: unknown): SolanaSwqosProbeResult['category'] {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  if (message.includes('aborted') || message.includes('timeout')) return 'timeout';
+  return 'network_error';
+}
+
+function extractProviderErrorMessage(payload: any): string {
+  if (!payload) return '';
+  if (typeof payload === 'string') return payload;
+  if (typeof payload?.error === 'string') return payload.error;
+  if (typeof payload?.message === 'string') return payload.message;
+  if (typeof payload?.result?.message === 'string') return payload.result.message;
+  if (typeof payload?.error?.message === 'string') return payload.error.message;
+  return '';
+}
+
+function looksLikeProviderFailureMessage(input: string): boolean {
+  const text = String(input || '').toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes('error')
+    || text.includes('failed')
+    || text.includes('failure')
+    || text.includes('rejected')
+    || text.includes('invalid')
+    || text.includes('unauthorized')
+    || text.includes('forbidden')
+    || text.includes('denied')
+    || text.includes('bad request')
+    || text.includes('not found')
+    || text.includes('deserialize')
+    || text.includes('signature verification')
+  );
+}
+
+function ensureProviderSubmissionAccepted(providerType: SolanaSwqosProviderSettings['type'], result: JsonPostResult): void {
+  const payload = result.json;
+  if (!payload) {
+    throw new Error(`${providerType} returned non-JSON response: ${result.text || `HTTP ${result.status}`}`);
+  }
+  const errorMessage = extractProviderErrorMessage(payload);
+  if (payload?.error) {
+    throw new Error(`${providerType} submission rejected: ${errorMessage || JSON.stringify(payload.error)}`);
+  }
+  const hasExplicitSuccess =
+    providerType === 'blox'
+      ? typeof payload?.signature === 'string' && !!payload.signature.trim()
+      : providerType === 'blockrazor'
+        ? !!(payload?.result || payload?.signature)
+        : providerType === 'flashblock'
+          ? payload?.success === true || !!payload?.result
+          : !!payload?.result;
+  if (hasExplicitSuccess) {
+    return;
+  }
+  if (looksLikeProviderFailureMessage(errorMessage)) {
+    throw new Error(`${providerType} submission rejected: ${errorMessage}`);
+  }
+}
+
+function buildProviderProbeRequest(input: {
+  provider: SolanaSwqosProviderSettings;
+  submitUrl: string;
+}): {
+  url: string;
+  headers?: Record<string, string>;
+  body: unknown;
+} {
+  const { provider, submitUrl } = input;
+  const authKey = String(provider.authKey || '').trim();
+  const probeTx = 'dagobang-swqos-probe';
+  if (provider.type === 'jito') {
+    return {
+      url: `${submitUrl}/api/v1/transactions${authKey ? `?uuid=${encodeURIComponent(authKey)}` : ''}`,
+      headers: authKey ? { 'x-jito-auth': authKey } : undefined,
+      body: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [probeTx, { encoding: 'base64' }],
+      },
+    };
+  }
+  if (provider.type === 'nextblock') {
+    return {
+      url: submitUrl,
+      headers: authKey ? { Authorization: authKey } : undefined,
+      body: {
+        transaction: { content: probeTx },
+        frontRunningProtection: false,
+      },
+    };
+  }
+  if (provider.type === 'blox') {
+    return {
+      url: submitUrl,
+      headers: authKey ? { Authorization: authKey } : undefined,
+      body: {
+        transaction: { content: probeTx },
+        useStakedRPCs: true,
+      },
+    };
+  }
+  if (provider.type === 'temporal') {
+    return {
+      url: `${submitUrl}/?c=${encodeURIComponent(authKey)}`,
+      body: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [probeTx, { encoding: 'base64' }],
+      },
+    };
+  }
+  if (provider.type === 'zeroslot') {
+    return {
+      url: `${submitUrl}/?api-key=${encodeURIComponent(authKey)}`,
+      body: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [probeTx, { encoding: 'base64', skipPreflight: true }],
+      },
+    };
+  }
+  if (provider.type === 'node1') {
+    return {
+      url: submitUrl,
+      headers: authKey ? { 'api-key': authKey } : undefined,
+      body: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [probeTx, { encoding: 'base64', skipPreflight: true }],
+      },
+    };
+  }
+  if (provider.type === 'flashblock') {
+    return {
+      url: submitUrl,
+      headers: {
+        ...(authKey ? { Authorization: authKey } : {}),
+        Connection: 'keep-alive',
+        'Keep-Alive': 'timeout=30, max=1000',
+      },
+      body: {
+        transactions: [probeTx],
+      },
+    };
+  }
+  if (provider.type === 'blockrazor') {
+    return {
+      url: submitUrl,
+      headers: authKey ? { apikey: authKey } : undefined,
+      body: {
+        transaction: probeTx,
+        mode: 'fast',
+      },
+    };
+  }
+  if (provider.type === 'astralane') {
+    return {
+      url: submitUrl,
+      headers: authKey ? { api_key: authKey } : undefined,
+      body: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [
+          probeTx,
+          { encoding: 'base64', skipPreflight: true },
+          { mevProtect: false },
+        ],
+      },
+    };
+  }
+  throw new Error(`Unsupported Solana SWQoS provider: ${provider.type}`);
 }
 
 async function submitViaProvider(input: {
@@ -124,19 +490,21 @@ async function submitViaProvider(input: {
   region: SolanaSwqosRegion;
 }): Promise<SolanaBroadcastResult> {
   const endpoint = resolveProviderEndpoint(input.provider, input.region);
+  const submitUrl = resolveProviderSubmitUrl(input.provider, endpoint);
   const transactionBase64 = getSerializedTransactionBase64(input.transaction);
   const txHash = getLocalTransactionSignature(input.transaction);
   reportPumpSwapBroadcastDebug('broadcast.ts:submitViaProvider:start', '[DEBUG] pumpswap broadcast provider start', {
     providerType: input.provider.type,
     endpoint,
+    submitUrl,
     timeoutMs: input.timeoutMs,
     region: input.region,
     txHash,
   });
 
   if (input.provider.type === 'jito') {
-    const url = `${endpoint}/api/v1/transactions${input.provider.authKey ? `?uuid=${encodeURIComponent(input.provider.authKey)}` : ''}`;
-    await postJson({
+    const url = `${submitUrl}/api/v1/transactions${input.provider.authKey ? `?uuid=${encodeURIComponent(input.provider.authKey)}` : ''}`;
+    const response = await postJson({
       url,
       timeoutMs: input.timeoutMs,
       headers: input.provider.authKey ? { 'x-jito-auth': input.provider.authKey } : undefined,
@@ -150,6 +518,7 @@ async function submitViaProvider(input: {
         ],
       },
     });
+    ensureProviderSubmissionAccepted(input.provider.type, response);
     reportPumpSwapBroadcastDebug('broadcast.ts:submitViaProvider:done', '[DEBUG] pumpswap broadcast provider done', {
       providerType: input.provider.type,
       endpoint,
@@ -163,8 +532,8 @@ async function submitViaProvider(input: {
   }
 
   if (input.provider.type === 'nextblock') {
-    await postJson({
-      url: `${endpoint}/api/v2/submit`,
+    const response = await postJson({
+      url: submitUrl,
       timeoutMs: input.timeoutMs,
       headers: input.provider.authKey ? { Authorization: input.provider.authKey } : undefined,
       body: {
@@ -174,6 +543,7 @@ async function submitViaProvider(input: {
         frontRunningProtection: false,
       },
     });
+    ensureProviderSubmissionAccepted(input.provider.type, response);
     reportPumpSwapBroadcastDebug('broadcast.ts:submitViaProvider:done', '[DEBUG] pumpswap broadcast provider done', {
       providerType: input.provider.type,
       endpoint,
@@ -187,8 +557,8 @@ async function submitViaProvider(input: {
   }
 
   if (input.provider.type === 'blox') {
-    await postJson({
-      url: `${endpoint}/api/v2/submit`,
+    const response = await postJson({
+      url: submitUrl,
       timeoutMs: input.timeoutMs,
       headers: input.provider.authKey ? { Authorization: input.provider.authKey } : undefined,
       body: {
@@ -199,6 +569,7 @@ async function submitViaProvider(input: {
         useStakedRPCs: true,
       },
     });
+    ensureProviderSubmissionAccepted(input.provider.type, response);
     reportPumpSwapBroadcastDebug('broadcast.ts:submitViaProvider:done', '[DEBUG] pumpswap broadcast provider done', {
       providerType: input.provider.type,
       endpoint,
@@ -212,8 +583,8 @@ async function submitViaProvider(input: {
   }
 
   if (input.provider.type === 'temporal') {
-    const temporalUrl = `${endpoint}/?c=${encodeURIComponent(input.provider.authKey ?? '')}`;
-    await postJson({
+    const temporalUrl = `${submitUrl}/?c=${encodeURIComponent(input.provider.authKey ?? '')}`;
+    const response = await postJson({
       url: temporalUrl,
       timeoutMs: input.timeoutMs,
       body: {
@@ -226,6 +597,7 @@ async function submitViaProvider(input: {
         ],
       },
     });
+    ensureProviderSubmissionAccepted(input.provider.type, response);
     reportPumpSwapBroadcastDebug('broadcast.ts:submitViaProvider:done', '[DEBUG] pumpswap broadcast provider done', {
       providerType: input.provider.type,
       endpoint,
@@ -234,6 +606,115 @@ async function submitViaProvider(input: {
     return {
       txHash,
       broadcastVia: 'temporal',
+      broadcastUrl: endpoint,
+    };
+  }
+
+  if (input.provider.type === 'zeroslot') {
+    const zeroSlotUrl = `${submitUrl}/?api-key=${encodeURIComponent(input.provider.authKey ?? '')}`;
+    const response = await postJson({
+      url: zeroSlotUrl,
+      timeoutMs: input.timeoutMs,
+      body: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [
+          transactionBase64,
+          { encoding: 'base64', skipPreflight: true },
+        ],
+      },
+    });
+    ensureProviderSubmissionAccepted(input.provider.type, response);
+    return {
+      txHash,
+      broadcastVia: 'zeroslot',
+      broadcastUrl: endpoint,
+    };
+  }
+
+  if (input.provider.type === 'node1') {
+    const response = await postJson({
+      url: submitUrl,
+      timeoutMs: input.timeoutMs,
+      headers: input.provider.authKey ? { 'api-key': input.provider.authKey } : undefined,
+      body: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [
+          transactionBase64,
+          { encoding: 'base64', skipPreflight: true },
+        ],
+      },
+    });
+    ensureProviderSubmissionAccepted(input.provider.type, response);
+    return {
+      txHash,
+      broadcastVia: 'node1',
+      broadcastUrl: endpoint,
+    };
+  }
+
+  if (input.provider.type === 'flashblock') {
+    const response = await postJson({
+      url: submitUrl,
+      timeoutMs: input.timeoutMs,
+      headers: {
+        ...(input.provider.authKey ? { Authorization: input.provider.authKey } : {}),
+        Connection: 'keep-alive',
+        'Keep-Alive': 'timeout=30, max=1000',
+      },
+      body: {
+        transactions: [transactionBase64],
+      },
+    });
+    ensureProviderSubmissionAccepted(input.provider.type, response);
+    return {
+      txHash,
+      broadcastVia: 'flashblock',
+      broadcastUrl: endpoint,
+    };
+  }
+
+  if (input.provider.type === 'blockrazor') {
+    const response = await postJson({
+      url: submitUrl,
+      timeoutMs: input.timeoutMs,
+      headers: input.provider.authKey ? { apikey: input.provider.authKey } : undefined,
+      body: {
+        transaction: transactionBase64,
+        mode: 'fast',
+      },
+    });
+    ensureProviderSubmissionAccepted(input.provider.type, response);
+    return {
+      txHash,
+      broadcastVia: 'blockrazor',
+      broadcastUrl: endpoint,
+    };
+  }
+
+  if (input.provider.type === 'astralane') {
+    const response = await postJson({
+      url: submitUrl,
+      timeoutMs: input.timeoutMs,
+      headers: input.provider.authKey ? { api_key: input.provider.authKey } : undefined,
+      body: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [
+          transactionBase64,
+          { encoding: 'base64', skipPreflight: true },
+          { mevProtect: false },
+        ],
+      },
+    });
+    ensureProviderSubmissionAccepted(input.provider.type, response);
+    return {
+      txHash,
+      broadcastVia: 'astralane',
       broadcastUrl: endpoint,
     };
   }
@@ -371,6 +852,7 @@ async function submitViaSwqos(transaction: VersionedTransaction): Promise<Solana
   try {
     return await Promise.any(attempts);
   } catch (error: any) {
+    const providerErrors = Array.isArray(error?.errors) ? error.errors : [];
     reportPumpSwapBroadcastDebug('broadcast.ts:submitViaSwqos:anyError', '[DEBUG] pumpswap swqos all providers failed', {
       providerTypes: providers.map((provider) => provider.type),
       strategy,
@@ -378,10 +860,13 @@ async function submitViaSwqos(transaction: VersionedTransaction): Promise<Solana
       region,
       errorName: String(error?.name || ''),
       errorMessage: String(error?.message || error || ''),
-      errors: Array.isArray(error?.errors)
-        ? error.errors.map((item: any) => String(item?.message || item || ''))
+      errors: providerErrors
+        ? providerErrors.map((item: any) => String(item?.message || item || ''))
         : [],
     });
+    if (providerErrors.length === 1) {
+      throw providerErrors[0] instanceof Error ? providerErrors[0] : new Error(String(providerErrors[0] || 'Solana SWQoS provider failed'));
+    }
     throw new Error('All Solana SWQoS providers failed');
   }
 }
@@ -412,15 +897,86 @@ async function resolveBroadcastStrategy(): Promise<{
   };
 }
 
+function requiresSwqosForSolanaFeeMode(mode: SolanaFeeMode | undefined): boolean {
+  return mode === 'tip' || mode === 'pf_and_tip';
+}
+
 export class SolanaBroadcastService {
+  static async probeProvider(input: {
+    provider: SolanaSwqosProviderSettings;
+    region: SolanaSwqosRegion;
+    timeoutMs?: number;
+  }): Promise<SolanaSwqosProbeResult> {
+    const endpoint = resolveProviderEndpoint(input.provider, input.region);
+    const submitUrl = resolveProviderSubmitUrl(input.provider, endpoint);
+    const timeoutMs = Math.max(1000, Number(input.timeoutMs ?? 5000));
+    const hasAuthKey = !!String(input.provider.authKey || '').trim();
+    try {
+      const request = buildProviderProbeRequest({
+        provider: input.provider,
+        submitUrl,
+      });
+      const response = await rawPost({
+        url: request.url,
+        headers: request.headers,
+        body: request.body,
+        timeoutMs,
+      });
+      const message = truncateProbeMessage(response.text);
+      const category = classifyProbeHttpResponse({
+        status: response.status,
+        text: response.text,
+        hasAuthKey,
+      });
+      return {
+        ok: true,
+        status: category === 'ok' || category === 'payload_rejected' || category === 'auth_required' || category === 'auth_failed' || category === 'rate_limited'
+          ? 'reachable'
+          : 'failed',
+        category,
+        providerType: input.provider.type,
+        endpoint,
+        submitUrl,
+        httpStatus: response.status,
+        message,
+        hasAuthKey,
+      };
+    } catch (error: any) {
+      return {
+        ok: true,
+        status: 'failed',
+        category: classifyProbeError(error),
+        providerType: input.provider.type,
+        endpoint,
+        submitUrl,
+        message: String(error?.message || error || 'probe failed'),
+        hasAuthKey,
+      };
+    }
+  }
+
   static async sendSignedTransaction(input: {
     transaction: VersionedTransaction;
     txSide?: 'buy' | 'sell';
     submitChannel?: SubmitChannel;
+    solanaFeeMode?: SolanaFeeMode;
     executionMode?: 'default' | 'turbo';
   }): Promise<SolanaBroadcastResult> {
     const startedAt = Date.now();
     const strategy = await resolveBroadcastStrategy();
+    const solanaFeeMode = input.solanaFeeMode ?? 'pf';
+    const swqosRequired = requiresSwqosForSolanaFeeMode(solanaFeeMode);
+    if (swqosRequired) {
+      if (!strategy.swqosEnabled) {
+        throw new Error('Solana Tip requires SWQoS channel to be enabled');
+      }
+      if (!strategy.swqosConfigured) {
+        throw new Error('Solana Tip requires at least one configured SWQoS provider');
+      }
+      if (strategy.primary !== 'swqos') {
+        throw new Error('Solana Tip requires SWQoS as the active submit path');
+      }
+    }
     if (strategy.primary === 'rpc') {
       const rpcResult = await submitViaRpc(input);
       return rpcResult;
@@ -429,7 +985,7 @@ export class SolanaBroadcastService {
       const swqosResult = await submitViaSwqos(input.transaction);
       return swqosResult;
     } catch (error: any) {
-      if (strategy.fallback !== 'rpc') throw error;
+      if (swqosRequired || strategy.fallback !== 'rpc') throw error;
       const rpcResult = await submitViaRpc(input);
       return rpcResult;
     }

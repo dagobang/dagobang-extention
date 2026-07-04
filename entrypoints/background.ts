@@ -32,7 +32,7 @@ import { createTelegramNotifier } from '@/services/telegram/notifier';
 import { createTelegramController } from '@/services/telegram/controller';
 import { getChainRuntime } from '@/constants/chains';
 import { RpcReadBalancer } from '@/services/rpcReadBalancer';
-import { shouldUseMergedTokenValue } from '@/utils/gmgnWs';
+import { normalizeTokenAddressKey, shouldUseMergedTokenValue } from '@/utils/gmgnWs';
 import { getTradeExecutor, getWalletAdapter } from '@/services/chain/registry';
 import type { BuyRetryContext, BuySubmittedContext, SellRetryContext, SellSubmittedContext } from '@/services/chain/types';
 import { SolanaRpcService } from '@/services/chain/solana/rpc';
@@ -40,6 +40,7 @@ import type { ChainTxId } from '@/types/chain';
 import AxiomAPI from '@/hooks/AxiomAPI';
 import FlapAPI from '@/hooks/FlapAPI';
 import { resolveMigratedSolanaTokenInfo, shouldTryRefreshMigratedSolanaTokenInfo } from '@/services/limitOrders/solanaTokenInfoRefresh';
+import { SolanaBroadcastService } from '@/services/chain/solana/broadcast';
 
 if (!(globalThis as any).Buffer) {
   (globalThis as any).Buffer = Buffer;
@@ -151,7 +152,7 @@ export default defineBackground(() => {
     return merged;
   };
   const getNewPoolMonitorKey = (detail: NewPoolMonitorUiDetail) => {
-    const addr = typeof detail?.tokenData?.tokenAddress === 'string' ? detail.tokenData.tokenAddress.trim().toLowerCase() : '';
+    const addr = normalizeTokenAddressKey(detail?.tokenData?.tokenAddress);
     return addr || `${detail.source}:${detail.channel}:${detail.receivedAtMs}`;
   };
   const mergeNewPoolMonitorDetail = (prev: NewPoolMonitorUiDetail | undefined, next: NewPoolMonitorUiDetail): NewPoolMonitorUiDetail => {
@@ -163,8 +164,6 @@ export default defineBackground(() => {
       receivedAtMs: Math.max(prev.receivedAtMs, next.receivedAtMs),
     };
   };
-  const normalizeTokenSnapshotKey = (input: unknown) =>
-    typeof input === 'string' ? input.trim().toLowerCase() : '';
   const mergeGmgnTokenSnapshot = (prev: GmgnTokenSnapshot | undefined, next: GmgnTokenSnapshot): GmgnTokenSnapshot => {
     if (!prev) return next;
     const merged: Record<string, any> = { ...(prev as any) };
@@ -172,7 +171,7 @@ export default defineBackground(() => {
       if (!shouldUseMergedTokenValue(value)) continue;
       merged[key] = value;
     }
-    merged.tokenAddress = normalizeTokenSnapshotKey(next.tokenAddress || prev.tokenAddress);
+    merged.tokenAddress = String(next.tokenAddress || prev.tokenAddress || '').trim();
     merged.receivedAtMs = Math.max(prev.receivedAtMs ?? 0, next.receivedAtMs ?? 0);
     return merged as GmgnTokenSnapshot;
   };
@@ -203,9 +202,12 @@ export default defineBackground(() => {
           : [];
         for (const item of items) {
           if (!item || typeof item !== 'object') continue;
-          const key = normalizeTokenSnapshotKey(item.tokenAddress);
+          const key = normalizeTokenAddressKey(item.tokenAddress);
           if (!key) continue;
-          const merged = mergeGmgnTokenSnapshot(gmgnTokenSnapshotStore.get(key), { ...item, tokenAddress: key });
+          const merged = mergeGmgnTokenSnapshot(gmgnTokenSnapshotStore.get(key), {
+            ...item,
+            tokenAddress: String(item.tokenAddress || '').trim(),
+          });
           gmgnTokenSnapshotStore.set(key, merged);
         }
       } catch {
@@ -213,14 +215,28 @@ export default defineBackground(() => {
     })();
     return gmgnTokenSnapshotStoreLoadPromise;
   };
+  const clearGmgnTokenSnapshotStore = async () => {
+    gmgnTokenSnapshotStore.clear();
+    if (gmgnTokenSnapshotPersistTimer != null) {
+      clearTimeout(gmgnTokenSnapshotPersistTimer);
+      gmgnTokenSnapshotPersistTimer = null;
+    }
+    try {
+      await browser.storage.local.set({ [GMGN_TOKEN_SNAPSHOT_STORAGE_KEY]: [] } as any);
+    } catch {
+    }
+  };
   const upsertGmgnTokenSnapshots = (items: GmgnTokenSnapshot[]) => {
     let changed = false;
     for (const item of items) {
       if (!item || typeof item !== 'object') continue;
-      const key = normalizeTokenSnapshotKey(item.tokenAddress);
+      const key = normalizeTokenAddressKey(item.tokenAddress);
       if (!key) continue;
       const prev = gmgnTokenSnapshotStore.get(key);
-      const merged = mergeGmgnTokenSnapshot(prev, { ...item, tokenAddress: key });
+      const merged = mergeGmgnTokenSnapshot(prev, {
+        ...item,
+        tokenAddress: String(item.tokenAddress || '').trim(),
+      });
       if (prev === merged) continue;
       gmgnTokenSnapshotStore.set(key, merged);
       changed = true;
@@ -235,7 +251,7 @@ export default defineBackground(() => {
   };
   const buildGmgnTokenSnapshotFromDetail = (detail: NewPoolMonitorUiDetail): GmgnTokenSnapshot | null => {
     const tokenData = detail?.tokenData;
-    const tokenAddress = normalizeTokenSnapshotKey(tokenData?.tokenAddress);
+    const tokenAddress = typeof tokenData?.tokenAddress === 'string' ? tokenData.tokenAddress.trim() : '';
     if (!tokenAddress) return null;
     return {
       tokenAddress,
@@ -278,7 +294,7 @@ export default defineBackground(() => {
     };
   };
   const buildNewPoolMonitorDetailFromSnapshot = (snapshot: GmgnTokenSnapshot): NewPoolMonitorUiDetail | null => {
-    const tokenAddress = normalizeTokenSnapshotKey(snapshot?.tokenAddress);
+    const tokenAddress = typeof snapshot?.tokenAddress === 'string' ? snapshot.tokenAddress.trim() : '';
     if (!tokenAddress) return null;
     const createdAtMs = pickFiniteNumber(snapshot.createdAtMs);
     const tokenData = {
@@ -385,6 +401,14 @@ export default defineBackground(() => {
       if (!items.length) return;
       void broadcastToTabs({ type: 'bg:newpool:batch', items });
     }, NEWPOOL_MONITOR_BROADCAST_MS);
+  };
+  const clearNewPoolMonitorStore = () => {
+    newPoolMonitorStore.clear();
+    pendingNewPoolMonitorBroadcast.clear();
+    if (newPoolMonitorBroadcastTimer != null) {
+      clearTimeout(newPoolMonitorBroadcastTimer);
+      newPoolMonitorBroadcastTimer = null;
+    }
   };
   const upsertNewPoolMonitorItems = (items: NewPoolMonitorUiDetail[]) => {
     const beforeSize = newPoolMonitorStore.size;
@@ -568,8 +592,9 @@ export default defineBackground(() => {
   };
   const maybeEnrichNewPoolMonitorItem = (detail: NewPoolMonitorUiDetail) => {
     const tokenData = detail?.tokenData;
-    const tokenAddress = typeof tokenData?.tokenAddress === 'string' ? tokenData.tokenAddress.trim().toLowerCase() : '';
+    const tokenAddress = typeof tokenData?.tokenAddress === 'string' ? tokenData.tokenAddress.trim() : '';
     if (!/^0x[a-f0-9]{40}$/i.test(tokenAddress)) return;
+    const tokenKey = normalizeTokenAddressKey(tokenAddress);
     const hasName = typeof tokenData?.tokenName === 'string' && tokenData.tokenName.trim()
       || typeof tokenData?.name === 'string' && tokenData.name.trim()
       || typeof tokenData?.nm === 'string' && tokenData.nm.trim()
@@ -582,14 +607,14 @@ export default defineBackground(() => {
       || typeof tokenData?.logo === 'string' && tokenData.logo.trim()
       || typeof tokenData?.l === 'string' && tokenData.l.trim();
     const hasMarketCap = typeof tokenData?.marketCapUsd === 'number' || typeof tokenData?.mc === 'number';
-    if ((hasName && hasSymbol && hasLogo && hasMarketCap) || pendingNewPoolIdentityLookup.has(tokenAddress)) return;
-    pendingNewPoolIdentityLookup.add(tokenAddress);
+    if ((hasName && hasSymbol && hasLogo && hasMarketCap) || pendingNewPoolIdentityLookup.has(tokenKey)) return;
+    pendingNewPoolIdentityLookup.add(tokenKey);
     void (async () => {
       try {
         const chainRaw = typeof tokenData?.chain === 'string' ? tokenData.chain.trim().toLowerCase() : '';
         const chainId = chainRaw === 'bsc' || !chainRaw ? 56 : undefined;
         const brief = await resolveTokenBrief(chainId, tokenAddress);
-        const current = newPoolMonitorStore.get(tokenAddress);
+        const current = newPoolMonitorStore.get(tokenKey);
         if (!current) return;
         const nextTokenData = {
           ...(current.tokenData && typeof current.tokenData === 'object' ? current.tokenData : {}),
@@ -636,15 +661,15 @@ export default defineBackground(() => {
           tokenData: nextTokenData,
           receivedAtMs: Date.now(),
         });
-        newPoolMonitorStore.delete(tokenAddress);
-        newPoolMonitorStore.set(tokenAddress, merged);
+        newPoolMonitorStore.delete(tokenKey);
+        newPoolMonitorStore.set(tokenKey, merged);
         const snapshot = buildGmgnTokenSnapshotFromDetail(merged);
         if (snapshot) upsertGmgnTokenSnapshots([snapshot]);
-        pendingNewPoolMonitorBroadcast.set(tokenAddress, merged);
+        pendingNewPoolMonitorBroadcast.set(tokenKey, merged);
         scheduleNewPoolMonitorBroadcast();
       } catch {
       } finally {
-        pendingNewPoolIdentityLookup.delete(tokenAddress);
+        pendingNewPoolIdentityLookup.delete(tokenKey);
       }
     })();
   };
@@ -656,20 +681,47 @@ export default defineBackground(() => {
   }) => {
     const currentTokenInfo = input.tokenInfo ?? null;
     if (input.chainId !== ChainId.SOL) return currentTokenInfo;
+    const isMeaningfulSolanaLabel = (value: unknown) => {
+      const text = String(value || '').trim();
+      if (!text) return false;
+      if (text === input.tokenAddress) return false;
+      const placeholder = `${input.tokenAddress.slice(0, 4)}...${input.tokenAddress.slice(-4)}`;
+      if (text === placeholder) return false;
+      return true;
+    };
     if (!shouldTryRefreshMigratedSolanaTokenInfo({
       tokenAddress: input.tokenAddress,
       tokenInfo: currentTokenInfo,
     })) {
-      return currentTokenInfo;
+      await ensureGmgnTokenSnapshotStoreLoaded();
+      const snapshot = gmgnTokenSnapshotStore.get(normalizeTokenAddressKey(input.tokenAddress));
+      if (!snapshot) return currentTokenInfo;
+      return {
+        ...currentTokenInfo,
+        name: isMeaningfulSolanaLabel(currentTokenInfo?.name)
+          ? currentTokenInfo.name
+          : (isMeaningfulSolanaLabel(snapshot.tokenName) ? snapshot.tokenName : (currentTokenInfo?.name ?? '')),
+        symbol: isMeaningfulSolanaLabel(currentTokenInfo?.symbol)
+          ? currentTokenInfo.symbol
+          : (isMeaningfulSolanaLabel(snapshot.tokenSymbol) ? snapshot.tokenSymbol : (currentTokenInfo?.symbol ?? '')),
+      };
     }
     await ensureGmgnTokenSnapshotStoreLoaded();
-    const snapshot = gmgnTokenSnapshotStore.get(normalizeTokenSnapshotKey(input.tokenAddress));
-    const refreshed = resolveMigratedSolanaTokenInfo({
+    const snapshot = gmgnTokenSnapshotStore.get(normalizeTokenAddressKey(input.tokenAddress));
+    const refreshedBase = resolveMigratedSolanaTokenInfo({
       tokenAddress: input.tokenAddress,
       tokenInfo: currentTokenInfo,
       snapshot,
     }) ?? currentTokenInfo;
-    return refreshed;
+    return {
+      ...refreshedBase,
+      name: isMeaningfulSolanaLabel(refreshedBase?.name)
+        ? refreshedBase.name
+        : (isMeaningfulSolanaLabel(snapshot?.tokenName) ? snapshot?.tokenName : (refreshedBase?.name ?? '')),
+      symbol: isMeaningfulSolanaLabel(refreshedBase?.symbol)
+        ? refreshedBase.symbol
+        : (isMeaningfulSolanaLabel(snapshot?.tokenSymbol) ? snapshot?.tokenSymbol : (refreshedBase?.symbol ?? '')),
+    };
   };
 
   const broadcastTradeSuccess = async (payload: any, tabId?: number | null) => {
@@ -920,6 +972,25 @@ export default defineBackground(() => {
             } catch (e: any) {
               return { ok: true, status: 'failed', message: String(e?.message || e || ''), hasAuthHeader };
             }
+          }
+
+          case 'solanaSwqos:probe': {
+            const providerType = msg.providerType;
+            const authKey = typeof msg.authKey === 'string' ? msg.authKey.replace(/[\r\n]+/g, '').trim() : '';
+            const endpoint = typeof msg.endpoint === 'string' ? msg.endpoint.trim() : '';
+            const region = typeof msg.region === 'string' ? msg.region : 'default';
+            const timeoutMs = Number.isFinite(Number(msg.timeoutMs)) ? Number(msg.timeoutMs) : 5000;
+            return await SolanaBroadcastService.probeProvider({
+              provider: {
+                type: providerType,
+                enabled: true,
+                authKey,
+                endpoint,
+                weight: 1,
+              },
+              region: (region as any),
+              timeoutMs,
+            });
           }
 
           case 'settings:set':
@@ -1712,6 +1783,7 @@ export default defineBackground(() => {
                   side: 'buy',
                   chainId: msg.input.chainId,
                   tokenAddress: msg.input.tokenAddress,
+                  fromAddress: input.fromAddress,
                   txHash: (rsp as any)?.txHash,
                   submitElapsedMs: (rsp as any)?.submitElapsedMs,
                   receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
@@ -1851,6 +1923,7 @@ export default defineBackground(() => {
                   side: 'buy',
                   chainId: msg.input.chainId,
                   tokenAddress: msg.input.tokenAddress,
+                  fromAddress: input.fromAddress,
                   txHash: submittedTxHash ?? undefined,
                   submitElapsedMs: submittedElapsedMs,
                   stage: submittedTxHash ? 'receipt' : 'submit',
@@ -1874,6 +1947,7 @@ export default defineBackground(() => {
                     side: 'buy',
                     chainId: msg.input.chainId,
                     tokenAddress: msg.input.tokenAddress,
+                    fromAddress: input.fromAddress,
                     txHash: rsp.txHash,
                     submitElapsedMs,
                     broadcastVia: rsp.broadcastVia,
@@ -1905,6 +1979,7 @@ export default defineBackground(() => {
                         side: 'buy',
                         chainId: msg.input.chainId,
                         tokenAddress: msg.input.tokenAddress,
+                        fromAddress: input.fromAddress,
                         txHash: rsp.txHash,
                         submitElapsedMs,
                         receiptElapsedMs: Date.now() - receiptStart,
@@ -1946,6 +2021,7 @@ export default defineBackground(() => {
                       side: 'buy',
                       chainId: msg.input.chainId,
                       tokenAddress: msg.input.tokenAddress,
+                      fromAddress: input.fromAddress,
                       txHash: ctx.txHash,
                       submitElapsedMs: ctx.submitElapsedMs,
                       broadcastVia: ctx.broadcastVia,
@@ -2480,6 +2556,16 @@ export default defineBackground(() => {
             const items = Array.isArray(msg.payload?.items) ? msg.payload.items : [];
             if (items.length) upsertNewPoolMonitorItems(items);
             return { ok: true };
+          }
+
+          case 'newpool:clearCache': {
+            await ensureGmgnTokenSnapshotStoreLoaded();
+            const clearedNewPoolCount = newPoolMonitorStore.size;
+            const clearedSnapshotCount = gmgnTokenSnapshotStore.size;
+            clearNewPoolMonitorStore();
+            await clearGmgnTokenSnapshotStore();
+            void broadcastToTabs({ type: 'bg:newpool:batch', items: [] });
+            return { ok: true, clearedNewPoolCount, clearedSnapshotCount };
           }
         }
       } catch (e: any) {

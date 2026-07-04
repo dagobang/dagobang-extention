@@ -5,6 +5,7 @@ declare global {
   const BNBCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').BNBCoinIcon
   const ChainCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').ChainCoinIcon
   const ContentScriptContext: typeof import('wxt/utils/content-script-context').ContentScriptContext
+  const DEFAULT_SOLANA_TIP_PRESET_VALUES: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').DEFAULT_SOLANA_TIP_PRESET_VALUES
   const ETHCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').ETHCoinIcon
   const FlapAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI').default
   const GmgnAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI').default
@@ -59,6 +60,11 @@ declare global {
   const formatTime: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').formatTime
   const getDexPoolPrefer: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/dexUtils').getDexPoolPrefer
   const getNonceErrorKindFromText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').getNonceErrorKindFromText
+  const getRandomSolanaTipRecipient: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getRandomSolanaTipRecipient
+  const getSolanaTipAccounts: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getSolanaTipAccounts
+  const getSolanaTipMinimumNative: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getSolanaTipMinimumNative
+  const getSolanaTipPresetValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getSolanaTipPresetValue
+  const getSolanaTipProviderLabel: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getSolanaTipProviderLabel
   const injectScript: typeof import('wxt/utils/inject-script').injectScript
   const isAllowanceLikeText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').isAllowanceLikeText
   const isHexPrivateKey: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').isHexPrivateKey
@@ -66,12 +72,14 @@ declare global {
   const isObject: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').isObject
   const loadContractAbi: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi').loadContractAbi
   const navigateToUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').navigateToUrl
+  const normalizeGmgnChainName: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeGmgnChainName
   const normalizeInlineWebpData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeInlineWebpData
   const normalizeLocale: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n').normalizeLocale
   const normalizeNewPoolTokenData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeNewPoolTokenData
   const normalizePercentValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').normalizePercentValue
   const normalizePriceValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').normalizePriceValue
   const normalizePublicTokenData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizePublicTokenData
+  const normalizeTokenAddressKey: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeTokenAddressKey
   const normalizeTrenchesTokenData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeTrenchesTokenData
   const parseCurrentUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrl
   const parseCurrentUrlFull: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').parseCurrentUrlFull
