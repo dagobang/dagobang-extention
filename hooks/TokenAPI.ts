@@ -37,7 +37,9 @@ export class TokenAPI {
         return `${platform}:${chain}:${addressKey}:${tokenKey}`;
     }
     private static toTokenInfoKey(platform: string, chain: string, tokenAddress: string) {
-        return `${platform}:${chain}:${tokenAddress.toLowerCase()}`;
+        const chainId = getChainIdByName(chain);
+        const tokenKey = chainId === ChainId.SOL ? tokenAddress : tokenAddress.toLowerCase();
+        return `${platform}:${chain}:${tokenKey}`;
     }
     private static resolveTokenInfoCacheTtlMs(platform: string, requestedTtlMs: number, value: TokenInfo | null | undefined) {
         if (!(requestedTtlMs > 0)) return 0;
@@ -274,7 +276,7 @@ export class TokenAPI {
             type: 'token:getTokenInfo:fourmemeHttp',
             platform,
             chain,
-            address: address as `0x${string}`,
+            address,
         });
         return res.tokenInfo;
     }
@@ -389,7 +391,7 @@ export class TokenAPI {
             const res = await call({
                 type: 'token:getPriceUsd',
                 chainId,
-                tokenAddress: tokenAddress as `0x${string}`,
+                tokenAddress,
                 tokenInfo: tokenInfo ?? null,
             });
             const v = Number(res.priceUsd);

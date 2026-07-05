@@ -1,10 +1,11 @@
 import { parseNumber } from '@/services/xSniper/engine/metrics';
 import type { WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
+import { buildScopedTokenKey, normalizeAddress, normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 
 export type RapidExitPosition = {
   chainId: number;
-  tokenAddress: `0x${string}`;
-  walletAddress?: `0x${string}`;
+  tokenAddress: string;
+  walletAddress?: string;
   dryRun: boolean;
   openedAtMs: number;
   entryMcapUsd: number;
@@ -48,11 +49,13 @@ const parseUnknownNumber = (value: unknown) => {
   return null;
 };
 
-const parseTokenAddressFromPosKey = (posKey: string): `0x${string}` | null => {
+const parseTokenAddressFromPosKey = (posKey: string): string | null => {
   const parts = String(posKey || '').split(':');
-  const match = parts.find((p) => /^0x[a-f0-9]{40}$/i.test(String(p)));
-  if (!match) return null;
-  return String(match).toLowerCase() as `0x${string}`;
+  for (const part of parts) {
+    const normalized = normalizeAddress(part);
+    if (normalized) return normalized;
+  }
+  return null;
 };
 
 export const readRapidExitConfig = (strategy: any): RapidExitConfig => {
@@ -93,7 +96,7 @@ export const registerRapidExitPosition = (input: {
   strategy: any;
   posKey: string;
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: string;
   dryRun: boolean;
   entryMcapUsd: number | null;
   buyAmountNative: number;
@@ -106,7 +109,7 @@ export const registerRapidExitPosition = (input: {
   signalEventId?: string;
   signalTweetId?: string;
   entryPriceUsd?: number | null;
-  walletAddress?: `0x${string}`;
+  walletAddress?: string;
 }) => {
   const cfg = readRapidExitConfig(input.strategy);
   if (!cfg.enabled) return;
@@ -148,7 +151,7 @@ export const registerRapidExitPosition = (input: {
 
 export const maybeEvaluateRapidExitAutoSell = async (input: {
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: string;
   nowMs: number;
   strategy: any;
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>;
@@ -157,7 +160,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
   isPosMarkedManuallyClosed?: (posKey: string) => boolean;
   tryRapidExitSellOnce: (args: {
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
     percent: number;
     dryRun: boolean;
     reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
@@ -178,11 +181,11 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
       triggerMarketCapUsd?: number;
       sellPercentOfOriginal?: number;
       sellPercentOfCurrent?: number;
-      walletAddress?: `0x${string}`;
+      walletAddress?: string;
     };
   }) => Promise<boolean>;
 }) => {
-  const snapshotKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+  const snapshotKey = buildScopedTokenKey(input.chainId, input.tokenAddress);
   const snapshots = input.wsSnapshotsByAddr.get(snapshotKey) ?? [];
   const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
   const curMcap = typeof cur?.marketCapUsd === 'number' && Number.isFinite(cur.marketCapUsd) ? cur.marketCapUsd : null;
@@ -190,7 +193,7 @@ export const maybeEvaluateRapidExitAutoSell = async (input: {
 
   const keys = Array.from(input.rapidExitByPosKey.keys()).filter((k) => {
     const addr = parseTokenAddressFromPosKey(k);
-    return !!addr && addr.toLowerCase() === input.tokenAddress.toLowerCase();
+    return !!addr && addr === normalizeAddressKey(input.tokenAddress);
   });
   for (const posKey of keys) {
     const pos = input.rapidExitByPosKey.get(posKey);

@@ -221,7 +221,7 @@ export type NewCoinXmodeSnipeTask = {
   id: string;
   enabled?: boolean;
   taskName?: string;
-  tokenAddress?: `0x${string}`;
+  tokenAddress?: ChainAddress;
   keywords: string[];
   matchMode?: 'any' | 'all';
   maxTokenAgeSeconds?: string;
@@ -235,7 +235,7 @@ export type NewCoinXmodeSnipeTask = {
 export type TokenSnipeTask = {
   id: string;
   chain: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: ChainAddress;
   tokenSymbol?: string;
   tokenName?: string;
   tweetType: TokenSnipeTweetType;
@@ -857,11 +857,11 @@ export type BgRequest =
   | { type: 'token:getBalance'; tokenAddress: ChainAddress; address: ChainAddress; chainId: number }
   | { type: 'token:getAllowance'; tokenAddress: `0x${string}`; owner: `0x${string}`; spender: `0x${string}`; chainId: number }
   | { type: 'token:getPoolPair'; pair: `0x${string}`; chainId: number }
-  | { type: 'token:getPriceUsd'; chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo | null }
+  | { type: 'token:getPriceUsd'; chainId: number; tokenAddress: ChainAddress; tokenInfo?: TokenInfo | null }
   | { type: 'token:getTokenInfo:fourmeme'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:flap'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:altfun'; chainId: number; tokenAddress: `0x${string}` }
-  | { type: 'token:getTokenInfo:fourmemeHttp'; platform: string; chain: string; address: `0x${string}` }
+  | { type: 'token:getTokenInfo:fourmemeHttp'; platform: string; chain: string; address: ChainAddress }
   | {
     type: 'token:createFourmeme';
     input: {
@@ -907,7 +907,7 @@ export type BgRequest =
   | { type: 'rpc:capacityProbe'; chainId: number; mode?: 'request' | 'force' }
   | { type: 'rpc:resetProfiles'; chainId: number; urls?: string[] }
   | { type: 'trade:prewarmTurbo'; input: TradeTurboPrewarmInput }
-  | { type: 'trade:refreshNonce'; input: { chainId: number; fromAddress?: `0x${string}` } }
+  | { type: 'trade:refreshNonce'; input: { chainId: number; fromAddress?: ChainAddress } }
   | { type: 'tx:buy'; input: TxBuyInput }
   | { type: 'tx:buyWithReceiptAuto'; input: TxBuyInput }
   | { type: 'tx:sell'; input: TxSellInput }
@@ -935,29 +935,29 @@ export type BgRequest =
     password: string;
   }
   | { type: 'tx:waitForReceipt'; hash: ChainTxId; chainId: number }
-  | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo; fromAddress?: `0x${string}`; submitChannel?: SubmitChannel }
-  | { type: 'tx:checkSellAllowanceInsufficient'; chainId: number; tokenAddress: `0x${string}`; tokenInfo: TokenInfo; fromAddress?: `0x${string}` }
+  | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: ChainAddress; tokenInfo: TokenInfo; fromAddress?: ChainAddress; submitChannel?: SubmitChannel }
+  | { type: 'tx:checkSellAllowanceInsufficient'; chainId: number; tokenAddress: ChainAddress; tokenInfo: TokenInfo; fromAddress?: ChainAddress }
   | { type: 'tx:bloxroutePrivate'; chainId: number; signedTx: `0x${string}` }
   | { type: 'telegram:test' }
   | { type: 'telegram:getStatus' }
-  | { type: 'telegram:quickBuy'; tokenAddress: `0x${string}`; amountBnb: string }
-  | { type: 'telegram:quickSell'; tokenAddress: `0x${string}`; sellPercent: number }
+  | { type: 'telegram:quickBuy'; tokenAddress: ChainAddress; amountBnb: string }
+  | { type: 'telegram:quickSell'; tokenAddress: ChainAddress; sellPercent: number }
   | {
     type: 'xsniper:manualPositionClosed';
     input: {
       chainId: number;
-      tokenAddress: `0x${string}`;
+      tokenAddress: ChainAddress;
       sellPercent?: number;
-      txHash?: `0x${string}`;
+      txHash?: ChainTxId;
     };
   }
   | {
     type: 'xsniper:manualPositionSold';
     input: {
       chainId: number;
-      tokenAddress: `0x${string}`;
+      tokenAddress: ChainAddress;
       sellPercent: number;
-      txHash?: `0x${string}`;
+      txHash?: ChainTxId;
     };
   }
   | { type: 'xsniper:clearRuntimeState' }
@@ -965,18 +965,18 @@ export type BgRequest =
     type: 'newCoinSniper:manualPositionClosed';
     input: {
       chainId: number;
-      tokenAddress: `0x${string}`;
+      tokenAddress: ChainAddress;
       sellPercent?: number;
-      txHash?: `0x${string}`;
+      txHash?: ChainTxId;
     };
   }
   | {
     type: 'newCoinSniper:manualPositionSold';
     input: {
       chainId: number;
-      tokenAddress: `0x${string}`;
+      tokenAddress: ChainAddress;
       sellPercent: number;
-      txHash?: `0x${string}`;
+      txHash?: ChainTxId;
     };
   }
   | { type: 'newCoinSniper:clearRuntimeState' }
@@ -1190,7 +1190,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
     error?: TxWaitForReceiptError;
   }
   : T extends { type: 'tx:approveMaxForSellIfNeeded' }
-  ? { ok: true; txHash?: `0x${string}` }
+  ? { ok: true; txHash?: ChainTxId }
   : T extends { type: 'tx:checkSellAllowanceInsufficient' }
   ? { ok: true; insufficient: boolean; checked?: Array<{ token: string; spender: string; allowance: string }> }
   : T extends { type: 'tx:bloxroutePrivate' }
@@ -1203,7 +1203,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? (
     | ({
       ok: true;
-      txHash: `0x${string}`;
+      txHash: ChainTxId;
       protectionMinOutWei: string;
       quotedOutWei?: string | null;
       broadcastVia?: string;
@@ -1214,7 +1214,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   )
   : T extends { type: 'telegram:quickSell' }
   ? (
-    | ({ ok: true; txHash: `0x${string}`; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
+    | ({ ok: true; txHash: ChainTxId; broadcastVia?: string; broadcastUrl?: string; isBundle?: boolean } & TxTimingMetrics)
     | { ok: false; error?: TxWaitForReceiptError | { message: string } }
   )
   : T extends { type: 'xsniper:manualPositionClosed' }

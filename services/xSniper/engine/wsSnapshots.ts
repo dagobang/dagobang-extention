@@ -1,5 +1,5 @@
 import type { TokenMetrics } from '@/services/xSniper/engine/metrics';
-import { parseNumber } from '@/services/xSniper/engine/metrics';
+import { buildScopedTokenKey, parseNumber } from '@/services/xSniper/engine/metrics';
 
 export type WsSnapshot = {
   atMs: number;
@@ -12,12 +12,7 @@ export type WsSnapshot = {
   smartMoney?: number;
 };
 
-const normalizeSnapshotKey = (input: { chainId?: number | null; tokenAddress: `0x${string}` }) => {
-  const token = String(input.tokenAddress || '').trim().toLowerCase();
-  const chainId = Number(input.chainId);
-  if (Number.isFinite(chainId) && chainId > 0) return `${chainId}:${token}`;
-  return token;
-};
+const normalizeSnapshotKey = (input: { chainId?: number | null; tokenAddress: string }) => buildScopedTokenKey(input.chainId, input.tokenAddress);
 
 export type WsConfirmFailedCheck = {
   key:
@@ -49,11 +44,11 @@ export const shouldLogWsConfirmFail = (wsConfirmFailDedupe: Map<string, number>,
 
 export const pushWsSnapshot = (input: {
   chainId?: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: string;
   metrics: TokenMetrics;
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>;
   nowMs?: number;
-  onUpdated: (tokenAddress: `0x${string}`, atMs: number) => void;
+  onUpdated: (tokenAddress: string, atMs: number) => void;
 }) => {
   const atMsRaw = typeof input.metrics.updatedAtMs === 'number' && input.metrics.updatedAtMs > 0 ? input.metrics.updatedAtMs : (input.nowMs ?? Date.now());
   const snapshotKey = normalizeSnapshotKey({ chainId: input.chainId, tokenAddress: input.tokenAddress });
@@ -80,7 +75,7 @@ export const pushWsSnapshot = (input: {
 export const getWsWindowStats = (
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>,
   chainId: number | undefined,
-  tokenAddress: `0x${string}`,
+  tokenAddress: string,
   nowMs: number,
   windowMs: number
 ) => {
@@ -151,7 +146,7 @@ export const getWsWindowStats = (
 export const getWsDrawdownPctSince = (
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>,
   chainId: number | undefined,
-  tokenAddress: `0x${string}`,
+  tokenAddress: string,
   sinceMs: number
 ) => {
   const list = wsSnapshotsByAddr.get(normalizeSnapshotKey({ chainId, tokenAddress })) ?? [];
@@ -173,7 +168,7 @@ export const getWsDrawdownPctSince = (
 export const computeWsConfirm = (
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>,
   chainId: number | undefined,
-  tokenAddress: `0x${string}`,
+  tokenAddress: string,
   nowMs: number,
   strategy: any
 ) => {

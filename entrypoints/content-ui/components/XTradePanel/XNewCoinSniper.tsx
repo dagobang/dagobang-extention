@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { browser } from 'wxt/browser';
 import type { Account, AutoTradeNewCoinSnipeConfig, BgGetStateResponse, NewCoinXmodeSnipeTask, Settings, UnifiedMarketSignalSource, XSniperBuyRecord } from '@/types/extention';
 import { call } from '@/utils/messaging';
-import { normalizeAddress } from '@/services/xSniper/engine/metrics';
+import { normalizeAddress, normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 import { NEW_COIN_SNIPER_HISTORY_STORAGE_KEY, clearNewCoinSniperHistory, type NewCoinSniperOrderRecord } from '@/services/newCoinSniper/newCoinSniperHistory';
 import { type SiteInfo } from '@/utils/sites';
 import { t, normalizeLocale, type Locale } from '@/utils/i18n';
@@ -165,7 +165,7 @@ export function XNewCoinSniperContent({
   const [history, setHistory] = useState<NewCoinSniperOrderRecord[]>([]);
   const [strategyJsonInput, setStrategyJsonInput] = useState('');
   const [walletAccounts, setWalletAccounts] = useState<Account[]>([]);
-  const [activeWalletAddress, setActiveWalletAddress] = useState<`0x${string}` | null>(null);
+  const [activeWalletAddress, setActiveWalletAddress] = useState<string | null>(null);
   const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
   const [wsStatus, setWsStatus] = useState(() => {
     const initial = (window as any).__DAGOBANG_WS_STATUS__;
@@ -300,11 +300,11 @@ export function XNewCoinSniperContent({
     for (const r of sortedAsc) {
       if (!r) continue;
       const chainId = typeof r.chainId === 'number' ? r.chainId : 0;
-      const addr = String(r.tokenAddress || '').toLowerCase();
+      const addr = normalizeAddressKey(r.tokenAddress);
       if (!addr) continue;
       const dryFlag = r.dryRun === true ? 'dry' : 'live';
       const tokenBaseKey = `${chainId}:${addr}:${dryFlag}`;
-      const wallet = String((r as any).walletAddress || '').trim().toLowerCase();
+      const wallet = normalizeAddressKey((r as any).walletAddress);
       if (!wallet) continue;
       const prev = preferredWalletByTokenKey.get(tokenBaseKey);
       if (!prev) preferredWalletByTokenKey.set(tokenBaseKey, wallet);
@@ -313,10 +313,10 @@ export function XNewCoinSniperContent({
     const standaloneSellGroups: NewCoinHistoryGroup[] = [];
     for (const r of sortedAsc) {
       const chainId = typeof r.chainId === 'number' ? r.chainId : 0;
-      const addr = String(r.tokenAddress || '').toLowerCase();
+      const addr = normalizeAddressKey(r.tokenAddress);
       const dryFlag = r.dryRun === true ? 'dry' : 'live';
       const tokenBaseKey = `${chainId}:${addr}:${dryFlag}`;
-      const walletRaw = String((r as any).walletAddress || '').trim().toLowerCase();
+      const walletRaw = normalizeAddressKey((r as any).walletAddress);
       const preferred = preferredWalletByTokenKey.get(tokenBaseKey);
       const walletKey = walletRaw || (preferred && preferred !== '*' ? preferred : '') || 'current';
       const tokenKey = `${chainId}:${addr}:${dryFlag}:${walletKey}`;
@@ -346,7 +346,7 @@ export function XNewCoinSniperContent({
     const ath: Record<string, number> = {};
     const sorted = normalizedHistory.slice().sort((a, b) => (Number(b.tsMs) || 0) - (Number(a.tsMs) || 0));
     for (const r of sorted) {
-      const addr = String(r.tokenAddress || '').toLowerCase();
+      const addr = normalizeAddressKey(r.tokenAddress);
       if (!addr) continue;
       const mcap = typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) ? r.marketCapUsd : null;
       if (mcap != null) {
@@ -496,7 +496,7 @@ export function XNewCoinSniperContent({
     const currentTokenAddress = normalizeAddress(String(siteInfo?.tokenAddress || '').trim());
     if (currentTokenAddress) {
       try {
-        const metaRes = await call({ type: 'token:getMeta', tokenAddress: currentTokenAddress as `0x${string}`, chainId: pageChainId } as const);
+        const metaRes = await call({ type: 'token:getMeta', tokenAddress: currentTokenAddress, chainId: pageChainId } as any);
         const symbol = String((metaRes as any)?.symbol || '').trim();
         const name = String((metaRes as any)?.name || '').trim();
         if (name) presetTokenName = name;
@@ -509,8 +509,8 @@ export function XNewCoinSniperContent({
           type: 'token:getTokenInfo:fourmemeHttp',
           platform: siteInfo?.platform ?? 'gmgn',
           chain: String(siteInfo?.chain || 'bsc'),
-          address: currentTokenAddress as `0x${string}`,
-        } as const);
+          address: currentTokenAddress,
+        } as any);
         const name = String((tokenInfoRes as any)?.tokenInfo?.name || '').trim();
         if (name) presetTokenName = name;
         if (name) presetKeywords.push(name);
@@ -673,7 +673,7 @@ export function XNewCoinSniperContent({
   const selectedWalletInfo = useMemo(() => {
     const selected = normalizeAddress(draft.walletAddress);
     if (!selected) return null;
-    return walletAccounts.find((acc) => acc.address.toLowerCase() === selected.toLowerCase()) ?? null;
+    return walletAccounts.find((acc) => normalizeAddressKey(acc.address) === normalizeAddressKey(selected)) ?? null;
   }, [draft.walletAddress, walletAccounts]);
 
   if (!active) return null;
@@ -772,8 +772,8 @@ export function XNewCoinSniperContent({
                           使用当前钱包
                         </button>
                         {walletAccounts.map((acc) => {
-                          const selected = String(draft.walletAddress || '').toLowerCase() === acc.address.toLowerCase();
-                          const isActive = !!activeWalletAddress && activeWalletAddress.toLowerCase() === acc.address.toLowerCase();
+                          const selected = normalizeAddressKey(draft.walletAddress) === normalizeAddressKey(acc.address);
+                          const isActive = !!activeWalletAddress && normalizeAddressKey(activeWalletAddress) === normalizeAddressKey(acc.address);
                           return (
                             <button
                               key={acc.address}

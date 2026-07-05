@@ -70,7 +70,12 @@ export function XSniperBasicSection({
   onToggleWalletSelector,
   onSelectWalletAddress,
 }: XSniperBasicSectionProps) {
-  const selectedWallet = walletAccounts.find((acc) => acc.address.toLowerCase() === String(selectedWalletAddress || '').toLowerCase()) ?? null;
+  const normalizeChainAddressKey = (value: unknown) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    return /^0x[a-fA-F0-9]{40}$/.test(raw) ? raw.toLowerCase() : raw;
+  };
+  const selectedWallet = walletAccounts.find((acc) => normalizeChainAddressKey(acc.address) === normalizeChainAddressKey(selectedWalletAddress)) ?? null;
   return (
     <div className="space-y-2 pb-3 border-b border-zinc-800/60">
       <button
@@ -188,8 +193,8 @@ export function XSniperBasicSection({
               使用当前钱包
             </button>
             {walletAccounts.map((acc) => {
-              const selected = String(selectedWalletAddress || '').toLowerCase() === acc.address.toLowerCase();
-              const isActive = !!activeWalletAddress && activeWalletAddress.toLowerCase() === acc.address.toLowerCase();
+              const selected = normalizeChainAddressKey(selectedWalletAddress) === normalizeChainAddressKey(acc.address);
+              const isActive = !!activeWalletAddress && normalizeChainAddressKey(activeWalletAddress) === normalizeChainAddressKey(acc.address);
               return (
                 <button
                   key={acc.address}

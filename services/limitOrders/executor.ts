@@ -17,6 +17,7 @@ import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoRes
 import type { LimitOrder } from '@/types/extention';
 import { getTradeExecutor, getWalletAdapter } from '@/services/chain/registry';
 import type { ChainAddress } from '@/types/chain/address';
+import { buildScopedTokenKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
 
 const erc20AbiLite = parseAbi([
   'function balanceOf(address owner) view returns (uint256)',
@@ -34,11 +35,11 @@ export const tickLimitOrdersForToken = async (input: {
   }
 
   const all = await getLimitOrders();
-  const keyAddr = tokenAddress.toLowerCase();
+  const keyAddr = buildScopedTokenKey(chainId, tokenAddress);
   const nowMs = Date.now();
   const candidates = all.filter((o) => {
     if (o.chainId !== chainId) return false;
-    if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
+    if (buildScopedTokenKey(o.chainId, o.tokenAddress) !== keyAddr) return false;
     if (!(o.status === 'open' || o.status === 'triggered')) return false;
     if (typeof o.retryAtMs === 'number' && Number.isFinite(o.retryAtMs) && o.retryAtMs > nowMs) return false;
     return true;
@@ -378,7 +379,7 @@ export const createLimitOrderExecutor = (deps: {
         deps.onOrdersChanged();
       } else if (type === 'take_profit_sell' && percentBps > 0 && percentBps < 10000) {
         const all = await getLimitOrders();
-        const keyAddr = order.tokenAddress.toLowerCase();
+        const keyAddr = buildScopedTokenKey(order.chainId, order.tokenAddress);
         const settings = await SettingsService.get();
         const config = (settings as any).advancedAutoSell;
         const mode = (config as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
@@ -386,8 +387,8 @@ export const createLimitOrderExecutor = (deps: {
         const hasSpecialOrder = all.some((o) => {
           if (o.chainId !== order.chainId) return false;
           if (o.status !== 'open') return false;
-          if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
-          if ((o.fromAddress?.toLowerCase() ?? null) !== (order.fromAddress?.toLowerCase() ?? null)) return false;
+          if (buildScopedTokenKey(o.chainId, o.tokenAddress) !== keyAddr) return false;
+          if ((o.fromAddress ? normalizeWalletAddressKey(o.fromAddress) : null) !== (order.fromAddress ? normalizeWalletAddressKey(order.fromAddress) : null)) return false;
           const ot = normalizeLimitOrderType(o.orderType, o.side);
           if (autoSellMode === 'rolling_take_profit') {
             return ot === 'take_profit_sell' && Number(o.rollingStepPercent) > 0;
@@ -401,8 +402,8 @@ export const createLimitOrderExecutor = (deps: {
             : !all.some((o) => {
               if (o.chainId !== order.chainId) return false;
               if (o.status !== 'open') return false;
-              if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
-              if ((o.fromAddress?.toLowerCase() ?? null) !== (order.fromAddress?.toLowerCase() ?? null)) return false;
+              if (buildScopedTokenKey(o.chainId, o.tokenAddress) !== keyAddr) return false;
+              if ((o.fromAddress ? normalizeWalletAddressKey(o.fromAddress) : null) !== (order.fromAddress ? normalizeWalletAddressKey(order.fromAddress) : null)) return false;
               const ot = normalizeLimitOrderType(o.orderType, o.side);
               if (ot !== 'take_profit_sell' || Number(o.rollingStepPercent) > 0) return false;
               return o.triggerPriceUsd > order.triggerPriceUsd;

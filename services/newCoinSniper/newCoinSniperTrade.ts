@@ -6,7 +6,7 @@ import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoRes
 import { maybeEvaluateDryRunAutoSell as maybeEvaluateDryRunAutoSellFromMod, type DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
 import { maybeEvaluateRapidExitAutoSell as maybeEvaluateRapidExitAutoSellFromMod, registerRapidExitPosition as registerRapidExitPositionFromMod, type RapidExitPosition } from '@/services/xSniper/engine/rapidExitAutoSell';
 import { createSellExecutors } from '@/services/xSniper/engine/sellExecutors';
-import { type TokenMetrics, normalizeAddress, parseNumber, shouldBuyByConfig } from '@/services/xSniper/engine/metrics';
+import { buildScopedTokenKey, type TokenMetrics, normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey, parseNumber, shouldBuyByConfig } from '@/services/xSniper/engine/metrics';
 import { extractLaunchpadPlatform } from '@/constants/launchpad';
 import { computeWsConfirm as computeWsConfirmFromWs, pushWsSnapshot as pushWsSnapshotFromWs, shouldLogWsConfirmFail as shouldLogWsConfirmFailFromWs, type WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
 import { metricsFromUnifiedToken } from '@/services/xSniper/engine/signalSelection';
@@ -39,10 +39,10 @@ export const createNewCoinSniperTrade = (deps: {
     tokenAddress?: string | null;
     signal?: UnifiedMarketSignal | null;
   }) => {
-    const addr = String(input.tokenAddress || '').trim().toLowerCase();
+    const addr = normalizeAddressKey(input.tokenAddress);
     const tokens = Array.isArray(input.signal?.tokens) ? input.signal.tokens : [];
     if (addr) {
-      const matched = tokens.find((x) => String((x as any)?.tokenAddress || '').trim().toLowerCase() === addr);
+      const matched = tokens.find((x) => normalizeAddressKey((x as any)?.tokenAddress) === addr);
       const tokenChain = String((matched as any)?.chain || '').trim();
       if (tokenChain) {
         const chainId = getChainIdByName(tokenChain);
@@ -54,7 +54,7 @@ export const createNewCoinSniperTrade = (deps: {
     const chainId = getChainIdByName(signalChain);
     return Number.isFinite(chainId) && chainId > 0 ? chainId : null;
   };
-  const toModeMetaKey = (chainId: number, tokenAddrLower: string) => `${chainId}:${tokenAddrLower}`;
+  const toModeMetaKey = (chainId: number, tokenAddrLower: string) => buildScopedTokenKey(chainId, tokenAddrLower);
 
   const DEFAULT_PLATFORM_FILTERS = ['fourmeme', 'fourmeme_agent', 'xmode', 'xmode_agent'] as const;
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -82,12 +82,12 @@ export const createNewCoinSniperTrade = (deps: {
     dryRunAutoSellByPosKey.delete(posKey);
     rapidExitByPosKey.delete(posKey);
   };
-  const toScopedTokenKey = (chainId: number, tokenAddress: `0x${string}`) => `${chainId}:${tokenAddress.toLowerCase()}`;
+  const toScopedTokenKey = (chainId: number, tokenAddress: string) => buildScopedTokenKey(chainId, tokenAddress);
 
   const { fetchTokenInfoFresh, buildGenericTokenInfo, getEntryPriceUsd } = createTokenInfoResolvers();
 
   const shouldLogWsConfirmFail = (key: string, nowMs: number) => shouldLogWsConfirmFailFromWs(wsConfirmFailDedupe, key, nowMs);
-  const computeWsConfirm = (chainId: number, tokenAddress: `0x${string}`, nowMs: number, strategy: any) =>
+  const computeWsConfirm = (chainId: number, tokenAddress: string, nowMs: number, strategy: any) =>
     computeWsConfirmFromWs(wsSnapshotsByAddr, chainId, tokenAddress, nowMs, strategy);
 
   const readRapidWatchdogIntervalMs = (strategy: any) => {
@@ -104,7 +104,7 @@ export const createNewCoinSniperTrade = (deps: {
     const nowMs = Date.now();
     const staleMs = 3000;
     const rpcCooldownMs = 3000;
-    const scopedTokens = new Map<string, { chainId: number; tokenAddress: `0x${string}` }>();
+    const scopedTokens = new Map<string, { chainId: number; tokenAddress: string }>();
     for (const pos of rapidExitByPosKey.values()) {
       const addr = normalizeAddress(pos?.tokenAddress);
       if (!addr) continue;
@@ -122,7 +122,7 @@ export const createNewCoinSniperTrade = (deps: {
           rapidWatchdogRpcAtMs.set(rpcKey, nowMs);
           try {
             const anyPos = Array.from(rapidExitByPosKey.values()).find(
-              (p) => Number(p.chainId) === Number(chainId) && p.tokenAddress.toLowerCase() === tokenAddress.toLowerCase()
+              (p) => Number(p.chainId) === Number(chainId) && normalizeAddressKey(p.tokenAddress) === normalizeAddressKey(tokenAddress)
             );
             const resolvedChainId = anyPos?.chainId ?? chainId;
             const impliedSupply = Number(anyPos?.impliedSupply);
@@ -188,7 +188,7 @@ export const createNewCoinSniperTrade = (deps: {
     }, nextIntervalMs);
   };
 
-  const pushWsSnapshot = (chainId: number, tokenAddress: `0x${string}`, metrics: TokenMetrics) => {
+  const pushWsSnapshot = (chainId: number, tokenAddress: string, metrics: TokenMetrics) => {
     pushWsSnapshotFromWs({
       chainId,
       tokenAddress,
@@ -200,7 +200,7 @@ export const createNewCoinSniperTrade = (deps: {
     });
   };
 
-  async function onWsSnapshotUpdated(chainId: number, tokenAddress: `0x${string}`, nowMs: number) {
+  async function onWsSnapshotUpdated(chainId: number, tokenAddress: string, nowMs: number) {
     const snapshots = wsSnapshotsByAddr.get(toScopedTokenKey(chainId, tokenAddress)) ?? [];
     const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
     if (cur) {
@@ -256,7 +256,7 @@ export const createNewCoinSniperTrade = (deps: {
     }
   };
 
-  const broadcastMatchedSound = async (strategy: any, tokenAddress?: `0x${string}`) => {
+  const broadcastMatchedSound = async (strategy: any, tokenAddress?: string) => {
     if (strategy?.playSound === false) return;
     const rawPreset = (strategy as any)?.soundPreset;
     const preset = TRADE_SUCCESS_SOUND_PRESETS.includes(rawPreset) ? rawPreset : 'Boom';
@@ -289,10 +289,10 @@ export const createNewCoinSniperTrade = (deps: {
     return merged;
   };
 
-  const getKey = (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean; walletAddress?: `0x${string}` }) => {
+  const getKey = (chainId: number, tokenAddress: string, opts?: { dry?: boolean; walletAddress?: string }) => {
     const dry = opts?.dry === true;
-    const walletKey = !dry && opts?.walletAddress ? String(opts.walletAddress).toLowerCase() : 'all-wallets';
-    return `${dry ? 'dry:' : ''}${chainId}:${tokenAddress.toLowerCase()}:${walletKey}:new-coin`;
+    const walletKey = !dry ? normalizeWalletAddressKey(opts?.walletAddress) : 'all-wallets';
+    return `${dry ? 'dry:' : ''}${toScopedTokenKey(chainId, tokenAddress)}:${walletKey}:new-coin`;
   };
 
   const loadBoughtOnceIfNeeded = async () => {
@@ -336,14 +336,14 @@ export const createNewCoinSniperTrade = (deps: {
   const shouldEmitBuyFailureRecord = (input: {
     reason: string;
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
   }) => {
     const now = Date.now();
     const signalStableId = currentSignalContext?.id || 'no-signal';
     const modeTag = currentStrategyMode === 'xmode_task'
       ? `xmode_task:${currentTaskContext?.taskId || 'no-task'}`
       : 'auto_filter';
-    const key = `${input.reason}:${input.chainId}:${input.tokenAddress.toLowerCase()}:${signalStableId}:${modeTag}`;
+    const key = `${input.reason}:${input.chainId}:${normalizeAddressKey(input.tokenAddress)}:${signalStableId}:${modeTag}`;
     const ttlMs =
       input.reason === 'buy_skipped_recently_bought' || input.reason === 'buy_skipped_in_flight'
         ? 60_000
@@ -370,7 +370,7 @@ export const createNewCoinSniperTrade = (deps: {
   const emitRecord = (record: any) => {
     const signal = currentSignalContext;
     const signalSourceTag = signal?.source ? String(signal.source) : undefined;
-    const tokenAddrLower = String(record?.tokenAddress || '').trim().toLowerCase();
+    const tokenAddrLower = normalizeAddressKey(record?.tokenAddress);
     const resolvedChainId = (() => {
       const fromSignal = resolveSignalChainIdLoose({
         tokenAddress: record?.tokenAddress,
@@ -409,10 +409,10 @@ export const createNewCoinSniperTrade = (deps: {
     const resolvedLaunchpadPlatform = (() => {
       const fromRecord = extractLaunchpadPlatform(record as any);
       if (fromRecord) return fromRecord;
-      const addr = String(record?.tokenAddress || '').trim().toLowerCase();
+      const addr = normalizeAddressKey(record?.tokenAddress);
       if (!addr) return undefined;
       const tokens = Array.isArray(signal?.tokens) ? (signal?.tokens as UnifiedSignalToken[]) : [];
-      const matched = tokens.find((x) => String((x as any)?.tokenAddress || '').trim().toLowerCase() === addr);
+      const matched = tokens.find((x) => normalizeAddressKey((x as any)?.tokenAddress) === addr);
       return extractLaunchpadPlatform(matched as any);
     })();
     void pushNewCoinSniperHistory({
@@ -594,7 +594,7 @@ export const createNewCoinSniperTrade = (deps: {
     return true;
   };
 
-  const getWsAthMarketCapUsd = (chainId: number, tokenAddress: `0x${string}`): number => {
+  const getWsAthMarketCapUsd = (chainId: number, tokenAddress: string): number => {
     const snapshots = wsSnapshotsByAddr.get(toScopedTokenKey(chainId, tokenAddress)) ?? [];
     let ath = 0;
     for (const snap of snapshots) {
@@ -766,7 +766,7 @@ export const createNewCoinSniperTrade = (deps: {
     const unique: UnifiedSignalToken[] = [];
     const seen = new Set<string>();
     for (const t of tokens) {
-      const addr = String(t.tokenAddress || '').trim().toLowerCase();
+      const addr = normalizeAddressKey(t.tokenAddress);
       if (!addr || seen.has(addr)) continue;
       seen.add(addr);
       unique.push(t);
@@ -833,7 +833,7 @@ export const createNewCoinSniperTrade = (deps: {
     const unique: UnifiedSignalToken[] = [];
     const seen = new Set<string>();
     for (const t of tokens) {
-      const addr = String(t.tokenAddress || '').trim().toLowerCase();
+      const addr = normalizeAddressKey(t.tokenAddress);
       if (!addr || seen.has(addr)) continue;
       seen.add(addr);
       unique.push(t);
@@ -895,7 +895,7 @@ export const createNewCoinSniperTrade = (deps: {
     strategy: any;
     chainId: number;
     settings: any;
-    onMatched?: (tokenAddress?: `0x${string}`) => Promise<void> | void;
+    onMatched?: (tokenAddress?: string) => Promise<void> | void;
   }) => {
     const tasks = normalizeXmodeTasks(input.strategy?.xmodeTasks).filter((x) => x.enabled !== false);
     if (!tasks.length) return;
@@ -958,7 +958,7 @@ export const createNewCoinSniperTrade = (deps: {
 
   const tryAutoBuyOnce = async (input: {
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
     metrics: TokenMetrics;
     strategy: any;
     signal?: UnifiedTwitterSignal;
@@ -991,7 +991,7 @@ export const createNewCoinSniperTrade = (deps: {
     strategy: any;
     posKey: string;
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
     dryRun: boolean;
     entryMcapUsd: number | null;
     buyAmountNative: number;
@@ -1004,7 +1004,7 @@ export const createNewCoinSniperTrade = (deps: {
     signalEventId?: string;
     signalTweetId?: string;
     entryPriceUsd?: number | null;
-    walletAddress?: `0x${string}`;
+    walletAddress?: string;
   }) =>
     (() => {
       manuallyClosedPosKeys.delete(input.posKey);
@@ -1054,7 +1054,7 @@ export const createNewCoinSniperTrade = (deps: {
       if (!effectiveAutoModeEnabled && !effectiveTaskModeEnabled) return;
       if (effectiveTaskModeEnabled) {
         let matchedSoundPlayed = false;
-        const playMatchedSoundOnce = async (tokenAddress?: `0x${string}`) => {
+        const playMatchedSoundOnce = async (tokenAddress?: string) => {
           if (matchedSoundPlayed) return;
           matchedSoundPlayed = true;
           await broadcastMatchedSound(strategy, tokenAddress);
@@ -1121,11 +1121,11 @@ export const createNewCoinSniperTrade = (deps: {
 
   const markPositionSoldManually = (input: {
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
     sellPercent?: number;
     txHash?: string;
   }) => {
-    const tokenKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+    const tokenKey = toScopedTokenKey(input.chainId, input.tokenAddress);
     const keysToTouch: string[] = [];
     for (const key of rapidExitByPosKey.keys()) {
       if (key.startsWith('dry:')) continue;
@@ -1171,7 +1171,7 @@ export const createNewCoinSniperTrade = (deps: {
       hasRemainingTrackedPos = true;
       break;
     }
-    const snapshots = wsSnapshotsByAddr.get(input.tokenAddress) ?? [];
+    const snapshots = wsSnapshotsByAddr.get(tokenKey) ?? [];
     const latest = snapshots.length ? snapshots[snapshots.length - 1] : null;
     const now = Date.now();
     emitRecord({
@@ -1192,7 +1192,7 @@ export const createNewCoinSniperTrade = (deps: {
   };
   const markPositionClosedManually = (input: {
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
     txHash?: string;
   }) =>
     markPositionSoldManually({

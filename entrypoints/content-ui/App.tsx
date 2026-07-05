@@ -148,10 +148,10 @@ function getSolPrewarmCacheKey(input: {
   tokenInfo?: TokenInfo | null;
 }) {
   const platform = String(input.sitePlatform || '');
-  const tokenAddress = input.tokenAddress.toLowerCase();
+  const tokenAddress = normalizeChainScopedAddressKey(ChainId.SOL, input.tokenAddress);
   const fingerprint = getTokenInfoWarmFingerprint(input.tokenInfo);
   if (input.address) {
-    return `${input.chainId}:sol-owner:${input.address.toLowerCase()}:${platform}:${tokenAddress}:${fingerprint}`;
+    return `${input.chainId}:sol-owner:${normalizeChainScopedAddressKey(ChainId.SOL, input.address)}:${platform}:${tokenAddress}:${fingerprint}`;
   }
   return `${input.chainId}:sol-base:${platform}:${tokenAddress}:${fingerprint}`;
 }
@@ -448,17 +448,19 @@ function resolveSelectedTradeWallets(
 ): ChainAddress[] {
   if (!wallet?.isUnlocked) return [];
   const allAccounts = Array.isArray(wallet.accounts) ? wallet.accounts : [];
-  const byLower = new Map<string, ChainAddress>();
+  const byKey = new Map<string, ChainAddress>();
   for (const acc of allAccounts) {
     const normalized = normalizeWalletAddress(chainId, String(acc.address || ''));
     if (!normalized) continue;
-    byLower.set(normalized.toLowerCase(), normalized);
+    byKey.set(normalizeChainScopedAddressKey(chainId, normalized), normalized);
   }
   const selectedRaw = Array.isArray(settings?.selectedTradeWallets) ? settings!.selectedTradeWallets : [];
   const picked = selectedRaw
-    .map((x) => byLower.get(String(x).toLowerCase()))
+    .map((x) => byKey.get(normalizeChainScopedAddressKey(chainId, String(x))))
     .filter(Boolean) as ChainAddress[];
-  const deduped = Array.from(new Set(picked.map((x) => x.toLowerCase()))).map((x) => byLower.get(x)!).filter(Boolean);
+  const deduped = Array.from(new Set(picked.map((x) => normalizeChainScopedAddressKey(chainId, x))))
+    .map((x) => byKey.get(x)!)
+    .filter(Boolean);
   if (deduped.length > 0) return deduped;
   const fallback = normalizeWalletAddress(chainId, String(wallet.address || ''));
   return fallback ? [fallback] : [];
@@ -483,17 +485,23 @@ type PendingAutoSellOrderContext = {
 };
 
 function getPendingTokenDeltaKey(tokenAddress: string, walletAddress: string) {
-  return `${String(tokenAddress || '').trim().toLowerCase()}:${String(walletAddress || '').trim().toLowerCase()}`;
+  return `${normalizeChainScopedAddressKey(ChainId.SOL, tokenAddress)}:${normalizeChainScopedAddressKey(ChainId.SOL, walletAddress)}`;
 }
 
 function getPendingTradeBaseDeltaKey(baseTokenAddress: string, walletAddress: string) {
-  return `${String(baseTokenAddress || '').trim().toLowerCase()}:${String(walletAddress || '').trim().toLowerCase()}`;
+  return `${normalizeChainScopedAddressKey(ChainId.SOL, baseTokenAddress)}:${normalizeChainScopedAddressKey(ChainId.SOL, walletAddress)}`;
 }
 
 function normalizeChainScopedAddressKey(chainId: number, value: string): string {
   const trimmed = String(value || '').trim();
   if (!trimmed) return '';
   return isSolanaChain(chainId) ? trimmed : trimmed.toLowerCase();
+}
+
+function normalizeGenericTxOrAddressKey(value: string | null | undefined): string {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  return /^0x[0-9a-fA-F]+$/.test(trimmed) ? trimmed.toLowerCase() : trimmed;
 }
 
 function getPendingAutoSellOrderKey(chainId: number, tokenAddress: string, walletAddress: string) {
@@ -568,6 +576,7 @@ export default function App() {
   const handleBuyRef = useRef<(amountStr: string, presetIndex: number) => void>(() => { });
   const handleSellRef = useRef<(pct: number) => void>(() => { });
   const prewarmedTurboRef = useRef<Map<string, number>>(new Map());
+  const prewarmTurboErrorRef = useRef<Map<string, string>>(new Map());
   const prewarmedRpcRef = useRef<Set<string>>(new Set());
   const prewarmTurboInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
   const solSubmitKickoffQueuesRef = useRef<Map<string, Promise<void>>>(new Map());
@@ -649,6 +658,9 @@ export default function App() {
   const hasSolPrewarmSnapshot = useCallback((key: string) => {
     return prewarmedTurboRef.current.has(key);
   }, []);
+  const getSolPrewarmLastError = useCallback((key: string) => {
+    return prewarmTurboErrorRef.current.get(key);
+  }, []);
   const channelOptions = useMemo<ChannelSwitcherItem[]>(() => {
     if (isSolana) {
       const swqos = effectiveChainSettings?.solanaSwqos;
@@ -728,8 +740,8 @@ export default function App() {
     [state?.wallet, settings, chainId]
   );
   const selectedTradeWalletsKey = useMemo(
-    () => selectedTradeWallets.map((item) => item.toLowerCase()).sort().join(','),
-    [selectedTradeWallets]
+    () => selectedTradeWallets.map((item) => normalizeChainScopedAddressKey(chainId, item)).sort().join(','),
+    [chainId, selectedTradeWallets]
   );
   const gmgnHoldingWallets = useMemo(() => {
     if (selectedTradeWallets.length > 0) return selectedTradeWallets;
@@ -778,13 +790,13 @@ export default function App() {
     if (multiWalletBuyMode !== 'child_custom') return [0, 0, 0, 0];
     if (selectedTradeWallets.length <= 0) return [0, 0, 0, 0];
     const mainWalletLower = (() => {
-      const activeLower = String(address || '').toLowerCase();
-      if (activeLower && selectedTradeWallets.some((w) => w.toLowerCase() === activeLower)) return activeLower;
-      return selectedTradeWallets[0].toLowerCase();
+      const activeLower = normalizeChainScopedAddressKey(chainId, String(address || ''));
+      if (activeLower && selectedTradeWallets.some((w) => normalizeChainScopedAddressKey(chainId, w) === activeLower)) return activeLower;
+      return normalizeChainScopedAddressKey(chainId, selectedTradeWallets[0] || '');
     })();
     const counts: [number, number, number, number] = [0, 0, 0, 0];
     for (const walletAddress of selectedTradeWallets) {
-      const lower = walletAddress.toLowerCase();
+      const lower = normalizeChainScopedAddressKey(chainId, walletAddress);
       if (lower === mainWalletLower) continue;
       const presets = childWalletBuyPresetAmountsNative[lower];
       for (const idx of [0, 1, 2, 3] as const) {
@@ -855,12 +867,12 @@ export default function App() {
     const totals: [number, number, number, number] = [0, 0, 0, 0];
     if (multiWalletBuyMode === 'child_custom' && selectedTradeWallets.length > 0) {
       const mainWalletLower = (() => {
-        const activeLower = String(address || '').toLowerCase();
-        if (activeLower && selectedTradeWallets.some((w) => w.toLowerCase() === activeLower)) return activeLower;
-        return selectedTradeWallets[0].toLowerCase();
+        const activeLower = normalizeChainScopedAddressKey(chainId, String(address || ''));
+        if (activeLower && selectedTradeWallets.some((w) => normalizeChainScopedAddressKey(chainId, w) === activeLower)) return activeLower;
+        return normalizeChainScopedAddressKey(chainId, selectedTradeWallets[0] || '');
       })();
       for (const walletAddress of selectedTradeWallets) {
-        const lower = walletAddress.toLowerCase();
+        const lower = normalizeChainScopedAddressKey(chainId, walletAddress);
         if (lower === mainWalletLower) continue;
         const presets = childWalletBuyPresetAmountsNative[lower];
         for (const idx of [0, 1, 2, 3] as const) {
@@ -1158,7 +1170,7 @@ export default function App() {
       setDraftSellPresets(settings.chains[quickBuyChainId]?.sellPresets || ['10', '25', '50', '100']);
       setDraftQuickBuyAdvancedEnabled(!!settings.chains[quickBuyChainId]?.quickBuyAdvancedEnabled);
       setDraftQuickBuyPresetOverrides(normalizeQuickBuyPresetOverrides(settings.chains[quickBuyChainId]?.quickBuyPresetOverrides));
-      setPendingQuickBuy({ tokenAddress: addr.toLowerCase(), amount });
+      setPendingQuickBuy({ tokenAddress: normalizeChainScopedAddressKey(quickBuyChainId, addr), amount });
     };
     window.addEventListener('dagobang-quickbuy' as any, handler as any);
     return () => {
@@ -1332,12 +1344,12 @@ export default function App() {
       return (tokenInfo as TokenInfo | null) ?? null;
     }
     if (cookingTokenInfoOverride) return cookingTokenInfoOverride;
-    const overrideAddress = cookingSiteInfoOverride.tokenAddress.toLowerCase();
-    if (tokenInfo && tokenAddressNormalized && overrideAddress === tokenAddressNormalized.toLowerCase()) {
+    const overrideAddress = normalizeChainScopedAddressKey(chainId, cookingSiteInfoOverride.tokenAddress);
+    if (tokenInfo && tokenAddressNormalized && overrideAddress === normalizeChainScopedAddressKey(chainId, tokenAddressNormalized)) {
       return tokenInfo as TokenInfo;
     }
     return null;
-  }, [cookingSiteInfoOverride, cookingTokenInfoOverride, tokenInfo, tokenAddressNormalized]);
+  }, [chainId, cookingSiteInfoOverride, cookingTokenInfoOverride, tokenInfo, tokenAddressNormalized]);
   const limitTradePanelOnlyOnTokenPage = settings?.ui?.limitTradePanelOnlyOnTokenPage ?? false;
   const quickCookingEnabled = settings?.ui?.quickCookingEnabled ?? false;
   const newPoolMonitorEnabled = settings?.ui?.newPoolMonitorEnabled ?? false;
@@ -1381,6 +1393,10 @@ export default function App() {
     if (pending.length > 0) {
       await Promise.allSettled(pending);
     }
+    const lastError = getSolPrewarmLastError(ownerKey || baseKey) || getSolPrewarmLastError(baseKey);
+    if (lastError && !isSolPrewarmFresh(baseKey)) {
+      throw new Error(lastError);
+    }
     if (!isSolPrewarmFresh(baseKey) && !hasSolPrewarmSnapshot(baseKey)) {
       throw new Error('交易预热中，请稍后再试');
     }
@@ -1393,6 +1409,7 @@ export default function App() {
     tokenInfo,
     isSolPrewarmFresh,
     hasSolPrewarmSnapshot,
+    getSolPrewarmLastError,
   ]);
 
   useEffect(() => {
@@ -1442,7 +1459,7 @@ export default function App() {
     if (!settings) return;
     if (!tokenAddressNormalized) return;
     if (!tokenInfo) return;
-    if (tokenAddressNormalized.toLowerCase() !== pendingQuickBuy.tokenAddress) return;
+    if (normalizeChainScopedAddressKey(chainId, tokenAddressNormalized) !== pendingQuickBuy.tokenAddress) return;
     handleBuy(pendingQuickBuy.amount, -1);
     setPendingQuickBuy(null);
   }, [pendingQuickBuy, tokenAddressNormalized, tokenInfo, settings]);
@@ -1511,10 +1528,14 @@ export default function App() {
       input: prewarmInput,
     } as const)
       .then(() => {
+        prewarmTurboErrorRef.current.delete(input.key);
         prewarmedTurboRef.current.set(input.key, Date.now());
       })
-      .catch(() => {
+      .catch((error) => {
         prewarmedTurboRef.current.delete(input.key);
+        const message = error instanceof Error ? error.message : String(error || '交易预热失败');
+        prewarmTurboErrorRef.current.set(input.key, message);
+        throw error;
       })
       .finally(() => {
         prewarmTurboInFlightRef.current.delete(input.key);
@@ -1550,7 +1571,7 @@ export default function App() {
         debugDoneLocation: 'App.tsx:solBasePrewarmDone',
         debugMsgPrefix: 'ui sol base prewarm',
         onDone: () => {
-          if (!cancelled) setTurboPrewarmState('done');
+          if (!cancelled) setTurboPrewarmState(isSolPrewarmFresh(key) ? 'done' : 'warming');
         },
       });
       return () => {
@@ -1578,7 +1599,7 @@ export default function App() {
       key,
       fromAddress: address,
       onDone: () => {
-        if (!cancelled) setTurboPrewarmState('done');
+        if (!cancelled) setTurboPrewarmState(isSolPrewarmFresh(key) ? 'done' : 'warming');
       },
     });
     return () => {
@@ -1614,7 +1635,7 @@ export default function App() {
         debugMsgPrefix: 'ui sol owner prewarm',
       });
     })).then(() => {
-      if (!cancelled) setTurboPrewarmState('done');
+      if (!cancelled) setTurboPrewarmState(ownerKeys.every((item) => isSolPrewarmFresh(item.key)) ? 'done' : 'warming');
     });
     return () => {
       cancelled = true;
@@ -1684,6 +1705,29 @@ export default function App() {
   ]);
 
   const shouldShowPrewarmIndicator = !!tokenAddressNormalized;
+  const currentSolPrewarmError = useMemo(() => {
+    if (!isSolana || !tokenAddressNormalized) return '';
+    const keys = [
+      getSolPrewarmCacheKey({
+        chainId,
+        sitePlatform: normalizedSitePlatform,
+        tokenAddress: tokenAddressNormalized,
+        tokenInfo: tokenInfo as TokenInfo | null | undefined,
+      }),
+      ...selectedTradeWallets.map((walletAddress) => getSolPrewarmCacheKey({
+        chainId,
+        sitePlatform: normalizedSitePlatform,
+        tokenAddress: tokenAddressNormalized,
+        address: walletAddress,
+        tokenInfo: tokenInfo as TokenInfo | null | undefined,
+      })),
+    ];
+    for (const key of keys) {
+      const message = getSolPrewarmLastError(key);
+      if (message) return message;
+    }
+    return '';
+  }, [isSolana, tokenAddressNormalized, chainId, normalizedSitePlatform, tokenInfo, selectedTradeWallets, getSolPrewarmLastError]);
   const prewarmIndicatorState = useMemo<'hidden' | 'warming' | 'done'>(() => {
     if (!shouldShowPrewarmIndicator) return 'hidden';
     const turboExpected = isSolana ? selectedTradeWallets.length > 0 : (!!isUnlocked && !!address);
@@ -1694,6 +1738,9 @@ export default function App() {
   const prewarmIndicatorTitle = useMemo(() => {
     if (!shouldShowPrewarmIndicator) return undefined;
     if (prewarmIndicatorState === 'warming') {
+      if (currentSolPrewarmError) {
+        return `预热未完成：${currentSolPrewarmError}`;
+      }
       const parts: string[] = [];
       if (rpcPrewarmState === 'warming') parts.push('RPC');
       const turboExpected = isSolana ? selectedTradeWallets.length > 0 : (!!isUnlocked && !!address);
@@ -1707,7 +1754,7 @@ export default function App() {
     return isSolana
       ? '预热完成：当前代币详情页已完成 SOL 交易预取'
       : '预热完成：当前代币详情页已完成预热';
-  }, [shouldShowPrewarmIndicator, prewarmIndicatorState, rpcPrewarmState, turboPrewarmState, isUnlocked, address, selectedTradeWallets.length, tokenInfo, isSolana]);
+  }, [shouldShowPrewarmIndicator, prewarmIndicatorState, currentSolPrewarmError, rpcPrewarmState, turboPrewarmState, isUnlocked, address, selectedTradeWallets.length, tokenInfo, isSolana]);
 
   const formattedNativeBalance = useMemo(
     () => formatTokenAmountForDisplay(tradeBaseBalanceWei, tradeBaseTokenMeta.decimals),
@@ -2019,7 +2066,7 @@ export default function App() {
   }, [getPendingSolTradeBaseDeltaWei]);
 
   const getTrackedSolWalletTokenBalanceWei = useCallback((walletAddress: string) => {
-    const walletKey = String(walletAddress || '').trim().toLowerCase();
+    const walletKey = normalizeChainScopedAddressKey(ChainId.SOL, walletAddress);
     if (!walletKey) return null;
     if (!Object.prototype.hasOwnProperty.call(effectiveWalletTokenBalancesRef.current, walletKey)) return null;
     try {
@@ -2030,7 +2077,7 @@ export default function App() {
   }, []);
 
   const getTrackedSolWalletSellableTokenBalanceWei = useCallback((tokenAddress: string, walletAddress: string) => {
-    const walletKey = String(walletAddress || '').trim().toLowerCase();
+    const walletKey = normalizeChainScopedAddressKey(ChainId.SOL, walletAddress);
     if (!walletKey) return null;
     if (!Object.prototype.hasOwnProperty.call(actualWalletTokenBalancesRef.current, walletKey)) return null;
     let actual = 0n;
@@ -2060,7 +2107,7 @@ export default function App() {
   const solWalletDisplayBalanceCacheRef = useRef(new Map<string, { value: string; updatedAt: number }>());
 
   const getSolWalletDisplayBalanceCacheKey = useCallback((tokenAddress: string, walletAddress: string) => {
-    return `${chainId}:${String(tokenAddress || '').toLowerCase()}:${String(walletAddress || '').toLowerCase()}`;
+    return `${chainId}:${normalizeChainScopedAddressKey(chainId, tokenAddress)}:${normalizeChainScopedAddressKey(chainId, walletAddress)}`;
   }, [chainId]);
 
   const getCachedSolWalletDisplayBalanceWei = useCallback((tokenAddress: string, walletAddress: string) => {
@@ -2093,7 +2140,7 @@ export default function App() {
         resolved = true;
         continue;
       }
-      const fallback = walletTokenBalancesWei[String(walletAddress || '').toLowerCase()];
+      const fallback = walletTokenBalancesWei[normalizeChainScopedAddressKey(ChainId.SOL, walletAddress)];
       if (typeof fallback === 'string') {
         try {
           total += BigInt(fallback || '0');
@@ -2112,7 +2159,7 @@ export default function App() {
 
   const getSelectedSingleWalletDisplayBalanceWei = useCallback((walletAddress: string) => {
     if (chainId !== ChainId.SOL) return null;
-    const walletKey = String(walletAddress || '').toLowerCase();
+    const walletKey = normalizeChainScopedAddressKey(ChainId.SOL, walletAddress);
     const direct = walletTokenBalancesWei[walletKey];
     if (typeof direct === 'string' && direct) return direct;
     const cachedPerWallet = tokenAddressNormalized
@@ -2120,7 +2167,7 @@ export default function App() {
       : null;
     if (cachedPerWallet != null) return cachedPerWallet;
     if (selectedTradeWallets.length !== 1) return null;
-    const selectedWallet = String(selectedTradeWallets[0] || '').toLowerCase();
+    const selectedWallet = normalizeChainScopedAddressKey(ChainId.SOL, selectedTradeWallets[0] || '');
     if (!selectedWallet || selectedWallet !== walletKey) return null;
     if (trackedSelectedSolTokenBalanceWei && trackedSelectedSolTokenBalanceWei !== '0') return trackedSelectedSolTokenBalanceWei;
     const selectedCachedTotal = getSelectedCachedSolDisplayBalanceWei();
@@ -2133,7 +2180,7 @@ export default function App() {
     if (chainId !== ChainId.SOL) return true;
     if (!tokenAddressNormalized || selectedTradeWallets.length <= 0) return false;
     return selectedTradeWallets.every((walletAddress) => {
-      const walletKey = String(walletAddress || '').toLowerCase();
+      const walletKey = normalizeChainScopedAddressKey(ChainId.SOL, walletAddress);
       if (Object.prototype.hasOwnProperty.call(walletTokenBalancesWei, walletKey)) return true;
       if (getCachedSolWalletDisplayBalanceWei(tokenAddressNormalized, walletAddress) != null) return true;
       if (selectedTradeWallets.length !== 1) return false;
@@ -2197,7 +2244,7 @@ export default function App() {
   }, [displayTokenBalanceWei, resolvedTokenDecimals]);
 
   const getTrackedSolWalletTradeBaseBalanceWei = useCallback((walletAddress: string) => {
-    const walletKey = String(walletAddress || '').trim().toLowerCase();
+    const walletKey = normalizeChainScopedAddressKey(ChainId.SOL, walletAddress);
     if (!walletKey) return null;
     if (!Object.prototype.hasOwnProperty.call(effectiveWalletTradeBaseBalancesRef.current, walletKey)) return null;
     try {
@@ -2209,7 +2256,7 @@ export default function App() {
 
   const applyOptimisticSolWalletTokenDeltaWei = useCallback((walletAddress: string, deltaWei: bigint) => {
     if (!isSolana || deltaWei === 0n) return;
-    const walletKey = String(walletAddress || '').trim().toLowerCase();
+    const walletKey = normalizeChainScopedAddressKey(ChainId.SOL, walletAddress);
     if (!walletKey) return;
     const currentRaw = effectiveWalletTokenBalancesRef.current[walletKey];
     if (typeof currentRaw !== 'string') return;
@@ -2239,10 +2286,10 @@ export default function App() {
       ...prev,
       [walletKey]: nextDisplayWei,
     }));
-    if (selectedTradeWallets.some((wallet) => wallet.toLowerCase() === walletKey)) {
+    if (selectedTradeWallets.some((wallet) => normalizeChainScopedAddressKey(ChainId.SOL, wallet) === walletKey)) {
       let total = 0n;
       for (const selectedWalletAddress of selectedTradeWallets) {
-        const addrLower = selectedWalletAddress.toLowerCase();
+        const addrLower = normalizeChainScopedAddressKey(ChainId.SOL, selectedWalletAddress);
         const actualSelectedRaw = actualWalletTokenBalancesRef.current[addrLower] || '0';
         const displayWei = tokenAddressNormalized
           ? getSolWalletTokenSellableBalanceWei(tokenAddressNormalized, selectedWalletAddress, actualSelectedRaw)
@@ -2258,7 +2305,7 @@ export default function App() {
 
   const applyOptimisticSolWalletTradeBaseDeltaWei = useCallback((walletAddress: string, deltaWei: bigint) => {
     if (!isSolana || deltaWei === 0n) return;
-    const walletKey = String(walletAddress || '').trim().toLowerCase();
+    const walletKey = normalizeChainScopedAddressKey(ChainId.SOL, walletAddress);
     if (!walletKey) return;
     const currentRaw = effectiveWalletTradeBaseBalancesRef.current[walletKey];
     if (typeof currentRaw !== 'string') return;
@@ -2275,7 +2322,7 @@ export default function App() {
     };
     effectiveWalletTradeBaseBalancesRef.current = nextByWallet;
     setWalletTradeBaseBalancesWei(nextByWallet);
-    if (selectedTradeWallets.some((wallet) => wallet.toLowerCase() === walletKey)) {
+    if (selectedTradeWallets.some((wallet) => normalizeChainScopedAddressKey(ChainId.SOL, wallet) === walletKey)) {
       setTradeBaseBalanceWei((prev) => {
         let currentTotal = 0n;
         try {
@@ -2557,10 +2604,10 @@ export default function App() {
     if (isSolana && solRefreshSeq !== solBaseBalanceRefreshSeqRef.current) return null;
     const byWallet: Record<string, string> = {};
     allWallets.forEach((addr) => {
-      byWallet[addr.toLowerCase()] = '0';
+      byWallet[normalizeChainScopedAddressKey(resolvedChainId, addr)] = '0';
     });
     queryWallets.forEach((addr, i) => {
-      byWallet[addr.toLowerCase()] = typeof allBalances[i] === 'string' ? (allBalances[i] as string) : '0';
+      byWallet[normalizeChainScopedAddressKey(resolvedChainId, addr)] = typeof allBalances[i] === 'string' ? (allBalances[i] as string) : '0';
     });
     setWalletNativeBalancesWei(byWallet);
 
@@ -2574,10 +2621,10 @@ export default function App() {
       if (isSolana && solRefreshSeq !== solBaseBalanceRefreshSeqRef.current) return null;
       const mapped: Record<string, string> = {};
       allWallets.forEach((addr) => {
-        mapped[addr.toLowerCase()] = '0';
+        mapped[normalizeChainScopedAddressKey(resolvedChainId, addr)] = '0';
       });
       queryWallets.forEach((addr, i) => {
-        mapped[addr.toLowerCase()] = typeof tradeBaseBalances[i] === 'string' ? (tradeBaseBalances[i] as string) : '0';
+        mapped[normalizeChainScopedAddressKey(resolvedChainId, addr)] = typeof tradeBaseBalances[i] === 'string' ? (tradeBaseBalances[i] as string) : '0';
       });
       byTradeBaseWallet = mapped;
     }
@@ -2585,7 +2632,7 @@ export default function App() {
     const prevActualTradeBaseByWallet = actualWalletTradeBaseBalancesRef.current;
     if (isSolana) {
       queryWallets.forEach((addr) => {
-        const addrLower = addr.toLowerCase();
+        const addrLower = normalizeChainScopedAddressKey(resolvedChainId, addr);
         const prevActualWei = prevActualTradeBaseByWallet[addrLower] || '0';
         const nextActualWei = byTradeBaseWallet[addrLower] || '0';
         let prevActual = 0n;
@@ -2606,7 +2653,7 @@ export default function App() {
     actualWalletTradeBaseBalancesRef.current = { ...byTradeBaseWallet };
     const effectiveTradeBaseByWallet: Record<string, string> = {};
     allWallets.forEach((addr) => {
-      const addrLower = addr.toLowerCase();
+      const addrLower = normalizeChainScopedAddressKey(resolvedChainId, addr);
       effectiveTradeBaseByWallet[addrLower] = isSolana
         ? applyPendingSolTradeBaseDeltaWei(tradeBaseAddress, addr, byTradeBaseWallet[addrLower] || '0')
         : (byTradeBaseWallet[addrLower] || '0');
@@ -2614,7 +2661,7 @@ export default function App() {
     effectiveWalletTradeBaseBalancesRef.current = { ...effectiveTradeBaseByWallet };
     setWalletTradeBaseBalancesWei(effectiveTradeBaseByWallet);
 
-    const total = targetWallets.reduce((sum, addr) => sum + BigInt(effectiveTradeBaseByWallet[addr.toLowerCase()] || '0'), 0n);
+    const total = targetWallets.reduce((sum, addr) => sum + BigInt(effectiveTradeBaseByWallet[normalizeChainScopedAddressKey(resolvedChainId, addr)] || '0'), 0n);
     setTradeBaseBalanceWei(total.toString());
     return {
       selectedWalletCount: selectedWallets.length,
@@ -2776,12 +2823,12 @@ export default function App() {
         if (seq !== tokenRefreshSeqRef.current || reqCtxKey !== tokenContextKeyRef.current) return;
         const byWallet: Record<string, string> = {};
         allWalletsForToken.forEach((addr) => {
-          byWallet[addr.toLowerCase()] = '0';
+          byWallet[normalizeChainScopedAddressKey(ChainId.SOL, addr)] = '0';
         });
         const prevActualByWallet = actualWalletTokenBalancesRef.current;
         let resolvedHoldingCount = 0;
         queryWalletsForToken.forEach((addr, i) => {
-          const addrLower = addr.toLowerCase();
+          const addrLower = normalizeChainScopedAddressKey(ChainId.SOL, addr);
           const result = holdingResults[i];
           let nextHoldingRaw = prevActualByWallet[addrLower] || '0';
           if (result?.status === 'fulfilled') {
@@ -2823,7 +2870,7 @@ export default function App() {
           });
         }
         queryWalletsForToken.forEach((addr) => {
-          const addrLower = addr.toLowerCase();
+          const addrLower = normalizeChainScopedAddressKey(ChainId.SOL, addr);
           reconcilePendingSolTokenDeltaWei(
             tokenAddressNormalized,
             addr,
@@ -2835,7 +2882,7 @@ export default function App() {
         const effectiveByWallet: Record<string, string> = {};
         const displayByWallet: Record<string, string> = {};
         allWalletsForToken.forEach((addr) => {
-          const addrLower = addr.toLowerCase();
+          const addrLower = normalizeChainScopedAddressKey(ChainId.SOL, addr);
           effectiveByWallet[addrLower] = isSolana
             ? applyPendingSolTokenDeltaWei(tokenAddressNormalized, addr, byWallet[addrLower] || '0')
             : (byWallet[addrLower] || '0');
@@ -2851,7 +2898,7 @@ export default function App() {
         });
         effectiveWalletTokenBalancesRef.current = { ...effectiveByWallet };
         setWalletTokenBalancesWei(displayByWallet);
-        const total = targetWalletsForToken.reduce((sum, addr) => sum + BigInt(displayByWallet[addr.toLowerCase()] || '0'), 0n);
+        const total = targetWalletsForToken.reduce((sum, addr) => sum + BigInt(displayByWallet[normalizeChainScopedAddressKey(ChainId.SOL, addr)] || '0'), 0n);
         setTokenBalanceWei(total.toString());
       } else {
         logHyperReadDebug('refreshToken.done', {
@@ -3605,7 +3652,7 @@ export default function App() {
       setWalletApproveStates((prev) => {
         const next = { ...prev };
         for (const walletAddress of selectedTradeWallets) {
-          next[walletAddress.toLowerCase()] = { approved: true };
+          next[normalizeChainScopedAddressKey(ChainId.SOL, walletAddress)] = { approved: true };
         }
         return next;
       });
@@ -3666,7 +3713,7 @@ export default function App() {
       setWalletApproveStates((prev) => {
         const next = { ...prev };
         for (const walletAddress of wallets) {
-          next[walletAddress.toLowerCase()] = { approved: true };
+          next[normalizeChainScopedAddressKey(ChainId.SOL, walletAddress)] = { approved: true };
         }
         return next;
       });
@@ -3948,13 +3995,13 @@ export default function App() {
   };
 
   const getTradeToastId = (side: 'buy' | 'sell', tokenAddress?: string | null) =>
-    `trade-flow:${side}:${String(tokenAddress || '').toLowerCase()}`;
+    `trade-flow:${side}:${normalizeGenericTxOrAddressKey(tokenAddress)}`;
   const getTradeEventToastId = (side: 'buy' | 'sell', tokenAddress?: string | null, txHash?: string | null) =>
     txHash
-      ? `trade-event:${side}:${String(txHash).toLowerCase()}`
-      : `trade-event:${side}:${String(tokenAddress || '').toLowerCase()}`;
+      ? `trade-event:${side}:${normalizeGenericTxOrAddressKey(txHash)}`
+      : `trade-event:${side}:${normalizeGenericTxOrAddressKey(tokenAddress)}`;
   const getSolTradeOutcomeKey = (side: 'buy' | 'sell', tokenAddress?: string | null) =>
-    `${side}:${String(tokenAddress || '').toLowerCase()}`;
+    `${side}:${normalizeGenericTxOrAddressKey(tokenAddress)}`;
   const getSolTradeOutcomeStatus = (side: 'buy' | 'sell', tokenAddress?: string | null) =>
     solTradeOutcomeRef.current.get(getSolTradeOutcomeKey(side, tokenAddress)) || '';
   const shouldIgnoreSolUiTransportError = (
@@ -3995,7 +4042,7 @@ export default function App() {
       const buyPlan: Array<{ walletAddress: ChainAddress; amountWei: bigint }> = [];
       const skippedByPreset: ChainAddress[] = [];
       for (const walletAddress of wallets) {
-        const lower = walletAddress.toLowerCase();
+        const lower = normalizeChainScopedAddressKey(chainId, walletAddress);
         const isMainWallet = lower === mainWalletLower;
         if (multiWalletBuyMode === 'child_custom' && !isMainWallet && hasValidPresetIndex) {
           const customAmountRaw = childWalletBuyPresetAmountsNative[lower]?.[presetIndex];
@@ -4023,7 +4070,7 @@ export default function App() {
       const insufficientWallets: ChainAddress[] = [];
       for (const item of buyPlan) {
         const walletBal = isSolana
-          ? (getTrackedSolWalletTradeBaseBalanceWei(item.walletAddress) ?? BigInt(walletTradeBaseBalancesWei[item.walletAddress.toLowerCase()] || '0'))
+          ? (getTrackedSolWalletTradeBaseBalanceWei(item.walletAddress) ?? BigInt(walletTradeBaseBalancesWei[normalizeChainScopedAddressKey(ChainId.SOL, item.walletAddress)] || '0'))
           : BigInt(walletTradeBaseBalancesWei[item.walletAddress.toLowerCase()] || '0');
         if (walletBal < item.amountWei) {
           insufficientWallets.push(item.walletAddress);
@@ -4116,7 +4163,7 @@ export default function App() {
           };
           if (chainId === ChainId.SOL) {
             await enqueueSolSubmitKickoff(
-              `sol:buy:${walletAddress.toLowerCase()}:${String(tradeBaseTokenAddress || '').toLowerCase()}`,
+              `sol:buy:${normalizeChainScopedAddressKey(ChainId.SOL, walletAddress)}:${normalizeChainScopedAddressKey(ChainId.SOL, tradeBaseTokenAddress || '')}`,
               launchTrade,
             );
             return;
@@ -4283,7 +4330,7 @@ export default function App() {
                 ? getTrackedSolWalletSellableTokenBalanceWei(tokenAddressNormalized, walletAddress)
                 : null;
               const usingTrackedSolBalance = chainId === ChainId.SOL && trackedSolSellableBalanceWei != null;
-              const walletAddrLower = String(walletAddress || '').toLowerCase();
+              const walletAddrLower = normalizeChainScopedAddressKey(ChainId.SOL, walletAddress);
               const displayedSolSellableBalanceWei = chainId === ChainId.SOL
                 ? (walletTokenBalancesWei[walletAddrLower] ?? getSelectedSingleWalletDisplayBalanceWei(walletAddress))
                 : null;
@@ -4392,7 +4439,7 @@ export default function App() {
           };
           if (chainId === ChainId.SOL) {
             await enqueueSolSubmitKickoff(
-              `sol:sell:${walletAddress.toLowerCase()}:${tokenAddressNormalized.toLowerCase()}`,
+              `sol:sell:${normalizeChainScopedAddressKey(ChainId.SOL, walletAddress)}:${normalizeChainScopedAddressKey(ChainId.SOL, tokenAddressNormalized)}`,
               launchTrade,
             );
             return;
@@ -4855,16 +4902,16 @@ export default function App() {
     for (const acc of allAccounts) {
       const normalized = normalizeWalletAddress(chainId, String(acc.address || ''));
       if (!normalized) continue;
-      lowerToCanonical.set(normalized.toLowerCase(), normalized);
+      lowerToCanonical.set(normalizeChainScopedAddressKey(chainId, normalized), normalized);
     }
-    const targetLower = walletAddress.toLowerCase();
+    const targetLower = normalizeChainScopedAddressKey(chainId, walletAddress);
     if (!lowerToCanonical.has(targetLower)) return;
-    const current = new Set(selectedTradeWallets.map((x) => x.toLowerCase()));
+    const current = new Set(selectedTradeWallets.map((x) => normalizeChainScopedAddressKey(chainId, x)));
     if (current.has(targetLower)) current.delete(targetLower);
     else current.add(targetLower);
     if (current.size === 0) {
       const fallback = normalizeWalletAddress(chainId, String(state.wallet.address || ''));
-      if (fallback) current.add(fallback.toLowerCase());
+      if (fallback) current.add(normalizeChainScopedAddressKey(chainId, fallback));
     }
     const nextSelected = Array.from(current)
       .map((x) => lowerToCanonical.get(x))
@@ -4892,7 +4939,7 @@ export default function App() {
   const handleUpdateChildWalletBuyPresetAmount = (walletAddress: ChainAddress, presetIndex: number, amountNative: string) => {
     if (!settings) return;
     if (!Number.isInteger(presetIndex) || presetIndex < 0 || presetIndex > 3) return;
-    const key = walletAddress.toLowerCase();
+    const key = normalizeChainScopedAddressKey(chainId, walletAddress);
     const next = { ...(settings.childWalletBuyPresetAmountsNative ?? {}) } as Record<string, string[]>;
     const curr = Array.isArray(next[key]) ? next[key].slice(0, 4) : ['', '', '', ''];
     while (curr.length < 4) curr.push('');

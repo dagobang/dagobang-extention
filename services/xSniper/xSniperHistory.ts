@@ -1,5 +1,6 @@
 import { browser } from 'wxt/browser';
 import type { XSniperBuyRecord, XSniperEvalPoint } from '@/types/extention';
+import { normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 
 export const XSNIPER_HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
 export const XSNIPER_HISTORY_LIMIT = 200;
@@ -78,12 +79,12 @@ export const clearXSniperHistory = async () => {
 
 export const maybeUpdateXSniperHistoryEvaluations = async (input: {
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: string;
   nowMs: number;
   marketCapUsd?: number;
   holders?: number;
 }) => {
-  const inputTokenAddress = String(input.tokenAddress || '').toLowerCase();
+  const inputTokenAddress = normalizeAddressKey(input.tokenAddress);
   if (!inputTokenAddress) return;
   const curMcap = typeof input.marketCapUsd === 'number' && Number.isFinite(input.marketCapUsd) ? input.marketCapUsd : null;
   const curHolders = typeof input.holders === 'number' && Number.isFinite(input.holders) ? input.holders : null;
@@ -94,7 +95,7 @@ export const maybeUpdateXSniperHistoryEvaluations = async (input: {
       const r = historyList[i];
       if (!r || r.side !== 'buy') continue;
       if (Number(r.chainId) !== Number(input.chainId)) continue;
-      if (String(r.tokenAddress || '').toLowerCase() !== inputTokenAddress) continue;
+      if (normalizeAddressKey(r.tokenAddress) !== inputTokenAddress) continue;
       if (typeof r.tsMs !== 'number' || r.tsMs <= 0) continue;
       const ageMs = input.nowMs - r.tsMs;
       const entryMcap = typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) ? r.marketCapUsd : null;

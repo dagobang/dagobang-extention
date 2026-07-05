@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { TradeReview, TradeReviewFilters, TradeReviewUpsertInput } from '@/types/review';
+import { normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
 
 const TABLE_NAME = 'trade_reviews';
 const CACHE_KEY = 'dagobang_trade_reviews_cache_v1';
@@ -190,9 +191,9 @@ function toRow(input: TradeReviewUpsertInput): Omit<TradeReviewRow, 'created_at'
   });
   return {
     id: input.id ?? crypto.randomUUID(),
-    wallet_address: input.walletAddress,
+    wallet_address: normalizeAddress(input.walletAddress) ?? input.walletAddress,
     chain: input.chain,
-    token_address: input.tokenAddress.toLowerCase(),
+    token_address: normalizeAddress(input.tokenAddress) ?? input.tokenAddress,
     token_symbol: input.tokenSymbol,
     token_name: input.tokenName || '',
     launchpad: input.launchpad || '',
@@ -253,11 +254,12 @@ function setCache(items: TradeReview[]) {
 
 function filterReviews(items: TradeReview[], filters: TradeReviewFilters = {}) {
   const search = (filters.search || '').trim().toLowerCase();
-  const tokenAddress = (filters.tokenAddress || '').trim().toLowerCase();
+  const tokenAddress = normalizeAddressKey(filters.tokenAddress || '');
+  const walletAddress = normalizeWalletAddressKey(filters.walletAddress || '');
   let result = items.filter((item) => {
-    if (filters.walletAddress && item.walletAddress.toLowerCase() !== filters.walletAddress.toLowerCase()) return false;
+    if (walletAddress && normalizeWalletAddressKey(item.walletAddress) !== walletAddress) return false;
     if (filters.chain && item.chain !== filters.chain) return false;
-    if (tokenAddress && item.tokenAddress.toLowerCase() !== tokenAddress) return false;
+    if (tokenAddress && normalizeAddressKey(item.tokenAddress) !== tokenAddress) return false;
     if (!search) return true;
     const combined = [
       item.tokenAddress,
@@ -311,13 +313,13 @@ export class ReviewService {
         .select('*')
         .order('updated_at', { ascending: false });
       if (filters.walletAddress) {
-        query = query.eq('wallet_address', filters.walletAddress.toLowerCase());
+        query = query.eq('wallet_address', normalizeAddress(filters.walletAddress) ?? filters.walletAddress);
       }
       if (filters.chain) {
         query = query.eq('chain', filters.chain);
       }
       if (filters.tokenAddress) {
-        query = query.eq('token_address', filters.tokenAddress.toLowerCase());
+        query = query.eq('token_address', normalizeAddress(filters.tokenAddress) ?? filters.tokenAddress);
       }
       if (filters.limit && filters.limit > 0) {
         query = query.limit(filters.limit);

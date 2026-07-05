@@ -1,5 +1,7 @@
 import { browser } from 'wxt/browser';
-import { parseEther } from 'viem';
+import { parseUnits } from 'viem';
+import { ChainId } from '@/constants/chains/chainId';
+import { getTradeExecutor } from '@/services/chain/registry';
 import { TRADE_SUCCESS_SOUND_PRESETS, type TokenSnipeBuyMethod, type TokenSnipeTask, type TokenSnipeTaskRuntimeStatus, type UnifiedTwitterSignal } from '@/types/extention';
 import { defaultSettings } from '@/utils/defaults';
 import { SettingsService } from '@/services/settings';
@@ -13,7 +15,7 @@ import {
 } from '@/services/limitOrders/advancedAutoSell';
 import { cancelAllSellLimitOrdersForToken, createLimitOrder } from '@/services/limitOrders/store';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
-import { parseNumber } from '@/services/xSniper/engine/metrics';
+import { normalizeAddress, parseNumber } from '@/services/xSniper/engine/metrics';
 
 export const TOKEN_SNIPER_STATUS_STORAGE_KEY = 'dagobang_token_sniper_task_status_v1';
 export const TOKEN_SNIPER_HISTORY_STORAGE_KEY = 'dagobang_token_sniper_order_history_v1';
@@ -305,7 +307,12 @@ const normalizeBuyMethod = (task: TokenSnipeTask): TokenSnipeBuyMethod => {
   if (raw === 'all' || raw === 'dagobang' || raw === 'gmgn') return raw;
   return 'dagobang';
 };
-const normalizeAddress = (value: unknown): string => (typeof value === 'string' ? value.trim().toLowerCase() : '');
+const normalizeChainAddress = (value: unknown): string => {
+  if (typeof value !== 'string') return '';
+  return normalizeAddress(value) ?? '';
+};
+const resolveNativeAmountWei = (chainId: number, amountNative: number) =>
+  parseUnits(String(amountNative), chainId === ChainId.SOL ? 9 : 18).toString();
 
 const updateTaskStatus = async (taskId: string, patch: Partial<TokenSnipeTaskRuntimeStatus>) => {
   await enqueueStatusMutation((statusMap) => {
@@ -342,7 +349,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
     } catch {
     }
   };
-  const requestGmgnBuyViaContent = async (input: { tokenAddress: `0x${string}`; amountWei: string; gasGwei?: string }) => {
+  const requestGmgnBuyViaContent = async (input: { tokenAddress: string; amountWei: string; gasGwei?: string }) => {
     try {
       const tabs = await browser.tabs.query({});
       const settled = await Promise.all(
@@ -394,7 +401,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
         const msg = settled.find((item: any) => typeof item?.error === 'string')?.error;
         return { ok: false, error: msg || '未找到可用的 GMGN 页面或页面未登录' };
       }
-      return { ok: true, address: normalizeAddress((success as any).address) };
+      return { ok: true, address: normalizeChainAddress((success as any).address) };
     } catch {
       return { ok: false, error: 'GMGN地址查询失败' };
     }
@@ -563,15 +570,15 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
             deps.onStateChanged();
             continue;
           }
-          const amountWei = parseEther(String(amountBnb)).toString();
+          const amountWei = resolveNativeAmountWei(task.chain, amountBnb);
           const buyMethod = normalizeBuyMethod(task);
           let shouldDagobangBuy = buyMethod === 'all' || buyMethod === 'dagobang';
           let shouldGmgnBuy = buyMethod === 'all' || buyMethod === 'gmgn';
-          const pluginWalletAddress = normalizeAddress(status.address);
+          const pluginWalletAddress = normalizeChainAddress(status.address);
           let sameAddressDowngraded = false;
           if (buyMethod === 'all' && shouldDagobangBuy && shouldGmgnBuy && pluginWalletAddress) {
             const gmgnWalletRsp = await requestGmgnWalletAddressViaContent();
-            const gmgnWalletAddress = gmgnWalletRsp.ok ? normalizeAddress(gmgnWalletRsp.address) : '';
+            const gmgnWalletAddress = gmgnWalletRsp.ok ? normalizeChainAddress(gmgnWalletRsp.address) : '';
             if (gmgnWalletAddress && gmgnWalletAddress === pluginWalletAddress) {
               shouldGmgnBuy = false;
               sameAddressDowngraded = true;
@@ -605,7 +612,7 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                 chainId: task.chain,
                 tokenAddress: task.tokenAddress,
                 nativeAmountWei: amountWei,
-                fromAddress: pluginWalletAddress ? (pluginWalletAddress as `0x${string}`) : undefined,
+                fromAddress: pluginWalletAddress || undefined,
                 gasPriceGwei: typeof task.buyGasGwei === 'string' ? String(task.buyGasGwei).trim() : undefined,
                 priorityFeeNative: typeof task.buyBribeBnb === 'string' ? String(task.buyBribeBnb).trim() : undefined,
                 tokenInfo: tokenInfo as any,
@@ -730,8 +737,8 @@ export const createTokenSniperTrade = (deps: { onStateChanged: () => void }) => 
                 null,
               );
               if (cfg?.enabled && entryPriceUsd != null && entryPriceUsd > 0) {
-                const fromAddress = pluginWalletAddress ? (pluginWalletAddress as `0x${string}`) : undefined;
-                await TradeService.approveMaxForSellIfNeeded(task.chain, task.tokenAddress, tokenInfo, { fromAddress });
+                const fromAddress = pluginWalletAddress || undefined;
+                await getTradeExecutor(task.chain).approveMaxForSellIfNeeded(task.chain, task.tokenAddress, tokenInfo, { fromAddress });
                 await cancelAllSellLimitOrdersForToken(task.chain, task.tokenAddress, fromAddress);
                 const orders = buildStrategySellOrderInputs({
                   config: cfg,

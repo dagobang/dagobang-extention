@@ -1,7 +1,7 @@
 import type { UnifiedTwitterSignal } from '@/types/extention';
 
 export type TokenMetrics = {
-  tokenAddress?: `0x${string}`;
+  tokenAddress?: string;
   chain?: string;
   tokenSymbol?: string;
   launchpadPlatform?: string;
@@ -17,7 +17,7 @@ export type TokenMetrics = {
   createdAtMs?: number;
   firstSeenAtMs?: number;
   updatedAtMs?: number;
-  devAddress?: `0x${string}`;
+  devAddress?: string;
   devHoldPercent?: number;
   devMaxBuyPercent?: number;
   viewerCount?: number;
@@ -64,11 +64,34 @@ export const computeTickerLen = (symbol: string) => {
   return total;
 };
 
-export const normalizeAddress = (addr: string | null | undefined): `0x${string}` | null => {
+export const isEvmAddress = (addr: string | null | undefined) => /^0x[a-fA-F0-9]{40}$/.test(String(addr || '').trim());
+
+export const isSolanaAddress = (addr: string | null | undefined) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(addr || '').trim());
+
+export const normalizeAddress = (addr: string | null | undefined): string | null => {
   if (!addr) return null;
   const trimmed = addr.trim();
-  if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return null;
-  return trimmed as `0x${string}`;
+  if (isEvmAddress(trimmed)) return trimmed.toLowerCase();
+  if (isSolanaAddress(trimmed)) return trimmed;
+  return null;
+};
+
+export const normalizeAddressKey = (addr: string | null | undefined): string => {
+  const normalized = normalizeAddress(addr);
+  return normalized ?? '';
+};
+
+export const normalizeWalletAddressKey = (addr: string | null | undefined): string => {
+  const normalized = normalizeAddress(addr);
+  return normalized || 'all-wallets';
+};
+
+export const buildScopedTokenKey = (chainId: number | null | undefined, tokenAddress: string | null | undefined) => {
+  const key = normalizeAddressKey(tokenAddress);
+  const normalizedChainId = Number(chainId);
+  if (!key) return '';
+  if (Number.isFinite(normalizedChainId) && normalizedChainId > 0) return `${normalizedChainId}:${key}`;
+  return key;
 };
 
 export const normalizeEpochMs = (v: unknown) => {

@@ -1,10 +1,11 @@
 import type { XSniperBuyRecord } from '@/types/extention';
 import type { WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
+import { buildScopedTokenKey, normalizeAddress, normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 
 export type DryRunAutoSellPos = {
   chainId: number;
-  tokenAddress: `0x${string}`;
-  walletAddress?: `0x${string}`;
+  tokenAddress: string;
+  walletAddress?: string;
   openedAtMs: number;
   entryMcapUsd: number;
   remainingBps: number;
@@ -34,19 +35,21 @@ export type DryRunAutoSellPos = {
 
 export const maybeEvaluateDryRunAutoSell = async (input: {
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: string;
   nowMs: number;
   wsSnapshotsByAddr: Map<string, WsSnapshot[]>;
   dryRunAutoSellByPosKey: Map<string, DryRunAutoSellPos>;
   cleanupPosKey: (posKey: string) => void;
   emitRecord: (record: XSniperBuyRecord) => void;
 }) => {
-  const snapshotKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}`;
-  const parseTokenAddressFromPosKey = (posKey: string): `0x${string}` | null => {
+  const snapshotKey = buildScopedTokenKey(input.chainId, input.tokenAddress);
+  const parseTokenAddressFromPosKey = (posKey: string): string | null => {
     const parts = String(posKey || '').split(':');
-    const match = parts.find((p) => /^0x[a-f0-9]{40}$/i.test(String(p)));
-    if (!match) return null;
-    return String(match).toLowerCase() as `0x${string}`;
+    for (const part of parts) {
+      const normalized = normalizeAddress(part);
+      if (normalized) return normalized;
+    }
+    return null;
   };
   const snapshots = input.wsSnapshotsByAddr.get(snapshotKey) ?? [];
   const cur = snapshots.length ? snapshots[snapshots.length - 1] : null;
@@ -55,7 +58,7 @@ export const maybeEvaluateDryRunAutoSell = async (input: {
 
   const keys = Array.from(input.dryRunAutoSellByPosKey.keys()).filter((k) => {
     const addr = parseTokenAddressFromPosKey(k);
-    return !!addr && addr.toLowerCase() === input.tokenAddress.toLowerCase();
+    return !!addr && addr === normalizeAddressKey(input.tokenAddress);
   });
   for (const posKey of keys) {
     const pos = input.dryRunAutoSellByPosKey.get(posKey);

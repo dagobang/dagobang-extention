@@ -8,6 +8,7 @@ import { parseCurrentUrl, parsePlatformTokenLink } from '@/utils/sites';
 import GmgnAPI from '@/hooks/GmgnAPI';
 import type { ReviewMetrics, TradeReview, TradeReviewUpsertInput } from '@/types/review';
 import { ReviewService } from '@/services/review';
+import { normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 
 type ReviewPanelProps = {
   visible: boolean;
@@ -690,7 +691,7 @@ export function ReviewPanel({
               {reviews.map((item) => (
                 (() => {
                   const pnl = Number(item.metrics?.totalProfitPnl || 0);
-                  const isCurrentToken = !!tokenAddress && item.tokenAddress.toLowerCase() === tokenAddress.toLowerCase();
+                  const isCurrentToken = !!tokenAddress && normalizeAddressKey(item.tokenAddress) === normalizeAddressKey(tokenAddress);
                   const isProfit = pnl >= 0;
                   const cardCls = activeId === item.id
                     ? (isProfit ? 'border-emerald-500 bg-emerald-500/10' : 'border-rose-500 bg-rose-500/10')

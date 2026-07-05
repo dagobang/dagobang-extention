@@ -1,4 +1,5 @@
 import { browser } from 'wxt/browser';
+import { normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
 
 export const XSNIPER_DECISION_SNAPSHOT_STORAGE_KEY = 'dagobang_xsniper_decision_snapshot_v1';
 const XSNIPER_DECISION_SNAPSHOT_LIMIT = 3000;
@@ -12,9 +13,9 @@ export type XSniperDecisionSnapshot = {
   signalEventId?: string;
   signalTweetId?: string;
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: string;
   walletAddressKey: string;
-  walletAddressResolved?: `0x${string}`;
+  walletAddressResolved?: string;
   walletSource?: 'strategy' | 'active' | 'fallback';
   firstSeenAtMs: number;
   updatedAtMs: number;
@@ -42,9 +43,9 @@ export type UpsertDecisionSnapshotInput = {
   signalEventId?: string;
   signalTweetId?: string;
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: string;
   walletAddressKey: string;
-  walletAddressResolved?: `0x${string}`;
+  walletAddressResolved?: string;
   walletSource?: 'strategy' | 'active' | 'fallback';
   everEligibleInTokenAgeWindow?: boolean;
   everEligibleInTweetAgeWindow?: boolean;
@@ -67,17 +68,17 @@ export type UpsertDecisionSnapshotInput = {
 const buildDecisionSnapshotKey = (input: {
   signalStableId: string;
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: string;
   walletAddressKey: string;
-}) => `${input.signalStableId}:${input.chainId}:${input.tokenAddress.toLowerCase()}:${input.walletAddressKey.toLowerCase()}`;
+}) => `${input.signalStableId}:${input.chainId}:${normalizeAddressKey(input.tokenAddress)}:${normalizeWalletAddressKey(input.walletAddressKey)}`;
 
 const cleanOldSnapshots = (list: XSniperDecisionSnapshot[], nowMs: number) =>
   list.filter((row) => nowMs - row.updatedAtMs <= XSNIPER_DECISION_SNAPSHOT_TTL_MS);
 
 export const upsertXSniperDecisionSnapshot = async (input: UpsertDecisionSnapshotInput) => {
   const signalStableId = String(input.signalStableId || '').trim();
-  const walletAddressKey = String(input.walletAddressKey || '').trim().toLowerCase();
-  const tokenAddress = String(input.tokenAddress || '').trim().toLowerCase() as `0x${string}`;
+  const walletAddressKey = normalizeWalletAddressKey(input.walletAddressKey);
+  const tokenAddress = normalizeAddress(input.tokenAddress);
   if (!signalStableId || !walletAddressKey || !tokenAddress) return;
   const nowMs = Date.now();
   const key = buildDecisionSnapshotKey({
@@ -104,7 +105,7 @@ export const upsertXSniperDecisionSnapshot = async (input: UpsertDecisionSnapsho
             chainId: input.chainId,
             tokenAddress,
             walletAddressKey,
-            walletAddressResolved: input.walletAddressResolved,
+            walletAddressResolved: normalizeAddress(input.walletAddressResolved ?? '') ?? undefined,
             walletSource: input.walletSource,
             firstSeenAtMs: nowMs,
             updatedAtMs: nowMs,
@@ -122,7 +123,7 @@ export const upsertXSniperDecisionSnapshot = async (input: UpsertDecisionSnapsho
           chainId: input.chainId,
           tokenAddress,
           walletAddressKey,
-          walletAddressResolved: input.walletAddressResolved || base.walletAddressResolved,
+          walletAddressResolved: normalizeAddress(input.walletAddressResolved ?? '') || base.walletAddressResolved,
           walletSource: input.walletSource || base.walletSource,
           updatedAtMs: nowMs,
           everEligibleInTokenAgeWindow: base.everEligibleInTokenAgeWindow || input.everEligibleInTokenAgeWindow === true,

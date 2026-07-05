@@ -13,12 +13,15 @@ export class EvmTradeExecutor implements TradeExecutor {
 
   async refreshNonce(input: {
     chainId: number;
-    fromAddress?: `0x${string}`;
+    fromAddress?: string;
     txSide?: 'buy' | 'sell';
     submitChannel?: import('@/types/extention').SubmitChannel;
     error?: any;
   }) {
-    return await TradeService.refreshNonce(input);
+    return await TradeService.refreshNonce({
+      ...input,
+      fromAddress: input.fromAddress as `0x${string}` | undefined,
+    });
   }
 
   async buy(
@@ -89,18 +92,24 @@ export class EvmTradeExecutor implements TradeExecutor {
     chainId: number,
     tokenAddress: string,
     tokenInfo: import('@/types/token').TokenInfo,
-    opts?: { extraSpenders?: string[]; fromAddress?: `0x${string}`; submitChannel?: import('@/types/extention').SubmitChannel }
+    opts?: { extraSpenders?: string[]; fromAddress?: string; submitChannel?: import('@/types/extention').SubmitChannel }
   ) {
-    return await TradeService.approveMaxForSellIfNeeded(chainId, tokenAddress, tokenInfo, opts);
+    return await TradeService.approveMaxForSellIfNeeded(chainId, tokenAddress, tokenInfo, {
+      ...opts,
+      fromAddress: opts?.fromAddress as `0x${string}` | undefined,
+    });
   }
 
   async checkSellAllowanceInsufficient(
     chainId: number,
     tokenAddress: string,
     tokenInfo: import('@/types/token').TokenInfo,
-    opts?: { extraSpenders?: string[]; fromAddress?: `0x${string}` }
+    opts?: { extraSpenders?: string[]; fromAddress?: string }
   ) {
-    return await TradeService.checkSellAllowanceInsufficient(chainId, tokenAddress, tokenInfo, opts);
+    return await TradeService.checkSellAllowanceInsufficient(chainId, tokenAddress, tokenInfo, {
+      ...opts,
+      fromAddress: opts?.fromAddress as `0x${string}` | undefined,
+    });
   }
 }
 

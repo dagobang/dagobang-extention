@@ -7,6 +7,7 @@ import { call } from '@/utils/messaging';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { browser } from 'wxt/browser';
 import { loadXSniperDecisionSnapshots, XSNIPER_DECISION_SNAPSHOT_STORAGE_KEY, type XSniperDecisionSnapshot } from '@/services/xSniper/xSniperDecisionSnapshot';
+import { normalizeGmgnChainName, normalizeTokenAddressKey } from '@/utils/gmgnWs';
 
 type TTFunc = (key: string, subs?: Array<string | number>) => string;
 
@@ -77,10 +78,31 @@ const normalizeEpochMs = (v: unknown) => {
   return Math.floor(n);
 };
 
-const normalizeWalletAddress = (input: unknown): `0x${string}` | undefined => {
-  const raw = String(input ?? '').trim().toLowerCase();
-  if (!raw || !/^0x[a-f0-9]{40}$/.test(raw)) return undefined;
-  return raw as `0x${string}`;
+const isEvmAddress = (value: string) => /^0x[a-fA-F0-9]{40}$/.test(value);
+
+const isSolanaAddress = (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
+
+const normalizeChainAddressKey = (input: unknown) => {
+  const raw = String(input ?? '').trim();
+  if (!raw) return '';
+  return isEvmAddress(raw) ? raw.toLowerCase() : raw;
+};
+
+const normalizeWalletAddress = (input: unknown): string | undefined => {
+  const raw = String(input ?? '').trim();
+  if (!raw) return undefined;
+  if (isEvmAddress(raw)) return raw.toLowerCase();
+  if (isSolanaAddress(raw)) return raw;
+  return undefined;
+};
+
+const inferSignalTokenChainName = (chain: unknown, tokenAddress?: unknown) => {
+  const normalizedChain = normalizeGmgnChainName(chain);
+  if (normalizedChain) return normalizedChain;
+  const address = typeof tokenAddress === 'string' ? tokenAddress.trim() : '';
+  if (isSolanaAddress(address)) return 'sol';
+  if (isEvmAddress(address)) return 'bsc';
+  return undefined;
 };
 
 const getSignalAtMs = (signal: UnifiedTwitterSignal) => {
@@ -264,6 +286,7 @@ const buildNotBoughtReason = (input: {
   signal: UnifiedTwitterSignal;
   token: UnifiedSignalToken;
   recentBoughtCooldown: boolean;
+  currentChain?: string;
 }) => {
   if (!input.wsMonitorEnabled) return input.tt('contentUi.xMonitor.notBought.reason.wsMonitorDisabled');
   if (!input.strategy?.enabled) return input.tt('contentUi.xMonitor.notBought.reason.sniperDisabled');
@@ -359,8 +382,9 @@ const buildNotBoughtReason = (input: {
     const seen = new Set<string>();
     for (const t of tokens) {
       const addr = typeof (t as any)?.tokenAddress === 'string' ? String((t as any).tokenAddress).trim() : '';
-      const key = addr.toLowerCase();
+      const key = normalizeTokenAddressKey(addr);
       if (!addr) continue;
+      if (input.currentChain && inferSignalTokenChainName((t as any)?.chain, addr) !== input.currentChain) continue;
       if (seen.has(key)) continue;
       seen.add(key);
       unique.push(t);
@@ -438,10 +462,10 @@ const buildNotBoughtReason = (input: {
     const selected = candidates.slice(0, perTweetMax);
     const selectedKey = new Set<string>(
       selected
-        .map((t) => (typeof (t as any)?.tokenAddress === 'string' ? String((t as any).tokenAddress).trim().toLowerCase() : ''))
+        .map((t) => (typeof (t as any)?.tokenAddress === 'string' ? normalizeTokenAddressKey((t as any).tokenAddress) : ''))
         .filter(Boolean)
     );
-    const curAddr = typeof (input.token as any)?.tokenAddress === 'string' ? String((input.token as any).tokenAddress).trim().toLowerCase() : '';
+    const curAddr = typeof (input.token as any)?.tokenAddress === 'string' ? normalizeTokenAddressKey((input.token as any).tokenAddress) : '';
     return curAddr ? selectedKey.has(curAddr) : false;
   })();
 
@@ -674,6 +698,8 @@ export function XMonitorContent({
   }, [settings]);
   const locale: Locale = normalizeLocale(resolvedSettings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
+  const resolvedSiteInfo = siteInfo ?? { chain: 'bsc', tokenAddress: '', platform: 'gmgn', showBar: true };
+  const currentChain = normalizeGmgnChainName(resolvedSiteInfo.chain) ?? 'bsc';
 
   const [wsMonitorEnabled, setWsMonitorEnabled] = useState(() => resolvedSettings?.autoTrade?.wsMonitorEnabled !== false);
   useEffect(() => {
@@ -685,7 +711,7 @@ export function XMonitorContent({
     () => resolveTwitterSnipeByActivePreset(twitterSnipeSource),
     [twitterSnipeSource]
   );
-  const [activeWalletAddress, setActiveWalletAddress] = useState<`0x${string}` | undefined>(undefined);
+  const [activeWalletAddress, setActiveWalletAddress] = useState<string | undefined>(undefined);
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
@@ -711,7 +737,7 @@ export function XMonitorContent({
   }, [active]);
   const decisionWalletAddressKey = useMemo(() => {
     const strategyWallet = normalizeWalletAddress((twitterSnipeStrategy as any)?.walletAddress);
-    return (strategyWallet || activeWalletAddress || 'all-wallets').toLowerCase();
+    return normalizeChainAddressKey(strategyWallet || activeWalletAddress || 'all-wallets') || 'all-wallets';
   }, [twitterSnipeStrategy, activeWalletAddress]);
   const tickerLenFilter = useMemo(() => {
     const parseLen = (v: any) => {
@@ -743,7 +769,7 @@ export function XMonitorContent({
         const nextFail: Record<string, { tsMs: number; reason: string }> = {};
         for (const r of list) {
           if (!r || r.side !== 'buy') continue;
-          const addr = typeof r.tokenAddress === 'string' ? r.tokenAddress.trim().toLowerCase() : '';
+          const addr = normalizeTokenAddressKey(r.tokenAddress);
           if (!addr) continue;
           const tsMs = typeof r.tsMs === 'number' ? r.tsMs : 0;
           const reason = typeof r.reason === 'string' ? r.reason.trim() : '';
@@ -789,9 +815,9 @@ export function XMonitorContent({
         if (raw && typeof raw === 'object') {
           for (const [key, ts] of Object.entries(raw as Record<string, unknown>)) {
             if (typeof key !== 'string') continue;
-            const match = key.match(/^(dry:)?\d+:(0x[a-fA-F0-9]{40}):full$/);
+            const match = key.match(/^(dry:)?\d+:([^:]+):full$/);
             if (!match) continue;
-            const addr = String(match[2]).toLowerCase();
+            const addr = normalizeTokenAddressKey(match[2]);
             const n = typeof ts === 'number' ? ts : Number(ts);
             if (!Number.isFinite(n)) continue;
             if (now - n > BOUGHT_ONCE_TTL_MS) continue;
@@ -817,7 +843,7 @@ export function XMonitorContent({
       if (!message || message.type !== 'bg:xsniper:buy') return;
       const record = message.record as XSniperBuyRecordLite | undefined;
       if (!record || record.side !== 'buy') return;
-      const addr = typeof record.tokenAddress === 'string' ? record.tokenAddress.trim().toLowerCase() : '';
+      const addr = normalizeTokenAddressKey(record.tokenAddress);
       if (!addr) return;
       const tsMs = typeof record.tsMs === 'number' ? record.tsMs : 0;
       const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
@@ -871,12 +897,12 @@ export function XMonitorContent({
         const allowAllWalletFallback = decisionWalletAddressKey !== 'all-wallets';
         for (const row of list) {
           if (!row) continue;
-          const walletKey = typeof row.walletAddressKey === 'string' ? row.walletAddressKey.trim().toLowerCase() : 'all-wallets';
+          const walletKey = normalizeChainAddressKey(row.walletAddressKey || 'all-wallets') || 'all-wallets';
           const walletPriority = walletKey === decisionWalletAddressKey
             ? 2
             : (allowAllWalletFallback && walletKey === 'all-wallets' ? 1 : 0);
           if (walletPriority <= 0) continue;
-          const addr = typeof row.tokenAddress === 'string' ? row.tokenAddress.trim().toLowerCase() : '';
+          const addr = normalizeTokenAddressKey(row.tokenAddress);
           if (!addr) continue;
           const reason = resolveDecisionReason(row);
           if (!reason) continue;
@@ -1057,11 +1083,13 @@ export function XMonitorContent({
     () => normalizeTargetUsers((resolvedSettings as any)?.autoTrade?.tokenSnipe?.targetUsers),
     [resolvedSettings]
   );
+  const signalHasCurrentChainTokens = (signal: UnifiedTwitterSignal) =>
+    normalizeSignalTokensForDisplay(signal).some((token) => inferSignalTokenChainName(token.chain, token.tokenAddress) === currentChain);
 
   const visibleSignals = useMemo(() => {
     let next = signalList;
     if (onlyWithTokens) {
-      next = next.filter((s) => Array.isArray(s.tokens) && s.tokens.length > 0);
+      next = next.filter((s) => signalHasCurrentChainTokens(s));
     }
     if (userFilterMode === 'twitterSnipe') {
       next = next.filter((s) => matchesTargetUsers(s, twitterSnipeTargetUsers));
@@ -1069,7 +1097,7 @@ export function XMonitorContent({
       next = next.filter((s) => matchesTargetUsers(s, tokenSnipeTargetUsers));
     }
     return next;
-  }, [signalList, onlyWithTokens, userFilterMode, twitterSnipeTargetUsers, tokenSnipeTargetUsers]);
+  }, [signalList, onlyWithTokens, userFilterMode, twitterSnipeTargetUsers, tokenSnipeTargetUsers, currentChain]);
 
   useEffect(() => {
     setSignalPage(1);
@@ -1261,6 +1289,7 @@ export function XMonitorContent({
               const followFollowers = formatCountShort(signal.followedUserFollowers);
 
               const displayTokens = normalizeSignalTokensForDisplay(signal)
+                .filter((t) => inferSignalTokenChainName(t.chain, t.tokenAddress) === currentChain)
                 .filter((t) => {
                   const min = tickerLenFilter.min;
                   const max = tickerLenFilter.max;
@@ -1274,8 +1303,8 @@ export function XMonitorContent({
                 })
                 .slice()
                 .sort((a, b) => {
-                  const aa = typeof a.tokenAddress === 'string' ? a.tokenAddress.trim().toLowerCase() : '';
-                  const bb = typeof b.tokenAddress === 'string' ? b.tokenAddress.trim().toLowerCase() : '';
+                  const aa = normalizeTokenAddressKey(a.tokenAddress);
+                  const bb = normalizeTokenAddressKey(b.tokenAddress);
                   const ba = aa ? boughtByAddr[aa] : null;
                   const bbought = bb ? boughtByAddr[bb] : null;
                   const ra = ba ? (ba.dryRun ? 1 : 0) : 2;
@@ -1302,7 +1331,7 @@ export function XMonitorContent({
                 const out: Record<string, number> = {};
                 for (let i = 0; i < sortedByMcap.length; i += 1) {
                   const addr = typeof sortedByMcap[i]?.tokenAddress === 'string'
-                    ? sortedByMcap[i].tokenAddress.trim().toLowerCase()
+                    ? normalizeTokenAddressKey(sortedByMcap[i].tokenAddress)
                     : '';
                   if (!addr || out[addr] != null) continue;
                   out[addr] = i + 1;
@@ -1589,10 +1618,11 @@ export function XMonitorContent({
                     <div className="mt-3 space-y-2">
                       {displayTokens.map((token) => {
                         const tokenAddr = token.tokenAddress;
-                        const bought = boughtByAddr[tokenAddr.toLowerCase()] ?? null;
+                        const tokenAddrKey = normalizeTokenAddressKey(tokenAddr);
+                        const bought = boughtByAddr[tokenAddrKey] ?? null;
                         const signalReasonKeys = getSignalIdentityKeys(signal);
                         const persistedFailureReasonLabel = (() => {
-                          const addr = tokenAddr.toLowerCase();
+                          const addr = tokenAddrKey;
                           let latestTs = 0;
                           let latestReason = '';
                           for (const sk of signalReasonKeys) {
@@ -1605,7 +1635,7 @@ export function XMonitorContent({
                           return latestReason ? resolveReasonLabel(tt, latestReason) : '';
                         })();
                         const decisionFailureReasonLabel = (() => {
-                          const addr = tokenAddr.toLowerCase();
+                          const addr = tokenAddrKey;
                           let latestTs = 0;
                           let latestReason = '';
                           for (const sk of signalReasonKeys) {
@@ -1618,7 +1648,7 @@ export function XMonitorContent({
                           return latestReason ? resolveReasonLabel(tt, latestReason) : '';
                         })();
                         const latestDecision = (() => {
-                          const addr = tokenAddr.toLowerCase();
+                          const addr = tokenAddrKey;
                           let latestTs = 0;
                           let latest: XSniperDecisionReasonLite | null = null;
                           for (const sk of signalReasonKeys) {
@@ -1639,7 +1669,7 @@ export function XMonitorContent({
                         const wsConfirmDetailText = latestDecision?.reason === 'ws_confirm_failed'
                           ? formatWsConfirmFailed(tt, { windowMs: latestDecision.wsConfirmWindowMs, checks: latestDecision.wsConfirmFailedChecks })
                           : '';
-                        const boughtOnce = boughtOnceByAddr[tokenAddr.toLowerCase()] ?? null;
+                        const boughtOnce = boughtOnceByAddr[tokenAddrKey] ?? null;
                         const nowMs = Date.now();
                         const strategyDryRun = twitterSnipeStrategy?.dryRun === true;
                         const recentBoughtCooldown = strategyDryRun
@@ -1653,10 +1683,11 @@ export function XMonitorContent({
                             signal,
                             token,
                             recentBoughtCooldown,
+                            currentChain,
                           }))
                           : null;
                         const shortAddr = `${tokenAddr.slice(0, 6)}...${tokenAddr.slice(-4)}`;
-                        const mcapRank = mcapRankByAddr[tokenAddr.toLowerCase()] ?? null;
+                        const mcapRank = mcapRankByAddr[tokenAddrKey] ?? null;
                         const symbol = token.tokenSymbol?.trim() || '';
                         const tokenName = token.tokenName?.trim() || '';
                         const name = symbol || tokenName || shortAddr;
@@ -1703,8 +1734,7 @@ export function XMonitorContent({
                                 type="button"
                                 className="min-w-0 truncate text-left text-[14px] font-semibold text-zinc-100 hover:underline underline-offset-2"
                                 onClick={() => {
-                                  if (!siteInfo) return;
-                                  navigateToUrl(parsePlatformTokenLink(siteInfo, tokenAddr));
+                                  navigateToUrl(parsePlatformTokenLink(resolvedSiteInfo, tokenAddr));
                                 }}
                                 title={tokenAddr}
                               >

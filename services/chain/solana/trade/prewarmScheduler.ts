@@ -63,7 +63,9 @@ function ensurePrewarmTask(input: SharedPrewarmInput): Promise<void> | null {
         submitChannel: input.submitChannel,
         platform: platform || undefined,
       });
-    } catch {
+    } catch (error) {
+      prewarmStartedAtByKey.delete(key);
+      throw error;
     } finally {
       prewarmInFlightByKey.delete(key);
     }

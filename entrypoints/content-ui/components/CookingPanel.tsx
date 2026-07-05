@@ -7,6 +7,7 @@ import GmgnAPI from '@/hooks/GmgnAPI';
 import { call } from '@/utils/messaging';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
+import { normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 
 type CookingPanelProps = {
   visible: boolean;
@@ -200,7 +201,7 @@ export function CookingPanel({
       return;
     }
     if (!siteInfo?.tokenAddress) return;
-    const tokenKey = siteInfo.tokenAddress.toLowerCase();
+    const tokenKey = normalizeAddressKey(siteInfo.tokenAddress);
     const isNewToken = autoFillTokenKeyRef.current !== tokenKey;
     const nextLogo = pickFirstNonEmpty(currentTokenInfo?.logo);
     const nextName = pickFirstNonEmpty(currentTokenInfo?.name, currentTokenName);

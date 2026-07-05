@@ -320,7 +320,7 @@ export class SolanaTradeExecutor implements TradeExecutor {
 
   async refreshNonce(_input: {
     chainId: number;
-    fromAddress?: EvmAddress;
+    fromAddress?: string;
     txSide?: 'buy' | 'sell';
     submitChannel?: SubmitChannel;
     error?: any;
@@ -471,7 +471,7 @@ export class SolanaTradeExecutor implements TradeExecutor {
     _chainId: number,
     _tokenAddress: string,
     _tokenInfo: TokenInfo,
-    _opts?: { extraSpenders?: string[]; fromAddress?: EvmAddress; submitChannel?: SubmitChannel }
+    _opts?: { extraSpenders?: string[]; fromAddress?: string; submitChannel?: SubmitChannel }
   ) {
     return null;
   }
@@ -480,7 +480,7 @@ export class SolanaTradeExecutor implements TradeExecutor {
     _chainId: number,
     _tokenAddress: string,
     _tokenInfo: TokenInfo,
-    _opts?: { extraSpenders?: string[]; fromAddress?: EvmAddress }
+    _opts?: { extraSpenders?: string[]; fromAddress?: string }
   ) {
     return { insufficient: false, checked: [] };
   }

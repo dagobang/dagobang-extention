@@ -16,6 +16,7 @@ import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInD
 import { getGasPriceWei, prewarmNonce, sendTransaction } from './tradeTx';
 import { getSellSpenders, hasInsufficientSellAllowance, type SellAllowanceCheckResult } from './sellAllowance';
 import { encodeFourMemeBuyTokenData, encodeFourMemeUint256, tryFourMemeBuyEstimatedAmount, tryFourMemeSellEstimatedFunds } from './tradeFourMeme';
+import { buildScopedTokenKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
 import {
   encodeHyperZapBuyData,
   encodeHyperZapSellData,
@@ -1286,7 +1287,7 @@ export class TradeService {
       onSubmitted?: (ctx: { side: 'buy'; txHash: `0x${string}`; submitElapsedMs: number }) => void | Promise<void>;
     }
   ) {
-    const flowId = `buy-auto:${input.chainId}:${input.tokenAddress.toLowerCase()}:${Date.now().toString(36)}`;
+    const flowId = `buy-auto:${buildScopedTokenKey(input.chainId, input.tokenAddress)}:${Date.now().toString(36)}`;
     const flowStart = Date.now();
     console.log('[trade.buy.auto][start]', {
       flowId,
@@ -1379,7 +1380,7 @@ export class TradeService {
     }
   ) {
     if (!input.tokenInfo) throw new Error('Token info required');
-    const flowId = `sell-auto:${input.chainId}:${input.tokenAddress.toLowerCase()}:${Date.now().toString(36)}`;
+    const flowId = `sell-auto:${buildScopedTokenKey(input.chainId, input.tokenAddress)}:${Date.now().toString(36)}`;
     const flowStart = Date.now();
     console.log('[trade.sell.auto][start]', {
       flowId,
@@ -1609,8 +1610,8 @@ export class TradeService {
       forceRefreshHyperState?: boolean;
     }
   ) {
-    const sellFrom = String(input.fromAddress || 'default').toLowerCase();
-    const sellLockKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${sellFrom}`;
+    const sellFrom = input.fromAddress ? normalizeWalletAddressKey(input.fromAddress) : 'default';
+    const sellLockKey = `${buildScopedTokenKey(input.chainId, input.tokenAddress)}:${sellFrom}`;
     if (this.sellInFlightByToken.has(sellLockKey)) {
       throw new Error('SELL_IN_FLIGHT');
     }

@@ -14,6 +14,7 @@ import { getSolanaTokenPriceUsdFromQuote } from './solanaPrice';
 import { isHyperAltfunPlatform, quoteHyperSellToUsdc } from '../trade/tradeHyper';
 import { SolanaRpcService } from '@/services/chain/solana/rpc';
 import type { ChainAddress } from '@/types/chain/address';
+import { buildScopedTokenKey, normalizeAddressKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
 
 export class TokenService {
   private static poolPairCache = new Map<string, { token0: `0x${string}`; token1: `0x${string}` }>();
@@ -49,7 +50,7 @@ export class TokenService {
     const now = Date.now();
     const resolvedChainId = typeof chainId === 'number' && Number.isFinite(chainId) ? chainId : undefined;
     const ttlMs = this.resolveBalanceCacheTtlMs(resolvedChainId);
-    const key = `${resolvedChainId ?? 'default'}:${owner.toLowerCase()}:${tokenAddress.toLowerCase()}`;
+    const key = `${resolvedChainId ?? 'default'}:${normalizeWalletAddressKey(owner)}:${buildScopedTokenKey(resolvedChainId, tokenAddress)}`;
     const cached = this.tokenBalanceCache.get(key);
     if (cached && now - cached.ts < ttlMs) return cached.value;
     const inFlight = this.tokenBalanceInFlight.get(key);
@@ -275,7 +276,7 @@ export class TokenService {
       return v;
     };
 
-    if (tokenAddress.toLowerCase() === wNativeAddress.toLowerCase()) {
+    if (normalizeAddressKey(tokenAddress) === normalizeAddressKey(wNativeAddress)) {
       const nativeUsd = await getNativePriceUsd();
       if (nativeUsd > 0) {
         this.tokenUsdCache.set(key, { ts: now, value: nativeUsd });

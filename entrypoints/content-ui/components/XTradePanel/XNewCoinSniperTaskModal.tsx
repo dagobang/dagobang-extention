@@ -72,12 +72,12 @@ export function XNewCoinSniperTaskModal({
             <input
               type="text"
               className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-[12px] outline-none"
-              placeholder="0x..."
+              placeholder="0x... / Solana address"
               value={taskEditor.tokenAddress ?? ''}
               disabled={!canEdit || saving}
               onChange={(e) => {
                 const raw = e.target.value.trim();
-                onTaskEditorChange({ tokenAddress: raw ? (raw as `0x${string}`) : undefined });
+                onTaskEditorChange({ tokenAddress: raw || undefined });
               }}
             />
           </label>

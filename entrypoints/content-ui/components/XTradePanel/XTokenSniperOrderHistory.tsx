@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatShortAddress } from '@/utils/format';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { t, type Locale } from '@/utils/i18n';
+import { normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 
 export type TokenSniperOrderRecord = {
   id: string;
@@ -119,10 +120,10 @@ export function XTokenSniperOrderHistory(props: {
             }
             try {
               const href = window.location.href;
-              const match = href.match(/0x[a-fA-F0-9]{40}/);
+              const match = href.match(/0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44}/);
               if (!match) return;
               const current = match[0];
-              if (current.toLowerCase() === item.tokenAddress.toLowerCase()) return;
+              if (normalizeAddressKey(current) === normalizeAddressKey(item.tokenAddress)) return;
               navigateToUrl(href.replace(new RegExp(current, 'i'), item.tokenAddress));
             } catch {
             }

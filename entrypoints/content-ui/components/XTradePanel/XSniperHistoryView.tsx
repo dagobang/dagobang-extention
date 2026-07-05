@@ -7,6 +7,7 @@ import { extractLaunchpadPlatform } from '@/constants/launchpad';
 import { call } from '@/utils/messaging';
 import { navigateToUrl, type SiteInfo, parsePlatformTokenLink } from '@/utils/sites';
 import { formatBnbAmount, formatCompactNumber, formatShortAddress } from '@/utils/format';
+import { normalizeTokenAddressKey } from '@/utils/gmgnWs';
 import { XSniperWsStatusSection } from './XSniperWsStatusSection';
 import { LaunchpadPlatformBadge } from './LaunchpadPlatformBadge';
 import { XSniperHistorySummaryPanel, type SummaryRunMode } from './XSniperHistorySummaryPanel';
@@ -147,16 +148,24 @@ const formatEvalPnl = (record: XSniperBuyRecord, key: keyof XSniperBuyRecord) =>
   return `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
 };
 
+const normalizeChainAddressKey = (input: unknown) => {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  return /^0x[a-fA-F0-9]{40}$/.test(raw) ? raw.toLowerCase() : raw;
+};
+
 const resolveWalletDisplay = (input: { record: XSniperBuyRecord; settings: Settings | null; walletAccounts?: Account[] }) => {
-  const walletAddress = String((input.record as any).walletAddress || '').trim().toLowerCase();
+  const rawWalletAddress = String((input.record as any).walletAddress || '').trim();
+  const walletAddress = normalizeChainAddressKey(rawWalletAddress);
   if (!walletAddress) return '未记录(默认当前钱包)';
   const accounts = Array.isArray(input.walletAccounts) && input.walletAccounts.length
     ? input.walletAccounts
     : (Array.isArray((input.settings as any)?.wallet?.accounts) ? (input.settings as any).wallet.accounts : []);
-  const account = accounts.find((acc: any) => String(acc?.address || '').trim().toLowerCase() === walletAddress);
-  const alias = String(((input.settings as any)?.wallet?.accountAliases || {})?.[walletAddress] || '').trim();
+  const account = accounts.find((acc: any) => normalizeChainAddressKey(acc?.address) === walletAddress);
+  const aliases = ((input.settings as any)?.wallet?.accountAliases || {}) as Record<string, string>;
+  const alias = String(aliases[walletAddress] || aliases[rawWalletAddress] || '').trim();
   const name = String(account?.name || '').trim() || alias || 'Wallet';
-  return `${name} (${formatShortAddress(walletAddress)})`;
+  return `${name} (${formatShortAddress(rawWalletAddress || walletAddress)})`;
 };
 
 const computeWeightedPnlPct = (input: {
@@ -278,7 +287,7 @@ export function XSniperHistoryView({
     const weightedStats = summaryGroups.map((g) => {
       const r = g.parent;
       const entryMcap = typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) ? r.marketCapUsd : null;
-      const latest = latestTokenByAddr[String(r.tokenAddress || '').toLowerCase()] ?? null;
+      const latest = latestTokenByAddr[normalizeTokenAddressKey(r.tokenAddress)] ?? null;
       const latestMcap = latest && typeof latest.marketCapUsd === 'number' && Number.isFinite(latest.marketCapUsd)
         ? Number(latest.marketCapUsd)
         : null;
@@ -303,7 +312,7 @@ export function XSniperHistoryView({
         sellCount: sellRecords.length,
         athPnlPct: (() => {
           const recordAthMcap = typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) ? r.athMarketCapUsd : null;
-          const athMcap = recordAthMcap ?? (athMcapByAddr[String(r.tokenAddress || '').toLowerCase()] ?? null);
+          const athMcap = recordAthMcap ?? (athMcapByAddr[normalizeTokenAddressKey(r.tokenAddress)] ?? null);
           if (entryMcap == null || !Number.isFinite(entryMcap) || entryMcap <= 0) return null;
           if (athMcap == null || !Number.isFinite(athMcap) || athMcap <= 0) return null;
           return ((athMcap / entryMcap) - 1) * 100;
@@ -319,7 +328,7 @@ export function XSniperHistoryView({
         const r = g.parent;
         const entryMcap = typeof r.marketCapUsd === 'number' && Number.isFinite(r.marketCapUsd) ? r.marketCapUsd : null;
         const recordAthMcap = typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) ? r.athMarketCapUsd : null;
-        const athMcap = recordAthMcap ?? (athMcapByAddr[String(r.tokenAddress || '').toLowerCase()] ?? null);
+        const athMcap = recordAthMcap ?? (athMcapByAddr[normalizeTokenAddressKey(r.tokenAddress)] ?? null);
         if (entryMcap == null || !Number.isFinite(entryMcap) || entryMcap <= 0) return null;
         if (athMcap == null || !Number.isFinite(athMcap) || athMcap <= 0) return null;
         return ((athMcap / entryMcap) - 1) * 100;
@@ -388,8 +397,8 @@ export function XSniperHistoryView({
       return Number.isFinite(resolved) && resolved > 0 ? resolved : settings.chainId;
     })();
     const chainId = typeof record.chainId === 'number' ? record.chainId : pageChainId;
-    const tokenAddressNormalized = String(record.tokenAddress || '').toLowerCase() as `0x${string}`;
-    if (!tokenAddressNormalized || !tokenAddressNormalized.startsWith('0x')) return;
+    const tokenAddressNormalized = normalizeTokenAddressKey(record.tokenAddress);
+    if (!tokenAddressNormalized) return;
 
     const percentBps = Math.max(1, Math.min(10000, Math.floor(pct * 100)));
     const isTurbo = settings.chains[chainId]?.executionMode === 'turbo';
@@ -412,7 +421,7 @@ export function XSniperHistoryView({
         platform: siteInfo?.platform ?? 'gmgn',
         chain,
         address: tokenAddressNormalized,
-      } as const);
+      } as any) as any;
 
       const tokenInfo: TokenInfo =
         httpTokenInfoRes.tokenInfo ??
@@ -435,7 +444,7 @@ export function XSniperHistoryView({
         chainId,
         tokenAddress: tokenAddressNormalized,
         tokenInfo,
-      } as const);
+      } as any) as any;
       if (approveRes.txHash) {
         const receipt = await call({ type: 'tx:waitForReceipt', hash: approveRes.txHash, chainId } as const);
         if (!receipt.ok) {
@@ -688,14 +697,14 @@ export function XSniperHistoryView({
             return (
               <div key={g.key} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
                 {(() => {
-                  const latest = latestTokenByAddr[String(r.tokenAddress).toLowerCase()] ?? null;
+                  const latest = latestTokenByAddr[normalizeTokenAddressKey(r.tokenAddress)] ?? null;
                   const isSell = r.side === 'sell';
                   const orderMcap = typeof r.marketCapUsd === 'number' ? r.marketCapUsd : null;
                   const latestMcap = latest && typeof latest.marketCapUsd === 'number' ? (latest.marketCapUsd as number) : null;
                   const sellRecords = g.children.filter((x) => x && x.side === 'sell');
                   const weightedPnl = computeWeightedPnlPct({ entryMcap: orderMcap, latestMcap, sellRecords });
                   const recordAthMcap = typeof r.athMarketCapUsd === 'number' && Number.isFinite(r.athMarketCapUsd) ? r.athMarketCapUsd : null;
-                  const athMcap = recordAthMcap ?? (athMcapByAddr[String(r.tokenAddress).toLowerCase()] ?? null);
+                  const athMcap = recordAthMcap ?? (athMcapByAddr[normalizeTokenAddressKey(r.tokenAddress)] ?? null);
                   const launchpadPlatform = extractLaunchpadPlatform(r as any) ?? extractLaunchpadPlatform(latest as any);
                   const pnlPct = weightedPnl.pnlPct;
                   const pnlText = pnlPct == null || !Number.isFinite(pnlPct) ? '-' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;

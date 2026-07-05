@@ -5,6 +5,7 @@ import { TokenService } from '@/services/token';
 import { getLimitOrders } from '@/services/storage';
 import { applyTrailingStopUpdate, hitLimitOrder, normalizeLimitOrderType, patchLimitOrder } from '@/services/limitOrders/store';
 import { getWalletAdapter } from '@/services/chain/registry';
+import { buildScopedTokenKey } from '@/services/xSniper/engine/metrics';
 import { normalizePriceValue } from '@/utils/format';
 import type { LimitOrder, LimitOrderScanStatus } from '@/types/extention';
 
@@ -58,7 +59,7 @@ export const createLimitOrderScanner = (deps: {
   let limitScanLastOk = true;
   let limitScanLastError: string | null = null;
 
-  const toPriceKey = (chainId: number, tokenAddress: string) => `${chainId}:${tokenAddress.toLowerCase()}`;
+  const toPriceKey = (chainId: number, tokenAddress: string) => buildScopedTokenKey(chainId, tokenAddress);
 
   const upsertDisplayPrice = (chainId: number, tokenAddress: string, priceUsd: number, ts = Date.now()) => {
     const scanPriceUsd = normalizePriceValue(priceUsd, 4, 6);

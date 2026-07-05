@@ -1,10 +1,12 @@
 import { chainNames } from '@/constants/chains/chainName';
+import { ChainId } from '@/constants/chains/chainId';
 import { FourmemeAPI } from '@/services/api/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenService } from '@/services/token';
 import type { TokenInfo } from '@/types/token';
 import { isAddress } from 'viem';
+import { isSolanaAddress, normalizeAddress } from '@/services/xSniper/engine/metrics';
 
 const isFlapAddress = (addr: string) => {
   const low = addr.toLowerCase();
@@ -37,14 +39,52 @@ const isRateLimitError = (error: unknown): boolean => {
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
+const isSupportedChainAddress = (chainId: number, tokenAddress: string) => {
+  if (chainId === ChainId.SOL) return isSolanaAddress(tokenAddress);
+  return isAddress(tokenAddress);
+};
+
+const buildGenericTokenInfoFromMeta = async (chainId: number, tokenAddress: string): Promise<TokenInfo> => {
+  const chain = chainNames[chainId as any] ?? 'bsc';
+  const meta = await TokenService.getMeta(tokenAddress, chainId);
+  return {
+    chain,
+    address: tokenAddress,
+    name: '',
+    symbol: String(meta.symbol ?? ''),
+    decimals: Number(meta.decimals ?? (chainId === ChainId.SOL ? 9 : 18)),
+    logo: '',
+    launchpad: '',
+    launchpad_progress: 0,
+    launchpad_platform: '',
+    launchpad_status: 1,
+    quote_token: '',
+    quote_token_address: '',
+    pool_pair: '',
+    dex_type: '',
+    tokenPrice: {
+      price: '0',
+      marketCap: '0',
+      timestamp: Date.now(),
+    },
+  };
+};
+
 export const createTokenInfoResolvers = () => {
   const fetchTokenInfoFreshWithReason = async (
     chainId: number,
     tokenAddressRaw: string,
   ): Promise<{ tokenInfo: TokenInfo | null; failureReason?: string }> => {
-    const tokenAddress = String(tokenAddressRaw || '').trim();
-    if (!isAddress(tokenAddress)) {
+    const tokenAddress = normalizeAddress(String(tokenAddressRaw || '').trim());
+    if (!tokenAddress || !isSupportedChainAddress(chainId, tokenAddress)) {
       return { tokenInfo: null, failureReason: 'invalid_address' };
+    }
+    if (chainId === ChainId.SOL) {
+      try {
+        return { tokenInfo: await buildGenericTokenInfoFromMeta(chainId, tokenAddress) };
+      } catch (error) {
+        return { tokenInfo: null, failureReason: isRateLimitError(error) ? 'rpc_rate_limited' : 'rpc_error' };
+      }
     }
     const typedAddress = tokenAddress as `0x${string}`;
     const chain = chainNames[chainId as any] ?? 'bsc';
@@ -108,7 +148,7 @@ export const createTokenInfoResolvers = () => {
     }
   };
 
-  const fetchTokenInfoFresh = async (chainId: number, tokenAddress: `0x${string}`): Promise<TokenInfo | null> => {
+  const fetchTokenInfoFresh = async (chainId: number, tokenAddress: string): Promise<TokenInfo | null> => {
     const result = await fetchTokenInfoFreshWithReason(chainId, tokenAddress);
     return result.tokenInfo;
   };
@@ -118,37 +158,12 @@ export const createTokenInfoResolvers = () => {
     tokenAddressRaw: string,
   ): Promise<{ tokenInfo: TokenInfo | null; failureReason?: string }> => {
     try {
-      const tokenAddress = String(tokenAddressRaw || '').trim();
-      if (!isAddress(tokenAddress)) {
+      const tokenAddress = normalizeAddress(String(tokenAddressRaw || '').trim());
+      if (!tokenAddress || !isSupportedChainAddress(chainId, tokenAddress)) {
         return { tokenInfo: null, failureReason: 'invalid_address' };
       }
-      const typedAddress = tokenAddress as `0x${string}`;
-      const chain = chainNames[chainId as any] ?? 'bsc';
       try {
-        const meta = await TokenService.getMeta(typedAddress, chainId);
-        return {
-          tokenInfo: {
-            chain,
-            address: typedAddress,
-            name: '',
-            symbol: String(meta.symbol ?? ''),
-            decimals: Number(meta.decimals ?? 18),
-            logo: '',
-            launchpad: '',
-            launchpad_progress: 0,
-            launchpad_platform: '',
-            launchpad_status: 1,
-            quote_token: '',
-            quote_token_address: '',
-            pool_pair: '',
-            dex_type: '',
-            tokenPrice: {
-              price: '0',
-              marketCap: '0',
-              timestamp: Date.now(),
-            },
-          },
-        };
+        return { tokenInfo: await buildGenericTokenInfoFromMeta(chainId, tokenAddress) };
       } catch (error) {
         return { tokenInfo: null, failureReason: isRateLimitError(error) ? 'rpc_rate_limited' : 'rpc_error' };
       }
@@ -157,14 +172,14 @@ export const createTokenInfoResolvers = () => {
     }
   };
 
-  const buildGenericTokenInfo = async (chainId: number, tokenAddress: `0x${string}`): Promise<TokenInfo | null> => {
+  const buildGenericTokenInfo = async (chainId: number, tokenAddress: string): Promise<TokenInfo | null> => {
     const result = await buildGenericTokenInfoWithReason(chainId, tokenAddress);
     return result.tokenInfo;
   };
 
   const getEntryPriceUsd = async (
     chainId: number,
-    tokenAddress: `0x${string}`,
+    tokenAddress: string,
     tokenInfo: TokenInfo,
     fallback: number | null,
     fallbackMcapUsd: number | null,

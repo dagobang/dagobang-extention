@@ -16,6 +16,7 @@ import { getEvmChainRuntime } from '@/constants/chains/evmRuntime';
 import { USDC, USDT } from '@/constants/tokens/chains/common';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
 import type { ChainAddress } from '@/types/chain/address';
+import { normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 
 const normalizeWalletAddr = (addr?: string | null): ChainAddress | null => {
   const raw = typeof addr === 'string' ? addr.trim() : '';
@@ -388,7 +389,7 @@ export function LimitTradePanel({
     }
   };
   const filteredOrders = onlyCurrentToken && tokenAddress
-    ? orders.filter((o) => o.tokenAddress.toLowerCase() === tokenAddress.toLowerCase())
+    ? orders.filter((o) => normalizeAddressKey(o.tokenAddress) === normalizeAddressKey(tokenAddress))
     : orders;
   const hasExecutedOrders = filteredOrders.some((o) => o.status === 'executed');
 
@@ -672,8 +673,8 @@ export function LimitTradePanel({
     if (v == null) return;
     if (autoTriggerPriceRef.current.key !== key) return;
     if (autoTriggerPriceRef.current.stage === 'fetched') return;
-    const tokenLower = tokenAddress.toLowerCase();
-    const tokenInfoLower = tokenInfo?.address?.toLowerCase?.();
+    const tokenLower = normalizeAddressKey(tokenAddress);
+    const tokenInfoLower = normalizeAddressKey(tokenInfo?.address || '');
     const tokenInfoMatches = tokenInfoLower === tokenLower;
     const tokenPriceChangedSinceSwitch = tokenPriceSnapshotRef.current == null || tokenPriceSnapshotRef.current !== v;
     if (!tokenInfoMatches && !tokenPriceChangedSinceSwitch) return;

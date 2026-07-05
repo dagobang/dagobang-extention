@@ -2,6 +2,7 @@ import type { LimitOrder, LimitOrderCreateInput, LimitOrderType } from '@/types/
 import type { ChainAddress } from '@/types/chain/address';
 import { getLimitOrders, setLimitOrders } from '@/services/storage';
 import { normalizePriceValue } from '@/utils/format';
+import { buildScopedTokenKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
 
 export const makeLimitOrderId = () => {
   try {
@@ -79,7 +80,7 @@ export const listLimitOrders = async (chainId: number, tokenAddress?: ChainAddre
   const all = await getLimitOrders();
   const filtered = all.filter((o) => {
     if (o.chainId !== chainId) return false;
-    if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return false;
+    if (tokenAddress && buildScopedTokenKey(o.chainId, o.tokenAddress) !== buildScopedTokenKey(chainId, tokenAddress)) return false;
     return true;
   });
   filtered.sort((a, b) => b.createdAtMs - a.createdAtMs);
@@ -131,9 +132,9 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
   }
 
   const all = await getLimitOrders();
-  const keyAddr = input.tokenAddress.toLowerCase();
-  const inputFromLower = input.fromAddress?.toLowerCase() ?? null;
-  const inputBaseTokenLower = input.baseTokenAddress?.toLowerCase() ?? null;
+  const keyAddr = buildScopedTokenKey(input.chainId, input.tokenAddress);
+  const inputFromLower = input.fromAddress ? normalizeWalletAddressKey(input.fromAddress) : null;
+  const inputBaseTokenLower = input.baseTokenAddress ? buildScopedTokenKey(input.chainId, input.baseTokenAddress) : null;
   const normalizedTrigger = triggerPriceUsd;
   const normalizedTrailingPeak =
     orderType === 'trailing_stop_sell'
@@ -146,8 +147,8 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
       const buyAmountWei = input.buyNativeAmountWei || input.buyBnbAmountWei;
       const orderBuyAmountWei = o.buyNativeAmountWei || o.buyBnbAmountWei;
       if (!buyAmountWei || orderBuyAmountWei !== buyAmountWei) return false;
-      const inputBase = input.baseTokenAddress?.toLowerCase() ?? null;
-      const orderBase = o.baseTokenAddress?.toLowerCase() ?? null;
+      const inputBase = input.baseTokenAddress ? buildScopedTokenKey(input.chainId, input.baseTokenAddress) : null;
+      const orderBase = o.baseTokenAddress ? buildScopedTokenKey(o.chainId, o.baseTokenAddress) : null;
       return inputBase === orderBase;
     }
     if (input.sellTokenAmountWei) {
@@ -166,10 +167,10 @@ export const createLimitOrder = async (input: LimitOrderCreateInput) => {
   };
   const existing = all.find((o) => {
     if (o.chainId !== input.chainId) return false;
-    if (o.tokenAddress.toLowerCase() !== keyAddr) return false;
-    const orderBaseTokenLower = o.baseTokenAddress?.toLowerCase() ?? null;
+    if (buildScopedTokenKey(o.chainId, o.tokenAddress) !== keyAddr) return false;
+    const orderBaseTokenLower = o.baseTokenAddress ? buildScopedTokenKey(o.chainId, o.baseTokenAddress) : null;
     if (orderBaseTokenLower !== inputBaseTokenLower) return false;
-    const orderFromLower = o.fromAddress?.toLowerCase() ?? null;
+    const orderFromLower = o.fromAddress ? normalizeWalletAddressKey(o.fromAddress) : null;
     if (orderFromLower !== inputFromLower) return false;
     if (o.status !== 'open') return false;
     if (normalizeLimitOrderType(o.orderType, o.side) !== orderType) return false;
@@ -245,7 +246,7 @@ export const cancelAllLimitOrders = async (chainId: number, tokenAddress?: Chain
   const all = await getLimitOrders();
   const next = all.filter((o) => {
     if (o.chainId !== chainId) return true;
-    if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return true;
+    if (tokenAddress && buildScopedTokenKey(o.chainId, o.tokenAddress) !== buildScopedTokenKey(chainId, tokenAddress)) return true;
     if (o.status === 'executed') return true;
     return false;
   });
@@ -257,7 +258,7 @@ export const clearExecutedLimitOrders = async (chainId: number, tokenAddress?: C
   const all = await getLimitOrders();
   const next = all.filter((o) => {
     if (o.chainId !== chainId) return true;
-    if (tokenAddress && o.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) return true;
+    if (tokenAddress && buildScopedTokenKey(o.chainId, o.tokenAddress) !== buildScopedTokenKey(chainId, tokenAddress)) return true;
     return o.status !== 'executed';
   });
   await setLimitOrders(next);
@@ -270,13 +271,13 @@ export const cancelAllSellLimitOrdersForToken = async (
   fromAddress?: ChainAddress
 ) => {
   if (!tokenAddress) return getLimitOrders();
-  const keyAddr = tokenAddress.toLowerCase();
-  const fromLower = fromAddress?.toLowerCase() ?? null;
+  const keyAddr = buildScopedTokenKey(chainId, tokenAddress);
+  const fromLower = fromAddress ? normalizeWalletAddressKey(fromAddress) : null;
   const all = await getLimitOrders();
   const next = all.filter((o) => {
     if (o.chainId !== chainId) return true;
-    if (o.tokenAddress.toLowerCase() !== keyAddr) return true;
-    if (fromLower && (o.fromAddress?.toLowerCase() ?? null) !== fromLower) return true;
+    if (buildScopedTokenKey(o.chainId, o.tokenAddress) !== keyAddr) return true;
+    if (fromLower && (o.fromAddress ? normalizeWalletAddressKey(o.fromAddress) : null) !== fromLower) return true;
     if (o.side !== 'sell') return true;
     if (o.status === 'executed') return true;
     return false;

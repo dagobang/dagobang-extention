@@ -3,7 +3,7 @@ import { SettingsService } from '@/services/settings';
 import { TradeService } from '@/services/trade';
 import { TokenService } from '@/services/token';
 import { cancelAllSellLimitOrdersForToken } from '@/services/limitOrders/store';
-import { buildTweetUrl, getSignalTimeMs } from '@/services/xSniper/engine/metrics';
+import { buildTweetUrl, getSignalTimeMs, normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
 import type { UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 
@@ -26,21 +26,17 @@ const calcSellAmountWei = (input: {
   return amountWei;
 };
 
-const parseStrategyWalletAddress = (input: unknown): `0x${string}` | undefined => {
-  const raw = String(input ?? '').trim().toLowerCase();
-  if (!raw) return undefined;
-  if (!/^0x[a-f0-9]{40}$/.test(raw)) return undefined;
-  return raw as `0x${string}`;
-};
+const parseStrategyWalletAddress = (input: unknown): string | undefined => normalizeAddress(typeof input === 'string' ? input : String(input ?? '')) ?? undefined;
 
 const buildPositionKey = (input: {
   chainId: number;
-  tokenAddress: `0x${string}`;
-  walletAddress?: `0x${string}`;
+  tokenAddress: string;
+  walletAddress?: string;
   dryRun: boolean;
 }) => {
-  const walletKey = input.walletAddress ? String(input.walletAddress).toLowerCase() : 'all-wallets';
-  return `${input.dryRun ? 'dry:' : ''}${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}`;
+  const tokenKey = normalizeAddressKey(input.tokenAddress);
+  if (!tokenKey) return '';
+  return `${input.dryRun ? 'dry:' : ''}${input.chainId}:${tokenKey}:${normalizeWalletAddressKey(input.walletAddress)}`;
 };
 
 const summarizeTokenInfoForLog = (tokenInfo: TokenInfo | null | undefined) => {
@@ -73,9 +69,9 @@ export const createSellExecutors = (deps: {
   cleanupPosKey: (posKey: string) => void;
   emitRecord: (record: XSniperBuyRecord) => void;
   broadcastToActiveTabs: (message: any) => Promise<void>;
-  fetchTokenInfoFresh: (chainId: number, tokenAddress: `0x${string}`) => Promise<TokenInfo | null>;
-  buildGenericTokenInfo: (chainId: number, tokenAddress: `0x${string}`) => Promise<TokenInfo | null>;
-  getLatestMarketCapUsd: (chainId: number, tokenAddress: `0x${string}`) => number | null;
+  fetchTokenInfoFresh: (chainId: number, tokenAddress: string) => Promise<TokenInfo | null>;
+  buildGenericTokenInfo: (chainId: number, tokenAddress: string) => Promise<TokenInfo | null>;
+  getLatestMarketCapUsd: (chainId: number, tokenAddress: string) => number | null;
 }) => {
   const deleteSellInFlight = new Set<string>();
   const rapidSellInFlight = new Set<string>();
@@ -107,9 +103,9 @@ export const createSellExecutors = (deps: {
   };
   const analyzeReceiptFailureBeforeRetry = async (input: {
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
     tokenInfo: TokenInfo;
-    fromAddress: `0x${string}`;
+    fromAddress: string;
     reason: string;
   }) => {
     let balanceWei = 0n;
@@ -133,7 +129,7 @@ export const createSellExecutors = (deps: {
         input.chainId,
         input.tokenAddress,
         input.tokenInfo,
-        { fromAddress: input.fromAddress },
+        { fromAddress: input.fromAddress } as any,
       );
       allowanceInsufficient = check.insufficient === true;
     } catch {
@@ -155,7 +151,7 @@ export const createSellExecutors = (deps: {
         input.chainId,
         input.tokenAddress,
         input.tokenInfo,
-        { fromAddress: input.fromAddress },
+        { fromAddress: input.fromAddress } as any,
       );
       repaired = true;
     } catch {
@@ -182,12 +178,12 @@ export const createSellExecutors = (deps: {
 
   const tryDeleteTweetSellOnce = async (input: {
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
     percent: number;
     signal: UnifiedTwitterSignal;
     relatedBuy?: XSniperBuyRecord;
     dryRun: boolean;
-    walletAddress?: `0x${string}`;
+    walletAddress?: string;
   }) => {
     const percent = Math.max(0, Math.min(100, Number(input.percent)));
     if (!Number.isFinite(percent) || percent <= 0) return;
@@ -203,8 +199,8 @@ export const createSellExecutors = (deps: {
     const sourceTweetId = String((input.signal as any)?.sourceTweetId ?? '').trim();
     const signalEventId = String(input.signal.eventId ?? '').trim();
     const signalStableId = signalTweetId || sourceTweetId || signalEventId;
-    const walletKey = input.walletAddress ? String(input.walletAddress).toLowerCase() : 'all-wallets';
-    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}:${signalStableId}:${bps}`;
+    const walletKey = normalizeWalletAddressKey(input.walletAddress);
+    const dedupeKey = `${input.chainId}:${normalizeAddressKey(input.tokenAddress)}:${walletKey}:${signalStableId}:${bps}`;
     if (deleteSellInFlight.has(dedupeKey)) return;
     deleteSellInFlight.add(dedupeKey);
     try {
@@ -255,14 +251,14 @@ export const createSellExecutors = (deps: {
       const preferredWalletAddress = parseStrategyWalletAddress(input.walletAddress);
       const availableWalletSet = new Set(
         (status.accounts ?? [])
-          .map((acc) => String(acc?.address ?? '').trim().toLowerCase())
-          .filter((addr): addr is `0x${string}` => /^0x[a-f0-9]{40}$/.test(addr)),
+          .map((acc) => normalizeAddress(acc?.address))
+          .filter((addr): addr is string => !!addr),
       );
       if (preferredWalletAddress && !availableWalletSet.has(preferredWalletAddress)) {
         deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'wallet_not_found' });
         return;
       }
-      const sellFromAddress = preferredWalletAddress ?? (status.address ? (String(status.address).toLowerCase() as `0x${string}`) : undefined);
+      const sellFromAddress = preferredWalletAddress ?? (normalizeAddress(status.address) || undefined);
       if (status.locked || !sellFromAddress) {
         deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'wallet_locked' });
         return;
@@ -307,7 +303,7 @@ export const createSellExecutors = (deps: {
         await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
       } catch {}
       let rsp: any;
-      let submittedTxHash: `0x${string}` | null = null;
+      let submittedTxHash: string | null = null;
       let sellErr: unknown = null;
       let tokenInfoForTrade = tokenInfo;
       try {
@@ -378,7 +374,7 @@ export const createSellExecutors = (deps: {
 
           // Allowance repaired: submit exactly one follow-up sell attempt.
           let retryRsp: any;
-          let retrySubmittedTxHash: `0x${string}` | null = null;
+          let retrySubmittedTxHash: string | null = null;
           let retryErr: unknown = null;
           try {
             retryRsp = await TradeService.sellWithReceiptAndAutoRecovery({
@@ -464,7 +460,7 @@ export const createSellExecutors = (deps: {
         });
         return;
       }
-      const finalTxHash = (rsp as any)?.txHash as `0x${string}`;
+      const finalTxHash = String((rsp as any)?.txHash || '');
       void deps.broadcastToActiveTabs({
         type: 'bg:tradeSuccess',
         source: 'xsniper',
@@ -496,7 +492,7 @@ export const createSellExecutors = (deps: {
 
   const tryRapidExitSellOnce = async (input: {
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
     percent: number;
     dryRun: boolean;
     reason: 'rapid_take_profit' | 'rapid_stop_loss' | 'rapid_trailing_stop';
@@ -517,15 +513,15 @@ export const createSellExecutors = (deps: {
       triggerMarketCapUsd?: number;
       sellPercentOfOriginal?: number;
       sellPercentOfCurrent?: number;
-      walletAddress?: `0x${string}`;
+      walletAddress?: string;
     };
   }) => {
     const percent = Math.max(0, Math.min(100, Number(input.percent)));
     if (!Number.isFinite(percent) || percent <= 0) return false;
     const bps = Math.floor(percent * 100);
     if (!(bps > 0)) return false;
-    const walletKey = input.meta.walletAddress ? String(input.meta.walletAddress).toLowerCase() : 'all-wallets';
-    const dedupeKey = `${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}:${input.reason}:${bps}`;
+    const walletKey = normalizeWalletAddressKey(input.meta.walletAddress);
+    const dedupeKey = `${input.chainId}:${normalizeAddressKey(input.tokenAddress)}:${walletKey}:${input.reason}:${bps}`;
     if (rapidSellInFlight.has(dedupeKey)) return false;
     rapidSellInFlight.add(dedupeKey);
     try {
@@ -585,14 +581,14 @@ export const createSellExecutors = (deps: {
       const preferredWalletAddress = parseStrategyWalletAddress(input.meta.walletAddress);
       const availableWalletSet = new Set(
         (status.accounts ?? [])
-          .map((acc) => String(acc?.address ?? '').trim().toLowerCase())
-          .filter((addr): addr is `0x${string}` => /^0x[a-f0-9]{40}$/.test(addr)),
+          .map((acc) => normalizeAddress(acc?.address))
+          .filter((addr): addr is string => !!addr),
       );
       if (preferredWalletAddress && !availableWalletSet.has(preferredWalletAddress)) {
         deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'wallet_not_found' });
         return false;
       }
-      const sellFromAddress = preferredWalletAddress ?? (status.address ? (String(status.address).toLowerCase() as `0x${string}`) : undefined);
+      const sellFromAddress = preferredWalletAddress ?? (normalizeAddress(status.address) || undefined);
       if (status.locked || !sellFromAddress) {
         deps.emitRecord({ ...baseRecord, dryRun: false, reason: 'wallet_locked' });
         return false;
@@ -636,7 +632,7 @@ export const createSellExecutors = (deps: {
         await cancelAllSellLimitOrdersForToken(input.chainId, input.tokenAddress);
       } catch {}
       let tokenInfoForTrade = tokenInfo;
-      let submittedTxHash: `0x${string}` | null = null;
+      let submittedTxHash: string | null = null;
       let submitFailedReason: string = 'sell_submit_failed_unknown';
       let submittedSettled = false;
       let resolveSubmitted: (() => void) | null = null;
@@ -675,7 +671,7 @@ export const createSellExecutors = (deps: {
         });
         void settlePromise
           .then(async (doneRsp) => {
-            const finalTxHash = (doneRsp as any)?.txHash as `0x${string}`;
+            const finalTxHash = String((doneRsp as any)?.txHash || '');
             await deps.broadcastToActiveTabs({
               type: 'bg:tradeSuccess',
               source: 'xsniper',

@@ -1,7 +1,8 @@
-import { parseEther } from 'viem';
+import { parseUnits } from 'viem';
 import { WalletService } from '@/services/wallet';
 import { TradeService } from '@/services/trade';
-import { buildTweetUrl, getSignalTimeMs, isRepostOrQuoteSignal, parseNumber, sanitizeMarketCapUsd, shouldBuyByConfig, type TokenMetrics } from '@/services/xSniper/engine/metrics';
+import { ChainId } from '@/constants/chains';
+import { buildTweetUrl, getSignalTimeMs, isRepostOrQuoteSignal, normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey, parseNumber, sanitizeMarketCapUsd, shouldBuyByConfig, type TokenMetrics } from '@/services/xSniper/engine/metrics';
 import type { WsConfirmFailedCheck } from '@/services/xSniper/engine/wsSnapshots';
 import type { UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
@@ -47,28 +48,30 @@ const resolveStrategyBuyAmountNative = (strategy: any, chainId: number) => {
 
 const buildGlobalBuyLockKey = (input: {
   chainId: number;
-  tokenAddress: `0x${string}`;
-  walletAddress?: `0x${string}`;
+  tokenAddress: string;
+  walletAddress?: string;
 }) => {
-  const walletKey = input.walletAddress ? String(input.walletAddress).toLowerCase() : 'all-wallets';
-  return `${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}`;
+  const tokenKey = normalizeAddressKey(input.tokenAddress);
+  if (!tokenKey) return '';
+  return `${input.chainId}:${tokenKey}:${normalizeWalletAddressKey(input.walletAddress)}`;
 };
 
 const buildPositionKey = (input: {
   chainId: number;
-  tokenAddress: `0x${string}`;
-  walletAddress?: `0x${string}`;
+  tokenAddress: string;
+  walletAddress?: string;
   dryRun: boolean;
 }) => {
-  const walletKey = input.walletAddress ? String(input.walletAddress).toLowerCase() : 'all-wallets';
-  return `${input.dryRun ? 'dry:' : ''}${input.chainId}:${input.tokenAddress.toLowerCase()}:${walletKey}`;
+  const tokenKey = normalizeAddressKey(input.tokenAddress);
+  if (!tokenKey) return '';
+  return `${input.dryRun ? 'dry:' : ''}${input.chainId}:${tokenKey}:${normalizeWalletAddressKey(input.walletAddress)}`;
 };
 
-const parseStrategyWalletAddress = (input: unknown): `0x${string}` | undefined => {
-  const raw = String(input ?? '').trim().toLowerCase();
-  if (!raw) return undefined;
-  if (!/^0x[a-f0-9]{40}$/.test(raw)) return undefined;
-  return raw as `0x${string}`;
+const parseStrategyWalletAddress = (input: unknown): string | undefined => normalizeAddress(typeof input === 'string' ? input : String(input ?? '')) ?? undefined;
+
+const resolveNativeAmountWei = (chainId: number, amountNative: number) => {
+  const decimals = chainId === ChainId.SOL ? 9 : 18;
+  return parseUnits(String(amountNative), decimals);
 };
 
 const classifyBuySubmitFailureReason = (error: unknown): string => {
@@ -130,7 +133,7 @@ const summarizeErrorForLog = (error: unknown) => {
 
 export const tryAutoBuyOnce = async (input: {
   chainId: number;
-  tokenAddress: `0x${string}`;
+  tokenAddress: string;
   metrics: TokenMetrics;
   strategy: any;
   signal?: UnifiedTwitterSignal;
@@ -141,10 +144,10 @@ export const tryAutoBuyOnce = async (input: {
   onStateChanged: () => void;
   loadBoughtOnceIfNeeded: () => Promise<void>;
   persistBoughtOnce: () => Promise<void>;
-  getKey: (chainId: number, tokenAddress: `0x${string}`, opts?: { dry?: boolean; walletAddress?: `0x${string}` }) => string;
+  getKey: (chainId: number, tokenAddress: string, opts?: { dry?: boolean; walletAddress?: string }) => string;
   boughtOnceAtMs: Map<string, number>;
   buyInFlight: Set<string>;
-  computeWsConfirm: (chainId: number, tokenAddress: `0x${string}`, nowMs: number, strategy: any) => {
+  computeWsConfirm: (chainId: number, tokenAddress: string, nowMs: number, strategy: any) => {
     pass: boolean;
     windowMs: number;
     stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number };
@@ -153,16 +156,16 @@ export const tryAutoBuyOnce = async (input: {
   shouldEmitBuyFailureRecord?: (input: {
     reason: string;
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
     signal?: UnifiedTwitterSignal;
   }) => boolean;
   emitRecord: (record: XSniperBuyRecord) => void;
   broadcastToActiveTabs: (message: any) => Promise<void>;
-  fetchTokenInfoFresh: (chainId: number, tokenAddress: `0x${string}`) => Promise<TokenInfo | null>;
-  buildGenericTokenInfo: (chainId: number, tokenAddress: `0x${string}`) => Promise<TokenInfo | null>;
+  fetchTokenInfoFresh: (chainId: number, tokenAddress: string) => Promise<TokenInfo | null>;
+  buildGenericTokenInfo: (chainId: number, tokenAddress: string) => Promise<TokenInfo | null>;
   getEntryPriceUsd: (
     chainId: number,
-    tokenAddress: `0x${string}`,
+    tokenAddress: string,
     tokenInfo: TokenInfo,
     fallback: number | null,
     fallbackMcapUsd: number | null,
@@ -171,7 +174,7 @@ export const tryAutoBuyOnce = async (input: {
     strategy: any;
     posKey: string;
     chainId: number;
-    tokenAddress: `0x${string}`;
+    tokenAddress: string;
     dryRun: boolean;
     entryMcapUsd: number | null;
     buyAmountNative: number;
@@ -184,7 +187,7 @@ export const tryAutoBuyOnce = async (input: {
     signalEventId?: string;
     signalTweetId?: string;
     entryPriceUsd?: number | null;
-    walletAddress?: `0x${string}`;
+    walletAddress?: string;
   }) => void;
   dryRunAutoSellByPosKey: Map<string, DryRunAutoSellPos>;
   onAttemptOutcome?: (outcome: { bought: boolean; attempted: boolean; reason?: string; detail?: any }) => void;
@@ -195,8 +198,8 @@ export const tryAutoBuyOnce = async (input: {
   const strategyWalletAddress = parseStrategyWalletAddress(input.strategy?.walletAddress);
   const availableWalletSet = new Set(
     (status?.accounts ?? [])
-      .map((acc) => String(acc?.address ?? '').trim().toLowerCase())
-      .filter((addr): addr is `0x${string}` => /^0x[a-f0-9]{40}$/.test(addr)),
+      .map((acc) => normalizeAddress(acc?.address))
+      .filter((addr): addr is string => !!addr),
   );
   if (!dryRun && strategyWalletAddress && !availableWalletSet.has(strategyWalletAddress)) {
     console.warn('XSniperTrade configured wallet not found in unlocked accounts', {
@@ -212,7 +215,7 @@ export const tryAutoBuyOnce = async (input: {
   }
   const tradeFromAddress =
     strategyWalletAddress || (!dryRun && status?.address)
-      ? (String(strategyWalletAddress || status?.address).toLowerCase() as `0x${string}`)
+      ? (normalizeAddress(String(strategyWalletAddress || status?.address)) ?? undefined)
       : undefined;
   const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun, walletAddress: tradeFromAddress });
   const globalLockKey = !dryRun
@@ -231,7 +234,7 @@ export const tryAutoBuyOnce = async (input: {
     metrics?: TokenMetrics;
     tokenInfo?: TokenInfo | null;
     confirm?: { windowMs?: number; stats?: { mcapChangePct?: number; holdersDelta?: number; buySellRatio?: number } };
-    txHash?: `0x${string}`;
+    txHash?: string;
     buySubmittedAtMs?: number;
   }) => {
     lastFailureReason = reason;
@@ -351,7 +354,7 @@ export const tryAutoBuyOnce = async (input: {
     if (!confirm.pass) {
       if (dryRun) {
         const sigKey = typeof input.signal?.id === 'string' && input.signal.id.trim() ? input.signal.id.trim() : '';
-        const dedupe = `${sigKey}:${input.chainId}:${input.tokenAddress.toLowerCase()}`;
+        const dedupe = `${sigKey}:${input.chainId}:${normalizeAddressKey(input.tokenAddress)}`;
         if (input.shouldLogWsConfirmFail(dedupe, confirmNowMs)) {
           const tweetAtMs = getSignalTimeMs(input.signal) ?? undefined;
           const tweetUrl = buildTweetUrl(input.signal);
@@ -574,10 +577,10 @@ export const tryAutoBuyOnce = async (input: {
       return true;
     }
 
-    const amountWei = parseEther(String(amountNumber));
+    const amountWei = resolveNativeAmountWei(input.chainId, amountNumber);
     let rsp: any;
     let buySubmittedAtMs: number | undefined;
-    let submittedTxHash: `0x${string}` | undefined;
+    let submittedTxHash: string | undefined;
     let tokenInfoForTrade = tokenInfo;
     try {
       rsp = await TradeService.buyWithReceiptAndNonceRecovery({
@@ -686,9 +689,9 @@ export const tryAutoBuyOnce = async (input: {
       const approveStartAtMs = Date.now();
       void (async () => {
         try {
-          const approveTx = await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfoForTrade, {
+            const approveTx = await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfoForTrade, {
             fromAddress: tradeFromAddress,
-          });
+            } as any);
           if (approveTx) {
             console.log('[xsniper.buy.post_approve][submitted]', {
               chainId: input.chainId,

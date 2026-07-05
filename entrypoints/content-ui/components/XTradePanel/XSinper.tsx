@@ -7,7 +7,9 @@ import { call } from '@/utils/messaging';
 import { browser } from 'wxt/browser';
 import { SiteInfo } from '@/utils/sites';
 import { clearXSniperHistory, XSNIPER_HISTORY_STORAGE_KEY } from '@/services/xSniper/xSniperHistory';
-import { PLATFORM_OPTIONS } from '@/constants/launchpad';
+import { getPlatformOptionsByChain } from '@/constants/launchpad';
+import { getChainIdByName } from '@/constants/chains';
+import { normalizeGmgnChainName, normalizeTokenAddressKey } from '@/utils/gmgnWs';
 import { XSniperHistoryView } from './XSniperHistoryView';
 import { XSniperBasicSection } from './XSniperBasicSection';
 import { XSniperFilterSection } from './XSniperFilterSection';
@@ -69,11 +71,12 @@ const parseList = (value: string) =>
 
 const createPresetId = () => `preset-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-const normalizeWalletAddress = (input: unknown): `0x${string}` | undefined => {
-  const raw = String(input ?? '').trim().toLowerCase();
+const normalizeWalletAddress = (input: unknown): string | undefined => {
+  const raw = String(input ?? '').trim();
   if (!raw) return undefined;
-  if (!/^0x[a-f0-9]{40}$/.test(raw)) return undefined;
-  return raw as `0x${string}`;
+  if (/^0x[a-fA-F0-9]{40}$/.test(raw)) return raw.toLowerCase();
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw)) return raw;
+  return undefined;
 };
 
 const buildNormalizedPresetStrategy = (raw: any) => {
@@ -129,6 +132,13 @@ export function XSniperContent({
 }: XSniperContentProps) {
   const locale: Locale = normalizeLocale(settings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
+  const resolvedSiteInfo = siteInfo ?? { chain: 'bsc', tokenAddress: '', platform: 'gmgn', showBar: true };
+  const currentChain = normalizeGmgnChainName(resolvedSiteInfo.chain) ?? 'bsc';
+  const currentChainId = useMemo(() => getChainIdByName(currentChain), [currentChain]);
+  const currentPlatformOptions = useMemo(
+    () => [...getPlatformOptionsByChain(currentChainId)],
+    [currentChainId]
+  );
 
   const normalizedAutoTrade = useMemo(
     () => normalizeAutoTrade(settings?.autoTrade ?? null),
@@ -166,12 +176,12 @@ export function XSniperContent({
   const [latestTokenByAddr, setLatestTokenByAddr] = useState<Record<string, any>>({});
   const [athMcapByAddr, setAthMcapByAddr] = useState<Record<string, number>>({});
   const [walletAccounts, setWalletAccounts] = useState<Account[]>([]);
-  const [activeWalletAddress, setActiveWalletAddress] = useState<`0x${string}` | null>(null);
+  const [activeWalletAddress, setActiveWalletAddress] = useState<string | null>(null);
   const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
 
   const historyGroups = useMemo(() => {
-    const normalizeAddr = (addr: string) => String(addr || '').trim().toLowerCase();
-    const normalizeWallet = (addr: unknown) => String(addr || '').trim().toLowerCase();
+    const normalizeAddr = (addr: string) => normalizeTokenAddressKey(addr);
+    const normalizeWallet = (addr: unknown) => normalizeWalletAddress(addr) ?? '';
     const preferredWalletByTokenDry = new Map<string, string>();
     for (const r of buyHistory) {
       if (!r || typeof r.chainId !== 'number' || !r.tokenAddress) continue;
@@ -331,7 +341,7 @@ export function XSniperContent({
         for (const t of tokens) {
           const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
           if (!addr) continue;
-          const key = addr.toLowerCase();
+          const key = normalizeTokenAddressKey(addr);
           const updatedAtMs =
             typeof t?.updatedAtMs === 'number'
               ? t.updatedAtMs
@@ -391,7 +401,7 @@ export function XSniperContent({
           for (const t of entry.tokens) {
             const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
             if (!addr) continue;
-            const key = addr.toLowerCase();
+            const key = normalizeTokenAddressKey(addr);
             const mcap = typeof t?.marketCapUsd === 'number' && Number.isFinite(t.marketCapUsd) && t.marketCapUsd >= 3000 ? t.marketCapUsd : null;
             if (mcap == null) continue;
             const cur = next[key];
@@ -412,7 +422,7 @@ export function XSniperContent({
           for (const t of entry.tokens) {
             const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
             if (!addr) continue;
-            const key = addr.toLowerCase();
+            const key = normalizeTokenAddressKey(addr);
             const updatedAtMs = typeof t?.updatedAtMs === 'number' ? t.updatedAtMs : entry.signalTs;
             const cur = next[key];
             if (cur && typeof cur.updatedAtMs === 'number' && updatedAtMs <= cur.updatedAtMs) continue;
@@ -752,7 +762,7 @@ export function XSniperContent({
               tt={tt}
               onToggle={() => toggleConfigSection('filter')}
               updateTwitterSnipe={updateTwitterSnipe}
-              platformOptions={[...PLATFORM_OPTIONS]}
+              platformOptions={currentPlatformOptions}
             />
             <XSniperWsConfirmSection
               open={configSectionOpen.wsConfirm}

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { isAddress } from 'viem';
 import { browser } from 'wxt/browser';
 import { TRADE_SUCCESS_SOUND_PRESETS, type Settings, type TokenSnipeBuyMethod, type TokenSnipeTask, type TokenSnipeTaskRuntimeStatus, type TradeSuccessSoundPreset } from '@/types/extention';
 import { call } from '@/utils/messaging';
@@ -8,6 +7,7 @@ import { type SiteInfo } from '@/utils/sites';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { TOKEN_SNIPER_HISTORY_STORAGE_KEY, TOKEN_SNIPER_STATUS_STORAGE_KEY } from '@/services/tokenSniper/tokenSniperTrade';
 import { TokenAPI } from '@/hooks/TokenAPI';
+import { normalizeAddress } from '@/services/xSniper/engine/metrics';
 import { XTokenSniperTaskList } from '@/entrypoints/content-ui/components/XTradePanel/XTokenSniperTaskList';
 import { XTokenSniperOrderHistory, type TokenSniperOrderRecord } from '@/entrypoints/content-ui/components/XTradePanel/XTokenSniperOrderHistory';
 
@@ -243,7 +243,7 @@ export function XTokenSniperContent({
 
   const resetTaskForm = () => {
     setEditTaskId(null);
-    const tokenAddress = siteInfo?.tokenAddress && isAddress(siteInfo.tokenAddress) ? siteInfo.tokenAddress : '';
+    const tokenAddress = normalizeAddress(String(siteInfo?.tokenAddress || '').trim()) ?? '';
     setTokenAddressInput(tokenAddress);
     setTokenSymbolInput('');
     setTokenNameInput('');
@@ -284,8 +284,8 @@ export function XTokenSniperContent({
 
   useEffect(() => {
     if (!showAddModal || editTaskId) return;
-    const tokenAddress = tokenAddressInput.trim();
-    if (!tokenAddress || !isAddress(tokenAddress)) return;
+    const tokenAddress = normalizeAddress(tokenAddressInput);
+    if (!tokenAddress) return;
     if (!siteInfo?.platform || !siteInfo?.chain) return;
     let cancelled = false;
     const timer = window.setTimeout(async () => {
@@ -310,8 +310,8 @@ export function XTokenSniperContent({
   };
 
   const saveTask = async () => {
-    const tokenAddress = tokenAddressInput.trim();
-    if (!isAddress(tokenAddress)) {
+    const tokenAddress = normalizeAddress(tokenAddressInput);
+    if (!tokenAddress) {
       setError(tt('contentUi.tokenSniper.errorInvalidTokenAddress'));
       return;
     }
@@ -336,7 +336,7 @@ export function XTokenSniperContent({
     const nextTask: TokenSnipeTask = {
       id: currentTask?.id ?? createTaskId(),
       chain: resolvedSettings?.chainId ?? 56,
-      tokenAddress: tokenAddress as `0x${string}`,
+      tokenAddress,
       tokenSymbol: tokenSymbolInput.trim() || undefined,
       tokenName: tokenNameInput.trim() || undefined,
       tweetType: selectedTweetTypes.length === TWEET_TYPE_OPTIONS.length ? 'all' : selectedTweetTypes[0],

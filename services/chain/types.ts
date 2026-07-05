@@ -91,7 +91,7 @@ export interface TradeExecutor {
   prewarmTurbo(input: TradeTurboPrewarmInput): Promise<void>;
   refreshNonce(input: {
     chainId: number;
-    fromAddress?: EvmAddress;
+    fromAddress?: ChainAddress;
     txSide?: 'buy' | 'sell';
     submitChannel?: SubmitChannel;
     error?: any;
@@ -143,12 +143,12 @@ export interface TradeExecutor {
     chainId: number,
     tokenAddress: string,
     tokenInfo: TokenInfo,
-    opts?: { extraSpenders?: string[]; fromAddress?: EvmAddress; submitChannel?: SubmitChannel }
-  ): Promise<EvmAddress | null>;
+    opts?: { extraSpenders?: string[]; fromAddress?: ChainAddress; submitChannel?: SubmitChannel }
+  ): Promise<string | null>;
   checkSellAllowanceInsufficient(
     chainId: number,
     tokenAddress: string,
     tokenInfo: TokenInfo,
-    opts?: { extraSpenders?: string[]; fromAddress?: EvmAddress }
+    opts?: { extraSpenders?: string[]; fromAddress?: ChainAddress }
   ): Promise<Awaited<ReturnType<typeof import('@/services/trade').TradeService.checkSellAllowanceInsufficient>>>;
 }

@@ -1554,13 +1554,11 @@ export default defineBackground(() => {
           }
 
           case 'trade:prewarmTurbo': {
-            try {
-              if (msg.input.chainId === ChainId.SOL) {
-                await ensureSolanaTradePrewarm(msg.input);
-              } else {
-                await getTrade(msg.input.chainId).prewarmTurbo(msg.input);
-              }
-            } catch { }
+            if (msg.input.chainId === ChainId.SOL) {
+              await ensureSolanaTradePrewarm(msg.input);
+            } else {
+              await getTrade(msg.input.chainId).prewarmTurbo(msg.input);
+            }
             return { ok: true };
           }
 
