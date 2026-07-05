@@ -25,6 +25,7 @@ import {
   buildStrategyTrailingSellOrderInputs,
   getAdvancedAutoSellMode,
 } from '@/services/limitOrders/advancedAutoSell';
+import { cancelAllSellLimitOrdersForToken } from '@/services/limitOrders/store';
 
 import { CustomToaster } from './components/CustomToaster';
 import { LimitTradePanel } from './components/LimitTradePanel';
@@ -3897,6 +3898,7 @@ export default function App() {
     }
 
     if (!inputs.length) return 0;
+    await cancelAllSellLimitOrdersForToken(ctx.chainId, tokenAddress, ctx.walletAddress);
     for (const input of inputs) {
       await call({
         type: 'limitOrder:create',

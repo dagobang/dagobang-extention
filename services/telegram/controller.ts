@@ -1151,18 +1151,30 @@ export function createTelegramController(deps: {
     }
     let createdSellOrders = 0;
     const advancedAutoSell = (settings as any)?.advancedAutoSell;
-    if (advancedAutoSell?.enabled === true && isEvmAddress(tokenAddress)) {
+    if (advancedAutoSell?.enabled === true) {
       try {
-        const entryPriceUsd = await getEntryPriceUsd(
-          chainId,
-          tokenAddress,
-          tokenInfo,
-          null,
-          null,
-        );
+        const entryPriceUsd = chainId === ChainId.SOL
+          ? await TokenService.getTokenPriceUsdFromRpc({
+            chainId,
+            tokenAddress,
+            tokenInfo,
+            cacheTtlMs: 0,
+            allowTokenInfoPriceFallback: true,
+          }).catch(() => 0)
+          : await getEntryPriceUsd(
+            chainId,
+            tokenAddress as `0x${string}`,
+            tokenInfo,
+            null,
+            null,
+          );
         if (entryPriceUsd != null && entryPriceUsd > 0) {
-          const approvalFromAddress = status.address && isEvmAddress(status.address) ? status.address : undefined;
-          await trade.approveMaxForSellIfNeeded(chainId, tokenAddress, tokenInfo, approvalFromAddress ? { fromAddress: approvalFromAddress } : undefined);
+          const approvalFromAddress = status.address && isEvmAddress(status.address)
+            ? status.address as `0x${string}`
+            : undefined;
+          if (approvalFromAddress && isEvmAddress(tokenAddress)) {
+            await trade.approveMaxForSellIfNeeded(chainId, tokenAddress, tokenInfo, { fromAddress: approvalFromAddress });
+          }
           await cancelAllSellLimitOrdersForToken(chainId, tokenAddress, fromAddress);
           const baseOrders = buildStrategySellOrderInputs({
             config: advancedAutoSell,
