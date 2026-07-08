@@ -18,6 +18,7 @@ export type ParsedTelegramCommand =
   | { type: 'switchWallet'; target: string }
   | { type: 'orders'; chain?: string }
   | { type: 'tokenInfo'; tokenAddress: string; chain?: string }
+  | { type: 'limit'; tokenAddress: string; chain?: string }
   | { type: 'cancel'; orderId: string }
   | { type: 'buy'; tokenAddress: string; amountBnb: string; chain?: string }
   | { type: 'sell'; tokenAddress: string; sellPercent: number; chain?: string }
@@ -27,6 +28,17 @@ export type ParsedTelegramCommand =
   | { type: 'actionCancel'; orderId: string }
   | { type: 'actionBuy'; tokenAddress: string; amountBnb: string; chainId?: number }
   | { type: 'actionSell'; tokenAddress: string; sellPercent: number; chainId?: number }
+  | { type: 'actionLimitOpen'; tokenAddress: string; chainId?: number }
+  | { type: 'actionLimitType'; kind: string }
+  | { type: 'actionLimitOffset'; percent: number }
+  | { type: 'actionLimitCustomTriggerPrice' }
+  | { type: 'actionLimitAmount'; amountNative: string }
+  | { type: 'actionLimitCustomBuyAmount' }
+  | { type: 'actionLimitSellPercent'; sellPercent: number }
+  | { type: 'actionLimitCustomSellPercent' }
+  | { type: 'actionLimitCreate' }
+  | { type: 'actionLimitBack' }
+  | { type: 'actionLimitCancel' }
   | { type: 'actionMenu' }
   | { type: 'actionChainMenu' }
   | { type: 'actionSwitchChain'; chain: string }
@@ -152,6 +164,40 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
         };
       }
     }
+    if (action === 'lim') {
+      const sub = String(arg1 || '').trim();
+      if (sub === 'open') {
+        const chainId = Number(arg2 || '');
+        const tokenAddress = String(arg3 || '').trim();
+        if (isTelegramTokenAddress(tokenAddress)) {
+          return { type: 'actionLimitOpen', chainId: Number.isFinite(chainId) ? chainId : undefined, tokenAddress };
+        }
+      }
+      if (sub === 'type') {
+        const kind = String(arg2 || '').trim();
+        if (kind) return { type: 'actionLimitType', kind };
+      }
+      if (sub === 'off') {
+        const v = String(arg2 || '').trim();
+        if (v === 'custom') return { type: 'actionLimitCustomTriggerPrice' };
+        const pct = Number(v);
+        if (Number.isFinite(pct)) return { type: 'actionLimitOffset', percent: pct };
+      }
+      if (sub === 'amt') {
+        const amountNative = String(arg2 || '').trim();
+        if (amountNative === 'custom') return { type: 'actionLimitCustomBuyAmount' };
+        if (amountNative) return { type: 'actionLimitAmount', amountNative };
+      }
+      if (sub === 'pct') {
+        const v = String(arg2 || '').trim();
+        if (v === 'custom') return { type: 'actionLimitCustomSellPercent' };
+        const pct = Number(v);
+        if (Number.isFinite(pct)) return { type: 'actionLimitSellPercent', sellPercent: pct };
+      }
+      if (sub === 'go') return { type: 'actionLimitCreate' };
+      if (sub === 'back') return { type: 'actionLimitBack' };
+      if (sub === 'cancel') return { type: 'actionLimitCancel' };
+    }
     if (action === 'xso' && (arg1 || '').trim()) {
       return { type: 'actionXSniperOrder', orderId: (arg1 || '').trim() };
     }
@@ -192,6 +238,13 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand {
     const tokenAddress = (hasChainArg ? rest[1] : rest[0] || '').trim();
     if (!isTelegramTokenAddress(tokenAddress)) return { type: 'unknown', text: raw };
     return { type: 'tokenInfo', tokenAddress, chain };
+  }
+  if (cmd === '/limit') {
+    const hasChainArg = rest.length >= 2;
+    const chain = hasChainArg ? (rest[0] || '').trim() : undefined;
+    const tokenAddress = (hasChainArg ? rest[1] : rest[0] || '').trim();
+    if (!isTelegramTokenAddress(tokenAddress)) return { type: 'unknown', text: raw };
+    return { type: 'limit', tokenAddress, chain };
   }
   if (cmd === '/cancel') {
     const orderId = (rest[0] || '').trim();

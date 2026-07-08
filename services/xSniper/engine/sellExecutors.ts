@@ -1,6 +1,6 @@
 import { WalletService } from '@/services/wallet';
 import { SettingsService } from '@/services/settings';
-import { TradeService } from '@/services/trade';
+import { getTradeExecutor } from '@/services/chain/registry';
 import { TokenService } from '@/services/token';
 import { cancelAllSellLimitOrdersForToken } from '@/services/limitOrders/store';
 import { buildTweetUrl, getSignalTimeMs, normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
@@ -108,6 +108,7 @@ export const createSellExecutors = (deps: {
     fromAddress: string;
     reason: string;
   }) => {
+    const tradeExecutor = getTradeExecutor(input.chainId);
     let balanceWei = 0n;
     try {
       balanceWei = BigInt(await TokenService.getBalance(input.tokenAddress, input.fromAddress, input.chainId));
@@ -125,7 +126,7 @@ export const createSellExecutors = (deps: {
 
     let allowanceInsufficient = false;
     try {
-      const check = await TradeService.checkSellAllowanceInsufficient(
+      const check = await tradeExecutor.checkSellAllowanceInsufficient(
         input.chainId,
         input.tokenAddress,
         input.tokenInfo,
@@ -147,7 +148,7 @@ export const createSellExecutors = (deps: {
 
     let repaired = false;
     try {
-      await TradeService.approveMaxForSellIfNeeded(
+      await tradeExecutor.approveMaxForSellIfNeeded(
         input.chainId,
         input.tokenAddress,
         input.tokenInfo,
@@ -307,13 +308,15 @@ export const createSellExecutors = (deps: {
       let sellErr: unknown = null;
       let tokenInfoForTrade = tokenInfo;
       try {
-        rsp = await TradeService.sellWithReceiptAndAutoRecovery({
+        const tradeExecutor = getTradeExecutor(input.chainId);
+        rsp = await tradeExecutor.sellWithReceiptAndAutoRecovery({
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
           tokenAmountWei: amountWei.toString(),
           tokenInfo: tokenInfoForTrade,
           sellPercentBps: bps,
           fromAddress: sellFromAddress,
+          submitChannel: (settings as any)?.chains?.[input.chainId]?.submitChannel,
         } as any, {
           maxRetry: 1,
           timeoutMs: 20_000,
@@ -377,13 +380,15 @@ export const createSellExecutors = (deps: {
           let retrySubmittedTxHash: string | null = null;
           let retryErr: unknown = null;
           try {
-            retryRsp = await TradeService.sellWithReceiptAndAutoRecovery({
+            const tradeExecutor = getTradeExecutor(input.chainId);
+            retryRsp = await tradeExecutor.sellWithReceiptAndAutoRecovery({
               chainId: input.chainId,
               tokenAddress: input.tokenAddress,
               tokenAmountWei: amountWei.toString(),
               tokenInfo: tokenInfoForTrade,
               sellPercentBps: bps,
               fromAddress: sellFromAddress,
+              submitChannel: (settings as any)?.chains?.[input.chainId]?.submitChannel,
             } as any, {
               maxRetry: 0,
               timeoutMs: 20_000,
@@ -642,13 +647,15 @@ export const createSellExecutors = (deps: {
         rejectSubmitted = reject;
       });
       try {
-        const settlePromise = TradeService.sellWithReceiptAndAutoRecovery({
+        const tradeExecutor = getTradeExecutor(input.chainId);
+        const settlePromise = tradeExecutor.sellWithReceiptAndAutoRecovery({
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
           tokenAmountWei: amountWei.toString(),
           tokenInfo: tokenInfoForTrade,
           sellPercentBps: bps,
           fromAddress: sellFromAddress,
+          submitChannel: (settings as any)?.chains?.[input.chainId]?.submitChannel,
         } as any, {
           maxRetry: 1,
           timeoutMs: 20_000,

@@ -56,10 +56,34 @@ export function createTelegramController(deps: {
   const pendingInputByChat = new Map<
     string,
     {
-      kind: 'buyAmountNative' | 'buyNewCaCount' | 'newCoinBuyAmountNative' | 'newCoinBuyNewCaCount' | 'quickBuyPresets' | 'quickSellPresets';
+      kind:
+        | 'buyAmountNative'
+        | 'buyNewCaCount'
+        | 'newCoinBuyAmountNative'
+        | 'newCoinBuyNewCaCount'
+        | 'quickBuyPresets'
+        | 'quickSellPresets'
+        | 'limitTriggerPriceUsd'
+        | 'limitBuyAmountNative'
+        | 'limitSellPercent';
       chainId?: number;
     }
   >();
+  type TelegramLimitOrderTypeKey = 'low_buy' | 'high_buy' | 'stop_loss_sell' | 'take_profit_sell';
+  type PendingTelegramLimitFlow = {
+    chainId: number;
+    tokenAddress: ChainAddress;
+    tokenInfo: TokenInfo;
+    tokenSymbol: string;
+    priceUsd: number | null;
+    buyPresets: string[];
+    sellPresets: string[];
+    orderType?: TelegramLimitOrderTypeKey;
+    triggerPriceUsd?: number;
+    buyAmountNative?: string;
+    sellPercent?: number;
+  };
+  const pendingLimitFlowByChat = new Map<string, PendingTelegramLimitFlow>();
   const normalizeTelegramChainId = (value: unknown, fallbackChainId: number) => {
     const n = Number(value);
     if (
@@ -97,6 +121,44 @@ export function createTelegramController(deps: {
     return parseUnits(amountNative, decimals).toString();
   };
   const resolveBaseTokenAddress = (chainId: number) => (chainId === ChainId.SOL ? SOLANA_ZERO_ADDRESS : ZERO_ADDRESS);
+  const parsePositiveNumber = (raw: unknown) => {
+    const n = Number(String(raw ?? '').trim());
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const parsePercentNumber = (raw: unknown) => {
+    const n = Number(String(raw ?? '').trim());
+    return Number.isFinite(n) && n > 0 && n <= 100 ? n : null;
+  };
+  const clearTelegramLimitPendingInput = (chatId: string) => {
+    const pending = pendingInputByChat.get(chatId);
+    if (
+      pending?.kind === 'limitTriggerPriceUsd'
+      || pending?.kind === 'limitBuyAmountNative'
+      || pending?.kind === 'limitSellPercent'
+    ) {
+      pendingInputByChat.delete(chatId);
+    }
+  };
+  const resolveTelegramLimitOrderType = (kind: string): TelegramLimitOrderTypeKey | null => {
+    if (kind === 'lb') return 'low_buy';
+    if (kind === 'hb') return 'high_buy';
+    if (kind === 'ls') return 'stop_loss_sell';
+    if (kind === 'hs') return 'take_profit_sell';
+    return null;
+  };
+  const resolveTelegramLimitOrderSide = (orderType: TelegramLimitOrderTypeKey): 'buy' | 'sell' => {
+    if (orderType === 'low_buy' || orderType === 'high_buy') return 'buy';
+    return 'sell';
+  };
+  const isTelegramLimitOrderHigh = (orderType: TelegramLimitOrderTypeKey) => (
+    orderType === 'high_buy' || orderType === 'take_profit_sell'
+  );
+  const formatTelegramLimitOrderTypeLabel = (orderType: TelegramLimitOrderTypeKey) => {
+    if (orderType === 'low_buy') return '🟢 低价买';
+    if (orderType === 'high_buy') return '🟢 高价买';
+    if (orderType === 'stop_loss_sell') return '🔴 低价卖';
+    return '🔴 高价卖';
+  };
   const telegramPriorityFeeDefaults = {
     none: '0',
     slow: '0.000025',
@@ -567,10 +629,345 @@ export function createTelegramController(deps: {
         { text: `🔴 卖 ${sell4[3]}%`, callbackData: `act:sell:${chainId}:${tokenAddress}:${sell4[3]}` },
       ],
       [
+        { text: '📌 限价单', callbackData: `act:lim:open:${chainId}:${tokenAddress}` },
+      ],
+      [
         { text: '↩️ 返回菜单', callbackData: 'act:menu' },
         { text: '⚙️ 钱包', callbackData: 'act:wallets' },
       ],
     ];
+  };
+  const buildTelegramLimitTypeKeyboard = (chainId: number, tokenAddress: ChainAddress): TgInlineKeyboard => ([
+    [
+      { text: '🟢 低价买', callbackData: 'act:lim:type:lb' },
+      { text: '🟢 高价买', callbackData: 'act:lim:type:hb' },
+    ],
+    [
+      { text: '🔴 低价卖', callbackData: 'act:lim:type:ls' },
+      { text: '🔴 高价卖', callbackData: 'act:lim:type:hs' },
+    ],
+    [
+      { text: '🔍 返回代币', callbackData: `act:token:${chainId}:${tokenAddress}` },
+      { text: '↩️ 菜单', callbackData: 'act:menu' },
+    ],
+  ]);
+  const buildTelegramLimitOffsetKeyboard = (orderType: TelegramLimitOrderTypeKey, chainId: number, tokenAddress: ChainAddress): TgInlineKeyboard => {
+    const isHigh = isTelegramLimitOrderHigh(orderType);
+    const pctList = resolveTelegramLimitOrderSide(orderType) === 'buy'
+      ? [10, 20, 50]
+      : [20, 50, 100];
+    const pctText = (pct: number) => `${isHigh ? '+' : '-'}${pct}%`;
+    return [
+      [
+        { text: pctText(pctList[0]), callbackData: `act:lim:off:${pctList[0]}` },
+        { text: pctText(pctList[1]), callbackData: `act:lim:off:${pctList[1]}` },
+      ],
+      [
+        { text: pctText(pctList[2]), callbackData: `act:lim:off:${pctList[2]}` },
+        { text: '⌨️ 自定义触发价', callbackData: 'act:lim:off:custom' },
+      ],
+      [
+        { text: '↩️ 上一步', callbackData: 'act:lim:back' },
+        { text: '🔍 返回代币', callbackData: `act:token:${chainId}:${tokenAddress}` },
+      ],
+      [{ text: '取消', callbackData: 'act:lim:cancel' }],
+    ];
+  };
+  const buildTelegramLimitBuyAmountKeyboard = (flow: PendingTelegramLimitFlow): TgInlineKeyboard => {
+    const nativeSymbol = getNativeSymbol(flow.chainId);
+    const buy4 = [...(flow.buyPresets && flow.buyPresets.length ? flow.buyPresets : ['0.1', '0.5', '1', '2']).slice(0, 4)];
+    while (buy4.length < 4) buy4.push(buy4[buy4.length - 1] || '0.1');
+    return [
+      [
+        { text: `买 ${buy4[0]} ${nativeSymbol}`, callbackData: `act:lim:amt:${buy4[0]}` },
+        { text: `买 ${buy4[1]} ${nativeSymbol}`, callbackData: `act:lim:amt:${buy4[1]}` },
+      ],
+      [
+        { text: `买 ${buy4[2]} ${nativeSymbol}`, callbackData: `act:lim:amt:${buy4[2]}` },
+        { text: `买 ${buy4[3]} ${nativeSymbol}`, callbackData: `act:lim:amt:${buy4[3]}` },
+      ],
+      [
+        { text: '⌨️ 自定义金额', callbackData: 'act:lim:amt:custom' },
+        { text: '↩️ 上一步', callbackData: 'act:lim:back' },
+      ],
+      [
+        { text: '🔍 返回代币', callbackData: `act:token:${flow.chainId}:${flow.tokenAddress}` },
+        { text: '取消', callbackData: 'act:lim:cancel' },
+      ],
+    ];
+  };
+  const buildTelegramLimitSellAmountKeyboard = (flow: PendingTelegramLimitFlow): TgInlineKeyboard => {
+    const sell4 = [...(flow.sellPresets && flow.sellPresets.length ? flow.sellPresets : ['25', '50', '75', '100']).slice(0, 4)];
+    while (sell4.length < 4) sell4.push(sell4[sell4.length - 1] || '50');
+    return [
+      [
+        { text: `卖 ${sell4[0]}%`, callbackData: `act:lim:pct:${sell4[0]}` },
+        { text: `卖 ${sell4[1]}%`, callbackData: `act:lim:pct:${sell4[1]}` },
+      ],
+      [
+        { text: `卖 ${sell4[2]}%`, callbackData: `act:lim:pct:${sell4[2]}` },
+        { text: `卖 ${sell4[3]}%`, callbackData: `act:lim:pct:${sell4[3]}` },
+      ],
+      [
+        { text: '⌨️ 自定义比例', callbackData: 'act:lim:pct:custom' },
+        { text: '↩️ 上一步', callbackData: 'act:lim:back' },
+      ],
+      [
+        { text: '🔍 返回代币', callbackData: `act:token:${flow.chainId}:${flow.tokenAddress}` },
+        { text: '取消', callbackData: 'act:lim:cancel' },
+      ],
+    ];
+  };
+  const buildTelegramLimitConfirmKeyboard = (flow: PendingTelegramLimitFlow): TgInlineKeyboard => ([
+    [
+      { text: '✅ 创建', callbackData: 'act:lim:go' },
+      { text: '↩️ 上一步', callbackData: 'act:lim:back' },
+    ],
+    [
+      { text: '🔍 返回代币', callbackData: `act:token:${flow.chainId}:${flow.tokenAddress}` },
+      { text: '取消', callbackData: 'act:lim:cancel' },
+    ],
+  ]);
+  const sendTelegramLimitOpen = async (chatId: string, chainId: number, tokenAddress: ChainAddress) => {
+    clearTelegramLimitPendingInput(chatId);
+    const settings = await SettingsService.get();
+    const snapshot = await buildTelegramTokenSnapshot(chainId, tokenAddress);
+    if (!snapshot || !snapshot.tokenInfo) {
+      await sendTelegramReply(`未找到 Token 信息: ${tokenAddress}`, { chainId });
+      return;
+    }
+    const chainSettings = (settings.chains as any)?.[chainId] ?? {};
+    const buyPresets = Array.isArray(chainSettings.buyPresets) ? chainSettings.buyPresets : [];
+    const sellPresets = Array.isArray(chainSettings.sellPresets) ? chainSettings.sellPresets : [];
+    pendingLimitFlowByChat.set(chatId, {
+      chainId,
+      tokenAddress,
+      tokenInfo: snapshot.tokenInfo,
+      tokenSymbol: snapshot.symbol,
+      priceUsd: snapshot.priceUsd ?? null,
+      buyPresets,
+      sellPresets,
+    });
+    await sendTelegramReply(
+      [
+        '📌 限价单 - 快速创建',
+        `链: ${formatChainLabel(chainId)}`,
+        `代币: ${snapshot.symbol} | ${shortAddress(tokenAddress)}`,
+        `当前价: ${formatPrice(snapshot.priceUsd)}`,
+        '',
+        '选择类型：',
+      ].join('\n'),
+      { inlineKeyboard: buildTelegramLimitTypeKeyboard(chainId, tokenAddress), chainId, includeGlobalNav: false }
+    );
+  };
+  const sendTelegramLimitOffsetMenu = async (chatId: string) => {
+    const flow = pendingLimitFlowByChat.get(chatId);
+    if (!flow || !flow.orderType) {
+      await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+      return;
+    }
+    clearTelegramLimitPendingInput(chatId);
+    await sendTelegramReply(
+      [
+        '📌 限价单 - 选择触发价',
+        `类型: ${formatTelegramLimitOrderTypeLabel(flow.orderType)}`,
+        `代币: ${flow.tokenSymbol} | ${shortAddress(flow.tokenAddress)}`,
+        `当前价: ${formatPrice(flow.priceUsd)}`,
+        '',
+        flow.priceUsd && flow.priceUsd > 0 ? '选择偏移：' : '当前价格不可用，请自定义触发价（USD）：',
+      ].join('\n'),
+      { inlineKeyboard: buildTelegramLimitOffsetKeyboard(flow.orderType, flow.chainId, flow.tokenAddress), chainId: flow.chainId, includeGlobalNav: false }
+    );
+    if (!flow.priceUsd || flow.priceUsd <= 0) {
+      pendingInputByChat.set(chatId, { kind: 'limitTriggerPriceUsd', chainId: flow.chainId });
+    }
+  };
+  const computeTelegramLimitTriggerPriceUsd = (flow: PendingTelegramLimitFlow, pct: number) => {
+    const priceUsd = Number(flow.priceUsd ?? 0);
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return null;
+    const orderType = flow.orderType;
+    if (!orderType) return null;
+    const sign = isTelegramLimitOrderHigh(orderType) ? 1 : -1;
+    const trigger = priceUsd * (1 + sign * pct / 100);
+    return Number.isFinite(trigger) && trigger > 0 ? trigger : null;
+  };
+  const sendTelegramLimitAmountMenu = async (chatId: string) => {
+    const flow = pendingLimitFlowByChat.get(chatId);
+    if (!flow || !flow.orderType) {
+      await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+      return;
+    }
+    clearTelegramLimitPendingInput(chatId);
+    const side = resolveTelegramLimitOrderSide(flow.orderType);
+    const trigger = flow.triggerPriceUsd;
+    await sendTelegramReply(
+      [
+        '📌 限价单 - 选择金额',
+        `类型: ${formatTelegramLimitOrderTypeLabel(flow.orderType)}`,
+        `触发价: ${formatPrice(trigger)}`,
+        '',
+        side === 'buy' ? '选择买入金额：' : '选择卖出比例：',
+      ].join('\n'),
+      {
+        inlineKeyboard: side === 'buy' ? buildTelegramLimitBuyAmountKeyboard(flow) : buildTelegramLimitSellAmountKeyboard(flow),
+        chainId: flow.chainId,
+        includeGlobalNav: false,
+      }
+    );
+  };
+  const sendTelegramLimitConfirm = async (chatId: string) => {
+    const flow = pendingLimitFlowByChat.get(chatId);
+    if (!flow || !flow.orderType) {
+      await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+      return;
+    }
+    clearTelegramLimitPendingInput(chatId);
+    const side = resolveTelegramLimitOrderSide(flow.orderType);
+    const nativeSymbol = getNativeSymbol(flow.chainId);
+    const actionText = side === 'buy'
+      ? `买入: ${flow.buyAmountNative || '-'} ${nativeSymbol}`
+      : `卖出: ${flow.sellPercent != null ? `${flow.sellPercent}%` : '-'}`;
+    await sendTelegramReply(
+      [
+        '📌 限价单 - 确认',
+        `链: ${formatChainLabel(flow.chainId)}`,
+        `代币: ${flow.tokenSymbol} | ${shortAddress(flow.tokenAddress)}`,
+        `类型: ${formatTelegramLimitOrderTypeLabel(flow.orderType)}`,
+        `触发价: ${formatPrice(flow.triggerPriceUsd)}`,
+        actionText,
+      ].join('\n'),
+      { inlineKeyboard: buildTelegramLimitConfirmKeyboard(flow), chainId: flow.chainId, includeGlobalNav: false }
+    );
+  };
+  const backTelegramLimitStep = async (chatId: string) => {
+    const flow = pendingLimitFlowByChat.get(chatId);
+    if (!flow) {
+      await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+      return;
+    }
+    clearTelegramLimitPendingInput(chatId);
+    if (flow.buyAmountNative != null || flow.sellPercent != null) {
+      delete flow.buyAmountNative;
+      delete flow.sellPercent;
+      pendingLimitFlowByChat.set(chatId, flow);
+      await sendTelegramLimitAmountMenu(chatId);
+      return;
+    }
+    if (flow.triggerPriceUsd != null) {
+      delete flow.triggerPriceUsd;
+      pendingLimitFlowByChat.set(chatId, flow);
+      await sendTelegramLimitOffsetMenu(chatId);
+      return;
+    }
+    if (flow.orderType) {
+      delete flow.orderType;
+      pendingLimitFlowByChat.set(chatId, flow);
+      await sendTelegramReply(
+        [
+          '📌 限价单 - 快速创建',
+          `链: ${formatChainLabel(flow.chainId)}`,
+          `代币: ${flow.tokenSymbol} | ${shortAddress(flow.tokenAddress)}`,
+          `当前价: ${formatPrice(flow.priceUsd)}`,
+          '',
+          '选择类型：',
+        ].join('\n'),
+        { inlineKeyboard: buildTelegramLimitTypeKeyboard(flow.chainId, flow.tokenAddress), chainId: flow.chainId, includeGlobalNav: false }
+      );
+      return;
+    }
+    pendingLimitFlowByChat.delete(chatId);
+    await sendTelegramReply('已退出限价单创建流程。', { includeGlobalNav: false });
+  };
+  const cancelTelegramLimitFlow = async (chatId: string) => {
+    clearTelegramLimitPendingInput(chatId);
+    pendingLimitFlowByChat.delete(chatId);
+    await sendTelegramReply('已取消限价单创建流程。', { includeGlobalNav: false });
+  };
+  const submitTelegramLimitOrder = async (chatId: string) => {
+    const flow = pendingLimitFlowByChat.get(chatId);
+    if (!flow || !flow.orderType) {
+      await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+      return;
+    }
+    const trigger = Number(flow.triggerPriceUsd ?? 0);
+    if (!Number.isFinite(trigger) || trigger <= 0) {
+      await sendTelegramReply('触发价无效，请重新选择/输入。', { includeGlobalNav: false });
+      return;
+    }
+    const side = resolveTelegramLimitOrderSide(flow.orderType);
+    const status = await getWalletStatus(flow.chainId);
+    if (status.locked || !status.address) {
+      await sendTelegramReply('钱包已锁定，无法创建限价单。', { chainId: flow.chainId, includeGlobalNav: false });
+      return;
+    }
+    const fromAddress = status.address as ChainAddress;
+    const baseTokenAddress = resolveBaseTokenAddress(flow.chainId);
+    if (side === 'buy') {
+      const amt = String(flow.buyAmountNative || '').trim();
+      if (!amt || !Number.isFinite(Number(amt)) || Number(amt) <= 0) {
+        await sendTelegramReply('买入金额无效，请重新选择/输入。', { includeGlobalNav: false });
+        return;
+      }
+      const amountWei = resolveNativeAmountWei(flow.chainId, amt);
+      await createLimitOrder({
+        chainId: flow.chainId,
+        tokenAddress: flow.tokenAddress,
+        baseTokenAddress,
+        tokenSymbol: flow.tokenSymbol,
+        side: 'buy',
+        orderType: flow.orderType as any,
+        triggerPriceUsd: trigger,
+        buyNativeAmountWei: amountWei,
+        tokenInfo: flow.tokenInfo,
+        fromAddress,
+      });
+    } else {
+      const pct = flow.sellPercent;
+      if (!Number.isFinite(Number(pct)) || !(Number(pct) > 0 && Number(pct) <= 100)) {
+        await sendTelegramReply('卖出比例无效，请重新选择/输入。', { includeGlobalNav: false });
+        return;
+      }
+      const sellPercentBps = Math.floor(Number(pct) * 100);
+      await createLimitOrder({
+        chainId: flow.chainId,
+        tokenAddress: flow.tokenAddress,
+        baseTokenAddress,
+        tokenSymbol: flow.tokenSymbol,
+        side: 'sell',
+        orderType: flow.orderType as any,
+        triggerPriceUsd: trigger,
+        sellPercentBps,
+        tokenInfo: flow.tokenInfo,
+        fromAddress,
+      });
+    }
+    prewarmTelegramTradeIfNeeded({
+      chainId: flow.chainId,
+      tokenAddress: flow.tokenAddress,
+      tokenInfo: flow.tokenInfo,
+      fromAddress,
+      platform: flow.tokenInfo.launchpad_platform || flow.tokenInfo.launchpad,
+    });
+    await deps.broadcastStateChange();
+    pendingLimitFlowByChat.delete(chatId);
+    clearTelegramLimitPendingInput(chatId);
+    await sendTelegramReply(
+      [
+        '✅ 已创建限价单',
+        `链: ${formatChainLabel(flow.chainId)}`,
+        `代币: ${flow.tokenSymbol} | ${shortAddress(flow.tokenAddress)}`,
+        `类型: ${formatTelegramLimitOrderTypeLabel(flow.orderType)}`,
+        `触发价: ${formatPrice(trigger)}`,
+      ].join('\n'),
+      {
+        inlineKeyboard: [
+          [{ text: '🔄 刷新 Token', callbackData: `act:token:${flow.chainId}:${flow.tokenAddress}` }],
+          [{ text: '📋 查看挂单', callbackData: `act:orders:${flow.chainId}` }],
+        ],
+        chainId: flow.chainId,
+        includeGlobalNav: false,
+      }
+    );
   };
   const buildMainMenuKeyboard = (currentChainId?: number) => [
     [{ text: '插件状态', callbackData: 'act:status' }, { text: '挂单列表', callbackData: currentChainId ? `act:orders:${currentChainId}` : 'act:orders' }],
@@ -742,7 +1139,7 @@ export function createTelegramController(deps: {
     const chainName = String(chainNames[chainId] || chainId).toUpperCase();
     const nativeSymbol = getNativeSymbol(chainId);
     await sendTelegramReply(
-      ['Dagobang Telegram 菜单', '', `当前链: ${chainName} (${nativeSymbol})`, '', '1) 直接发送 tokenAddress 查看当前链快照与持仓', '2) 使用按钮快速查看状态、持仓和挂单', '3) Token 快照里可一键买卖', '', '命令:', '/menu', '/chain', '/chain <bsc|hyper|sol>', '/settings', '/status', '/holdings', '/holdings <bsc|hyper|sol>', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/orders <bsc|hyper|sol>', '/token <tokenAddress>', '/token <bsc|hyper|sol> <tokenAddress>', '/buy <tokenAddress> <nativeAmount>', '/buy <bsc|hyper|sol> <tokenAddress> <nativeAmount>', '/sell <tokenAddress> <percent>', '/sell <bsc|hyper|sol> <tokenAddress> <percent>'].join('\n'),
+      ['Dagobang Telegram 菜单', '', `当前链: ${chainName} (${nativeSymbol})`, '', '1) 直接发送 tokenAddress 查看当前链快照与持仓', '2) 使用按钮快速查看状态、持仓和挂单', '3) Token 快照里可一键买卖/创建限价单', '', '命令:', '/menu', '/chain', '/chain <bsc|hyper|sol>', '/settings', '/status', '/holdings', '/holdings <bsc|hyper|sol>', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/orders <bsc|hyper|sol>', '/token <tokenAddress>', '/token <bsc|hyper|sol> <tokenAddress>', '/limit <tokenAddress>', '/limit <bsc|hyper|sol> <tokenAddress>', '/buy <tokenAddress> <nativeAmount>', '/buy <bsc|hyper|sol> <tokenAddress> <nativeAmount>', '/sell <tokenAddress> <percent>', '/sell <bsc|hyper|sol> <tokenAddress> <percent>'].join('\n'),
       { inlineKeyboard: buildMainMenuKeyboard(chainId), chainId, includeGlobalNav: false }
     );
   };
@@ -887,7 +1284,7 @@ export function createTelegramController(deps: {
       fromAddress: holderAddress || undefined,
       platform: tokenInfo.launchpad_platform || tokenInfo.launchpad,
     });
-    return { chainId, tokenAddress, symbol, name, priceUsd: normalizedPriceUsd, marketCapUsd, holderAddress, balanceWei, balanceAmount, balanceUsd };
+    return { chainId, tokenAddress, symbol, name, priceUsd: normalizedPriceUsd, marketCapUsd, holderAddress, balanceWei, balanceAmount, balanceUsd, tokenInfo, decimals };
   };
   const pickNumericField = (obj: any, keys: string[]) => {
     for (const k of keys) {
@@ -1681,6 +2078,18 @@ export function createTelegramController(deps: {
         const isWhoamiAction = command.type === 'whoami' || command.type === 'actionWhoami';
         const isSwitchWalletAction = command.type === 'switchWallet' || command.type === 'actionSwitchWallet';
         const isXSniperOrderAction = command.type === 'actionXSniperOrder';
+        const isLimitCommand = command.type === 'limit';
+        const isLimitOpenAction = command.type === 'actionLimitOpen';
+        const isLimitTypeAction = command.type === 'actionLimitType';
+        const isLimitOffsetAction = command.type === 'actionLimitOffset';
+        const isLimitCustomTriggerPriceAction = command.type === 'actionLimitCustomTriggerPrice';
+        const isLimitAmountAction = command.type === 'actionLimitAmount';
+        const isLimitCustomBuyAmountAction = command.type === 'actionLimitCustomBuyAmount';
+        const isLimitSellPercentAction = command.type === 'actionLimitSellPercent';
+        const isLimitCustomSellPercentAction = command.type === 'actionLimitCustomSellPercent';
+        const isLimitCreateAction = command.type === 'actionLimitCreate';
+        const isLimitBackAction = command.type === 'actionLimitBack';
+        const isLimitCancelAction = command.type === 'actionLimitCancel';
 
         if (isMenuAction) {
           await sendTelegramMenu();
@@ -1718,6 +2127,140 @@ export function createTelegramController(deps: {
         }
         if (isQuickTradeSettingsAction) {
           await sendTelegramQuickTradeSettings();
+          return;
+        }
+        if (isLimitCommand) {
+          const tokenAddress = command.tokenAddress as ChainAddress;
+          await sendTelegramLimitOpen(chatId, effectiveChainId, tokenAddress);
+          return;
+        }
+        if (isLimitOpenAction) {
+          const chainId = normalizeTelegramChainId(command.chainId, effectiveChainId);
+          const tokenAddress = command.tokenAddress as ChainAddress;
+          await sendTelegramLimitOpen(chatId, chainId, tokenAddress);
+          return;
+        }
+        if (isLimitTypeAction) {
+          const flow = pendingLimitFlowByChat.get(chatId);
+          if (!flow) {
+            await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+            return;
+          }
+          const orderType = resolveTelegramLimitOrderType(command.kind);
+          if (!orderType) {
+            await sendTelegramReply('限价单类型无效，请重新选择。', { includeGlobalNav: false });
+            return;
+          }
+          flow.orderType = orderType;
+          delete flow.triggerPriceUsd;
+          delete flow.buyAmountNative;
+          delete flow.sellPercent;
+          pendingLimitFlowByChat.set(chatId, flow);
+          await sendTelegramLimitOffsetMenu(chatId);
+          return;
+        }
+        if (isLimitOffsetAction) {
+          const flow = pendingLimitFlowByChat.get(chatId);
+          if (!flow || !flow.orderType) {
+            await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+            return;
+          }
+          const pct = Number(command.percent);
+          const trigger = computeTelegramLimitTriggerPriceUsd(flow, pct);
+          if (!trigger) {
+            pendingInputByChat.set(chatId, { kind: 'limitTriggerPriceUsd', chainId: flow.chainId });
+            await sendTelegramReply('请输入触发价（USD），例如: 0.00012', { chainId: flow.chainId, includeGlobalNav: false });
+            return;
+          }
+          flow.triggerPriceUsd = trigger;
+          delete flow.buyAmountNative;
+          delete flow.sellPercent;
+          pendingLimitFlowByChat.set(chatId, flow);
+          await sendTelegramLimitAmountMenu(chatId);
+          return;
+        }
+        if (isLimitCustomTriggerPriceAction) {
+          const flow = pendingLimitFlowByChat.get(chatId);
+          if (!flow || !flow.orderType) {
+            await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+            return;
+          }
+          pendingInputByChat.set(chatId, { kind: 'limitTriggerPriceUsd', chainId: flow.chainId });
+          await sendTelegramReply('请输入触发价（USD），例如: 0.00012', { chainId: flow.chainId, includeGlobalNav: false });
+          return;
+        }
+        if (isLimitAmountAction) {
+          const flow = pendingLimitFlowByChat.get(chatId);
+          if (!flow || !flow.orderType) {
+            await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+            return;
+          }
+          const side = resolveTelegramLimitOrderSide(flow.orderType);
+          if (side !== 'buy') {
+            await sendTelegramReply('当前不是买单流程。', { includeGlobalNav: false });
+            return;
+          }
+          const amt = String(command.amountNative || '').trim();
+          if (!amt || !Number.isFinite(Number(amt)) || Number(amt) <= 0) {
+            await sendTelegramReply('买入金额无效，请重新选择/输入。', { includeGlobalNav: false });
+            return;
+          }
+          flow.buyAmountNative = amt;
+          pendingLimitFlowByChat.set(chatId, flow);
+          await sendTelegramLimitConfirm(chatId);
+          return;
+        }
+        if (isLimitCustomBuyAmountAction) {
+          const flow = pendingLimitFlowByChat.get(chatId);
+          if (!flow || !flow.orderType) {
+            await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+            return;
+          }
+          pendingInputByChat.set(chatId, { kind: 'limitBuyAmountNative', chainId: flow.chainId });
+          await sendTelegramReply(`请输入买入金额(${getNativeSymbol(flow.chainId)})，例如: 0.1`, { chainId: flow.chainId, includeGlobalNav: false });
+          return;
+        }
+        if (isLimitSellPercentAction) {
+          const flow = pendingLimitFlowByChat.get(chatId);
+          if (!flow || !flow.orderType) {
+            await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+            return;
+          }
+          const side = resolveTelegramLimitOrderSide(flow.orderType);
+          if (side !== 'sell') {
+            await sendTelegramReply('当前不是卖单流程。', { includeGlobalNav: false });
+            return;
+          }
+          const pct = parsePercentNumber(command.sellPercent);
+          if (pct == null) {
+            await sendTelegramReply('卖出比例无效，请输入 0-100 之间的数字。', { includeGlobalNav: false });
+            return;
+          }
+          flow.sellPercent = pct;
+          pendingLimitFlowByChat.set(chatId, flow);
+          await sendTelegramLimitConfirm(chatId);
+          return;
+        }
+        if (isLimitCustomSellPercentAction) {
+          const flow = pendingLimitFlowByChat.get(chatId);
+          if (!flow || !flow.orderType) {
+            await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+            return;
+          }
+          pendingInputByChat.set(chatId, { kind: 'limitSellPercent', chainId: flow.chainId });
+          await sendTelegramReply('请输入卖出比例（0-100），例如: 50', { chainId: flow.chainId, includeGlobalNav: false });
+          return;
+        }
+        if (isLimitCreateAction) {
+          await submitTelegramLimitOrder(chatId);
+          return;
+        }
+        if (isLimitBackAction) {
+          await backTelegramLimitStep(chatId);
+          return;
+        }
+        if (isLimitCancelAction) {
+          await cancelTelegramLimitFlow(chatId);
           return;
         }
         if (isInputXSniperBuyAmountAction) {
@@ -1782,6 +2325,63 @@ export function createTelegramController(deps: {
           const pendingChainId = typeof pending?.chainId === 'number' && Number.isFinite(pending.chainId)
             ? pending.chainId
             : tgChainId;
+          if (pendingKind === 'limitTriggerPriceUsd') {
+            const flow = pendingLimitFlowByChat.get(chatId);
+            if (!flow || !flow.orderType) {
+              pendingInputByChat.delete(chatId);
+              await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+              return;
+            }
+            const trigger = parsePositiveNumber(rawText);
+            if (trigger == null) {
+              await sendTelegramReply('输入无效，请输入大于0的数字（例如 0.00012）', { chainId: pendingChainId, includeGlobalNav: false });
+              return;
+            }
+            flow.triggerPriceUsd = trigger;
+            delete flow.buyAmountNative;
+            delete flow.sellPercent;
+            pendingLimitFlowByChat.set(chatId, flow);
+            pendingInputByChat.delete(chatId);
+            await sendTelegramLimitAmountMenu(chatId);
+            return;
+          }
+          if (pendingKind === 'limitBuyAmountNative') {
+            const flow = pendingLimitFlowByChat.get(chatId);
+            if (!flow || !flow.orderType) {
+              pendingInputByChat.delete(chatId);
+              await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+              return;
+            }
+            const amount = String(rawText || '').trim();
+            const n = Number(amount);
+            if (!Number.isFinite(n) || n <= 0) {
+              await sendTelegramReply('输入无效，请输入大于0的数字（例如 0.1）', { chainId: pendingChainId, includeGlobalNav: false });
+              return;
+            }
+            flow.buyAmountNative = amount;
+            pendingLimitFlowByChat.set(chatId, flow);
+            pendingInputByChat.delete(chatId);
+            await sendTelegramLimitConfirm(chatId);
+            return;
+          }
+          if (pendingKind === 'limitSellPercent') {
+            const flow = pendingLimitFlowByChat.get(chatId);
+            if (!flow || !flow.orderType) {
+              pendingInputByChat.delete(chatId);
+              await sendTelegramReply('未找到限价单上下文，请先从 Token 卡片进入 “限价单”。', { includeGlobalNav: false });
+              return;
+            }
+            const pct = parsePercentNumber(rawText);
+            if (pct == null) {
+              await sendTelegramReply('输入无效，请输入 0-100 之间的数字（例如 50）', { chainId: pendingChainId, includeGlobalNav: false });
+              return;
+            }
+            flow.sellPercent = pct;
+            pendingLimitFlowByChat.set(chatId, flow);
+            pendingInputByChat.delete(chatId);
+            await sendTelegramLimitConfirm(chatId);
+            return;
+          }
           if (pendingKind === 'buyAmountNative') {
             const v = String(rawText || '').trim();
             const n = Number(v);
@@ -2152,7 +2752,7 @@ export function createTelegramController(deps: {
           return void await runTelegramQuickBuy(effectiveChainId, command.tokenAddress, amountNative);
         }
         if (isSellAction) return void await runTelegramQuickSell(effectiveChainId, command.tokenAddress, command.sellPercent);
-        await sendTelegramReply(['未知命令: ' + rawText, '支持:', '/settings', '/chain', '/chain <bsc|hyper|sol>', '/status', '/holdings', '/holdings <bsc|hyper|sol>', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/orders <bsc|hyper|sol>', '/cancel <orderId>', '/buy <tokenAddress> <nativeAmount>', '/buy <bsc|hyper|sol> <tokenAddress> <nativeAmount>', '/sell <tokenAddress> <percent>', '/sell <bsc|hyper|sol> <tokenAddress> <percent>', '/token <tokenAddress>', '/token <bsc|hyper|sol> <tokenAddress>', '/menu', '/start', '或直接发送 tokenAddress'].join('\n'), { inlineKeyboard: buildMainMenuKeyboard(tgChainId) });
+        await sendTelegramReply(['未知命令: ' + rawText, '支持:', '/settings', '/chain', '/chain <bsc|hyper|sol>', '/status', '/holdings', '/holdings <bsc|hyper|sol>', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/orders <bsc|hyper|sol>', '/cancel <orderId>', '/limit <tokenAddress>', '/limit <bsc|hyper|sol> <tokenAddress>', '/buy <tokenAddress> <nativeAmount>', '/buy <bsc|hyper|sol> <tokenAddress> <nativeAmount>', '/sell <tokenAddress> <percent>', '/sell <bsc|hyper|sol> <tokenAddress> <percent>', '/token <tokenAddress>', '/token <bsc|hyper|sol> <tokenAddress>', '/menu', '/start', '或直接发送 tokenAddress'].join('\n'), { inlineKeyboard: buildMainMenuKeyboard(tgChainId) });
       } catch (e: any) {
         await sendTelegramReply(`命令执行失败: ${String(e?.message || e || 'unknown_error')}`);
       }

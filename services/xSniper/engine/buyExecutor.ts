@@ -1,12 +1,11 @@
 import { parseUnits } from 'viem';
 import { WalletService } from '@/services/wallet';
-import { TradeService } from '@/services/trade';
+import { getTradeExecutor } from '@/services/chain/registry';
 import { ChainId } from '@/constants/chains';
 import { buildTweetUrl, getSignalTimeMs, isRepostOrQuoteSignal, normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey, parseNumber, sanitizeMarketCapUsd, shouldBuyByConfig, type TokenMetrics } from '@/services/xSniper/engine/metrics';
 import type { WsConfirmFailedCheck } from '@/services/xSniper/engine/wsSnapshots';
 import type { UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
-import type { DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
 
 const resolveEntryMcapAnchor = (input: {
   postBuyMcapUsd?: number | null;
@@ -34,9 +33,7 @@ const resolveEntryMcapAnchor = (input: {
   return sanitizeMarketCapUsd(input.fallbackMcapUsd);
 };
 
-const terminalFailedBuyKeys = new Map<string, number>();
 const globalBuyInFlightKeys = new Set<string>();
-const globalBoughtLockKeys = new Set<string>();
 
 const resolveStrategyBuyAmountNative = (strategy: any, chainId: number) => {
   const byChain = strategy?.buyAmountNativeByChain;
@@ -189,7 +186,6 @@ export const tryAutoBuyOnce = async (input: {
     entryPriceUsd?: number | null;
     walletAddress?: string;
   }) => void;
-  dryRunAutoSellByPosKey: Map<string, DryRunAutoSellPos>;
   onAttemptOutcome?: (outcome: { bought: boolean; attempted: boolean; reason?: string; detail?: any }) => void;
 }) => {
   await input.loadBoughtOnceIfNeeded();
@@ -217,6 +213,7 @@ export const tryAutoBuyOnce = async (input: {
     strategyWalletAddress || (!dryRun && status?.address)
       ? (normalizeAddress(String(strategyWalletAddress || status?.address)) ?? undefined)
       : undefined;
+  const tradeExecutor = getTradeExecutor(input.chainId);
   const key = input.getKey(input.chainId, input.tokenAddress, { dry: dryRun, walletAddress: tradeFromAddress });
   const globalLockKey = !dryRun
     ? buildGlobalBuyLockKey({ chainId: input.chainId, tokenAddress: input.tokenAddress, walletAddress: tradeFromAddress })
@@ -316,18 +313,8 @@ export const tryAutoBuyOnce = async (input: {
     notifyOutcome({ bought: false, attempted: false, reason: lastFailureReason });
     return false;
   }
-  if (!dryRun && terminalFailedBuyKeys.has(key)) {
-    emitBuyFailure('buy_skipped_terminal_failed');
-    notifyOutcome({ bought: false, attempted: false, reason: lastFailureReason });
-    return false;
-  }
   if (input.buyInFlight.has(key)) {
     emitBuyFailure('buy_skipped_in_flight');
-    notifyOutcome({ bought: false, attempted: false, reason: lastFailureReason });
-    return false;
-  }
-  if (globalLockKey && globalBoughtLockKeys.has(globalLockKey)) {
-    emitBuyFailure('buy_skipped_global_locked');
     notifyOutcome({ bought: false, attempted: false, reason: lastFailureReason });
     return false;
   }
@@ -583,12 +570,13 @@ export const tryAutoBuyOnce = async (input: {
     let submittedTxHash: string | undefined;
     let tokenInfoForTrade = tokenInfo;
     try {
-      rsp = await TradeService.buyWithReceiptAndNonceRecovery({
+      rsp = await tradeExecutor.buyWithReceiptAndNonceRecovery({
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         nativeAmountWei: amountWei.toString(),
         fromAddress: tradeFromAddress,
         tokenInfo: tokenInfoForTrade,
+        submitChannel: input.strategy?.submitChannel,
         gasPriceGwei: input.gasPriceGweiOverride,
         priorityFeeNative: input.priorityFeeBnbOverride,
       } as any, {
@@ -689,9 +677,10 @@ export const tryAutoBuyOnce = async (input: {
       const approveStartAtMs = Date.now();
       void (async () => {
         try {
-            const approveTx = await TradeService.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfoForTrade, {
+          const approveTx = await tradeExecutor.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfoForTrade, {
             fromAddress: tradeFromAddress,
-            } as any);
+            submitChannel: input.strategy?.submitChannel,
+          } as any);
           if (approveTx) {
             console.log('[xsniper.buy.post_approve][submitted]', {
               chainId: input.chainId,
@@ -732,8 +721,6 @@ export const tryAutoBuyOnce = async (input: {
       fallbackMcapUsd: refreshedMetrics.marketCapUsd ?? null,
     });
     input.boughtOnceAtMs.set(key, Date.now());
-    if (globalLockKey) globalBoughtLockKeys.add(globalLockKey);
-    terminalFailedBuyKeys.delete(key);
     void input.persistBoughtOnce();
     input.onStateChanged();
     const posKey = buildPositionKey({

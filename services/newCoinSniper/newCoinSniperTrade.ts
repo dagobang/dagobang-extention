@@ -3,7 +3,6 @@ import { SettingsService } from '@/services/settings';
 import { defaultSettings } from '@/utils/defaults';
 import { TRADE_SUCCESS_SOUND_PRESETS, type NewCoinXmodeSnipeTask, UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal } from '@/types/extention';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
-import { maybeEvaluateDryRunAutoSell as maybeEvaluateDryRunAutoSellFromMod, type DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
 import { maybeEvaluateRapidExitAutoSell as maybeEvaluateRapidExitAutoSellFromMod, registerRapidExitPosition as registerRapidExitPositionFromMod, type RapidExitPosition } from '@/services/xSniper/engine/rapidExitAutoSell';
 import { createSellExecutors } from '@/services/xSniper/engine/sellExecutors';
 import { buildScopedTokenKey, type TokenMetrics, normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey, parseNumber, shouldBuyByConfig } from '@/services/xSniper/engine/metrics';
@@ -66,7 +65,6 @@ export const createNewCoinSniperTrade = (deps: {
   const wsConfirmFailDedupe = new Map<string, number>();
   const buyFailureRecordDedupe = new Map<string, number>();
   const wsSnapshotsByAddr = new Map<string, WsSnapshot[]>();
-  const dryRunAutoSellByPosKey = new Map<string, DryRunAutoSellPos>();
   const rapidExitByPosKey = new Map<string, RapidExitPosition>();
   const manuallyClosedPosKeys = new Map<string, number>();
   const rapidWatchdogRpcAtMs = new Map<string, number>();
@@ -79,7 +77,6 @@ export const createNewCoinSniperTrade = (deps: {
   let rapidWatchdogIntervalMs = -1;
 
   const cleanupPosKey = (posKey: string) => {
-    dryRunAutoSellByPosKey.delete(posKey);
     rapidExitByPosKey.delete(posKey);
   };
   const toScopedTokenKey = (chainId: number, tokenAddress: string) => buildScopedTokenKey(chainId, tokenAddress);
@@ -212,15 +209,6 @@ export const createNewCoinSniperTrade = (deps: {
         holders: cur.holders,
       });
     }
-    void maybeEvaluateDryRunAutoSellFromMod({
-      chainId,
-      tokenAddress,
-      nowMs,
-      wsSnapshotsByAddr,
-      dryRunAutoSellByPosKey,
-      cleanupPosKey,
-      emitRecord,
-    });
     void maybeEvaluateRapidExitAutoSellFromMod({
       chainId,
       tokenAddress,
@@ -933,7 +921,7 @@ export const createNewCoinSniperTrade = (deps: {
           const amountOverride = parseNumber(task.buyAmountNative);
           const gasPriceGweiOverride = String(task.buyGasGwei ?? '').trim() || undefined;
           const priorityFeeBnbOverride = String(task.buyBribeBnb ?? '').trim() || undefined;
-          bought = await tryAutoBuyOnce({
+          bought = (await tryAutoBuyOnce({
             chainId: tradeChainId,
             tokenAddress,
             metrics: m,
@@ -944,7 +932,7 @@ export const createNewCoinSniperTrade = (deps: {
               : undefined,
             gasPriceGweiOverride,
             priorityFeeBnbOverride,
-          });
+          })) === true;
         } catch {
         } finally {
           currentSignalContext = null;
@@ -984,7 +972,6 @@ export const createNewCoinSniperTrade = (deps: {
       buildGenericTokenInfo,
       getEntryPriceUsd,
       registerRapidExitPosition,
-      dryRunAutoSellByPosKey,
     });
 
   const registerRapidExitPosition = (input: {
@@ -1094,7 +1081,7 @@ export const createNewCoinSniperTrade = (deps: {
         try {
           const gasPriceGweiOverride = String(strategy?.buyGasGwei ?? '').trim() || undefined;
           const priorityFeeBnbOverride = String(strategy?.buyBribeBnb ?? '').trim() || undefined;
-          bought = await tryAutoBuyOnce({
+          bought = (await tryAutoBuyOnce({
             chainId: tradeChainId,
             tokenAddress: m.tokenAddress,
             metrics: m,
@@ -1102,7 +1089,7 @@ export const createNewCoinSniperTrade = (deps: {
             signal: pseudoSignal,
             gasPriceGweiOverride,
             priorityFeeBnbOverride,
-          });
+          })) === true;
         } catch {
         } finally {
           currentSignalContext = null;
@@ -1201,7 +1188,6 @@ export const createNewCoinSniperTrade = (deps: {
     });
 
   const clearRuntimeState = () => {
-    dryRunAutoSellByPosKey.clear();
     rapidExitByPosKey.clear();
     manuallyClosedPosKeys.clear();
     rapidWatchdogRpcAtMs.clear();

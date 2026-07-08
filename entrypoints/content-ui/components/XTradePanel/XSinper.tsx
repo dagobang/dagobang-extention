@@ -83,7 +83,6 @@ const buildNormalizedPresetStrategy = (raw: any) => {
   const base = { ...(defaultSettings().autoTrade.twitterSnipe as any) };
   delete (base as any).presets;
   delete (base as any).activePresetId;
-  delete (base as any).buyOgCount;
   const next = {
     ...base,
     ...(raw && typeof raw === 'object' ? raw : {}),
@@ -97,7 +96,6 @@ const buildNormalizedPresetStrategy = (raw: any) => {
     : base.interactionTypes;
   delete (next as any).presets;
   delete (next as any).activePresetId;
-  delete (next as any).buyOgCount;
   return next;
 };
 

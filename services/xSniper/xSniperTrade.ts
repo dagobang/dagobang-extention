@@ -5,7 +5,6 @@ import type { UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
 import { loadXSniperHistory, pushXSniperHistory } from '@/services/xSniper/xSniperHistory';
 import { buildScopedTokenKey, type TokenMetrics, normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey, parseNumber } from '@/services/xSniper/engine/metrics';
 import { computeWsConfirm as computeWsConfirmFromWs, getWsDrawdownPctSince as getWsDrawdownPctSinceFromWs, pushWsSnapshot as pushWsSnapshotFromWs, shouldLogWsConfirmFail as shouldLogWsConfirmFailFromWs, type WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
-import { maybeEvaluateDryRunAutoSell as maybeEvaluateDryRunAutoSellFromMod, type DryRunAutoSellPos } from '@/services/xSniper/engine/dryRunAutoSell';
 import { maybeEvaluateRapidExitAutoSell as maybeEvaluateRapidExitAutoSellFromMod, registerRapidExitPosition as registerRapidExitPositionFromMod, type RapidExitPosition } from '@/services/xSniper/engine/rapidExitAutoSell';
 import { matchesTwitterFilters, pickTokensToBuyFromSignal } from '@/services/xSniper/engine/signalSelection';
 import { createSellExecutors } from '@/services/xSniper/engine/sellExecutors';
@@ -95,7 +94,6 @@ export const createXSniperTrade = (deps: {
   const wsConfirmFailDedupe = new Map<string, number>();
   const buyFailureRecordDedupe = new Map<string, number>();
   const wsSnapshotsByAddr = new Map<string, WsSnapshot[]>();
-  const dryRunAutoSellByPosKey = new Map<string, DryRunAutoSellPos>();
   const rapidExitByPosKey = new Map<string, RapidExitPosition>();
   const manuallyClosedPosKeys = new Map<string, number>();
   const rapidWatchdogRpcAtMs = new Map<string, number>();
@@ -105,7 +103,6 @@ export const createXSniperTrade = (deps: {
   let rapidWatchdogIntervalMs = -1;
 
   const cleanupPosKey = (posKey: string) => {
-    dryRunAutoSellByPosKey.delete(posKey);
     rapidExitByPosKey.delete(posKey);
   };
   const toScopedTokenKey = (chainId: number, tokenAddress: string) => buildScopedTokenKey(chainId, tokenAddress);
@@ -293,15 +290,6 @@ export const createXSniperTrade = (deps: {
         holders: cur.holders,
       });
     }
-    void maybeEvaluateDryRunAutoSellFromMod({
-      chainId,
-      tokenAddress,
-      nowMs,
-      wsSnapshotsByAddr,
-      dryRunAutoSellByPosKey,
-      cleanupPosKey,
-      emitRecord,
-    });
     void maybeEvaluateRapidExitAutoSellFromMod({
       chainId,
       tokenAddress,
@@ -397,7 +385,6 @@ export const createXSniperTrade = (deps: {
     });
 
   const clearRuntimeState = () => {
-    dryRunAutoSellByPosKey.clear();
     rapidExitByPosKey.clear();
     manuallyClosedPosKeys.clear();
     rapidWatchdogRpcAtMs.clear();
@@ -542,7 +529,6 @@ export const createXSniperTrade = (deps: {
       buildGenericTokenInfo,
       getEntryPriceUsd,
       registerRapidExitPosition,
-      dryRunAutoSellByPosKey,
       onAttemptOutcome: input.onAttemptOutcome,
     });
 
@@ -729,7 +715,7 @@ export const createXSniperTrade = (deps: {
         const tokenAddress = m.tokenAddress;
         const decision = decisionMapByAddr.get(normalizeAddressKey(tokenAddress)) ?? null;
         const tradeChainId = resolveTradeChainId((t as any)?.chain, settings.chainId, settings);
-        if (!dryRun && boughtCount >= perTweetMax) {
+        if (boughtCount >= perTweetMax) {
           for (let j = i; j < picked.length; j += 1) {
             const quotaToken = picked[j]?.m?.tokenAddress;
             if (!quotaToken) continue;
@@ -758,7 +744,7 @@ export const createXSniperTrade = (deps: {
         let outcome: { bought: boolean; attempted: boolean; reason?: string; detail?: any } = { bought: false, attempted: true };
         try {
           currentSignalContext = signal;
-          bought = await tryAutoBuyOnce({
+          bought = (await tryAutoBuyOnce({
             chainId: tradeChainId,
             tokenAddress: m.tokenAddress,
             metrics: m,
@@ -767,7 +753,7 @@ export const createXSniperTrade = (deps: {
             onAttemptOutcome: (o) => {
               outcome = o;
             },
-          });
+          })) === true;
         } catch (e) {
           console.error('XSniperTrade buy attempt failed', {
             tokenAddress: m.tokenAddress,
@@ -812,7 +798,7 @@ export const createXSniperTrade = (deps: {
           });
           currentSignalContext = null;
         }
-        if (!dryRun && bought) {
+        if (bought) {
           boughtCount += 1;
         }
       }

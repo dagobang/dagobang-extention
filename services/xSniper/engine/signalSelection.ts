@@ -225,5 +225,7 @@ export const pickTokensToBuyFromSignal = (input: {
     return ta - tb;
   });
 
-  return { picked: candidates, skipped, decisions };
+  const dryRun = strategy?.dryRun === true;
+  const picked = dryRun ? candidates.slice(0, perTweetMax) : candidates;
+  return { picked, skipped, decisions };
 };
