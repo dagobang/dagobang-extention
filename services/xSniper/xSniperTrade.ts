@@ -501,6 +501,12 @@ export const createXSniperTrade = (deps: {
     return `${dry ? 'dry:' : ''}${toScopedTokenKey(chainId, tokenAddress)}:${normalizeWalletAddressKey(opts?.walletAddress)}:full`;
   };
 
+  const buildTweetScopeKey = (input: { chainId: number; walletAddressKey: string; tweetId: string; dryRun: boolean }) => {
+    const tweetId = String(input.tweetId || '').trim();
+    const walletAddressKey = String(input.walletAddressKey || '').trim() || 'all-wallets';
+    return `${input.dryRun ? 'dry:' : ''}${input.chainId}:${walletAddressKey}:${tweetId}`;
+  };
+
   const { fetchTokenInfoFresh, buildGenericTokenInfo, getEntryPriceUsd } = createTokenInfoResolvers();
 
   const tryAutoBuyOnce = async (input: {
@@ -708,37 +714,88 @@ export const createXSniperTrade = (deps: {
           notAttemptedReason: finalFailReason || null,
         });
       }
-      let boughtCount = 0;
+      const tweetId = typeof signal.tweetId === 'string' ? signal.tweetId.trim() : '';
+      const boughtTokenKeysByTweetScope = new Map<string, Set<string>>();
+      if (perTweetMax > 0 && tweetId) {
+        const history = await loadXSniperHistory().catch(() => []);
+        for (const r of history as any[]) {
+          if (!r) continue;
+          if (r.side && r.side !== 'buy') continue;
+          if ((r as any).dryRun === true !== dryRun) continue;
+          const tw = typeof (r as any).signalTweetId === 'string' ? (r as any).signalTweetId.trim() : '';
+          if (!tw || tw !== tweetId) continue;
+          const addr = normalizeAddress((r as any).tokenAddress);
+          if (!addr) continue;
+          const tradeChainId = resolveRecordedTradeChainId({
+            recordedChainId: (r as any).chainId,
+            tokenAddress: addr,
+            signal,
+            fallbackChainId: settings.chainId,
+            settings,
+          });
+          const scopeKey = buildTweetScopeKey({
+            chainId: tradeChainId,
+            walletAddressKey: normalizeWalletAddressKey((r as any).walletAddress) || walletAddressKey,
+            tweetId,
+            dryRun,
+          });
+          const tokenKey = normalizeAddressKey(addr);
+          if (!tokenKey) continue;
+          const set = boughtTokenKeysByTweetScope.get(scopeKey) ?? new Set<string>();
+          set.add(tokenKey);
+          boughtTokenKeysByTweetScope.set(scopeKey, set);
+        }
+      }
       for (let i = 0; i < picked.length; i += 1) {
         const { t, m } = picked[i];
         if (!m?.tokenAddress) continue;
         const tokenAddress = m.tokenAddress;
         const decision = decisionMapByAddr.get(normalizeAddressKey(tokenAddress)) ?? null;
         const tradeChainId = resolveTradeChainId((t as any)?.chain, settings.chainId, settings);
+        const tweetScopeKey = perTweetMax > 0 && tweetId
+          ? buildTweetScopeKey({ chainId: tradeChainId, walletAddressKey, tweetId, dryRun })
+          : '';
+        const boughtTokenKeysInTweet = tweetScopeKey ? (boughtTokenKeysByTweetScope.get(tweetScopeKey) ?? new Set<string>()) : null;
+        if (boughtTokenKeysInTweet && boughtTokenKeysInTweet.has(normalizeAddressKey(tokenAddress))) {
+          void upsertXSniperDecisionSnapshot({
+            signalStableId,
+            signalId: signal.id ? String(signal.id) : undefined,
+            signalEventId: signal.eventId ? String(signal.eventId) : undefined,
+            signalTweetId: signal.tweetId ? String(signal.tweetId) : undefined,
+            chainId: tradeChainId,
+            tokenAddress,
+            walletAddressKey,
+            walletAddressResolved,
+            walletSource,
+            everEligibleInTokenAgeWindow: decision?.tokenWindowPass === true,
+            everEligibleInTweetAgeWindow: decision?.tweetWindowPass === true,
+            finalFailReason: 'buy_skipped_already_bought_in_tweet',
+            buyAttemptResult: 'not_attempted',
+            notAttemptedReason: 'buy_skipped_already_bought_in_tweet',
+            windowClosedAtMs: Date.now(),
+          });
+          continue;
+        }
+        const boughtCount = boughtTokenKeysInTweet ? boughtTokenKeysInTweet.size : 0;
         if (boughtCount >= perTweetMax) {
-          for (let j = i; j < picked.length; j += 1) {
-            const quotaToken = picked[j]?.m?.tokenAddress;
-            if (!quotaToken) continue;
-            const quotaDecision = decisionMapByAddr.get(normalizeAddressKey(quotaToken)) ?? null;
-            void upsertXSniperDecisionSnapshot({
-              signalStableId,
-              signalId: signal.id ? String(signal.id) : undefined,
-              signalEventId: signal.eventId ? String(signal.eventId) : undefined,
-              signalTweetId: signal.tweetId ? String(signal.tweetId) : undefined,
-              chainId: resolveTradeChainId((picked[j].t as any)?.chain, settings.chainId, settings),
-              tokenAddress: quotaToken,
-              walletAddressKey,
-              walletAddressResolved,
-              walletSource,
-              everEligibleInTokenAgeWindow: quotaDecision?.tokenWindowPass === true,
-              everEligibleInTweetAgeWindow: quotaDecision?.tweetWindowPass === true,
-              finalFailReason: 'buy_skipped_per_tweet_quota_reached',
-              buyAttemptResult: 'not_attempted',
-              notAttemptedReason: 'buy_skipped_per_tweet_quota_reached',
-              windowClosedAtMs: Date.now(),
-            });
-          }
-          break;
+          void upsertXSniperDecisionSnapshot({
+            signalStableId,
+            signalId: signal.id ? String(signal.id) : undefined,
+            signalEventId: signal.eventId ? String(signal.eventId) : undefined,
+            signalTweetId: signal.tweetId ? String(signal.tweetId) : undefined,
+            chainId: tradeChainId,
+            tokenAddress,
+            walletAddressKey,
+            walletAddressResolved,
+            walletSource,
+            everEligibleInTokenAgeWindow: decision?.tokenWindowPass === true,
+            everEligibleInTweetAgeWindow: decision?.tweetWindowPass === true,
+            finalFailReason: 'buy_skipped_per_tweet_quota_reached',
+            buyAttemptResult: 'not_attempted',
+            notAttemptedReason: 'buy_skipped_per_tweet_quota_reached',
+            windowClosedAtMs: Date.now(),
+          });
+          continue;
         }
         let bought = false;
         let outcome: { bought: boolean; attempted: boolean; reason?: string; detail?: any } = { bought: false, attempted: true };
@@ -798,8 +855,12 @@ export const createXSniperTrade = (deps: {
           });
           currentSignalContext = null;
         }
-        if (bought) {
-          boughtCount += 1;
+        if (boughtTokenKeysInTweet && tweetScopeKey && bought) {
+          const tokenKey = normalizeAddressKey(tokenAddress);
+          if (tokenKey) {
+            boughtTokenKeysInTweet.add(tokenKey);
+            boughtTokenKeysByTweetScope.set(tweetScopeKey, boughtTokenKeysInTweet);
+          }
         }
       }
     } catch (e) {
