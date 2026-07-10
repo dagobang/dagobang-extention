@@ -75,6 +75,9 @@ export default defineContentScript({
       'new_pool_info',
       'trenches_update',
       'trenches_delta',
+      'token_page',
+      'token_stat',
+      'token_stats',
       'twitter_user_monitor_basic',
       'twitter_monitor_basic',
       'twitter_monitor_token',
@@ -693,6 +696,9 @@ export default defineContentScript({
             || normalized === 'new_pool_info'
             || normalized === 'trenches_update'
             || normalized === 'trenches_delta'
+            || normalized === 'token_page'
+            || normalized === 'token_stat'
+            || normalized === 'token_stats'
             || normalized === 'twitter_user_monitor_basic'
             || normalized === 'twitter_monitor_basic'
             || normalized === 'twitter_monitor_token'

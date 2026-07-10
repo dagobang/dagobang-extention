@@ -186,6 +186,53 @@ export const normalizeTrenchesTokenData = (item: any) => {
   };
 };
 
+export const normalizeTokenPageTokenData = (item: any) => {
+  const base = isObject(item) ? item : {};
+  const address =
+    asAddress((base as any)?.ta) ??
+    asAddress((base as any)?.a) ??
+    extractTokenAddress(base);
+  const chain = normalizeGmgnChainName((base as any)?.c ?? (base as any)?.n ?? (base as any)?.chain);
+  const viewerCount = extractNumber(base, ['v_c']);
+  return {
+    ...(isObject(base) ? base : {}),
+    a: address ?? (base as any)?.a ?? (base as any)?.ta,
+    c: chain ?? (base as any)?.c,
+    n: chain ?? (base as any)?.n ?? (base as any)?.c,
+    tokenAddress: address ?? undefined,
+    chain,
+    viewerCount: viewerCount ?? undefined,
+    _v_ch: 'page',
+  };
+};
+
+export const normalizeTokenStatTokenData = (item: any) => {
+  const base = isObject(item) ? item : {};
+  const address =
+    asAddress((base as any)?.a) ??
+    extractTokenAddress(base);
+  const chain = normalizeGmgnChainName((base as any)?.n ?? (base as any)?.c ?? (base as any)?.chain);
+  const buyVolume24h = extractNumber(base, ['bv24h']);
+  const sellVolume24h = extractNumber(base, ['sv24h']);
+  const netBuy24hUsd =
+    extractNumber(base, ['nba_24h']) ??
+    (buyVolume24h != null && sellVolume24h != null ? buyVolume24h - sellVolume24h : null);
+  return {
+    ...(isObject(base) ? base : {}),
+    a: address ?? (base as any)?.a,
+    c: chain ?? (base as any)?.c,
+    n: chain ?? (base as any)?.n ?? (base as any)?.c,
+    tokenAddress: address ?? undefined,
+    chain,
+    priceUsd: extractNumber(base, ['p']) ?? undefined,
+    vol24hUsd: extractNumber(base, ['v24h']) ?? undefined,
+    netBuy24hUsd: netBuy24hUsd ?? undefined,
+    buyTx24h: extractNumber(base, ['b24h']) ?? undefined,
+    sellTx24h: extractNumber(base, ['s24h']) ?? undefined,
+    _v_ch: 'stat',
+  };
+};
+
 export const extractPublicBroadcastCreates = (payload: any) => {
   const items = toArrayPayload(payload);
   const results: Array<{ tokenData: any; chain?: string }> = [];

@@ -15,6 +15,8 @@ import {
   isObject,
   normalizeNewPoolTokenData,
   normalizePublicTokenData,
+  normalizeTokenPageTokenData,
+  normalizeTokenStatTokenData,
   normalizeTokenAddressKey,
   normalizeTrenchesTokenData,
   resolveTrenchesStageByFid,
@@ -1775,6 +1777,8 @@ export function initGmgnWsMonitor(options: {
     const packetTs = typeof data.timestamp === 'number' ? data.timestamp : now;
     const latencyMs = computeLatencyMs(payload, packetTs, now);
     updatePacketStatus(channel, now, latencyMs);
+    const isTokenPageChannel = channel === 'token_page';
+    const isTokenStatChannel = channel === 'token_stat' || channel === 'token_stats';
     const wrapper = isObject(payload) ? (payload as any) : null;
     const deltaWrapper = (() => {
       if (wrapper && Array.isArray((wrapper as any).t)) return wrapper;
@@ -1782,10 +1786,16 @@ export function initGmgnWsMonitor(options: {
       return null;
     })();
     const wrapperUpdateTypeRaw =
+      (isTokenStatChannel ? 'stat' : '') ||
+      (isTokenPageChannel ? 'page' : '') ||
       (deltaWrapper && typeof (deltaWrapper as any)._v_ch === 'string' ? (deltaWrapper as any)._v_ch : '') ||
       (wrapper && typeof (wrapper as any)._v_ch === 'string' ? (wrapper as any)._v_ch : '');
-    const stage = resolveTrenchesStageByFid(deltaWrapper?.fid ?? wrapper?.fid);
-    const inner = deltaWrapper?.t ?? (wrapper && wrapper.data != null ? wrapper.data : payload);
+    const stage = isTokenPageChannel || isTokenStatChannel
+      ? 'unknown'
+      : resolveTrenchesStageByFid(deltaWrapper?.fid ?? wrapper?.fid);
+    const inner = isTokenPageChannel || isTokenStatChannel
+      ? payload
+      : deltaWrapper?.t ?? (wrapper && wrapper.data != null ? wrapper.data : payload);
     const items = toArrayPayload(inner);
     const list = items.length ? items : [inner];
     const debugPacket = {
@@ -1806,7 +1816,11 @@ export function initGmgnWsMonitor(options: {
         : [],
     );
     for (const item of list) {
-      const tokenData = normalizeTrenchesTokenData(item);
+      const tokenData = isTokenPageChannel
+        ? normalizeTokenPageTokenData(item)
+        : isTokenStatChannel
+          ? normalizeTokenStatTokenData(item)
+          : normalizeTrenchesTokenData(item);
       if (!tokenData.tokenAddress) continue;
       debugPacket.total += 1;
       const tokenAddrKey = normalizeTokenKey(tokenData.tokenAddress);
@@ -1888,6 +1902,9 @@ export function initGmgnWsMonitor(options: {
     new_pool_info: handleNewPoolInfoChannel,
     trenches_update: handleTrenchesUpdateChannel,
     trenches_delta: handleTrenchesUpdateChannel,
+    token_page: handleTrenchesUpdateChannel,
+    token_stat: handleTrenchesUpdateChannel,
+    token_stats: handleTrenchesUpdateChannel,
     twitter_user_monitor_basic: (data, channel, payload, now) => {
       handleTwitterChannel(data, channel, payload, now);
     },
