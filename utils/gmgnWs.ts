@@ -212,6 +212,8 @@ export const normalizeTokenStatTokenData = (item: any) => {
     asAddress((base as any)?.a) ??
     extractTokenAddress(base);
   const chain = normalizeGmgnChainName((base as any)?.n ?? (base as any)?.c ?? (base as any)?.chain);
+  const priceUsd = extractNumber(base, ['p']);
+  const marketCapUsd = extractNumber(base, ['mc', 'market_cap', 'marketCap', 'marketCapUsd', 'market_cap_usd']);
   const buyVolume24h = extractNumber(base, ['bv24h']);
   const sellVolume24h = extractNumber(base, ['sv24h']);
   const netBuy24hUsd =
@@ -224,7 +226,9 @@ export const normalizeTokenStatTokenData = (item: any) => {
     n: chain ?? (base as any)?.n ?? (base as any)?.c,
     tokenAddress: address ?? undefined,
     chain,
-    priceUsd: extractNumber(base, ['p']) ?? undefined,
+    marketCapUsd: marketCapUsd ?? undefined,
+    mc: marketCapUsd ?? undefined,
+    priceUsd: priceUsd ?? undefined,
     vol24hUsd: extractNumber(base, ['v24h']) ?? undefined,
     netBuy24hUsd: netBuy24hUsd ?? undefined,
     buyTx24h: extractNumber(base, ['b24h']) ?? undefined,

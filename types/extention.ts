@@ -721,6 +721,7 @@ export type GmgnTokenSnapshot = {
   channel?: string;
   chain?: string;
   launchpadPlatform?: string;
+  totalSupply?: number;
   tokenSymbol?: string;
   tokenName?: string;
   tokenLogo?: string;

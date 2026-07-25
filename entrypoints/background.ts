@@ -260,6 +260,7 @@ export default defineBackground(() => {
       channel: detail.channel,
       chain: typeof tokenData?.chain === 'string' ? tokenData.chain : undefined,
       launchpadPlatform: typeof tokenData?.launchpadPlatform === 'string' ? tokenData.launchpadPlatform : undefined,
+      totalSupply: pickFiniteNumber(tokenData?.totalSupply ?? tokenData?.tsp),
       tokenSymbol:
         (typeof tokenData?.tokenSymbol === 'string' && tokenData.tokenSymbol.trim() ? tokenData.tokenSymbol.trim() : undefined) ??
         (typeof tokenData?.symbol === 'string' && tokenData.symbol.trim() ? tokenData.symbol.trim() : undefined) ??
@@ -302,6 +303,7 @@ export default defineBackground(() => {
       tokenAddress,
       chain: snapshot.chain,
       launchpadPlatform: snapshot.launchpadPlatform,
+      totalSupply: snapshot.totalSupply,
       tokenSymbol: snapshot.tokenSymbol,
       symbol: snapshot.tokenSymbol,
       s: snapshot.tokenSymbol,

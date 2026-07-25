@@ -130,6 +130,11 @@ const resolvePreferredMarketSignalSource = (
   return (rank[next] ?? 0) >= (rank[prev] ?? 0) ? next : prev;
 };
 
+const resolveDefaultTokenSupply = (launchpadPlatform?: string): number => {
+  const normalized = typeof launchpadPlatform === 'string' ? launchpadPlatform.trim().toLowerCase() : '';
+  return normalized === 'bankr' ? 100_000_000_000 : 1_000_000_000;
+};
+
 const isWsMonitorEnabled = (): boolean => {
   const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
   const enabled = (settings as any)?.autoTrade?.wsMonitorEnabled;
@@ -1199,6 +1204,7 @@ export function initGmgnWsMonitor(options: {
       tokenAddress: snapshot.tokenAddress,
       chain: snapshot.chain ?? tokenData?.chain ?? tokenData?.c,
       launchpadPlatform: snapshot.launchpadPlatform ?? tokenData?.launchpadPlatform ?? tokenData?.lpp ?? tokenData?.lp,
+      totalSupply: snapshot.totalSupply ?? tokenData?.totalSupply ?? tokenData?.tsp,
       tokenSymbol: snapshot.tokenSymbol ?? tokenData?.tokenSymbol ?? tokenData?.symbol ?? tokenData?.s,
       symbol: snapshot.tokenSymbol ?? tokenData?.symbol ?? tokenData?.s,
       tokenName: snapshot.tokenName ?? tokenData?.tokenName ?? tokenData?.name ?? tokenData?.nm,
@@ -1451,7 +1457,42 @@ export function initGmgnWsMonitor(options: {
     const tokenSymbol = pickNonEmptyString(tokenData?.tokenSymbol ?? tokenData?.symbol ?? tokenData?.s, prev?.tokenSymbol);
     const tokenName = pickNonEmptyString(tokenData?.tokenName ?? tokenData?.name ?? tokenData?.nm, prev?.tokenName);
     const tokenLogo = pickNonEmptyString(tokenData?.tokenLogo ?? tokenData?.l ?? tokenData?.logo, prev?.tokenLogo);
+    const launchpadPlatform = pickNonEmptyString(
+      normalizeLaunchpadPlatform(
+        tokenData?.launchpadPlatform ??
+        tokenData?.launchpad_platform ??
+        tokenData?.platform ??
+        tokenData?.lpp ??
+        tokenData?.pts,
+      ),
+      prev?.launchpadPlatform,
+    );
     const devTokenStatus = pickNonEmptyString(tokenData?.devTokenStatus ?? tokenData?.d_ts, prev?.devTokenStatus);
+    const explicitTotalSupply = pickFiniteNumber(
+      typeof tokenData?.totalSupply === 'number'
+        ? tokenData.totalSupply
+        : typeof tokenData?.tsp === 'number'
+          ? tokenData.tsp
+          : extractNumber(tokenData, [
+            'totalSupply',
+            'total_supply',
+            'maxSupply',
+            'max_supply',
+            'circulatingSupply',
+            'circulating_supply',
+            'supply',
+            's',
+            'tsp',
+          ]),
+      prev?.totalSupply,
+    );
+    const effectiveTotalSupply = explicitTotalSupply ?? resolveDefaultTokenSupply(launchpadPlatform);
+    const nextPriceUsd =
+      typeof tokenData?.priceUsd === 'number'
+        ? tokenData.priceUsd
+        : typeof tokenData?.p === 'number'
+          ? tokenData.p
+          : prev?.priceUsd;
     const rawDevBuyRatio = pickFiniteNumber(
       extractNumber(tokenData, ['d_br']),
       undefined,
@@ -1541,16 +1582,8 @@ export function initGmgnWsMonitor(options: {
       source: meta?.source ?? prev?.source,
       channel: meta?.channel ?? prev?.channel,
       chain: pickNonEmptyString(tokenData?.chain, prev?.chain),
-      launchpadPlatform: pickNonEmptyString(
-        normalizeLaunchpadPlatform(
-          tokenData?.launchpadPlatform ??
-          tokenData?.launchpad_platform ??
-          tokenData?.platform ??
-          tokenData?.lpp ??
-          tokenData?.pts,
-        ),
-        prev?.launchpadPlatform,
-      ),
+      launchpadPlatform,
+      totalSupply: effectiveTotalSupply,
       tokenSymbol,
       tokenName,
       tokenLogo,
@@ -1562,15 +1595,14 @@ export function initGmgnWsMonitor(options: {
               ? tokenData.mc
               : null;
         if (v != null && Number.isFinite(v) && v >= 3000) return v;
+        if (typeof nextPriceUsd === 'number' && Number.isFinite(nextPriceUsd) && nextPriceUsd > 0 && Number.isFinite(effectiveTotalSupply) && effectiveTotalSupply > 0) {
+          const derived = nextPriceUsd * effectiveTotalSupply;
+          if (Number.isFinite(derived) && derived >= 3000) return derived;
+        }
         const p = typeof prev?.marketCapUsd === 'number' ? prev.marketCapUsd : null;
         return p != null && Number.isFinite(p) && p >= 3000 ? p : undefined;
       })(),
-      priceUsd:
-        typeof tokenData?.priceUsd === 'number'
-          ? tokenData.priceUsd
-          : typeof tokenData?.p === 'number'
-            ? tokenData.p
-            : prev?.priceUsd,
+      priceUsd: nextPriceUsd,
       liquidityUsd:
         typeof tokenData?.liquidityUsd === 'number'
           ? tokenData.liquidityUsd
@@ -1908,12 +1940,12 @@ export function initGmgnWsMonitor(options: {
     twitter_user_monitor_basic: (data, channel, payload, now) => {
       handleTwitterChannel(data, channel, payload, now);
     },
-    twitter_monitor_basic: (data, channel, payload, now) => {
-      handleTwitterChannel(data, channel, payload, now);
-    },
-    twitter_monitor_token: (data, channel, payload, now) => {
-      handleTwitterChannel(data, channel, payload, now);
-    },
+    // twitter_monitor_basic: (data, channel, payload, now) => {
+    //   handleTwitterChannel(data, channel, payload, now);
+    // },
+    // twitter_monitor_token: (data, channel, payload, now) => {
+    //   handleTwitterChannel(data, channel, payload, now);
+    // },
     twitter_monitor_translation: (data, channel, payload, now) => {
       handleTwitterChannel(data, channel, payload, now);
     },
