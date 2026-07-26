@@ -154,6 +154,14 @@ const normalizeChainAddressKey = (input: unknown) => {
   return /^0x[a-fA-F0-9]{40}$/.test(raw) ? raw.toLowerCase() : raw;
 };
 
+const resolvePageChainName = (siteInfo: SiteInfo | null, settings: Settings | null) => {
+  const fromSite = typeof siteInfo?.chain === 'string' ? siteInfo.chain.trim().toLowerCase() : '';
+  if (fromSite) return fromSite;
+  const chainId = Number(settings?.chainId);
+  if (Number.isFinite(chainId) && chainId > 0) return chainNames[chainId] ?? String(chainId);
+  return 'unknown';
+};
+
 const resolveWalletDisplay = (input: { record: XSniperBuyRecord; settings: Settings | null; walletAccounts?: Account[] }) => {
   const rawWalletAddress = String((input.record as any).walletAddress || '').trim();
   const walletAddress = normalizeChainAddressKey(rawWalletAddress);
@@ -240,6 +248,7 @@ export function XSniperHistoryView({
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [summaryRunMode, setSummaryRunMode] = useState<SummaryRunMode>('live');
   const [strategyModeFilter, setStrategyModeFilter] = useState<'all' | 'auto_filter' | 'xmode_task'>('all');
+  const currentChainName = useMemo(() => resolvePageChainName(siteInfo, settings), [siteInfo, settings]);
   const normalizedKeyword = keyword.trim().toLowerCase();
   const taskSummaryText = useMemo(() => {
     const rawTasks = (settings as any)?.autoTrade?.newCoinSnipe?.xmodeTasks;
@@ -494,7 +503,7 @@ export function XSniperHistoryView({
       const a = document.createElement('a');
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       a.href = url;
-      a.download = `xsniper-history-${stamp}.json`;
+      a.download = `xsniper-history-${currentChainName}-${stamp}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();

@@ -995,6 +995,7 @@ function TokenRowCard({
   showSocialMeta = false,
   highlightedByTwitterAccount = false,
 }: TokenRowCardProps) {
+  const chainLabel = (inferMonitorChainName(row.chain, row.tokenAddress) || 'bsc').toUpperCase();
   const shortAddr = `${row.tokenAddress.slice(0, 6)}...${row.tokenAddress.slice(-4)}`;
   const symbol = row.tokenSymbol?.trim() || '';
   const tokenName = row.tokenName?.trim() || '';
@@ -1155,6 +1156,9 @@ function TokenRowCard({
             </div>
             <div className={`mt-1 flex items-center text-[10px] ${row.launchpadPlatform ? 'gap-2' : 'gap-1.5'}`}>
               <span className="min-w-0 truncate font-mono text-[10px] text-zinc-500">{shortAddr}</span>
+              <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1 py-0.5 text-[9px] font-semibold text-sky-200">
+                {chainLabel}
+              </span>
               <span className={`inline-flex items-center font-bold text-[12px] leading-none ${typeof row.createdAtMs === 'number' && Date.now() - row.createdAtMs <= 60_000
                 ? 'text-emerald-300'
                 : typeof row.createdAtMs === 'number' && Date.now() - row.createdAtMs <= 5 * 60_000
@@ -1220,6 +1224,7 @@ export function NewPoolMonitorContent({
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
   const resolvedSiteInfo = siteInfo ?? { chain: 'bsc', tokenAddress: '', platform: 'gmgn', showBar: true };
   const currentChain = normalizeGmgnChainName(resolvedSiteInfo.chain) ?? 'bsc';
+  const currentChainLabel = currentChain.toUpperCase();
   const currentChainId = useMemo(() => getChainIdByName(currentChain), [currentChain]);
   const currentPlatformOptions = useMemo(
     () => [...getPlatformOptionsByChain(currentChainId)],
@@ -1569,24 +1574,29 @@ export function NewPoolMonitorContent({
       >
         <div className="sticky top-0 z-10 border-b border-zinc-800/60 bg-[#0F0F11] px-4 py-2">
           <div className="flex items-center justify-between gap-3">
-            <div className="inline-flex shrink-0 rounded-xl border border-zinc-800 bg-zinc-950/70 p-1">
-              {([
-                ['grouped', '分组'],
-                ['globalHot', '热榜'],
-              ] as Array<[MonitorViewMode, string]>).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={
-                    viewMode === value
-                      ? 'min-w-[58px] rounded-lg border border-sky-500/50 bg-sky-500/15 px-3 py-1.5 text-[12px] font-medium text-sky-200'
-                      : 'min-w-[58px] rounded-lg border border-transparent px-3 py-1.5 text-[12px] text-zinc-400 hover:text-zinc-200'
-                  }
-                  onClick={() => setViewMode(value)}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">
+                {currentChainLabel}
+              </span>
+              <div className="inline-flex shrink-0 rounded-xl border border-zinc-800 bg-zinc-950/70 p-1">
+                {([
+                  ['grouped', '分组'],
+                  ['globalHot', '热榜'],
+                ] as Array<[MonitorViewMode, string]>).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={
+                      viewMode === value
+                        ? 'min-w-[58px] rounded-lg border border-sky-500/50 bg-sky-500/15 px-3 py-1.5 text-[12px] font-medium text-sky-200'
+                        : 'min-w-[58px] rounded-lg border border-transparent px-3 py-1.5 text-[12px] text-zinc-400 hover:text-zinc-200'
+                    }
+                    onClick={() => setViewMode(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {listHovered ? <div className="text-[10px] text-amber-300">暂停</div> : null}

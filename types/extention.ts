@@ -991,7 +991,7 @@ export type BgRequest =
   | { type: 'limitOrder:list'; chainId: number; tokenAddress?: ChainAddress }
   | { type: 'limitOrder:create'; input: LimitOrderCreateInput }
   | { type: 'limitOrder:cancel'; id: string }
-  | { type: 'limitOrder:cancelAll'; chainId: number; tokenAddress?: ChainAddress }
+  | { type: 'limitOrder:cancelAll'; chainId: number; tokenAddress?: ChainAddress; fromAddress?: ChainAddress }
   | { type: 'limitOrder:clearExecuted'; chainId: number; tokenAddress?: ChainAddress }
   | { type: 'limitOrder:scanStatus'; chainId: number }
   | { type: 'limitOrder:trackPrice'; chainId: number; tokenAddress: ChainAddress; tokenInfo?: TokenInfo | null; active: boolean }

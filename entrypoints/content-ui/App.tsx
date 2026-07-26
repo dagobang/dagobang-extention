@@ -3177,6 +3177,22 @@ export default function App() {
               });
           }
         }
+          if (
+            side === 'sell'
+            && Number(message?.sellPercentBps ?? 0) === 10000
+            && Number(message?.chainId || 0) === ChainId.SOL
+            && rawAddr
+          ) {
+            const fromAddress = typeof message?.fromAddress === 'string' ? message.fromAddress : '';
+            if (fromAddress) {
+              void call({
+                type: 'limitOrder:cancelAll',
+                chainId: ChainId.SOL,
+                tokenAddress: rawAddr,
+                fromAddress: fromAddress as any,
+              } as const).catch(() => { });
+            }
+          }
         const eventToastId = getTradeEventToastId(side, rawAddr, String(message?.txHash || ''));
         toast.dismiss(eventToastId);
         toast.dismiss(getTradeToastId(side, rawAddr));
@@ -4366,10 +4382,20 @@ export default function App() {
           setPendingBuyQuotedOutWei(null);
         }
 
-        // Cancel limit order if exists
-        if (percentBps === 10000 && confirmedSuccesses.length > 0) {
-          await call({ type: 'limitOrder:cancelAll', chainId, tokenAddress: tokenAddressNormalized } as const);
-        }
+          // Clear remaining sell orders for wallets that fully exited.
+          if (percentBps === 10000 && confirmedSuccesses.length > 0) {
+            const soldOutWallets = Array.from(new Set(
+              confirmedSuccesses
+                .map((item) => String(item.walletAddress || '').trim())
+                .filter(Boolean),
+            ));
+            await Promise.allSettled(soldOutWallets.map((walletAddress) => call({
+              type: 'limitOrder:cancelAll',
+              chainId,
+              tokenAddress: tokenAddressNormalized,
+              fromAddress: walletAddress as any,
+            } as const)));
+          }
       })().catch((e: any) => {
         warnUiDebug('[ui.sell.auto][request.failed]', {
           chainId,

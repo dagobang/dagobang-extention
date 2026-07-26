@@ -4,7 +4,7 @@ import { SettingsService } from '@/services/settings';
 import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
 import {
-  cancelAllLimitOrders, cancelLimitOrder,
+  cancelAllLimitOrders, cancelAllSellLimitOrdersForToken, cancelLimitOrder,
   clearExecutedLimitOrders,
   createLimitOrder,
   listLimitOrders
@@ -1491,7 +1491,9 @@ export default defineBackground(() => {
           }
 
           case 'limitOrder:cancelAll': {
-            const orders = await cancelAllLimitOrders(msg.chainId, msg.tokenAddress);
+            const orders = msg.tokenAddress && msg.fromAddress
+              ? await cancelAllSellLimitOrdersForToken(msg.chainId, msg.tokenAddress, msg.fromAddress)
+              : await cancelAllLimitOrders(msg.chainId, msg.tokenAddress);
             broadcastStateChange();
             limitOrderScanner?.scheduleFromStorage().catch(() => { });
             return { ok: true, orders };
@@ -2266,6 +2268,8 @@ export default defineBackground(() => {
                         side: 'sell',
                         chainId: msg.input.chainId,
                         tokenAddress: msg.input.tokenAddress,
+                          fromAddress: input.fromAddress,
+                          sellPercentBps: input.sellPercentBps,
                         txHash: rsp.txHash,
                         submitElapsedMs,
                         receiptElapsedMs: Date.now() - receiptStart,
@@ -2347,6 +2351,8 @@ export default defineBackground(() => {
                   side: 'sell',
                   chainId: msg.input.chainId,
                   tokenAddress: msg.input.tokenAddress,
+                    fromAddress: input.fromAddress,
+                    sellPercentBps: input.sellPercentBps,
                   txHash: (rsp as any)?.txHash,
                   submitElapsedMs: (rsp as any)?.submitElapsedMs,
                   receiptElapsedMs: (rsp as any)?.receiptElapsedMs,

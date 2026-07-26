@@ -79,6 +79,23 @@ const normalizeWalletAddress = (input: unknown): string | undefined => {
   return undefined;
 };
 
+const buildScopedUiTokenKey = (chainId: number | null | undefined, tokenAddress: string | null | undefined) => {
+  const addr = normalizeTokenAddressKey(String(tokenAddress ?? ''));
+  if (!addr) return '';
+  const normalizedChainId = Number(chainId);
+  if (!Number.isFinite(normalizedChainId) || normalizedChainId <= 0) return addr;
+  return `${normalizedChainId}:${addr}`;
+};
+
+const resolveUiTokenChainId = (token: any, signal: any, fallbackChainId: number) => {
+  const tokenChain = normalizeGmgnChainName(typeof token?.chain === 'string' ? token.chain : '');
+  const signalChain = normalizeGmgnChainName(typeof signal?.chain === 'string' ? signal.chain : '');
+  const resolvedChain = tokenChain || signalChain || '';
+  const chainId = getChainIdByName(resolvedChain);
+  if (Number.isFinite(chainId) && chainId > 0) return chainId;
+  return fallbackChainId;
+};
+
 const buildNormalizedPresetStrategy = (raw: any) => {
   const base = { ...(defaultSettings().autoTrade.twitterSnipe as any) };
   delete (base as any).presets;
@@ -177,11 +194,16 @@ export function XSniperContent({
   const [activeWalletAddress, setActiveWalletAddress] = useState<string | null>(null);
   const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
 
+  const currentChainBuyHistory = useMemo(
+    () => buyHistory.filter((record) => Number(record?.chainId) === Number(currentChainId)),
+    [buyHistory, currentChainId],
+  );
+
   const historyGroups = useMemo(() => {
     const normalizeAddr = (addr: string) => normalizeTokenAddressKey(addr);
     const normalizeWallet = (addr: unknown) => normalizeWalletAddress(addr) ?? '';
     const preferredWalletByTokenDry = new Map<string, string>();
-    for (const r of buyHistory) {
+    for (const r of currentChainBuyHistory) {
       if (!r || typeof r.chainId !== 'number' || !r.tokenAddress) continue;
       const addr = normalizeAddr(r.tokenAddress);
       if (!addr) continue;
@@ -194,7 +216,7 @@ export function XSniperContent({
       else if (prev !== wallet) preferredWalletByTokenDry.set(tokenDryKey, '*');
     }
     const groups = new Map<string, { key: string; latestTsMs: number; records: XSniperBuyRecord[] }>();
-    for (const r of buyHistory) {
+    for (const r of currentChainBuyHistory) {
       if (!r || typeof r.chainId !== 'number' || !r.tokenAddress) continue;
       const addr = normalizeAddr(r.tokenAddress);
       if (!addr) continue;
@@ -224,7 +246,27 @@ export function XSniperContent({
         return { key: g.key, parent, children: sorted.filter((x) => x !== parent) };
       })
       .filter(Boolean) as Array<{ key: string; parent: XSniperBuyRecord; children: XSniperBuyRecord[] }>;
-  }, [buyHistory]);
+  }, [currentChainBuyHistory]);
+
+  const currentChainLatestTokenByAddr = useMemo(() => {
+    const next: Record<string, any> = {};
+    const prefix = `${currentChainId}:`;
+    for (const [key, value] of Object.entries(latestTokenByAddr)) {
+      if (!key.startsWith(prefix)) continue;
+      next[key.slice(prefix.length)] = value;
+    }
+    return next;
+  }, [latestTokenByAddr, currentChainId]);
+
+  const currentChainAthMcapByAddr = useMemo(() => {
+    const next: Record<string, number> = {};
+    const prefix = `${currentChainId}:`;
+    for (const [key, value] of Object.entries(athMcapByAddr)) {
+      if (!key.startsWith(prefix)) continue;
+      next[key.slice(prefix.length)] = value;
+    }
+    return next;
+  }, [athMcapByAddr, currentChainId]);
 
   useEffect(() => {
     if (!active) return;
@@ -339,7 +381,9 @@ export function XSniperContent({
         for (const t of tokens) {
           const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
           if (!addr) continue;
-          const key = normalizeTokenAddressKey(addr);
+          const tokenChainId = resolveUiTokenChainId(t, s, currentChainId);
+          const key = buildScopedUiTokenKey(tokenChainId, addr);
+          if (!key) continue;
           const updatedAtMs =
             typeof t?.updatedAtMs === 'number'
               ? t.updatedAtMs
@@ -399,7 +443,9 @@ export function XSniperContent({
           for (const t of entry.tokens) {
             const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
             if (!addr) continue;
-            const key = normalizeTokenAddressKey(addr);
+            const tokenChainId = resolveUiTokenChainId(t, null, currentChainId);
+            const key = buildScopedUiTokenKey(tokenChainId, addr);
+            if (!key) continue;
             const mcap = typeof t?.marketCapUsd === 'number' && Number.isFinite(t.marketCapUsd) && t.marketCapUsd >= 3000 ? t.marketCapUsd : null;
             if (mcap == null) continue;
             const cur = next[key];
@@ -420,7 +466,9 @@ export function XSniperContent({
           for (const t of entry.tokens) {
             const addr = typeof t?.tokenAddress === 'string' ? String(t.tokenAddress).trim() : '';
             if (!addr) continue;
-            const key = normalizeTokenAddressKey(addr);
+            const tokenChainId = resolveUiTokenChainId(t, null, currentChainId);
+            const key = buildScopedUiTokenKey(tokenChainId, addr);
+            if (!key) continue;
             const updatedAtMs = typeof t?.updatedAtMs === 'number' ? t.updatedAtMs : entry.signalTs;
             const cur = next[key];
             if (cur && typeof cur.updatedAtMs === 'number' && updatedAtMs <= cur.updatedAtMs) continue;
@@ -461,7 +509,7 @@ export function XSniperContent({
       }
       flushPendingSignals();
     };
-  }, [active, wsMonitorEnabled]);
+  }, [active, wsMonitorEnabled, currentChainId]);
 
   const twitterSnipe = draft?.twitterSnipe;
   const snipePresets = Array.isArray((twitterSnipe as any)?.presets)
@@ -797,10 +845,10 @@ export function XSniperContent({
             isUnlocked={isUnlocked}
             canEdit={canEdit}
             tt={tt}
-            buyHistory={buyHistory}
+            buyHistory={currentChainBuyHistory}
             historyGroups={historyGroups}
-            latestTokenByAddr={latestTokenByAddr}
-            athMcapByAddr={athMcapByAddr}
+            latestTokenByAddr={currentChainLatestTokenByAddr}
+            athMcapByAddr={currentChainAthMcapByAddr}
             wsStatus={wsStatus}
             wsMonitorEnabled={wsMonitorEnabled}
             twitterSnipeEnabled={twitterSnipe?.enabled !== false}
