@@ -73,12 +73,10 @@ type CachedBlockhashValue = {
 
 const POOL_CONTEXT_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const POOL_QUOTE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.dynamicQuote;
-const ATA_EXISTS_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const BLOCKHASH_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.blockhash;
 
 const poolContextCache = new Map<string, WarmCacheEntry<MeteoraDlmmStaticPoolContext>>();
 const poolQuoteCache = new Map<string, WarmCacheEntry<MeteoraDlmmQuoteContext>>();
-const ataExistsCache = new Map<string, WarmCacheEntry<boolean>>();
 const latestBlockhashCache = new Map<string, WarmCacheEntry<CachedBlockhashValue>>();
 
 function resolvePlatform(input: SolanaTradeRequest): string {
@@ -153,18 +151,31 @@ async function loadPoolContext(
   const lbPair = resolvePoolAddress(input);
   const cacheKey = lbPair.toBase58();
   const loader = async () => {
-    const connection = await input.runtime.getConnection();
-    const poolInfo = await connection.getAccountInfo(lbPair, 'confirmed');
+    const poolInfo = input.runtime.getAccountInfo
+      ? await input.runtime.getAccountInfo(lbPair, 'confirmed', 'static')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getAccountInfo(lbPair, 'confirmed');
+      })();
     if (!poolInfo?.data) throw new Error('Meteora DLMM pool account not found');
     if (!poolInfo.owner.equals(METEORA_DLMM_PROGRAM_ID)) {
       throw new Error('tokenInfo.pool_pair is not a Meteora DLMM pool');
     }
 
     const poolState = parseMeteoraDlmmPoolState(poolInfo.data);
-    const [tokenXProgram, tokenYProgram] = await connection.getMultipleAccountsInfo(
-      [poolState.tokenXMint, poolState.tokenYMint],
-      'confirmed',
-    );
+    const [tokenXProgram, tokenYProgram] = input.runtime.getMultipleAccountsInfo
+      ? await input.runtime.getMultipleAccountsInfo(
+        [poolState.tokenXMint, poolState.tokenYMint],
+        'confirmed',
+        'static',
+      )
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getMultipleAccountsInfo(
+          [poolState.tokenXMint, poolState.tokenYMint],
+          'confirmed',
+        );
+      })();
     if (!tokenXProgram?.owner || !tokenYProgram?.owner) {
       throw new Error('Meteora DLMM mint accounts not found');
     }
@@ -184,7 +195,7 @@ async function loadPoolContext(
 async function getPoolContextForBuild(input: SolanaTradeRequest): Promise<MeteoraDlmmStaticPoolContext> {
   if (resolveExecutionMode(input) !== 'turbo') return await loadPoolContext(input);
   const cached = getFreshWarmPromise<MeteoraDlmmStaticPoolContext>(poolContextCache, resolvePoolAddress(input).toBase58());
-  if (!cached) throw new Error('Meteora DLMM context not ready');
+  if (!cached) return await loadPoolContext(input);
   return await cached;
 }
 
@@ -198,13 +209,22 @@ async function loadPoolQuoteContext(
   const { swapForY } = resolveDlmmSwapDirection(staticContext.poolState, inputMint, outputMint);
   const cacheKey = getDlmmQuoteCacheKey(staticContext.lbPair, swapForY);
   const loader = async () => {
-    const connection = await input.runtime.getConnection();
-    const poolInfo = await connection.getAccountInfo(staticContext.lbPair, 'confirmed');
+    const poolInfo = input.runtime.getAccountInfo
+      ? await input.runtime.getAccountInfo(staticContext.lbPair, 'confirmed', 'dynamic')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getAccountInfo(staticContext.lbPair, 'confirmed');
+      })();
     if (!poolInfo?.data) throw new Error('Meteora DLMM pool account not found');
     const poolState = parseMeteoraDlmmPoolState(poolInfo.data);
     const binArrayKeys = buildMeteoraDlmmBinArrayIndices(poolState.activeId, swapForY)
       .map((index) => deriveMeteoraDlmmBinArrayPda(staticContext.lbPair, index));
-    const binArrayInfos = await connection.getMultipleAccountsInfo(binArrayKeys, 'confirmed');
+    const binArrayInfos = input.runtime.getMultipleAccountsInfo
+      ? await input.runtime.getMultipleAccountsInfo(binArrayKeys, 'confirmed', 'dynamic')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getMultipleAccountsInfo(binArrayKeys, 'confirmed');
+      })();
     const binArrays: MeteoraBinArrayAccount[] = [];
     for (let i = 0; i < binArrayInfos.length; i += 1) {
       const info = binArrayInfos[i];
@@ -235,30 +255,8 @@ async function getPoolQuoteContextForBuild(
     poolQuoteCache,
     getDlmmQuoteCacheKey(staticContext.lbPair, swapForY),
   );
-  if (!cached) throw new Error('Meteora DLMM build context not ready');
+  if (!cached) return await loadPoolQuoteContext(input, staticContext);
   return await cached;
-}
-
-async function prewarmAtaExistence(input: SolanaTradeRequest, accounts: PublicKey[]): Promise<void> {
-  if (!accounts.length) return;
-  const now = Date.now();
-  const connection = await input.runtime.getConnection();
-  const missingAccounts: PublicKey[] = [];
-  const missingKeys: string[] = [];
-  for (const account of accounts) {
-    const key = account.toBase58();
-    if (getFreshWarmPromise<boolean>(ataExistsCache, key, now)) continue;
-    missingAccounts.push(account);
-    missingKeys.push(key);
-  }
-  if (!missingAccounts.length) return;
-  const infos = await connection.getMultipleAccountsInfo(missingAccounts, 'confirmed');
-  missingKeys.forEach((key, index) => {
-    ataExistsCache.set(key, {
-      promise: Promise.resolve(Boolean(infos[index])),
-      expiresAt: now + ATA_EXISTS_CACHE_TTL_MS,
-    });
-  });
 }
 
 async function loadLatestBlockhash(input: SolanaTradeRequest, allowCached: boolean): Promise<CachedBlockhashValue> {
@@ -268,8 +266,13 @@ async function loadLatestBlockhash(input: SolanaTradeRequest, allowCached: boole
     if (cached) return await cached;
   }
   const loader = async () => {
-    const connection = await input.runtime.getConnection();
-    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    const latest = input.runtime.getLatestBlockhash
+      ? await input.runtime.getLatestBlockhash('confirmed')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getLatestBlockhash('confirmed');
+      })();
+    const { blockhash } = latest;
     return { blockhash };
   };
   return await (allowCached
@@ -419,32 +422,7 @@ export async function prewarmMeteoraDlmmTrade(input: {
     runtime: input.runtime,
   };
   const staticContext = await loadPoolContext(request, { forceRefresh: true });
-  await Promise.all([
-    loadPoolQuoteContext(request, staticContext, { forceRefresh: true }),
-    loadPoolQuoteContext({
-      ...request,
-      inputMint: request.outputMint,
-      outputMint: request.inputMint,
-    }, staticContext, { forceRefresh: true }),
-  ]);
-  const { poolState, tokenXProgram, tokenYProgram } = staticContext;
-  const tasks: Array<Promise<unknown>> = [
-    loadLatestBlockhash(request, false),
-  ];
-  if (ownerAddress) {
-    const user = new PublicKey(ownerAddress);
-    tasks.push(prewarmAtaExistence(request, [
-      findAta({ mint: new PublicKey(request.inputMint), owner: user, tokenProgramId: tokenXProgram }),
-      findAta({ mint: new PublicKey(request.outputMint), owner: user, tokenProgramId: tokenYProgram }),
-    ]));
-    if (!new PublicKey(request.inputMint).equals(poolState.tokenXMint)) {
-      tasks.push(prewarmAtaExistence(request, [
-        findAta({ mint: new PublicKey(request.inputMint), owner: user, tokenProgramId: tokenYProgram }),
-        findAta({ mint: new PublicKey(request.outputMint), owner: user, tokenProgramId: tokenXProgram }),
-      ]));
-    }
-  }
-  await Promise.all(tasks);
+  await loadPoolQuoteContext(request, staticContext, { forceRefresh: true });
 }
 
 export const meteoraDlmmTradeAdapter: SolanaTradeAdapter = {

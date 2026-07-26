@@ -67,8 +67,13 @@ export async function prewarmMeteoraTrade(input: {
 }): Promise<void> {
   const poolPair = String(input.tokenInfo?.pool_pair || '').trim();
   if (!poolPair) return;
-  const connection = await input.runtime.getConnection();
-  const poolInfo = await connection.getAccountInfo(new PublicKey(poolPair), 'confirmed');
+  const poolAddress = new PublicKey(poolPair);
+  const poolInfo = input.runtime.getAccountInfo
+    ? await input.runtime.getAccountInfo(poolAddress, 'confirmed', 'static')
+    : await (async () => {
+      const connection = await input.runtime.getConnection();
+      return await connection.getAccountInfo(poolAddress, 'confirmed');
+    })();
   if (!poolInfo?.owner) return;
   if (poolInfo.owner.equals(METEORA_DLMM_PROGRAM_ID)) {
     await prewarmMeteoraDlmmTrade(input);

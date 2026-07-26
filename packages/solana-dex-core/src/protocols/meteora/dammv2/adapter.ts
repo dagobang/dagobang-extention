@@ -53,12 +53,10 @@ type MeteoraDammV2StaticPoolContext = {
 
 const POOL_CONTEXT_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const POOL_QUOTE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.dynamicQuote;
-const ATA_EXISTS_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const BLOCKHASH_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.blockhash;
 
 const poolContextCache = new Map<string, WarmCacheEntry<MeteoraDammV2StaticPoolContext>>();
 const poolQuoteCache = new Map<string, WarmCacheEntry<MeteoraDammV2QuoteSnapshot>>();
-const ataExistsCache = new Map<string, WarmCacheEntry<boolean>>();
 const latestBlockhashCache = new Map<string, WarmCacheEntry<CachedBlockhashValue>>();
 
 function resolvePlatform(input: SolanaTradeRequest): string {
@@ -116,8 +114,12 @@ async function loadPoolContext(
   const poolAddress = resolvePoolAddress(input);
   const cacheKey = poolAddress.toBase58();
   const loader = async () => {
-    const connection = await input.runtime.getConnection();
-    const poolAccountInfo = await connection.getAccountInfo(poolAddress, 'confirmed');
+    const poolAccountInfo = input.runtime.getAccountInfo
+      ? await input.runtime.getAccountInfo(poolAddress, 'confirmed', 'static')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getAccountInfo(poolAddress, 'confirmed');
+      })();
     if (!poolAccountInfo?.data) throw new Error('Meteora DAMM v2 pool account not found');
     if (!poolAccountInfo.owner.equals(METEORA_DAMM_V2_PROGRAM_ID)) {
       throw new Error('tokenInfo.pool_pair is not a Meteora DAMM v2 pool');
@@ -130,8 +132,8 @@ async function loadPoolContext(
     });
     validateMeteoraDammV2Pool(poolInfo);
     const [tokenAProgram, tokenBProgram] = await Promise.all([
-      getMintProgramId(input.runtime, poolInfo.tokenAMint, { cacheOnly: true }),
-      getMintProgramId(input.runtime, poolInfo.tokenBMint, { cacheOnly: true }),
+      getMintProgramId(input.runtime, poolInfo.tokenAMint),
+      getMintProgramId(input.runtime, poolInfo.tokenBMint),
     ]);
 
     return {
@@ -148,7 +150,7 @@ async function loadPoolContext(
 async function getPoolContextForBuild(input: SolanaTradeRequest): Promise<MeteoraDammV2StaticPoolContext> {
   if (resolveExecutionMode(input) !== 'turbo') return await loadPoolContext(input);
   const cached = getFreshWarmPromise<MeteoraDammV2StaticPoolContext>(poolContextCache, resolvePoolAddress(input).toBase58());
-  if (!cached) throw new Error('Meteora DAMM v2 context not ready');
+  if (!cached) return await loadPoolContext(input);
   return await cached;
 }
 
@@ -159,36 +161,18 @@ async function loadPoolQuoteSnapshot(
   const poolAddress = resolvePoolAddress(input);
   const cacheKey = poolAddress.toBase58();
   const loader = async () => {
-    const connection = await input.runtime.getConnection();
-    const poolAccountInfo = await connection.getAccountInfo(poolAddress, 'confirmed');
+    const poolAccountInfo = input.runtime.getAccountInfo
+      ? await input.runtime.getAccountInfo(poolAddress, 'confirmed', 'dynamic')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getAccountInfo(poolAddress, 'confirmed');
+      })();
     if (!poolAccountInfo?.data) throw new Error('Meteora DAMM v2 pool account not found');
     return toMeteoraDammV2QuoteSnapshot(parseMeteoraDammV2PoolInfo(poolAccountInfo.data, poolAddress));
   };
   return await (opts?.forceRefresh
     ? refreshWarmPromise(poolQuoteCache, cacheKey, POOL_QUOTE_CACHE_TTL_MS, loader)
     : rememberWarmPromise(poolQuoteCache, cacheKey, POOL_QUOTE_CACHE_TTL_MS, loader));
-}
-
-async function prewarmAtaExistence(input: SolanaTradeRequest, accounts: PublicKey[]): Promise<void> {
-  if (!accounts.length) return;
-  const now = Date.now();
-  const connection = await input.runtime.getConnection();
-  const missingAccounts: PublicKey[] = [];
-  const missingKeys: string[] = [];
-  for (const account of accounts) {
-    const key = account.toBase58();
-    if (getFreshWarmPromise<boolean>(ataExistsCache, key, now)) continue;
-    missingAccounts.push(account);
-    missingKeys.push(key);
-  }
-  if (!missingAccounts.length) return;
-  const infos = await connection.getMultipleAccountsInfo(missingAccounts, 'confirmed');
-  missingKeys.forEach((key, index) => {
-    ataExistsCache.set(key, {
-      promise: Promise.resolve(Boolean(infos[index])),
-      expiresAt: now + ATA_EXISTS_CACHE_TTL_MS,
-    });
-  });
 }
 
 async function loadLatestBlockhash(input: SolanaTradeRequest, allowCached: boolean): Promise<CachedBlockhashValue> {
@@ -198,8 +182,13 @@ async function loadLatestBlockhash(input: SolanaTradeRequest, allowCached: boole
     if (cached) return await cached;
   }
   const loader = async () => {
-    const connection = await input.runtime.getConnection();
-    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    const latest = input.runtime.getLatestBlockhash
+      ? await input.runtime.getLatestBlockhash('confirmed')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getLatestBlockhash('confirmed');
+      })();
+    const { blockhash } = latest;
     return { blockhash };
   };
   return await (allowCached
@@ -343,26 +332,10 @@ export async function prewarmMeteoraDammV2Trade(input: {
     rawInput: { executionModeOverride: input.executionMode === 'turbo' ? 'turbo' : 'default' } as any,
     runtime: input.runtime,
   };
-  const { poolInfo, tokenAProgram, tokenBProgram } = await loadPoolContext(request, { forceRefresh: true });
+  await loadPoolContext(request, { forceRefresh: true });
   if (input.executionMode !== 'turbo') {
     await loadPoolQuoteSnapshot(request, { forceRefresh: true });
   }
-  const direction = resolveMeteoraDammV2TradeDirection(poolInfo, request.inputMint, request.outputMint);
-  const tasks: Array<Promise<unknown>> = [
-    loadLatestBlockhash(request, false),
-  ];
-  if (ownerAddress) {
-    const user = new PublicKey(ownerAddress);
-    const inputMint = direction === 'a_to_b' ? poolInfo.tokenAMint : poolInfo.tokenBMint;
-    const outputMint = direction === 'a_to_b' ? poolInfo.tokenBMint : poolInfo.tokenAMint;
-    const inputTokenProgram = direction === 'a_to_b' ? tokenAProgram : tokenBProgram;
-    const outputTokenProgram = direction === 'a_to_b' ? tokenBProgram : tokenAProgram;
-    tasks.push(prewarmAtaExistence(request, [
-      findAta({ mint: inputMint, owner: user, tokenProgramId: inputTokenProgram }),
-      findAta({ mint: outputMint, owner: user, tokenProgramId: outputTokenProgram }),
-    ]));
-  }
-  await Promise.all(tasks);
 }
 
 export const meteoraDammV2TradeAdapter: SolanaTradeAdapter = {

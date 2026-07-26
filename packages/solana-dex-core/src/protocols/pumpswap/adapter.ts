@@ -60,8 +60,6 @@ import {
 
 const STATIC_POOL_CONTEXT_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const RESERVE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.dynamicQuote;
-const ATA_EXISTS_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
-const ATA_EXISTS_FALSE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.missingAccount;
 const BLOCKHASH_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.blockhash;
 const PUMPSWAP_COMPUTE_UNIT_LIMIT = 300_000;
 const SOLANA_VERSIONED_TX_MAX_BYTES = 1232;
@@ -81,19 +79,11 @@ type CachedBlockhashValue = {
   fetchedAt: number;
 };
 
-type AccountExistsBatchOptions = {
-  forceFresh?: boolean;
-  commitment?: 'processed' | 'confirmed';
-  cacheTrueTtlMs?: number;
-  cacheFalseTtlMs?: number;
-};
-
 type PumpSwapStaticContext = Pick<PumpSwapPoolContext, 'poolAddress' | 'poolState' | 'globalState'>;
 type PumpSwapReserveSnapshot = Pick<PumpSwapPoolContext, 'baseReserve' | 'quoteReserve'>;
 
 const staticPoolContextCache = new Map<string, WarmCacheEntry<PumpSwapStaticContext>>();
 const reserveCache = new Map<string, WarmCacheEntry<PumpSwapReserveSnapshot>>();
-const ataExistsCache = new Map<string, WarmCacheEntry<boolean>>();
 const latestBlockhashCache = new Map<string, WarmCacheEntry<CachedBlockhashValue>>();
 let turboMemoNonce = 0;
 
@@ -264,11 +254,19 @@ async function loadPoolContext(input: SolanaTradeRequest, opts?: { forceRefreshR
         poolV2Address: poolV2Address.toBase58(),
         canonicalPoolAddress: canonicalPoolAddress.toBase58(),
       });
-      const connection = await input.runtime.getConnection();
-      const [globalInfo, poolV2Info, canonicalPoolInfo] = await connection.getMultipleAccountsInfo(
-        [PUMPSWAP_GLOBAL_ACCOUNT, poolV2Address, canonicalPoolAddress],
-        'confirmed',
-      );
+      const [globalInfo, poolV2Info, canonicalPoolInfo] = input.runtime.getMultipleAccountsInfo
+        ? await input.runtime.getMultipleAccountsInfo(
+          [PUMPSWAP_GLOBAL_ACCOUNT, poolV2Address, canonicalPoolAddress],
+          'confirmed',
+          'static',
+        )
+        : await (async () => {
+          const connection = await input.runtime.getConnection();
+          return await connection.getMultipleAccountsInfo(
+            [PUMPSWAP_GLOBAL_ACCOUNT, poolV2Address, canonicalPoolAddress],
+            'confirmed',
+          );
+        })();
       if (!globalInfo?.data) throw new Error('PumpSwap global account not found');
 
       const globalState = parsePumpSwapGlobalState(globalInfo.data);
@@ -312,11 +310,19 @@ async function loadPoolContext(input: SolanaTradeRequest, opts?: { forceRefreshR
     },
   );
   const reserveLoader = async () => {
-    const connection = await input.runtime.getConnection();
-    const reserveInfos = await connection.getMultipleAccountsInfo(
-      [staticContext.poolState.poolBaseTokenAccount, staticContext.poolState.poolQuoteTokenAccount],
-      'confirmed',
-    );
+    const reserveInfos = input.runtime.getMultipleAccountsInfo
+      ? await input.runtime.getMultipleAccountsInfo(
+        [staticContext.poolState.poolBaseTokenAccount, staticContext.poolState.poolQuoteTokenAccount],
+        'confirmed',
+        'dynamic',
+      )
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getMultipleAccountsInfo(
+          [staticContext.poolState.poolBaseTokenAccount, staticContext.poolState.poolQuoteTokenAccount],
+          'confirmed',
+        );
+      })();
     const [baseReserveInfo, quoteReserveInfo] = reserveInfos;
     if (!baseReserveInfo?.data || !quoteReserveInfo?.data) {
       throw new Error('PumpSwap reserve vaults not found');
@@ -346,116 +352,15 @@ async function getPoolContextForBuild(input: SolanaTradeRequest): Promise<PumpSw
   if (resolveExecutionMode(input) !== 'turbo') return await loadPoolContext(input);
   const baseMint = new PublicKey(input.side === 'buy' ? input.outputMint : input.inputMint);
   const staticContextCached = getFreshWarmPromise<PumpSwapStaticContext>(staticPoolContextCache, baseMint.toBase58());
-  if (!staticContextCached) throw new Error('PumpSwap static context not ready');
+  if (!staticContextCached) return await loadPoolContext(input);
   const staticContext = await staticContextCached;
   const reserveCached = getFreshWarmPromise<PumpSwapReserveSnapshot>(reserveCache, staticContext.poolAddress.toBase58());
-  if (!reserveCached) throw new Error('PumpSwap reserve quote not ready');
+  if (!reserveCached) return await loadPoolContext(input);
   const reserves = await reserveCached;
   return {
     ...staticContext,
     ...reserves,
   };
-}
-
-async function loadAccountExistsBatch(
-  input: SolanaTradeRequest,
-  accounts: PublicKey[],
-  options: AccountExistsBatchOptions = {},
-): Promise<Map<string, boolean>> {
-  const uniqueAccounts = Array.from(new Map(accounts.map((account) => [account.toBase58(), account])).values());
-  const now = Date.now();
-  const commitment = options.commitment ?? 'confirmed';
-  const cacheTrueTtlMs = options.cacheTrueTtlMs ?? ATA_EXISTS_CACHE_TTL_MS;
-  const cacheFalseTtlMs = options.cacheFalseTtlMs ?? ATA_EXISTS_FALSE_CACHE_TTL_MS;
-  const promises = new Map<string, Promise<boolean>>();
-  const missingAccounts: PublicKey[] = [];
-  for (const account of uniqueAccounts) {
-    const key = account.toBase58();
-    const cached = !options.forceFresh ? getFreshWarmPromise<boolean>(ataExistsCache, key, now) : null;
-    if (cached) {
-      reportPumpSwapDebug('E', 'pumpswap/adapter.ts:loadAccountExistsBatch:cacheHit', '[DEBUG] pumpswap ata existence cache hit', {
-        side: input.side,
-        account: key,
-        ownerAddress: input.ownerAddress,
-        commitment,
-      });
-      promises.set(key, cached);
-      continue;
-    }
-    missingAccounts.push(account);
-  }
-
-  if (missingAccounts.length > 0) {
-    const missingKeys = missingAccounts.map((account) => account.toBase58());
-    const batchPromise = (async () => {
-      const connection = await input.runtime.getConnection();
-      reportPumpSwapDebug('E', 'pumpswap/adapter.ts:loadAccountExistsBatch:fetchStart', '[DEBUG] pumpswap ata existence batch fetch start', {
-        side: input.side,
-        ownerAddress: input.ownerAddress,
-        commitment,
-        forceFresh: !!options.forceFresh,
-        accounts: missingKeys,
-      });
-      const infos = await connection.getMultipleAccountsInfo(missingAccounts, commitment);
-      reportPumpSwapDebug('E', 'pumpswap/adapter.ts:loadAccountExistsBatch:fetchDone', '[DEBUG] pumpswap ata existence batch fetch done', {
-        side: input.side,
-        ownerAddress: input.ownerAddress,
-        commitment,
-        forceFresh: !!options.forceFresh,
-        results: missingKeys.map((key, index) => ({
-          account: key,
-          exists: !!infos[index],
-        })),
-      });
-      return infos.map((info) => !!info);
-    })().catch((error) => {
-      for (const key of missingKeys) ataExistsCache.delete(key);
-      throw error;
-    });
-    for (const [index, account] of missingAccounts.entries()) {
-      const key = account.toBase58();
-      const promise = batchPromise.then((results) => results[index] ?? false);
-      promise.then((exists) => {
-        ataExistsCache.set(key, {
-          promise: Promise.resolve(exists),
-          expiresAt: Date.now() + (exists ? cacheTrueTtlMs : cacheFalseTtlMs),
-        });
-      }).catch(() => {
-        ataExistsCache.delete(key);
-      });
-      ataExistsCache.set(key, {
-        promise,
-        expiresAt: now + Math.max(cacheTrueTtlMs, cacheFalseTtlMs),
-      });
-      promises.set(key, promise);
-    }
-  }
-
-  const entries = await Promise.all(
-    uniqueAccounts.map(async (account) => {
-      const key = account.toBase58();
-      return [key, await (promises.get(key) ?? Promise.resolve(false))] as const;
-    }),
-  );
-  return new Map(entries);
-}
-
-async function prewarmBuildAccounts(input: SolanaTradeRequest, params: {
-  ownerAddress?: string;
-  baseMint: PublicKey;
-  baseTokenProgram: PublicKey;
-}): Promise<void> {
-  const ownerAddress = String(params.ownerAddress || '').trim();
-  if (!ownerAddress) return;
-  const user = new PublicKey(ownerAddress);
-  const quoteMint = new PublicKey(SOLANA_NATIVE_MINT);
-  await loadAccountExistsBatch(input, [
-    findAta({ mint: params.baseMint, owner: user, tokenProgramId: params.baseTokenProgram }),
-    findAta({ mint: quoteMint, owner: user, tokenProgramId: TOKEN_PROGRAM_ID }),
-  ], {
-    commitment: 'processed',
-    cacheFalseTtlMs: ATA_EXISTS_FALSE_CACHE_TTL_MS,
-  });
 }
 
 async function prewarmLatestBlockhash(input: SolanaTradeRequest): Promise<CachedBlockhashValue> {
@@ -468,8 +373,13 @@ async function prewarmLatestBlockhash(input: SolanaTradeRequest): Promise<Cached
     key,
     BLOCKHASH_CACHE_TTL_MS,
     async () => {
-      const connection = await input.runtime.getConnection();
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      const latest = input.runtime.getLatestBlockhash
+        ? await input.runtime.getLatestBlockhash('confirmed')
+        : await (async () => {
+          const connection = await input.runtime.getConnection();
+          return await connection.getLatestBlockhash('confirmed');
+        })();
+      const { blockhash, lastValidBlockHeight } = latest;
       return {
         blockhash,
         lastValidBlockHeight,
@@ -495,7 +405,7 @@ async function buildTransaction(input: SolanaTradeRequest): Promise<{
   const blockhashPromise = prewarmLatestBlockhash(input);
   const [ctx, baseTokenProgram] = await Promise.all([
     getPoolContextForBuild(input),
-    getMintProgramId(input.runtime, baseMint, { cacheOnly: true }),
+    getMintProgramId(input.runtime, baseMint),
   ]);
   if (!ctx.poolState.quoteMint.equals(quoteMint)) {
     throw new Error('PumpSwap pool quote mint is not WSOL');
@@ -825,14 +735,7 @@ export async function prewarmPumpSwapTrade(input: {
     rawInput: { executionModeOverride: input.executionMode === 'turbo' ? 'turbo' : 'default' } as any,
     runtime: input.runtime,
   };
-  const baseMint = new PublicKey(tokenAddress);
-  const baseTokenProgramPromise = getMintProgramId(request.runtime, baseMint);
   const ctxPromise = loadPoolContext(request, { forceRefreshReserve: true });
-  const [ctx, baseTokenProgram] = await Promise.all([ctxPromise, baseTokenProgramPromise]);
-  const tasks: Array<Promise<unknown>> = [
-    prewarmLatestBlockhash(request),
-    Promise.resolve(derivePumpSwapCreatorVaultPda(ctx.poolState.coinCreator)),
-  ];
-  tasks.push(prewarmBuildAccounts(request, { ownerAddress, baseMint, baseTokenProgram }));
-  await Promise.all(tasks);
+  const ctx = await ctxPromise;
+  derivePumpSwapCreatorVaultPda(ctx.poolState.coinCreator);
 }

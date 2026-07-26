@@ -165,8 +165,7 @@ async function getBagsDbcContextForBuild(input: SolanaTradeRequest): Promise<Bag
   if (resolveExecutionMode(input) !== 'turbo') return await loadBagsDbcContext(input);
   const baseMint = new PublicKey(input.side === 'buy' ? input.outputMint : input.inputMint);
   const cached = getFreshWarmPromise<BagsDbcContext>(bagsContextCache, baseMint.toBase58());
-  if (!cached) throw new Error('Bags pool context not ready');
-  const ctx = await cached;
+  const ctx = cached ? await cached : await loadBagsDbcContext(input);
   if (ctx.poolState?.isMigrated) throw new Error('Bags pool has already migrated');
   return ctx;
 }
@@ -236,7 +235,7 @@ async function getBagsCurrentPointForBuild(input: SolanaTradeRequest, ctx: BagsD
   if (resolveExecutionMode(input) !== 'turbo') return await loadBagsCurrentPoint(input, ctx);
   const cacheKey = String(ctx.poolConfig?.activationType ?? '');
   const cached = getFreshWarmPromise<BagsCurrentPointCacheValue>(bagsCurrentPointCache, cacheKey);
-  if (!cached) throw new Error('Bags current point not ready');
+  if (!cached) return await loadBagsCurrentPoint(input, ctx);
   return await cached;
 }
 
@@ -248,7 +247,9 @@ async function loadLatestBlockhash(input: SolanaTradeRequest, allowCached = fals
     if (cached) return await cached;
   }
   const loader = async () => {
-    const latest = await connection.getLatestBlockhash('confirmed');
+    const latest = input.runtime.getLatestBlockhash
+      ? await input.runtime.getLatestBlockhash('confirmed')
+      : await connection.getLatestBlockhash('confirmed');
     return { blockhash: latest.blockhash };
   };
   return await (forceRefresh

@@ -62,7 +62,6 @@ const BONDING_CONTEXT_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const BONDING_STATE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.dynamicQuote;
 // Creator vault and ATA existence change far less often than curve reserves, so keep them warm longer.
 const CREATOR_VAULT_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
-const ATA_EXISTS_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const BLOCKHASH_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.blockhash;
 const PUMPFUN_COMPUTE_UNIT_LIMIT = 250_000;
 const SOLANA_VERSIONED_TX_MAX_BYTES = 1232;
@@ -93,7 +92,6 @@ const bondingContextCache = new Map<string, WarmCacheEntry<PumpfunBondingCurveCo
 const bondingStateCache = new Map<string, WarmCacheEntry<{ state: PumpfunBondingCurveState; bondingCurve: PublicKey }>>();
 const creatorVaultCache = new Map<string, WarmCacheEntry<PublicKey>>();
 const sharingConfigCreatorVaultCache = new Map<string, WarmCacheEntry<PublicKey | null>>();
-const ataExistsCache = new Map<string, WarmCacheEntry<boolean>>();
 const latestBlockhashCache = new Map<string, WarmCacheEntry<CachedBlockhashValue>>();
 let turboMemoNonce = 0;
 
@@ -192,8 +190,12 @@ async function loadBondingCurveState(
   const mint = baseMint.toBase58();
   const loader = async () => {
     const bondingCurve = derivePumpfunBondingCurvePda(baseMint);
-    const connection = await input.runtime.getConnection();
-    const info = await connection.getAccountInfo(bondingCurve, 'confirmed');
+    const info = input.runtime.getAccountInfo
+      ? await input.runtime.getAccountInfo(bondingCurve, 'confirmed', 'dynamic')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getAccountInfo(bondingCurve, 'confirmed');
+      })();
     if (!info?.data) throw new Error('Pumpfun bonding curve account not found');
     const state = parsePumpfunBondingCurveState(info.data);
     cacheBondingCurveContext(mint, toBondingCurveContext(state, bondingCurve));
@@ -215,8 +217,12 @@ async function loadBondingCurveContext(
   const mint = baseMint.toBase58();
   const loader = async () => {
     const bondingCurve = derivePumpfunBondingCurvePda(baseMint);
-    const connection = await input.runtime.getConnection();
-    const info = await connection.getAccountInfo(bondingCurve, 'confirmed');
+    const info = input.runtime.getAccountInfo
+      ? await input.runtime.getAccountInfo(bondingCurve, 'confirmed', 'static')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getAccountInfo(bondingCurve, 'confirmed');
+      })();
     if (!info?.data) throw new Error('Pumpfun bonding curve account not found');
     return toBondingCurveContext(parsePumpfunBondingCurveState(info.data), bondingCurve);
   };
@@ -241,7 +247,7 @@ async function getBondingCurveContextForBuild(
     return toBondingCurveContext(state, bondingCurve);
   }
   const cached = getFreshWarmPromise<PumpfunBondingCurveContext>(bondingContextCache, baseMint.toBase58());
-  if (!cached) throw new Error('Pumpfun bonding curve context not ready');
+  if (!cached) return await loadBondingCurveContext(input, baseMint);
   return await cached;
 }
 
@@ -264,6 +270,7 @@ async function resolvePumpfunCreatorVault(
 }
 
 async function getCreatorVaultForBuild(
+  input: SolanaTradeRequest,
   baseMint: PublicKey,
   creator: PublicKey,
 ): Promise<PublicKey> {
@@ -271,9 +278,12 @@ async function getCreatorVaultForBuild(
   const cachedCreatorVault = getFreshWarmPromise<PublicKey>(creatorVaultCache, creatorKey);
   if (cachedCreatorVault) return await cachedCreatorVault;
   const cachedSharingConfig = getFreshWarmPromise<PublicKey | null>(sharingConfigCreatorVaultCache, baseMint.toBase58());
-  if (!cachedSharingConfig) throw new Error('Pumpfun creator vault cache not ready');
-  const sharingConfigCreatorVault = await cachedSharingConfig;
-  return sharingConfigCreatorVault ?? derivePumpfunCreatorVaultPda(creator);
+  const sharingConfigCreatorVault = cachedSharingConfig
+    ? await cachedSharingConfig
+    : await loadSharingConfigCreatorVault(input, baseMint);
+  return await resolvePumpfunCreatorVault(input, baseMint, creator, {
+    sharingConfigCreatorVaultPromise: Promise.resolve(sharingConfigCreatorVault),
+  });
 }
 
 async function loadSharingConfigCreatorVault(
@@ -287,8 +297,12 @@ async function loadSharingConfigCreatorVault(
     CREATOR_VAULT_CACHE_TTL_MS,
     async () => {
       const sharingConfig = derivePumpfunSharingConfigPda(baseMint);
-      const connection = await input.runtime.getConnection();
-      const info = await connection.getAccountInfo(sharingConfig, 'confirmed');
+      const info = input.runtime.getAccountInfo
+        ? await input.runtime.getAccountInfo(sharingConfig, 'confirmed', 'static')
+        : await (async () => {
+          const connection = await input.runtime.getConnection();
+          return await connection.getAccountInfo(sharingConfig, 'confirmed');
+        })();
       if (
         info?.owner.equals(PUMP_FEES_PROGRAM_ID)
         && info.data.length >= 43
@@ -303,31 +317,19 @@ async function loadSharingConfigCreatorVault(
   );
 }
 
-async function loadAccountExists(
-  input: SolanaTradeRequest,
-  account: PublicKey,
-): Promise<boolean> {
-  const key = account.toBase58();
-  return await rememberWarmPromise(
-    ataExistsCache,
-    key,
-    ATA_EXISTS_CACHE_TTL_MS,
-    async () => {
-      const connection = await input.runtime.getConnection();
-      const info = await connection.getAccountInfo(account, 'confirmed');
-      return !!info;
-    },
-  );
-}
-
 async function loadLatestBlockhash(
   input: SolanaTradeRequest,
   opts?: { allowCached?: boolean; forceRefresh?: boolean },
 ): Promise<CachedBlockhashValue> {
   void opts;
   const loader = async () => {
-    const connection = await input.runtime.getConnection();
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    const latest = input.runtime.getLatestBlockhash
+      ? await input.runtime.getLatestBlockhash('confirmed')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getLatestBlockhash('confirmed');
+      })();
+    const { blockhash, lastValidBlockHeight } = latest;
     return {
       blockhash,
       lastValidBlockHeight,
@@ -360,7 +362,7 @@ async function buildLegacyInstruction(input: SolanaTradeRequest): Promise<{
   const user = new PublicKey(input.ownerAddress);
   const [curveContext, baseTokenProgram] = await Promise.all([
     getBondingCurveContextForBuild(input, baseMint),
-    getMintProgramId(input.runtime, baseMint, { cacheOnly: true }),
+    getMintProgramId(input.runtime, baseMint),
   ]);
   if (isPumpfunRouteComplete(input, curveContext.complete)) {
     throw new Error('Pumpfun bonding curve is complete; use PumpSwap/AMM route instead');
@@ -373,7 +375,7 @@ async function buildLegacyInstruction(input: SolanaTradeRequest): Promise<{
     tokenProgramId: baseTokenProgram,
   });
   const associatedBaseUser = findAta({ mint: baseMint, owner: user, tokenProgramId: baseTokenProgram });
-  const creatorVault = await getCreatorVaultForBuild(baseMint, curveContext.creator);
+  const creatorVault = await getCreatorVaultForBuild(input, baseMint, curveContext.creator);
   const globalVolumeAccumulator = derivePumpfunGlobalVolumeAccumulatorPda();
   const userVolumeAccumulator = derivePumpfunUserVolumeAccumulatorPda(user);
   const feeConfig = derivePumpfunFeeConfigPda();
@@ -506,7 +508,7 @@ async function buildUnifiedInstruction(input: SolanaTradeRequest): Promise<{
   const user = new PublicKey(input.ownerAddress);
   const [curveContext, baseTokenProgram] = await Promise.all([
     getBondingCurveContextForBuild(input, baseMint),
-    getMintProgramId(input.runtime, baseMint, { cacheOnly: true }),
+    getMintProgramId(input.runtime, baseMint),
   ]);
   const quoteMint = curveContext.quoteMint.equals(PublicKey.default)
     ? new PublicKey(SOLANA_NATIVE_MINT)
@@ -529,7 +531,7 @@ async function buildUnifiedInstruction(input: SolanaTradeRequest): Promise<{
   });
   const associatedBaseUser = findAta({ mint: baseMint, owner: user, tokenProgramId: baseTokenProgram });
   const associatedQuoteUser = findAta({ mint: quoteMint, owner: user, tokenProgramId: TOKEN_PROGRAM_ID });
-  const creatorVault = await getCreatorVaultForBuild(baseMint, curveContext.creator);
+  const creatorVault = await getCreatorVaultForBuild(input, baseMint, curveContext.creator);
   const associatedCreatorVault = findAta({
     mint: quoteMint,
     owner: creatorVault,
@@ -709,24 +711,13 @@ export async function prewarmPumpfunTrade(input: {
     runtime: input.runtime,
   };
   const baseMint = new PublicKey(tokenAddress);
-  const user = new PublicKey(request.ownerAddress);
-  const baseTokenProgramPromise = getMintProgramId(request.runtime, baseMint);
-  const blockhashPromise = loadLatestBlockhash(request, { allowCached: true, forceRefresh: true });
   const curveContext = input.executionMode === 'turbo'
     ? await loadBondingCurveContext(request, baseMint)
     : await (async () => {
       const { state, bondingCurve } = await loadBondingCurveState(request, baseMint, { forceRefresh: true });
       return toBondingCurveContext(state, bondingCurve);
     })();
-  const baseTokenProgram = await baseTokenProgramPromise;
-  const tasks: Array<Promise<unknown>> = [
-    resolvePumpfunCreatorVault(request, baseMint, curveContext.creator),
-    blockhashPromise,
-  ];
-  if (ownerAddress) {
-    tasks.push(loadAccountExists(request, findAta({ mint: baseMint, owner: user, tokenProgramId: baseTokenProgram })));
-  }
-  await Promise.all(tasks);
+  await resolvePumpfunCreatorVault(request, baseMint, curveContext.creator);
 }
 
 export const pumpfunTradeAdapter: SolanaTradeAdapter = {

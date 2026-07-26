@@ -16,6 +16,21 @@ export async function prewarmSolanaTurboTradeContext(input: TradeTurboPrewarmInp
   });
   const runtime = {
     getConnection: () => SolanaRpcService.getConnection(),
+    getLatestBlockhash: (commitment: 'processed' | 'confirmed' = 'confirmed') => SolanaRpcService.getLatestBlockhash({
+      commitment,
+      scope: 'public',
+      timeoutMs: 1_500,
+    }),
+    getAccountInfo: (address: any, commitment: 'processed' | 'confirmed' = 'confirmed', queryClass = 'static') => SolanaRpcService.getAccountInfo(address, {
+      commitment,
+      scope: 'public',
+      timeoutMs: queryClass === 'dynamic' ? 1_800 : 2_500,
+    }),
+    getMultipleAccountsInfo: (addresses: any, commitment: 'processed' | 'confirmed' = 'confirmed', queryClass = 'static') => SolanaRpcService.getMultipleAccountsInfo(addresses, {
+      commitment,
+      scope: 'public',
+      timeoutMs: queryClass === 'dynamic' ? 2_200 : 3_000,
+    }),
   };
   const planRequest = {
     side: 'buy' as const,

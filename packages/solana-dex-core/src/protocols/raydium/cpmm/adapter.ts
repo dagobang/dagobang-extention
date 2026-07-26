@@ -48,12 +48,10 @@ type RaydiumCpmmBuildDirection = {
 
 const STATIC_POOL_INFO_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const RESERVE_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.dynamicQuote;
-const ATA_EXISTS_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.staticAccount;
 const BLOCKHASH_CACHE_TTL_MS = SOLANA_WARM_CACHE_TTL_MS.blockhash;
 
 const staticPoolInfoCache = new Map<string, WarmCacheEntry<RaydiumCpmmStaticPoolInfo>>();
 const reserveCache = new Map<string, WarmCacheEntry<RaydiumCpmmReserveSnapshot>>();
-const ataExistsCache = new Map<string, WarmCacheEntry<boolean>>();
 const latestBlockhashCache = new Map<string, WarmCacheEntry<CachedBlockhashValue>>();
 
 function resolvePlatform(input: SolanaTradeRequest): string {
@@ -81,8 +79,12 @@ async function loadStaticPoolInfo(
   const poolAddress = resolvePoolAddress(input);
   const cacheKey = poolAddress.toBase58();
   const loader = async () => {
-    const connection = await input.runtime.getConnection();
-    const poolAccountInfo = await connection.getAccountInfo(poolAddress, 'confirmed');
+    const poolAccountInfo = input.runtime.getAccountInfo
+      ? await input.runtime.getAccountInfo(poolAddress, 'confirmed', 'static')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getAccountInfo(poolAddress, 'confirmed');
+      })();
     if (!poolAccountInfo?.data) throw new Error('Raydium pool account not found');
     if (!poolAccountInfo.owner.equals(RAYDIUM_CPMM_PROGRAM_ID)) {
       throw new Error('tokenInfo.pool_pair is not a Raydium CPMM pool');
@@ -102,11 +104,15 @@ async function loadPoolReserves(
 ): Promise<RaydiumCpmmReserveSnapshot> {
   const cacheKey = poolInfo.poolState.toBase58();
   const loader = async () => {
-    const connection = await input.runtime.getConnection();
-    const [vault0Info, vault1Info] = await connection.getMultipleAccountsInfo(
-      [poolInfo.tokenVault0, poolInfo.tokenVault1],
-      'confirmed',
-    );
+    const [vault0Info, vault1Info] = input.runtime.getMultipleAccountsInfo
+      ? await input.runtime.getMultipleAccountsInfo([poolInfo.tokenVault0, poolInfo.tokenVault1], 'confirmed', 'dynamic')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getMultipleAccountsInfo(
+          [poolInfo.tokenVault0, poolInfo.tokenVault1],
+          'confirmed',
+        );
+      })();
     if (!vault0Info?.data || !vault1Info?.data) throw new Error('Raydium vault accounts not found');
     return {
       baseReserve: parseRaydiumCpmmTokenAccountBalance(vault0Info.data),
@@ -121,7 +127,7 @@ async function loadPoolReserves(
 async function getStaticPoolInfoForBuild(input: SolanaTradeRequest): Promise<RaydiumCpmmStaticPoolInfo> {
   if (resolveExecutionMode(input) !== 'turbo') return await loadStaticPoolInfo(input);
   const cached = getFreshWarmPromise<RaydiumCpmmStaticPoolInfo>(staticPoolInfoCache, resolvePoolAddress(input).toBase58());
-  if (!cached) throw new Error('Raydium pool context not ready');
+  if (!cached) return await loadStaticPoolInfo(input);
   return await cached;
 }
 
@@ -151,28 +157,6 @@ function resolveDirectionReserves(
     : { reserveIn: reserves.quoteReserve, reserveOut: reserves.baseReserve };
 }
 
-async function prewarmAtaExistence(input: SolanaTradeRequest, accounts: PublicKey[]): Promise<void> {
-  if (!accounts.length) return;
-  const now = Date.now();
-  const connection = await input.runtime.getConnection();
-  const missingAccounts: PublicKey[] = [];
-  const missingKeys: string[] = [];
-  for (const account of accounts) {
-    const key = account.toBase58();
-    if (getFreshWarmPromise<boolean>(ataExistsCache, key, now)) continue;
-    missingAccounts.push(account);
-    missingKeys.push(key);
-  }
-  if (!missingAccounts.length) return;
-  const infos = await connection.getMultipleAccountsInfo(missingAccounts, 'confirmed');
-  missingKeys.forEach((key, index) => {
-    ataExistsCache.set(key, {
-      promise: Promise.resolve(Boolean(infos[index])),
-      expiresAt: now + ATA_EXISTS_CACHE_TTL_MS,
-    });
-  });
-}
-
 async function loadLatestBlockhash(input: SolanaTradeRequest, allowCached: boolean): Promise<CachedBlockhashValue> {
   const key = 'confirmed';
   if (allowCached) {
@@ -180,8 +164,13 @@ async function loadLatestBlockhash(input: SolanaTradeRequest, allowCached: boole
     if (cached) return await cached;
   }
   const loader = async () => {
-    const connection = await input.runtime.getConnection();
-    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    const latest = input.runtime.getLatestBlockhash
+      ? await input.runtime.getLatestBlockhash('confirmed')
+      : await (async () => {
+        const connection = await input.runtime.getConnection();
+        return await connection.getLatestBlockhash('confirmed');
+      })();
+    const { blockhash } = latest;
     return { blockhash };
   };
   return await (allowCached
@@ -323,18 +312,6 @@ export async function prewarmRaydiumTrade(input: {
   if (input.executionMode !== 'turbo') {
     await loadPoolReserves(request, poolInfo, { forceRefresh: true });
   }
-  const direction = buildDirection(poolInfo, new PublicKey(request.inputMint), new PublicKey(request.outputMint));
-  const tasks: Array<Promise<unknown>> = [
-    loadLatestBlockhash(request, false),
-  ];
-  if (ownerAddress) {
-    const user = new PublicKey(ownerAddress);
-    tasks.push(prewarmAtaExistence(request, [
-      findAta({ mint: new PublicKey(request.inputMint), owner: user, tokenProgramId: direction.inputTokenProgram }),
-      findAta({ mint: new PublicKey(request.outputMint), owner: user, tokenProgramId: direction.outputTokenProgram }),
-    ]));
-  }
-  await Promise.all(tasks);
 }
 
 export const raydiumTradeAdapter: SolanaTradeAdapter = {

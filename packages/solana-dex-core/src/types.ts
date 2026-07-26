@@ -49,6 +49,20 @@ export type SolanaDexRawInput = {
 
 export type SolanaDexRuntime = {
   getConnection(): Promise<Connection>;
+  getLatestBlockhash?: (commitment?: 'processed' | 'confirmed') => Promise<{
+    blockhash: string;
+    lastValidBlockHeight: number;
+  }>;
+  getAccountInfo?: (
+    address: Parameters<Connection['getAccountInfo']>[0],
+    commitment?: 'processed' | 'confirmed',
+    queryClass?: 'static' | 'dynamic',
+  ) => ReturnType<Connection['getAccountInfo']>;
+  getMultipleAccountsInfo?: (
+    addresses: Parameters<Connection['getMultipleAccountsInfo']>[0],
+    commitment?: 'processed' | 'confirmed',
+    queryClass?: 'static' | 'dynamic',
+  ) => ReturnType<Connection['getMultipleAccountsInfo']>;
 };
 
 export type SolanaTradeRequest = {

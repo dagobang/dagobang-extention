@@ -169,9 +169,121 @@ export class SolanaRpcService {
     return proxy;
   }
 
+  static async getSubmitConnection(opts?: {
+    txSide?: 'buy' | 'sell';
+    submitChannel?: SubmitChannel;
+    scope?: 'auto' | 'protected' | 'public' | 'both';
+  }): Promise<Connection> {
+    const urls = await this.getSubmitRpcUrls({
+      txSide: opts?.txSide,
+      submitChannel: opts?.submitChannel,
+      scope: opts?.scope ?? 'both',
+    });
+    const cacheKey = `submit:${urls.join(',')}`;
+    const cached = this.balancedConnectionCache.get(cacheKey);
+    if (cached) return cached;
+    const primary = this.getConnectionForUrl(urls[0]);
+    const proxy = this.createBalancedConnection(urls, primary);
+    this.balancedConnectionCache.set(cacheKey, proxy);
+    return proxy;
+  }
+
   static async getConnections(): Promise<Array<{ url: string; connection: Connection }>> {
     const urls = await this.getRpcUrls();
     return this.getConnectionsForUrls(urls);
+  }
+
+  static async getLatestBlockhash(opts?: {
+    commitment?: SolanaConfirmationCommitment;
+    txSide?: 'buy' | 'sell';
+    submitChannel?: SubmitChannel;
+    scope?: 'auto' | 'protected' | 'public' | 'both';
+    timeoutMs?: number;
+  }): Promise<{ blockhash: string; lastValidBlockHeight: number; url?: string }> {
+    const commitment = opts?.commitment ?? 'confirmed';
+    const timeoutMs = Math.max(500, Number(opts?.timeoutMs ?? 1_500));
+    const urls = await this.getSubmitRpcUrls({
+      txSide: opts?.txSide,
+      submitChannel: opts?.submitChannel,
+      scope: opts?.scope ?? 'both',
+    });
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const result = await Promise.race([
+        this.executeBalancedRead<{
+          blockhash: string;
+          lastValidBlockHeight: number;
+          url: string;
+        }>({
+          urls,
+          operationName: 'getLatestBlockhash',
+          operation: async (connection, url) => {
+            const latest = await connection.getLatestBlockhash(commitment);
+            return {
+              blockhash: latest.blockhash,
+              lastValidBlockHeight: latest.lastValidBlockHeight,
+              url,
+            };
+          },
+        }),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error(`Timed out fetching Solana latest blockhash after ${timeoutMs}ms`));
+          }, timeoutMs);
+        }),
+      ]);
+      return result;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  static async getAccountInfo(
+    address: PublicKey,
+    opts?: {
+      commitment?: SolanaConfirmationCommitment;
+      txSide?: 'buy' | 'sell';
+      submitChannel?: SubmitChannel;
+      scope?: 'auto' | 'protected' | 'public' | 'both';
+      timeoutMs?: number;
+    },
+  ) {
+    const commitment = opts?.commitment ?? 'confirmed';
+    const urls = await this.getSubmitRpcUrls({
+      txSide: opts?.txSide,
+      submitChannel: opts?.submitChannel,
+      scope: opts?.scope ?? 'both',
+    });
+    return await this.executeBalancedRead({
+      urls,
+      operationName: 'getAccountInfo',
+      timeoutMs: opts?.timeoutMs,
+      operation: async (connection) => await connection.getAccountInfo(address, commitment),
+    });
+  }
+
+  static async getMultipleAccountsInfo(
+    addresses: PublicKey[],
+    opts?: {
+      commitment?: SolanaConfirmationCommitment;
+      txSide?: 'buy' | 'sell';
+      submitChannel?: SubmitChannel;
+      scope?: 'auto' | 'protected' | 'public' | 'both';
+      timeoutMs?: number;
+    },
+  ) {
+    const commitment = opts?.commitment ?? 'confirmed';
+    const urls = await this.getSubmitRpcUrls({
+      txSide: opts?.txSide,
+      submitChannel: opts?.submitChannel,
+      scope: opts?.scope ?? 'both',
+    });
+    return await this.executeBalancedRead({
+      urls,
+      operationName: 'getMultipleAccountsInfo',
+      timeoutMs: opts?.timeoutMs,
+      operation: async (connection) => await connection.getMultipleAccountsInfo(addresses, commitment),
+    });
   }
 
   static getConnectionsForUrls(urls: string[]): Array<{ url: string; connection: Connection }> {
@@ -192,21 +304,36 @@ export class SolanaRpcService {
     urls: string[];
     operationName: string;
     operation: (connection: Connection, url: string) => Promise<T>;
+    timeoutMs?: number;
   }): Promise<T> {
     const urls = this.normalizeUrls(input.urls);
     if (urls.length <= 0) {
       throw new Error('No Solana RPC URLs configured');
     }
+    const runWithDeadline = async (connection: Connection, url: string): Promise<T> => {
+      if (!input.timeoutMs || input.timeoutMs <= 0) {
+        return await input.operation(connection, url);
+      }
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      try {
+        return await Promise.race([
+          input.operation(connection, url),
+          new Promise<T>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              reject(new Error(`Solana ${input.operationName} timed out after ${input.timeoutMs}ms`));
+            }, input.timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    };
     if (urls.length === 1) {
       const url = urls[0]!;
-      const startedAt = Date.now();
       try {
-        const result = await input.operation(this.getConnectionForUrl(url), url);
+        const result = await runWithDeadline(this.getConnectionForUrl(url), url);
         return result;
       } catch (error: any) {
-        const errorMessage = String(error?.message || error || '');
-        const errorCode = error?.code ?? error?.cause?.code ?? error?.statusCode ?? error?.response?.status ?? null;
-        const httpStatus = error?.statusCode ?? error?.response?.status ?? error?.cause?.status ?? null;
         throw error;
       }
     }
@@ -215,14 +342,10 @@ export class SolanaRpcService {
       urls,
       probe: async (url) => await this.measureReadLatency(url),
       operation: async (url) => {
-        const startedAt = Date.now();
         try {
-          const result = await input.operation(this.getConnectionForUrl(url), url);
+          const result = await runWithDeadline(this.getConnectionForUrl(url), url);
           return result;
         } catch (error: any) {
-          const errorMessage = String(error?.message || error || '');
-          const errorCode = error?.code ?? error?.cause?.code ?? error?.statusCode ?? error?.response?.status ?? null;
-          const httpStatus = error?.statusCode ?? error?.response?.status ?? error?.cause?.status ?? null;
           throw error;
         }
       },
@@ -231,10 +354,30 @@ export class SolanaRpcService {
 
   private static createBalancedConnection(urls: string[], primary: Connection): Connection {
     const self = this;
+    const getReadTimeoutMs = (operationName: string): number | undefined => {
+      switch (operationName) {
+        case 'getLatestBlockhash':
+        case 'getLatestBlockhashAndContext':
+          return 1_500;
+        case 'getAccountInfo':
+        case 'getParsedAccountInfo':
+        case 'getTokenAccountBalance':
+        case 'getBalance':
+          return 2_000;
+        case 'getMultipleAccountsInfo':
+          return 2_500;
+        case 'getProgramAccounts':
+        case 'getParsedProgramAccounts':
+          return 3_000;
+        default:
+          return undefined;
+      }
+    };
     const runBalanced = async <T>(operationName: string, run: (connection: Connection, url: string) => Promise<T>): Promise<T> => {
       return await self.executeBalancedRead({
         urls,
         operationName,
+        timeoutMs: getReadTimeoutMs(operationName),
         operation: async (connection, url) => await run(connection, url),
       });
     };
@@ -246,6 +389,10 @@ export class SolanaRpcService {
         await runBalanced('getAccountInfo', (connection) => connection.getAccountInfo(...args)),
       getMultipleAccountsInfo: async (...args: Parameters<Connection['getMultipleAccountsInfo']>) =>
         await runBalanced('getMultipleAccountsInfo', (connection) => connection.getMultipleAccountsInfo(...args)),
+      getProgramAccounts: async (...args: Parameters<Connection['getProgramAccounts']>) =>
+        await runBalanced('getProgramAccounts', (connection) => connection.getProgramAccounts(...args)),
+      getParsedProgramAccounts: async (...args: Parameters<Connection['getParsedProgramAccounts']>) =>
+        await runBalanced('getParsedProgramAccounts', (connection) => connection.getParsedProgramAccounts(...args)),
       getParsedAccountInfo: async (...args: Parameters<Connection['getParsedAccountInfo']>) =>
         await runBalanced('getParsedAccountInfo', (connection) => connection.getParsedAccountInfo(...args)),
       getTokenAccountBalance: async (...args: Parameters<Connection['getTokenAccountBalance']>) =>

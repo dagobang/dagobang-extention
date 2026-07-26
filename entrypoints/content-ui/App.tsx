@@ -655,9 +655,6 @@ export default function App() {
     const warmedAt = prewarmedTurboRef.current.get(key);
     return typeof warmedAt === 'number' && (Date.now() - warmedAt) < SOL_PREWARM_REFRESH_TTL_MS;
   }, [SOL_PREWARM_REFRESH_TTL_MS]);
-  const hasSolPrewarmSnapshot = useCallback((key: string) => {
-    return prewarmedTurboRef.current.has(key);
-  }, []);
   const getSolPrewarmLastError = useCallback((key: string) => {
     return prewarmTurboErrorRef.current.get(key);
   }, []);
@@ -1367,51 +1364,6 @@ export default function App() {
     [siteInfo?.platform]
   );
   const shouldKeepSolPrewarmWarm = !!tokenAddressNormalized && (!minimized || limitTradePanelVisible || showCookingPanel);
-  const waitForSolTurboPrewarmReady = useCallback(async (walletAddress?: string | null) => {
-    if (!isSolana) return;
-    if (!tokenAddressNormalized) return;
-    if ((effectiveChainSettings?.executionMode ?? 'default') !== 'turbo') return;
-    const baseKey = getSolPrewarmCacheKey({
-      chainId,
-      sitePlatform: normalizedSitePlatform,
-      tokenAddress: tokenAddressNormalized,
-      tokenInfo: tokenInfo as TokenInfo | null | undefined,
-    });
-    const ownerKey = walletAddress
-      ? getSolPrewarmCacheKey({
-        chainId,
-        sitePlatform: normalizedSitePlatform,
-        tokenAddress: tokenAddressNormalized,
-        address: walletAddress,
-        tokenInfo: tokenInfo as TokenInfo | null | undefined,
-      })
-      : null;
-    const pending = [
-      prewarmTurboInFlightRef.current.get(baseKey),
-      ownerKey ? prewarmTurboInFlightRef.current.get(ownerKey) : null,
-    ].filter((item): item is Promise<void> => !!item);
-    if (pending.length > 0) {
-      await Promise.allSettled(pending);
-    }
-    const lastError = getSolPrewarmLastError(ownerKey || baseKey) || getSolPrewarmLastError(baseKey);
-    if (lastError && !isSolPrewarmFresh(baseKey)) {
-      throw new Error(lastError);
-    }
-    if (!isSolPrewarmFresh(baseKey) && !hasSolPrewarmSnapshot(baseKey)) {
-      throw new Error('交易预热中，请稍后再试');
-    }
-  }, [
-    isSolana,
-    tokenAddressNormalized,
-    effectiveChainSettings?.executionMode,
-    chainId,
-    normalizedSitePlatform,
-    tokenInfo,
-    isSolPrewarmFresh,
-    hasSolPrewarmSnapshot,
-    getSolPrewarmLastError,
-  ]);
-
   useEffect(() => {
     if (!settingsReady) return;
     if (!newPoolMonitorEnabled) {
@@ -1608,41 +1560,6 @@ export default function App() {
   }, [isUnlocked, address, tokenAddressNormalized, tokenInfo, chainId, submitChannel, isSolana, normalizedSitePlatform, startSolTurboPrewarm]);
 
   useEffect(() => {
-    if (!isSolana || !tokenAddressNormalized || selectedTradeWallets.length <= 0) return;
-    let cancelled = false;
-    const ownerKeys = selectedTradeWallets.map((walletAddress) => ({
-      walletAddress,
-      key: getSolPrewarmCacheKey({
-        chainId,
-        sitePlatform: normalizedSitePlatform,
-        tokenAddress: tokenAddressNormalized,
-        address: walletAddress,
-        tokenInfo: tokenInfo as TokenInfo | null | undefined,
-      }),
-    }));
-    if (ownerKeys.every((item) => isSolPrewarmFresh(item.key))) {
-      setTurboPrewarmState('done');
-      return;
-    }
-    setTurboPrewarmState('warming');
-    void Promise.allSettled(ownerKeys.map((item) => {
-      if (isSolPrewarmFresh(item.key)) return Promise.resolve();
-      return startSolTurboPrewarm({
-        key: item.key,
-        fromAddress: item.walletAddress,
-        debugStartLocation: 'App.tsx:solOwnerPrewarmStart',
-        debugDoneLocation: 'App.tsx:solOwnerPrewarmDone',
-        debugMsgPrefix: 'ui sol owner prewarm',
-      });
-    })).then(() => {
-      if (!cancelled) setTurboPrewarmState(ownerKeys.every((item) => isSolPrewarmFresh(item.key)) ? 'done' : 'warming');
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [isSolana, tokenAddressNormalized, selectedTradeWalletsKey, selectedTradeWallets, chainId, normalizedSitePlatform, startSolTurboPrewarm, tokenInfo, isSolPrewarmFresh]);
-
-  useEffect(() => {
     if (!isSolana || !tokenAddressNormalized || !shouldKeepSolPrewarmWarm) return;
     let disposed = false;
     const tick = () => {
@@ -1661,24 +1578,6 @@ export default function App() {
           debugMsgPrefix: 'ui sol keepwarm base',
         });
       }
-      for (const walletAddress of selectedTradeWallets) {
-        const ownerKey = getSolPrewarmCacheKey({
-          chainId,
-          sitePlatform: normalizedSitePlatform,
-          tokenAddress: tokenAddressNormalized,
-          address: walletAddress,
-          tokenInfo: tokenInfo as TokenInfo | null | undefined,
-        });
-        if (!isSolPrewarmFresh(ownerKey) && !prewarmTurboInFlightRef.current.has(ownerKey)) {
-          void startSolTurboPrewarm({
-            key: ownerKey,
-            fromAddress: walletAddress,
-            debugStartLocation: 'App.tsx:solKeepWarmOwnerStart',
-            debugDoneLocation: 'App.tsx:solKeepWarmOwnerDone',
-            debugMsgPrefix: 'ui sol keepwarm owner',
-          });
-        }
-      }
     };
     const onVisibilityChange = () => {
       if (!document.hidden) tick();
@@ -1695,8 +1594,6 @@ export default function App() {
     tokenAddressNormalized,
     shouldKeepSolPrewarmWarm,
     chainId,
-    selectedTradeWallets,
-    selectedTradeWalletsKey,
     normalizedSitePlatform,
     tokenInfo,
     startSolTurboPrewarm,
@@ -1707,34 +1604,21 @@ export default function App() {
   const shouldShowPrewarmIndicator = !!tokenAddressNormalized;
   const currentSolPrewarmError = useMemo(() => {
     if (!isSolana || !tokenAddressNormalized) return '';
-    const keys = [
-      getSolPrewarmCacheKey({
-        chainId,
-        sitePlatform: normalizedSitePlatform,
-        tokenAddress: tokenAddressNormalized,
-        tokenInfo: tokenInfo as TokenInfo | null | undefined,
-      }),
-      ...selectedTradeWallets.map((walletAddress) => getSolPrewarmCacheKey({
-        chainId,
-        sitePlatform: normalizedSitePlatform,
-        tokenAddress: tokenAddressNormalized,
-        address: walletAddress,
-        tokenInfo: tokenInfo as TokenInfo | null | undefined,
-      })),
-    ];
-    for (const key of keys) {
-      const message = getSolPrewarmLastError(key);
-      if (message) return message;
-    }
-    return '';
-  }, [isSolana, tokenAddressNormalized, chainId, normalizedSitePlatform, tokenInfo, selectedTradeWallets, getSolPrewarmLastError]);
+    const key = getSolPrewarmCacheKey({
+      chainId,
+      sitePlatform: normalizedSitePlatform,
+      tokenAddress: tokenAddressNormalized,
+      tokenInfo: tokenInfo as TokenInfo | null | undefined,
+    });
+    return getSolPrewarmLastError(key) || '';
+  }, [isSolana, tokenAddressNormalized, chainId, normalizedSitePlatform, tokenInfo, getSolPrewarmLastError]);
   const prewarmIndicatorState = useMemo<'hidden' | 'warming' | 'done'>(() => {
     if (!shouldShowPrewarmIndicator) return 'hidden';
-    const turboExpected = isSolana ? selectedTradeWallets.length > 0 : (!!isUnlocked && !!address);
+    const turboExpected = isSolana ? !!tokenAddressNormalized : (!!isUnlocked && !!address);
     if (rpcPrewarmState === 'warming') return 'warming';
     if (turboExpected && turboPrewarmState !== 'done') return 'warming';
     return 'done';
-  }, [shouldShowPrewarmIndicator, isSolana, selectedTradeWallets.length, isUnlocked, address, rpcPrewarmState, turboPrewarmState]);
+  }, [shouldShowPrewarmIndicator, isSolana, tokenAddressNormalized, isUnlocked, address, rpcPrewarmState, turboPrewarmState]);
   const prewarmIndicatorTitle = useMemo(() => {
     if (!shouldShowPrewarmIndicator) return undefined;
     if (prewarmIndicatorState === 'warming') {
@@ -1743,7 +1627,7 @@ export default function App() {
       }
       const parts: string[] = [];
       if (rpcPrewarmState === 'warming') parts.push('RPC');
-      const turboExpected = isSolana ? selectedTradeWallets.length > 0 : (!!isUnlocked && !!address);
+      const turboExpected = isSolana ? !!tokenAddressNormalized : (!!isUnlocked && !!address);
       if (turboExpected && turboPrewarmState !== 'done') {
         parts.push(isSolana ? '交易预取' : (tokenInfo ? '交易路由' : '代币信息'));
       }
@@ -1754,7 +1638,7 @@ export default function App() {
     return isSolana
       ? '预热完成：当前代币详情页已完成 SOL 交易预取'
       : '预热完成：当前代币详情页已完成预热';
-  }, [shouldShowPrewarmIndicator, prewarmIndicatorState, currentSolPrewarmError, rpcPrewarmState, turboPrewarmState, isUnlocked, address, selectedTradeWallets.length, tokenInfo, isSolana]);
+  }, [shouldShowPrewarmIndicator, prewarmIndicatorState, currentSolPrewarmError, rpcPrewarmState, turboPrewarmState, isUnlocked, address, tokenAddressNormalized, tokenInfo, isSolana]);
 
   const formattedNativeBalance = useMemo(
     () => formatTokenAmountForDisplay(tradeBaseBalanceWei, tradeBaseTokenMeta.decimals),
@@ -4101,9 +3985,6 @@ export default function App() {
           const launchTrade = async () => {
             let pendingTradeBaseDeltaId: string | null = null;
             const tradePromise = (async () => {
-              if (chainId === ChainId.SOL && buyExecutionMode === 'turbo') {
-                await waitForSolTurboPrewarmReady(walletAddress);
-              }
               const uiRequestStartedAt = Date.now();
               if (chainId === ChainId.SOL) {
                 pendingTradeBaseDeltaId = addPendingSolTradeBaseDeltaWei(tradeBaseTokenAddress, walletAddress, `-${amountWei.toString()}`);
@@ -4320,9 +4201,6 @@ export default function App() {
             let tokenAmountWei = '0';
             let expectedTokenInWeiHint: string | undefined;
             let pendingSellDeltaId: string | null = null;
-            if (chainId === ChainId.SOL && isTurbo) {
-              await waitForSolTurboPrewarmReady(walletAddress);
-            }
             const shouldResolveSellAmountBeforeSubmit = !isTurbo || chainId === ChainId.SOL;
             const sellPrepStartedAt = Date.now();
             if (shouldResolveSellAmountBeforeSubmit) {

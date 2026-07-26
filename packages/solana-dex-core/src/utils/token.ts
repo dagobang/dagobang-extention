@@ -85,8 +85,12 @@ export async function getMintProgramId(
   if (cached) return await cached;
   if (opts?.cacheOnly) throw new Error('Mint program cache not ready');
   const promise = (async () => {
-    const connection = await runtime.getConnection();
-    const info = await connection.getAccountInfo(mint, 'confirmed');
+    const info = runtime.getAccountInfo
+      ? await runtime.getAccountInfo(mint, 'confirmed', 'static')
+      : await (async () => {
+        const connection = await runtime.getConnection();
+        return await connection.getAccountInfo(mint, 'confirmed');
+      })();
     if (!info?.owner) throw new Error('Mint account not found');
     return info.owner;
   })().catch((error) => {

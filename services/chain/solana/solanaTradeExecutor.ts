@@ -171,7 +171,29 @@ export class SolanaTradeExecutor implements TradeExecutor {
       tokenInfo,
       rawInput: input,
       runtime: {
-        getConnection: () => SolanaRpcService.getConnection(),
+        getConnection: () => SolanaRpcService.getSubmitConnection({
+          txSide: side,
+          submitChannel: input.submitChannel,
+          scope: 'both',
+        }),
+        getLatestBlockhash: (commitment: 'processed' | 'confirmed' = 'confirmed') => SolanaRpcService.getLatestBlockhash({
+          commitment,
+          txSide: side,
+          submitChannel: input.submitChannel,
+          timeoutMs: 1_500,
+        }),
+        getAccountInfo: (address, commitment: 'processed' | 'confirmed' = 'confirmed', queryClass = 'static') => SolanaRpcService.getAccountInfo(address, {
+          commitment,
+          txSide: side,
+          submitChannel: input.submitChannel,
+          timeoutMs: queryClass === 'dynamic' ? 1_800 : 2_500,
+        }),
+        getMultipleAccountsInfo: (addresses, commitment: 'processed' | 'confirmed' = 'confirmed', queryClass = 'static') => SolanaRpcService.getMultipleAccountsInfo(addresses, {
+          commitment,
+          txSide: side,
+          submitChannel: input.submitChannel,
+          timeoutMs: queryClass === 'dynamic' ? 2_200 : 3_000,
+        }),
       },
     };
   }
