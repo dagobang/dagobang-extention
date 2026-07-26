@@ -149,7 +149,10 @@ const isNewPoolMonitorEnabled = (): boolean => {
 
 const shouldForwardMarketSignal = (): boolean => {
   const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
-  return settings?.ui?.newCoinSniperEnabled === true;
+  const newCoinSniperEnabled = settings?.ui?.newCoinSniperEnabled === true;
+  const twitterSnipeEnabled = settings?.autoTrade?.twitterSnipe?.enabled === true;
+  const wsMonitorEnabled = isWsMonitorEnabled();
+  return newCoinSniperEnabled || (wsMonitorEnabled && twitterSnipeEnabled);
 };
 
 const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';

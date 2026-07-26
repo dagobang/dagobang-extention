@@ -36,6 +36,22 @@ type NewCoinHistoryGroup = {
   children: NewCoinSniperOrderRecord[];
 };
 
+const dedupeHistoryRecords = (records: NewCoinSniperOrderRecord[]) => {
+  const byId = new Map<string, NewCoinSniperOrderRecord>();
+  for (const record of records) {
+    if (!record || typeof record.id !== 'string' || !record.id.trim()) continue;
+    byId.set(record.id, record);
+  }
+  return Array.from(byId.values())
+    .sort((a, b) => {
+      const ta = Number(a.tsMs) || 0;
+      const tb = Number(b.tsMs) || 0;
+      if (tb !== ta) return tb - ta;
+      return String(b.id).localeCompare(String(a.id));
+    })
+    .slice(0, 300);
+};
+
 const normalizePlatforms = (input: unknown): string[] => {
   const raw = Array.isArray(input) ? input : [];
   const list = raw
@@ -203,7 +219,7 @@ export function XNewCoinSniperContent({
         const res = await browser.storage.local.get(NEW_COIN_SNIPER_HISTORY_STORAGE_KEY);
         const raw = (res as any)?.[NEW_COIN_SNIPER_HISTORY_STORAGE_KEY];
         if (cancelled) return;
-        setHistory(Array.isArray(raw) ? (raw as NewCoinSniperOrderRecord[]) : []);
+          setHistory(Array.isArray(raw) ? dedupeHistoryRecords(raw as NewCoinSniperOrderRecord[]) : []);
       } catch {
         if (!cancelled) setHistory([]);
       }
@@ -244,8 +260,12 @@ export function XNewCoinSniperContent({
     const onChanged = (changes: Record<string, any>, areaName: string) => {
       if (areaName !== 'local') return;
       const next = changes?.[NEW_COIN_SNIPER_HISTORY_STORAGE_KEY]?.newValue;
-      if (!Array.isArray(next)) return;
-      setHistory(next as NewCoinSniperOrderRecord[]);
+      if (!Array.isArray(next)) {
+        if (next != null) return;
+        setHistory([]);
+        return;
+      }
+      setHistory(dedupeHistoryRecords(next as NewCoinSniperOrderRecord[]));
     };
     browser.storage.onChanged.addListener(onChanged as any);
     return () => browser.storage.onChanged.removeListener(onChanged as any);
@@ -256,7 +276,7 @@ export function XNewCoinSniperContent({
       if (!message || message.type !== 'bg:newCoinSniper:order') return;
       const record = message.record as NewCoinSniperOrderRecord | undefined;
       if (!record || typeof record.tokenAddress !== 'string') return;
-      setHistory((prev) => [record, ...prev].slice(0, 300));
+      setHistory((prev) => dedupeHistoryRecords([record, ...prev]));
     };
     browser.runtime.onMessage.addListener(listener);
     return () => browser.runtime.onMessage.removeListener(listener);

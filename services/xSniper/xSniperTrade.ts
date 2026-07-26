@@ -1,12 +1,12 @@
 import { browser } from 'wxt/browser';
 import { SettingsService } from '@/services/settings';
 import { defaultSettings } from '@/utils/defaults';
-import type { UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
+import type { UnifiedMarketSignal, UnifiedSignalToken, UnifiedTwitterSignal, XSniperBuyRecord } from '@/types/extention';
 import { loadXSniperHistory, pushXSniperHistory } from '@/services/xSniper/xSniperHistory';
 import { buildScopedTokenKey, type TokenMetrics, normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey, parseNumber } from '@/services/xSniper/engine/metrics';
-import { computeWsConfirm as computeWsConfirmFromWs, getWsDrawdownPctSince as getWsDrawdownPctSinceFromWs, pushWsSnapshot as pushWsSnapshotFromWs, shouldLogWsConfirmFail as shouldLogWsConfirmFailFromWs, type WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
+import { computeWsConfirm as computeWsConfirmFromWs, pushWsSnapshot as pushWsSnapshotFromWs, shouldLogWsConfirmFail as shouldLogWsConfirmFailFromWs, type WsSnapshot } from '@/services/xSniper/engine/wsSnapshots';
 import { maybeEvaluateRapidExitAutoSell as maybeEvaluateRapidExitAutoSellFromMod, registerRapidExitPosition as registerRapidExitPositionFromMod, type RapidExitPosition } from '@/services/xSniper/engine/rapidExitAutoSell';
-import { matchesTwitterFilters, pickTokensToBuyFromSignal } from '@/services/xSniper/engine/signalSelection';
+import { matchesTwitterFilters, metricsFromUnifiedToken, pickTokensToBuyFromSignal } from '@/services/xSniper/engine/signalSelection';
 import { createSellExecutors } from '@/services/xSniper/engine/sellExecutors';
 import { tryAutoBuyOnce as tryAutoBuyOnceFromMod } from '@/services/xSniper/engine/buyExecutor';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
@@ -15,7 +15,7 @@ import { TokenService } from '@/services/token';
 import { WalletService } from '@/services/wallet';
 import { extractLaunchpadPlatform } from '@/constants/launchpad';
 import { getChainIdByName } from '@/constants/chains';
-import { upsertXSniperDecisionSnapshot } from '@/services/xSniper/xSniperDecisionSnapshot';
+import { type UpsertDecisionSnapshotInput, upsertXSniperDecisionSnapshotBatch } from '@/services/xSniper/xSniperDecisionSnapshot';
 
 export const createXSniperTrade = (deps: {
   onStateChanged: () => void;
@@ -87,6 +87,20 @@ export const createXSniperTrade = (deps: {
 
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
   const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_xsniper_bought_once_v1';
+  const SESSION_REEVALUATE_DEBOUNCE_MS = 120;
+  const SESSION_IDLE_TTL_MS = 15 * 60 * 1000;
+
+  type XSniperSignalSession = {
+    id: string;
+    signalStableId: string;
+    signal: UnifiedTwitterSignal;
+    watchedTokenKeys: Set<string>;
+    lastTouchedAtMs: number;
+    lastEvaluatedAtMs: number;
+    evaluating: boolean;
+    queued: boolean;
+    pendingTimer: ReturnType<typeof setTimeout> | null;
+  };
 
   let boughtOnceLastSyncMs = 0;
   const boughtOnceAtMs = new Map<string, number>();
@@ -97,6 +111,8 @@ export const createXSniperTrade = (deps: {
   const rapidExitByPosKey = new Map<string, RapidExitPosition>();
   const manuallyClosedPosKeys = new Map<string, number>();
   const rapidWatchdogRpcAtMs = new Map<string, number>();
+  const sessionsById = new Map<string, XSniperSignalSession>();
+  const sessionIdsByScopedTokenKey = new Map<string, Set<string>>();
   let currentSignalContext: UnifiedTwitterSignal | null = null;
   let latestTwitterSnipeStrategy: any = null;
   let rapidWatchdogTimer: ReturnType<typeof setInterval> | null = null;
@@ -142,6 +158,118 @@ export const createXSniperTrade = (deps: {
     return true;
   };
 
+  const getSessionTokenScopedKeys = (signal: UnifiedTwitterSignal) => {
+    const keys = new Set<string>();
+    const tokens = Array.isArray(signal.tokens) ? signal.tokens : [];
+    for (const token of tokens) {
+      const addr = normalizeAddress(typeof token?.tokenAddress === 'string' ? token.tokenAddress : '');
+      if (!addr) continue;
+      const chainId = getChainIdByName(String((token as any)?.chain || '').trim());
+      if (!Number.isFinite(chainId) || chainId <= 0) continue;
+      keys.add(toScopedTokenKey(chainId, addr));
+    }
+    return keys;
+  };
+
+  const mergeSignalTokens = (baseTokens: UnifiedSignalToken[] | undefined, incomingTokens: UnifiedSignalToken[] | undefined) => {
+    const byAddr = new Map<string, UnifiedSignalToken>();
+    for (const token of Array.isArray(baseTokens) ? baseTokens : []) {
+      const key = normalizeAddressKey(token?.tokenAddress);
+      if (!key) continue;
+      byAddr.set(key, token);
+    }
+    for (const token of Array.isArray(incomingTokens) ? incomingTokens : []) {
+      const key = normalizeAddressKey(token?.tokenAddress);
+      if (!key) continue;
+      const prev = byAddr.get(key);
+      byAddr.set(key, prev ? ({ ...prev, ...token } as UnifiedSignalToken) : token);
+    }
+    return Array.from(byAddr.values());
+  };
+
+  const mergeSignals = (prev: UnifiedTwitterSignal, next: UnifiedTwitterSignal): UnifiedTwitterSignal => {
+    const merged: Record<string, any> = { ...prev };
+    for (const [key, value] of Object.entries(next as Record<string, any>)) {
+      if (value === undefined) continue;
+      merged[key] = value;
+    }
+    merged.receivedAtMs = (() => {
+      const a = typeof prev.receivedAtMs === 'number' ? prev.receivedAtMs : Number.POSITIVE_INFINITY;
+      const b = typeof next.receivedAtMs === 'number' ? next.receivedAtMs : Number.POSITIVE_INFINITY;
+      return Math.min(a, b);
+    })();
+    merged.ts = Math.max(
+      typeof prev.ts === 'number' ? prev.ts : 0,
+      typeof next.ts === 'number' ? next.ts : 0,
+    );
+    merged.tokens = mergeSignalTokens(prev.tokens, next.tokens);
+    return merged as UnifiedTwitterSignal;
+  };
+
+  const unregisterSessionWatchers = (session: XSniperSignalSession) => {
+    for (const scopedKey of session.watchedTokenKeys) {
+      const set = sessionIdsByScopedTokenKey.get(scopedKey);
+      if (!set) continue;
+      set.delete(session.id);
+      if (!set.size) sessionIdsByScopedTokenKey.delete(scopedKey);
+    }
+    session.watchedTokenKeys.clear();
+  };
+
+  const registerSessionWatchers = (session: XSniperSignalSession) => {
+    unregisterSessionWatchers(session);
+    const scopedKeys = getSessionTokenScopedKeys(session.signal);
+    session.watchedTokenKeys = scopedKeys;
+    for (const scopedKey of scopedKeys) {
+      const set = sessionIdsByScopedTokenKey.get(scopedKey) ?? new Set<string>();
+      set.add(session.id);
+      sessionIdsByScopedTokenKey.set(scopedKey, set);
+    }
+  };
+
+  const closeSession = (sessionId: string) => {
+    const session = sessionsById.get(sessionId);
+    if (!session) return;
+    if (session.pendingTimer) clearTimeout(session.pendingTimer);
+    unregisterSessionWatchers(session);
+    sessionsById.delete(sessionId);
+  };
+
+  const pruneIdleSessions = (nowMs: number) => {
+    for (const [sessionId, session] of sessionsById.entries()) {
+      if (nowMs - session.lastTouchedAtMs <= SESSION_IDLE_TTL_MS) continue;
+      closeSession(sessionId);
+    }
+  };
+
+  const upsertSignalSession = (signal: UnifiedTwitterSignal) => {
+    const signalStableId = resolveSignalStableId(signal);
+    if (!signalStableId) return null;
+    const nowMs = Date.now();
+    pruneIdleSessions(nowMs);
+    const existing = sessionsById.get(signalStableId);
+    if (existing) {
+      existing.signal = mergeSignals(existing.signal, signal);
+      existing.lastTouchedAtMs = nowMs;
+      registerSessionWatchers(existing);
+      return existing;
+    }
+    const session: XSniperSignalSession = {
+      id: signalStableId,
+      signalStableId,
+      signal,
+      watchedTokenKeys: new Set<string>(),
+      lastTouchedAtMs: nowMs,
+      lastEvaluatedAtMs: 0,
+      evaluating: false,
+      queued: false,
+      pendingTimer: null,
+    };
+    sessionsById.set(signalStableId, session);
+    registerSessionWatchers(session);
+    return session;
+  };
+
   const emitRecord = (record: XSniperBuyRecord) => {
     const resolvedChainId = (() => {
       const fromSignal = resolveSignalTokenChainIdLoose({
@@ -176,9 +304,6 @@ export const createXSniperTrade = (deps: {
 
   const computeWsConfirm = (chainId: number, tokenAddress: string, nowMs: number, strategy: any) =>
     computeWsConfirmFromWs(wsSnapshotsByAddr, chainId, tokenAddress, nowMs, strategy);
-
-  const getWsDrawdownPctSince = (chainId: number, tokenAddress: string, sinceMs: number) =>
-    getWsDrawdownPctSinceFromWs(wsSnapshotsByAddr, chainId, tokenAddress, sinceMs);
 
   const readRapidWatchdogIntervalMs = (strategy: any) => {
     const secRaw = parseNumber(strategy?.rapidWatchdogSec);
@@ -392,6 +517,7 @@ export const createXSniperTrade = (deps: {
     buyFailureRecordDedupe.clear();
     wsConfirmFailDedupe.clear();
     buyInFlight.clear();
+    for (const sessionId of Array.from(sessionsById.keys())) closeSession(sessionId);
   };
 
   const pushWsSnapshot = (chainId: number, tokenAddress: string, metrics: TokenMetrics) => {
@@ -579,95 +705,123 @@ export const createXSniperTrade = (deps: {
       });
     })();
 
-  const handleTwitterSignal = async (signal: UnifiedTwitterSignal) => {
+  const queueSessionEvaluation = (sessionId: string, delayMs = SESSION_REEVALUATE_DEBOUNCE_MS) => {
+    const session = sessionsById.get(sessionId);
+    if (!session) return;
+    session.lastTouchedAtMs = Date.now();
+    if (session.pendingTimer != null) return;
+    session.pendingTimer = setTimeout(() => {
+      const next = sessionsById.get(sessionId);
+      if (next) next.pendingTimer = null;
+      void evaluateSignalSession(sessionId);
+    }, Math.max(0, delayMs));
+  };
+
+  const handleDeletePostSignal = async (signal: UnifiedTwitterSignal, strategy: any, settings: any) => {
+    closeSession(resolveSignalStableId(signal));
+    const pct = parseNumber(strategy.deleteTweetSellPercent) ?? 0;
+    const percent = Math.max(0, Math.min(100, pct));
+    if (!(percent > 0)) return;
+
+    const delEventId = String(signal.eventId ?? '').trim();
+    const delTweetId = String(signal.tweetId ?? '').trim();
+    if (!delEventId && !delTweetId) return;
+
+    const history = await loadXSniperHistory();
+    const matchedBuys = history.filter((r) => {
+      if (!r) return false;
+      if (r.side && r.side !== 'buy') return false;
+      const ev = typeof r.signalEventId === 'string' ? r.signalEventId.trim() : '';
+      const tw = typeof r.signalTweetId === 'string' ? r.signalTweetId.trim() : '';
+      if (delEventId && ev && ev === delEventId) return true;
+      if (delTweetId && tw && tw === delTweetId) return true;
+      return false;
+    });
+    const rapidMatched = Array.from(rapidExitByPosKey.values()).filter((p) => {
+      if (!p) return false;
+      const ev = typeof p.signalEventId === 'string' ? p.signalEventId.trim() : '';
+      const tw = typeof p.signalTweetId === 'string' ? p.signalTweetId.trim() : '';
+      if (delEventId && ev && ev === delEventId) return true;
+      if (delTweetId && tw && tw === delTweetId) return true;
+      return false;
+    });
+    const sold = new Set<string>();
+    for (const r of matchedBuys) {
+      const addr = normalizeAddress(r.tokenAddress);
+      if (!addr) continue;
+      const tradeChainId = resolveRecordedTradeChainId({
+        recordedChainId: r.chainId,
+        tokenAddress: addr,
+        signal,
+        fallbackChainId: settings.chainId,
+        settings,
+      });
+      const walletKey = normalizeWalletAddressKey((r as any).walletAddress);
+      const dedupe = `${toScopedTokenKey(tradeChainId, addr)}:${walletKey}`;
+      if (sold.has(dedupe)) continue;
+      try {
+        await tryDeleteTweetSellOnce({
+          chainId: tradeChainId,
+          tokenAddress: addr,
+          percent,
+          signal,
+          relatedBuy: r,
+          dryRun: r.dryRun === true,
+          walletAddress: (r as any).walletAddress,
+        });
+      } catch {
+      }
+      sold.add(dedupe);
+    }
+    for (const p of rapidMatched) {
+      const addr = normalizeAddress(p.tokenAddress);
+      if (!addr) continue;
+      const walletKey = normalizeWalletAddressKey((p as any).walletAddress);
+      const dedupe = `${toScopedTokenKey(p.chainId, addr)}:${walletKey}`;
+      if (sold.has(dedupe)) continue;
+      try {
+        await tryDeleteTweetSellOnce({
+          chainId: p.chainId,
+          tokenAddress: addr,
+          percent,
+          signal,
+          dryRun: p.dryRun,
+          walletAddress: (p as any).walletAddress,
+        });
+      } catch {
+      }
+      sold.add(dedupe);
+    }
+  };
+
+  const evaluateSignalSession = async (sessionId: string) => {
+    const session = sessionsById.get(sessionId);
+    if (!session) return;
+    if (session.evaluating) {
+      session.queued = true;
+      return;
+    }
+    session.evaluating = true;
     try {
+      const signal = session.signal;
       const settings = await SettingsService.get();
       const config = normalizeAutoTrade((settings as any).autoTrade);
-      if (!config) return;
-      if (config.wsMonitorEnabled === false) return;
+      if (!config || config.wsMonitorEnabled === false) {
+        closeSession(sessionId);
+        return;
+      }
       const strategy = config.twitterSnipe;
-      if (!strategy) return;
-      if (strategy.enabled === false) return;
+      if (!strategy || strategy.enabled === false) {
+        closeSession(sessionId);
+        return;
+      }
       latestTwitterSnipeStrategy = strategy;
       ensureRapidWatchdog(strategy);
 
-      if (signal.tweetType === 'delete_post') {
-        const pct = parseNumber(strategy.deleteTweetSellPercent) ?? 0;
-        const percent = Math.max(0, Math.min(100, pct));
-        if (!(percent > 0)) return;
-
-        const delEventId = String(signal.eventId ?? '').trim();
-        const delTweetId = String(signal.tweetId ?? '').trim();
-        if (!delEventId && !delTweetId) return;
-
-        const history = await loadXSniperHistory();
-        const matchedBuys = history.filter((r) => {
-          if (!r) return false;
-          if (r.side && r.side !== 'buy') return false;
-          const ev = typeof r.signalEventId === 'string' ? r.signalEventId.trim() : '';
-          const tw = typeof r.signalTweetId === 'string' ? r.signalTweetId.trim() : '';
-          if (delEventId && ev && ev === delEventId) return true;
-          if (delTweetId && tw && tw === delTweetId) return true;
-          return false;
-        });
-        const rapidMatched = Array.from(rapidExitByPosKey.values()).filter((p) => {
-          if (!p) return false;
-          const ev = typeof p.signalEventId === 'string' ? p.signalEventId.trim() : '';
-          const tw = typeof p.signalTweetId === 'string' ? p.signalTweetId.trim() : '';
-          if (delEventId && ev && ev === delEventId) return true;
-          if (delTweetId && tw && tw === delTweetId) return true;
-          return false;
-        });
-        const sold = new Set<string>();
-        for (const r of matchedBuys) {
-          const addr = normalizeAddress(r.tokenAddress);
-          if (!addr) continue;
-          const tradeChainId = resolveRecordedTradeChainId({
-            recordedChainId: r.chainId,
-            tokenAddress: addr,
-            signal,
-            fallbackChainId: settings.chainId,
-            settings,
-          });
-          const walletKey = normalizeWalletAddressKey((r as any).walletAddress);
-          const dedupe = `${toScopedTokenKey(tradeChainId, addr)}:${walletKey}`;
-          if (sold.has(dedupe)) continue;
-          try {
-            await tryDeleteTweetSellOnce({
-              chainId: tradeChainId,
-              tokenAddress: addr,
-              percent,
-              signal,
-              relatedBuy: r,
-              dryRun: r.dryRun === true,
-              walletAddress: (r as any).walletAddress,
-            });
-          } catch {
-          }
-          sold.add(dedupe);
-        }
-        for (const p of rapidMatched) {
-          const addr = normalizeAddress(p.tokenAddress);
-          if (!addr) continue;
-          const walletKey = normalizeWalletAddressKey((p as any).walletAddress);
-          const dedupe = `${toScopedTokenKey(p.chainId, addr)}:${walletKey}`;
-          if (sold.has(dedupe)) continue;
-          try {
-            await tryDeleteTweetSellOnce({
-              chainId: p.chainId,
-              tokenAddress: addr,
-              percent,
-              signal,
-              dryRun: p.dryRun,
-              walletAddress: (p as any).walletAddress,
-            });
-          } catch {
-          }
-          sold.add(dedupe);
-        }
+      if (!matchesTwitterFilters(signal, strategy)) {
+        closeSession(sessionId);
         return;
       }
-      if (!matchesTwitterFilters(signal, strategy)) return;
 
       const selection = pickTokensToBuyFromSignal({
         signal,
@@ -679,13 +833,14 @@ export const createXSniperTrade = (deps: {
       const decisions = selection.decisions;
       const perTweetMax = Math.max(0, Math.floor(parseNumber(strategy?.buyNewCaCount) ?? 0));
       const dryRun = strategy?.dryRun === true;
-      const signalStableId = resolveSignalStableId(signal);
+      const signalStableId = session.signalStableId;
       const strategyWalletAddress = parseWalletAddress(strategy?.walletAddress);
       const walletStatus = !dryRun ? await WalletService.getStatus().catch(() => null) : null;
       const activeWalletAddress = !dryRun ? parseWalletAddress(walletStatus?.address) : undefined;
       const walletAddressResolved = strategyWalletAddress || activeWalletAddress;
       const walletAddressKey = normalizeWalletAddressKey(walletAddressResolved);
       const walletSource = strategyWalletAddress ? 'strategy' : activeWalletAddress ? 'active' : 'fallback';
+      const decisionUpdates: UpsertDecisionSnapshotInput[] = [];
       const decisionMapByAddr = new Map<string, (typeof decisions)[number]>();
       for (const d of decisions) {
         const tokenAddress = d.m?.tokenAddress ?? normalizeAddress((d.t as any)?.tokenAddress);
@@ -695,7 +850,7 @@ export const createXSniperTrade = (deps: {
         const finalFailReason = !d.fullPass
           ? (d.fullFailReason || 'buy_filter_rejected')
           : (!d.wsConfirmPass ? (d.wsConfirmReason || 'ws_confirm_failed') : undefined);
-        void upsertXSniperDecisionSnapshot({
+        decisionUpdates.push({
           signalStableId,
           signalId: signal.id ? String(signal.id) : undefined,
           signalEventId: signal.eventId ? String(signal.eventId) : undefined,
@@ -714,6 +869,7 @@ export const createXSniperTrade = (deps: {
           notAttemptedReason: finalFailReason || null,
         });
       }
+
       const tweetId = typeof signal.tweetId === 'string' ? signal.tweetId.trim() : '';
       const boughtTokenKeysByTweetScope = new Map<string, Set<string>>();
       if (perTweetMax > 0 && tweetId) {
@@ -746,6 +902,7 @@ export const createXSniperTrade = (deps: {
           boughtTokenKeysByTweetScope.set(scopeKey, set);
         }
       }
+
       for (let i = 0; i < picked.length; i += 1) {
         const { t, m } = picked[i];
         if (!m?.tokenAddress) continue;
@@ -757,7 +914,7 @@ export const createXSniperTrade = (deps: {
           : '';
         const boughtTokenKeysInTweet = tweetScopeKey ? (boughtTokenKeysByTweetScope.get(tweetScopeKey) ?? new Set<string>()) : null;
         if (boughtTokenKeysInTweet && boughtTokenKeysInTweet.has(normalizeAddressKey(tokenAddress))) {
-          void upsertXSniperDecisionSnapshot({
+          decisionUpdates.push({
             signalStableId,
             signalId: signal.id ? String(signal.id) : undefined,
             signalEventId: signal.eventId ? String(signal.eventId) : undefined,
@@ -778,7 +935,7 @@ export const createXSniperTrade = (deps: {
         }
         const boughtCount = boughtTokenKeysInTweet ? boughtTokenKeysInTweet.size : 0;
         if (boughtCount >= perTweetMax) {
-          void upsertXSniperDecisionSnapshot({
+          decisionUpdates.push({
             signalStableId,
             signalId: signal.id ? String(signal.id) : undefined,
             signalEventId: signal.eventId ? String(signal.eventId) : undefined,
@@ -818,7 +975,6 @@ export const createXSniperTrade = (deps: {
             tweetId: signal.tweetId,
           }, e);
           outcome = { bought: false, attempted: true, reason: 'buy_attempt_exception' };
-          continue;
         } finally {
           const resolvedOutcomeReason = bought
             ? null
@@ -829,7 +985,7 @@ export const createXSniperTrade = (deps: {
               failedChecks: Array.isArray(outcome.detail?.wsConfirm?.failedChecks) ? outcome.detail.wsConfirm.failedChecks : undefined,
             }
             : null;
-          void upsertXSniperDecisionSnapshot({
+          decisionUpdates.push({
             signalStableId,
             signalId: signal.id ? String(signal.id) : undefined,
             signalEventId: signal.eventId ? String(signal.eventId) : undefined,
@@ -863,10 +1019,90 @@ export const createXSniperTrade = (deps: {
           }
         }
       }
+
+      if (decisionUpdates.length) {
+        await upsertXSniperDecisionSnapshotBatch(decisionUpdates);
+      }
+      session.lastEvaluatedAtMs = Date.now();
+      session.lastTouchedAtMs = Date.now();
+      const tweetWindowOpen = decisions.some((d) => d.tweetWindowPass === true);
+      if (!tweetWindowOpen) {
+        closeSession(sessionId);
+        return;
+      }
+      if (perTweetMax > 0 && tweetId) {
+        const quotaReached = Array.from(boughtTokenKeysByTweetScope.values()).some((set) => set.size >= perTweetMax);
+        if (quotaReached) closeSession(sessionId);
+      }
+    } catch (e) {
+      console.error('XSniperTrade session evaluation error', { sessionId }, e);
+    } finally {
+      const next = sessionsById.get(sessionId);
+      if (!next) return;
+      next.evaluating = false;
+      if (next.queued) {
+        next.queued = false;
+        queueSessionEvaluation(sessionId, 0);
+      }
+    }
+  };
+
+  const handleMarketSignal = async (signal: UnifiedMarketSignal) => {
+    try {
+      if (!sessionsById.size && !rapidExitByPosKey.size) return;
+      const affectedSessionIds = new Set<string>();
+      for (const token of Array.isArray(signal.tokens) ? signal.tokens : []) {
+        const tokenAddress = normalizeAddress(typeof token?.tokenAddress === 'string' ? token.tokenAddress : '');
+        if (!tokenAddress) continue;
+        const chainId = getChainIdByName(String((token as any)?.chain || signal.chain || '').trim());
+        if (Number.isFinite(chainId) && chainId > 0) {
+          const metrics = metricsFromUnifiedToken(token as any);
+          if (!metrics) continue;
+          pushWsSnapshot(chainId, tokenAddress, metrics);
+          const scopedKey = toScopedTokenKey(chainId, tokenAddress);
+          const matchedSessionIds = sessionIdsByScopedTokenKey.get(scopedKey);
+          for (const sessionId of matchedSessionIds ?? []) {
+            const session = sessionsById.get(sessionId);
+            if (!session) continue;
+            session.signal = {
+              ...session.signal,
+              tokens: mergeSignalTokens(session.signal.tokens, [token as UnifiedSignalToken]),
+            };
+            session.lastTouchedAtMs = Date.now();
+            affectedSessionIds.add(sessionId);
+          }
+        }
+      }
+      for (const sessionId of affectedSessionIds) {
+        queueSessionEvaluation(sessionId);
+      }
+    } catch (e) {
+      console.error('XSniperTrade market signal handler error', e);
+    }
+  };
+
+  const handleTwitterSignal = async (signal: UnifiedTwitterSignal) => {
+    try {
+      const settings = await SettingsService.get();
+      const config = normalizeAutoTrade((settings as any).autoTrade);
+      if (!config) return;
+      if (config.wsMonitorEnabled === false) return;
+      const strategy = config.twitterSnipe;
+      if (!strategy) return;
+      if (strategy.enabled === false) return;
+      latestTwitterSnipeStrategy = strategy;
+      ensureRapidWatchdog(strategy);
+      if (signal.tweetType === 'delete_post') {
+        await handleDeletePostSignal(signal, strategy, settings);
+        return;
+      }
+      const session = upsertSignalSession(signal);
+      if (!session) return;
+      queueSessionEvaluation(session.id, 0);
     } catch (e) {
       console.error('XSniperTrade twitter signal handler error', e);
     }
   };
 
-  return { handleTwitterSignal, markPositionSoldManually, markPositionClosedManually, clearRuntimeState };
+  return { handleTwitterSignal, handleMarketSignal, markPositionSoldManually, markPositionClosedManually, clearRuntimeState };
 };

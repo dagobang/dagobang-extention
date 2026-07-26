@@ -5,6 +5,7 @@ import { normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 export const XSNIPER_HISTORY_STORAGE_KEY = 'dagobang_xsniper_order_history_v1';
 export const XSNIPER_HISTORY_LIMIT = 200;
 const NON_PERSIST_BUY_REASONS = new Set(['buy_skipped_recently_bought', 'buy_skipped_in_flight']);
+const HISTORY_FLUSH_DEBOUNCE_MS = 400;
 const XSNIPER_EVAL_WINDOWS = [
   { key: 'eval3s', minAgeMs: 3_000 },
   { key: 'eval5s', minAgeMs: 5_000 },
@@ -17,26 +18,74 @@ const XSNIPER_EVAL_WINDOWS = [
   { key: 'eval60s', minAgeMs: 60_000 },
 ] as const satisfies ReadonlyArray<{ key: keyof XSniperBuyRecord; minAgeMs: number }>;
 let historyWriteQueue: Promise<void> = Promise.resolve();
+let historyCache: XSniperBuyRecord[] | null = null;
+let historyLoadPromise: Promise<XSniperBuyRecord[]> | null = null;
+let historyDirty = false;
+let historyFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 const shouldPersistRecord = (record: XSniperBuyRecord) => {
   const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
   return !(record.side === 'buy' && reason && NON_PERSIST_BUY_REASONS.has(reason));
 };
 
-const runHistoryMutation = async (mutate: (list: XSniperBuyRecord[]) => boolean) => {
-  const res = await browser.storage.local.get(XSNIPER_HISTORY_STORAGE_KEY);
-  const raw = (res as any)?.[XSNIPER_HISTORY_STORAGE_KEY];
-  const list = Array.isArray(raw) ? raw.slice() : [];
-  const changed = mutate(list);
-  if (!changed) return;
-  await browser.storage.local.set({ [XSNIPER_HISTORY_STORAGE_KEY]: list.slice(0, XSNIPER_HISTORY_LIMIT) } as any);
+const ensureHistoryLoaded = async () => {
+  if (historyCache) return historyCache;
+  if (historyLoadPromise) return historyLoadPromise;
+  historyLoadPromise = (async () => {
+    try {
+      const res = await browser.storage.local.get(XSNIPER_HISTORY_STORAGE_KEY);
+      const raw = (res as any)?.[XSNIPER_HISTORY_STORAGE_KEY];
+      historyCache = Array.isArray(raw) ? (raw as XSniperBuyRecord[]).slice(0, XSNIPER_HISTORY_LIMIT) : [];
+      return historyCache;
+    } catch {
+      historyCache = [];
+      return historyCache;
+    } finally {
+      historyLoadPromise = null;
+    }
+  })();
+  return historyLoadPromise;
 };
 
-const enqueueHistoryMutation = (mutate: (list: XSniperBuyRecord[]) => boolean) => {
+const flushHistoryCache = async () => {
+  if (!historyDirty || !historyCache) return;
+  historyDirty = false;
+  await browser.storage.local.set({ [XSNIPER_HISTORY_STORAGE_KEY]: historyCache.slice(0, XSNIPER_HISTORY_LIMIT) } as any);
+};
+
+const scheduleHistoryFlush = () => {
+  if (historyFlushTimer != null) return;
+  historyFlushTimer = setTimeout(() => {
+    historyFlushTimer = null;
+    historyWriteQueue = historyWriteQueue
+      .then(async () => {
+        try {
+          await flushHistoryCache();
+        } catch {
+        }
+      })
+      .catch(() => {});
+  }, HISTORY_FLUSH_DEBOUNCE_MS);
+};
+
+const enqueueHistoryMutation = (mutate: (list: XSniperBuyRecord[]) => boolean, options?: { flushNow?: boolean }) => {
   historyWriteQueue = historyWriteQueue
     .then(async () => {
       try {
-        await runHistoryMutation(mutate);
+        const list = (await ensureHistoryLoaded()).slice();
+        const changed = mutate(list);
+        if (!changed) return;
+        historyCache = list.slice(0, XSNIPER_HISTORY_LIMIT);
+        historyDirty = true;
+        if (options?.flushNow) {
+          if (historyFlushTimer != null) {
+            clearTimeout(historyFlushTimer);
+            historyFlushTimer = null;
+          }
+          await flushHistoryCache();
+          return;
+        }
+        scheduleHistoryFlush();
       } catch {
       }
     })
@@ -58,9 +107,8 @@ export const pushXSniperHistory = async (record: XSniperBuyRecord) => {
 export const loadXSniperHistory = async (): Promise<XSniperBuyRecord[]> => {
   try {
     await historyWriteQueue;
-    const res = await browser.storage.local.get(XSNIPER_HISTORY_STORAGE_KEY);
-    const raw = (res as any)?.[XSNIPER_HISTORY_STORAGE_KEY];
-    return Array.isArray(raw) ? (raw as XSniperBuyRecord[]) : [];
+    const list = await ensureHistoryLoaded();
+    return list.slice();
   } catch {
     return [];
   }
@@ -72,7 +120,7 @@ export const clearXSniperHistory = async () => {
       if (!list.length) return false;
       list.length = 0;
       return true;
-    });
+    }, { flushNow: true });
   } catch {
   }
 };

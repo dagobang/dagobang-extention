@@ -21,9 +21,15 @@ export const TOKEN_SNIPER_STATUS_STORAGE_KEY = 'dagobang_token_sniper_task_statu
 export const TOKEN_SNIPER_HISTORY_STORAGE_KEY = 'dagobang_token_sniper_order_history_v1';
 export const TOKEN_SNIPER_HISTORY_LIMIT = 300;
 export const TOKEN_SNIPER_SIGNAL_ACTION_EXPIRE_MS = 3 * 60 * 1000;
+const STATUS_FLUSH_DEBOUNCE_MS = 150;
+const HISTORY_FLUSH_DEBOUNCE_MS = 250;
 
 let statusWriteQueue: Promise<void> = Promise.resolve();
 let historyWriteQueue: Promise<void> = Promise.resolve();
+let statusCache: Record<string, TokenSnipeTaskRuntimeStatus> | null = null;
+let statusLoadPromise: Promise<Record<string, TokenSnipeTaskRuntimeStatus>> | null = null;
+let statusDirty = false;
+let statusFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const handledSignalByTask = new Map<string, number>();
 const historyHandledKeySet = new Set<string>();
 let historyHandledKeySetLoaded = false;
@@ -87,23 +93,69 @@ const ensureHandledHistoryLoaded = async () => {
   await historyHandledKeySetLoading;
 };
 
-const runStatusMutation = async (mutate: (statusMap: Record<string, TokenSnipeTaskRuntimeStatus>) => boolean) => {
-  const res = await browser.storage.local.get(TOKEN_SNIPER_STATUS_STORAGE_KEY);
-  const raw = (res as any)?.[TOKEN_SNIPER_STATUS_STORAGE_KEY];
-  const statusMap =
-    raw && typeof raw === 'object'
-      ? { ...(raw as Record<string, TokenSnipeTaskRuntimeStatus>) }
-      : {};
-  const changed = mutate(statusMap);
-  if (!changed) return;
-  await browser.storage.local.set({ [TOKEN_SNIPER_STATUS_STORAGE_KEY]: statusMap } as any);
+const ensureStatusLoaded = async () => {
+  if (statusCache) return statusCache;
+  if (statusLoadPromise) return statusLoadPromise;
+  statusLoadPromise = (async () => {
+    try {
+      const res = await browser.storage.local.get(TOKEN_SNIPER_STATUS_STORAGE_KEY);
+      const raw = (res as any)?.[TOKEN_SNIPER_STATUS_STORAGE_KEY];
+      statusCache = raw && typeof raw === 'object'
+        ? { ...(raw as Record<string, TokenSnipeTaskRuntimeStatus>) }
+        : {};
+      return statusCache;
+    } catch {
+      statusCache = {};
+      return statusCache;
+    } finally {
+      statusLoadPromise = null;
+    }
+  })();
+  return statusLoadPromise;
 };
 
-const enqueueStatusMutation = (mutate: (statusMap: Record<string, TokenSnipeTaskRuntimeStatus>) => boolean) => {
+const flushStatusCache = async () => {
+  if (!statusDirty || !statusCache) return;
+  statusDirty = false;
+  await browser.storage.local.set({ [TOKEN_SNIPER_STATUS_STORAGE_KEY]: statusCache } as any);
+};
+
+const scheduleStatusFlush = () => {
+  if (statusFlushTimer != null) return;
+  statusFlushTimer = setTimeout(() => {
+    statusFlushTimer = null;
+    statusWriteQueue = statusWriteQueue
+      .then(async () => {
+        try {
+          await flushStatusCache();
+        } catch {
+        }
+      })
+      .catch(() => {});
+  }, STATUS_FLUSH_DEBOUNCE_MS);
+};
+
+const enqueueStatusMutation = (
+  mutate: (statusMap: Record<string, TokenSnipeTaskRuntimeStatus>) => boolean,
+  options?: { flushNow?: boolean },
+) => {
   statusWriteQueue = statusWriteQueue
     .then(async () => {
       try {
-        await runStatusMutation(mutate);
+        const statusMap = { ...(await ensureStatusLoaded()) };
+        const changed = mutate(statusMap);
+        if (!changed) return;
+        statusCache = statusMap;
+        statusDirty = true;
+        if (options?.flushNow) {
+          if (statusFlushTimer != null) {
+            clearTimeout(statusFlushTimer);
+            statusFlushTimer = null;
+          }
+          await flushStatusCache();
+          return;
+        }
+        scheduleStatusFlush();
       } catch {
       }
     })
@@ -136,20 +188,72 @@ type TokenSniperOrderRecord = {
   message?: string;
 };
 
-const runHistoryMutation = async (mutate: (list: TokenSniperOrderRecord[]) => boolean) => {
-  const res = await browser.storage.local.get(TOKEN_SNIPER_HISTORY_STORAGE_KEY);
-  const raw = (res as any)?.[TOKEN_SNIPER_HISTORY_STORAGE_KEY];
-  const list = Array.isArray(raw) ? (raw as TokenSniperOrderRecord[]).slice() : [];
-  const changed = mutate(list);
-  if (!changed) return;
-  await browser.storage.local.set({ [TOKEN_SNIPER_HISTORY_STORAGE_KEY]: list.slice(0, TOKEN_SNIPER_HISTORY_LIMIT) } as any);
+let historyCache: TokenSniperOrderRecord[] | null = null;
+let historyLoadPromise: Promise<TokenSniperOrderRecord[]> | null = null;
+let historyDirty = false;
+let historyFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+const ensureHistoryLoaded = async () => {
+  if (historyCache) return historyCache;
+  if (historyLoadPromise) return historyLoadPromise;
+  historyLoadPromise = (async () => {
+    try {
+      const res = await browser.storage.local.get(TOKEN_SNIPER_HISTORY_STORAGE_KEY);
+      const raw = (res as any)?.[TOKEN_SNIPER_HISTORY_STORAGE_KEY];
+      historyCache = Array.isArray(raw) ? (raw as TokenSniperOrderRecord[]).slice(0, TOKEN_SNIPER_HISTORY_LIMIT) : [];
+      return historyCache;
+    } catch {
+      historyCache = [];
+      return historyCache;
+    } finally {
+      historyLoadPromise = null;
+    }
+  })();
+  return historyLoadPromise;
 };
 
-const enqueueHistoryMutation = (mutate: (list: TokenSniperOrderRecord[]) => boolean) => {
+const flushHistoryCache = async () => {
+  if (!historyDirty || !historyCache) return;
+  historyDirty = false;
+  await browser.storage.local.set({ [TOKEN_SNIPER_HISTORY_STORAGE_KEY]: historyCache.slice(0, TOKEN_SNIPER_HISTORY_LIMIT) } as any);
+};
+
+const scheduleHistoryFlush = () => {
+  if (historyFlushTimer != null) return;
+  historyFlushTimer = setTimeout(() => {
+    historyFlushTimer = null;
+    historyWriteQueue = historyWriteQueue
+      .then(async () => {
+        try {
+          await flushHistoryCache();
+        } catch {
+        }
+      })
+      .catch(() => {});
+  }, HISTORY_FLUSH_DEBOUNCE_MS);
+};
+
+const enqueueHistoryMutation = (
+  mutate: (list: TokenSniperOrderRecord[]) => boolean,
+  options?: { flushNow?: boolean },
+) => {
   historyWriteQueue = historyWriteQueue
     .then(async () => {
       try {
-        await runHistoryMutation(mutate);
+        const list = (await ensureHistoryLoaded()).slice();
+        const changed = mutate(list);
+        if (!changed) return;
+        historyCache = list.slice(0, TOKEN_SNIPER_HISTORY_LIMIT);
+        historyDirty = true;
+        if (options?.flushNow) {
+          if (historyFlushTimer != null) {
+            clearTimeout(historyFlushTimer);
+            historyFlushTimer = null;
+          }
+          await flushHistoryCache();
+          return;
+        }
+        scheduleHistoryFlush();
       } catch {
       }
     })
@@ -164,6 +268,36 @@ const pushTokenSniperHistory = async (record: TokenSniperOrderRecord) => {
     list.unshift(record);
     return true;
   });
+};
+
+export const loadTokenSniperTaskStatus = async (): Promise<Record<string, TokenSnipeTaskRuntimeStatus>> => {
+  try {
+    await statusWriteQueue;
+    const statusMap = await ensureStatusLoaded();
+    return { ...statusMap };
+  } catch {
+    return {};
+  }
+};
+
+export const loadTokenSniperOrderHistory = async (): Promise<TokenSniperOrderRecord[]> => {
+  try {
+    await historyWriteQueue;
+    const list = await ensureHistoryLoaded();
+    return list.slice();
+  } catch {
+    return [];
+  }
+};
+
+export const clearTokenSniperOrderHistory = async () => {
+  historyHandledKeySet.clear();
+  historyHandledKeySetLoaded = true;
+  await enqueueHistoryMutation((list) => {
+    if (!list.length) return false;
+    list.length = 0;
+    return true;
+  }, { flushNow: true });
 };
 
 const hasHandledSignalInHistory = async (input: { taskId: string; accountKey: string; tweetId: string }) => {

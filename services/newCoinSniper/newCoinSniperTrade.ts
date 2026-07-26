@@ -58,6 +58,7 @@ export const createNewCoinSniperTrade = (deps: {
   const DEFAULT_PLATFORM_FILTERS = ['fourmeme', 'fourmeme_agent', 'xmode', 'xmode_agent'] as const;
   const BOUGHT_ONCE_TTL_MS = 6 * 60 * 60 * 1000;
   const BOUGHT_ONCE_STORAGE_KEY = 'dagobang_new_coin_sniper_bought_once_v1';
+  const AUTO_TASK_FLUSH_DEBOUNCE_MS = 800;
 
   let boughtOnceLastSyncMs = 0;
   const boughtOnceAtMs = new Map<string, number>();
@@ -69,12 +70,15 @@ export const createNewCoinSniperTrade = (deps: {
   const manuallyClosedPosKeys = new Map<string, number>();
   const rapidWatchdogRpcAtMs = new Map<string, number>();
   const latestModeMetaByToken = new Map<string, { strategyMode: 'auto_filter' | 'xmode_task'; taskId?: string; taskName?: string; matchKeywords?: string[]; matchText?: string }>();
+  const pendingAutoTasksByKeyword = new Map<string, NewCoinXmodeSnipeTask>();
   let currentSignalContext: UnifiedMarketSignal | null = null;
   let currentStrategyMode: 'auto_filter' | 'xmode_task' = 'auto_filter';
   let currentTaskContext: { taskId?: string; taskName?: string; matchKeywords?: string[]; matchText?: string } | null = null;
   let latestNewCoinSnipeStrategy: any = null;
   let rapidWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   let rapidWatchdogIntervalMs = -1;
+  let autoTaskFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  let autoTaskPersistQueue: Promise<void> = Promise.resolve();
 
   const cleanupPosKey = (posKey: string) => {
     rapidExitByPosKey.delete(posKey);
@@ -595,6 +599,63 @@ export const createNewCoinSniperTrade = (deps: {
 
   const buildTaskKeywordKey = (keywords: string[]) => normalizeKeywords(keywords).slice().sort().join('|');
 
+  const mergeXmodeTasks = (baseTasks: NewCoinXmodeSnipeTask[], extraTasks: NewCoinXmodeSnipeTask[]) => {
+    const merged = baseTasks.slice();
+    const keywordKeySet = new Set(baseTasks.map((task) => buildTaskKeywordKey(task.keywords)).filter(Boolean));
+    for (const task of extraTasks) {
+      const keywordKey = buildTaskKeywordKey(task.keywords);
+      if (!keywordKey || keywordKeySet.has(keywordKey)) continue;
+      keywordKeySet.add(keywordKey);
+      merged.push(task);
+    }
+    return merged;
+  };
+
+  const flushPendingAutoTasks = async () => {
+    const pending = Array.from(pendingAutoTasksByKeyword.values());
+    pendingAutoTasksByKeyword.clear();
+    if (!pending.length) return;
+    autoTaskPersistQueue = autoTaskPersistQueue
+      .then(async () => {
+        try {
+          const latestSettings = await SettingsService.get();
+          const latestConfig = normalizeAutoTrade((latestSettings as any).autoTrade);
+          const latestStrategy = (latestConfig as any)?.newCoinSnipe ?? {};
+          const latestTasks = normalizeXmodeTasks(latestStrategy?.xmodeTasks);
+          const nextTasks = mergeXmodeTasks(latestTasks, pending);
+          if (nextTasks.length === latestTasks.length) return;
+          const nextStrategy = {
+            ...latestStrategy,
+            xmodeTasks: nextTasks,
+          };
+          const nextAutoTrade = {
+            ...latestSettings.autoTrade,
+            newCoinSnipe: nextStrategy,
+          };
+          await SettingsService.update({ autoTrade: nextAutoTrade } as any);
+          latestNewCoinSnipeStrategy = nextStrategy;
+        } catch (e) {
+          console.error('auto task persist failed', e);
+          for (const task of pending) {
+            const keywordKey = buildTaskKeywordKey(task.keywords);
+            if (!keywordKey || pendingAutoTasksByKeyword.has(keywordKey)) continue;
+            pendingAutoTasksByKeyword.set(keywordKey, task);
+          }
+          scheduleAutoTaskFlush();
+        }
+      })
+      .catch(() => { });
+    await autoTaskPersistQueue;
+  };
+
+  const scheduleAutoTaskFlush = () => {
+    if (autoTaskFlushTimer != null) return;
+    autoTaskFlushTimer = setTimeout(() => {
+      autoTaskFlushTimer = null;
+      void flushPendingAutoTasks();
+    }, AUTO_TASK_FLUSH_DEBOUNCE_MS);
+  };
+
   const ensureAutoTasksFromSignal = async (input: {
     settings: any;
     strategy: any;
@@ -615,13 +676,16 @@ export const createNewCoinSniperTrade = (deps: {
       : Math.max(100, Math.min(50_000_000, athThresholdRaw));
     const maxPerSignal = parsePositiveInt(input.strategy?.autoTaskMaxPerSignal, 5, 1, 50);
     const tasks = normalizeXmodeTasks(input.strategy?.xmodeTasks);
+    const pendingTasks = Array.from(pendingAutoTasksByKeyword.values());
     const defaultTaskChainId = resolveTradeChainId({
       signalChain: input.signal?.chain,
       fallbackChainId: input.settings.chainId,
       settings: input.settings,
     });
     const defaultTaskBuyAmountNative = readDefaultTaskBuyAmountNative(input.strategy, defaultTaskChainId);
-    const existingKeywordKeySet = new Set(tasks.map((t) => buildTaskKeywordKey(t.keywords)));
+    const existingKeywordKeySet = new Set(
+      mergeXmodeTasks(tasks, pendingTasks).map((t) => buildTaskKeywordKey(t.keywords)).filter(Boolean),
+    );
     const tokens = normalizeSignalTokens(input.signal);
     const additions: NewCoinXmodeSnipeTask[] = [];
     const now = Date.now();
@@ -664,34 +728,20 @@ export const createNewCoinSniperTrade = (deps: {
       });
     }
     if (!additions.length) return { strategy: input.strategy, updated: false, addedCount: 0 };
-    try {
-      const latestSettings = await SettingsService.get();
-      const latestConfig = normalizeAutoTrade((latestSettings as any).autoTrade);
-      const latestStrategy = (latestConfig as any)?.newCoinSnipe ?? input.strategy;
-      const latestTasks = normalizeXmodeTasks(latestStrategy?.xmodeTasks);
-      const latestKeywordKeys = new Set(latestTasks.map((t) => buildTaskKeywordKey(t.keywords)));
-      const mergedAdditions = additions.filter((t) => {
-        const key = buildTaskKeywordKey(t.keywords);
-        if (!key || latestKeywordKeys.has(key)) return false;
-        latestKeywordKeys.add(key);
-        return true;
-      });
-      if (!mergedAdditions.length) return { strategy: latestStrategy, updated: false, addedCount: 0 };
-      const nextTasks = latestTasks.concat(mergedAdditions);
-      const nextStrategy = {
-        ...latestStrategy,
-        xmodeTasks: nextTasks,
-      };
-      const nextAutoTrade = {
-        ...latestSettings.autoTrade,
-        newCoinSnipe: nextStrategy,
-      };
-      await SettingsService.update({ autoTrade: nextAutoTrade } as any);
-      return { strategy: nextStrategy, updated: true, addedCount: mergedAdditions.length };
-    } catch (e) {
-      console.error('auto task persist failed', e);
-      return { strategy: input.strategy, updated: false, addedCount: 0 };
+    let addedCount = 0;
+    for (const task of additions) {
+      const keywordKey = buildTaskKeywordKey(task.keywords);
+      if (!keywordKey || pendingAutoTasksByKeyword.has(keywordKey)) continue;
+      pendingAutoTasksByKeyword.set(keywordKey, task);
+      addedCount += 1;
     }
+    if (!addedCount) return { strategy: input.strategy, updated: false, addedCount: 0 };
+    scheduleAutoTaskFlush();
+    const nextStrategy = {
+      ...input.strategy,
+      xmodeTasks: mergeXmodeTasks(tasks, Array.from(pendingAutoTasksByKeyword.values())),
+    };
+    return { strategy: nextStrategy, updated: true, addedCount };
   };
 
   const normalizeXmodeTasks = (input: unknown): NewCoinXmodeSnipeTask[] => {
@@ -1188,6 +1238,9 @@ export const createNewCoinSniperTrade = (deps: {
     });
 
   const clearRuntimeState = () => {
+    if (autoTaskFlushTimer) clearTimeout(autoTaskFlushTimer);
+    autoTaskFlushTimer = null;
+    pendingAutoTasksByKeyword.clear();
     rapidExitByPosKey.clear();
     manuallyClosedPosKeys.clear();
     rapidWatchdogRpcAtMs.clear();

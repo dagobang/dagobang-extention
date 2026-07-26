@@ -123,6 +123,22 @@ const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';
 const MCAP_HIGHLIGHT_WINDOW_MS = 6000;
 const PANEL_MIN_HEIGHT = 420;
 const PANEL_DEFAULT_HEIGHT = 640;
+const TOKEN_ID_SYNC_DEBOUNCE_MS = 80;
+
+type UnifiedTweetRef = {
+  tweetAuthor?: string;
+  tweetId?: string;
+  tweetUrl?: string;
+  tweetType?: MarketTokenRow['tweetType'];
+};
+
+let unifiedTwitterIndexCache:
+  | {
+    runtimeListRef: unknown;
+    storageRaw: string | null;
+    byTweetId: Map<string, UnifiedTweetRef>;
+  }
+  | null = null;
 
 const parseNumber = (v: any) => {
   if (v == null) return null;
@@ -423,25 +439,76 @@ const loadUnifiedTwitterSignals = (): UnifiedTwitterSignal[] => {
   }
 };
 
-const findTweetRefFromUnifiedCache = (tweetIds: string[]) => {
-  if (!tweetIds.length) return {};
-  const wanted = new Set(tweetIds);
-  const list = loadUnifiedTwitterSignals();
+const buildUnifiedTwitterRefIndex = (list: UnifiedTwitterSignal[]) => {
+  const byTweetId = new Map<string, UnifiedTweetRef>();
   for (let i = list.length - 1; i >= 0; i -= 1) {
     const signal = list[i];
     if (!signal) continue;
-    const hitByTweet = typeof signal.tweetId === 'string' && wanted.has(signal.tweetId);
-    const hitByQuoted = typeof signal.quotedTweetId === 'string' && wanted.has(signal.quotedTweetId);
-    if (!hitByTweet && !hitByQuoted) continue;
-    const tweetId = hitByTweet ? signal.tweetId : signal.quotedTweetId;
-    const authorRaw = hitByTweet ? signal.userScreen : (signal.quotedUserScreen ?? signal.userScreen);
-    const author = normalizeTweetAuthor(authorRaw);
-    return {
-      tweetId,
-      tweetAuthor: author,
-      tweetUrl: tweetId ? (author ? `https://x.com/${author}/status/${tweetId}` : `https://x.com/i/status/${tweetId}`) : undefined,
-      tweetType: normalizeTweetType(signal.tweetType),
-    };
+    const tweetType = normalizeTweetType(signal.tweetType);
+    const directTweetId = typeof signal.tweetId === 'string' ? signal.tweetId.trim() : '';
+    const quotedTweetId = typeof signal.quotedTweetId === 'string' ? signal.quotedTweetId.trim() : '';
+    if (directTweetId && !byTweetId.has(directTweetId)) {
+      const author = normalizeTweetAuthor(signal.userScreen);
+      byTweetId.set(directTweetId, {
+        tweetId: directTweetId,
+        tweetAuthor: author,
+        tweetUrl: author ? `https://x.com/${author}/status/${directTweetId}` : `https://x.com/i/status/${directTweetId}`,
+        tweetType,
+      });
+    }
+    if (quotedTweetId && !byTweetId.has(quotedTweetId)) {
+      const author = normalizeTweetAuthor(signal.quotedUserScreen ?? signal.userScreen);
+      byTweetId.set(quotedTweetId, {
+        tweetId: quotedTweetId,
+        tweetAuthor: author,
+        tweetUrl: author ? `https://x.com/${author}/status/${quotedTweetId}` : `https://x.com/i/status/${quotedTweetId}`,
+        tweetType,
+      });
+    }
+  }
+  return byTweetId;
+};
+
+const getUnifiedTwitterRefIndex = () => {
+  const runtimeCache = (() => {
+    try {
+      return (window as any).__DAGOBANG_UNIFIED_TWITTER_CACHE__ ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const runtimeListRef = runtimeCache && Array.isArray(runtimeCache.list) ? runtimeCache.list : null;
+  const storageRaw = runtimeListRef ? null : (() => {
+    try {
+      return window.localStorage.getItem(TWITTER_UNIFIED_CACHE_KEY);
+    } catch {
+      return null;
+    }
+  })();
+  if (
+    unifiedTwitterIndexCache &&
+    unifiedTwitterIndexCache.runtimeListRef === runtimeListRef &&
+    unifiedTwitterIndexCache.storageRaw === storageRaw
+  ) {
+    return unifiedTwitterIndexCache.byTweetId;
+  }
+  const list = runtimeListRef ? (runtimeListRef as UnifiedTwitterSignal[]) : loadUnifiedTwitterSignals();
+  const byTweetId = buildUnifiedTwitterRefIndex(list);
+  unifiedTwitterIndexCache = {
+    runtimeListRef,
+    storageRaw,
+    byTweetId,
+  };
+  return byTweetId;
+};
+
+const findTweetRefFromUnifiedCache = (tweetIds: string[]) => {
+  if (!tweetIds.length) return {};
+  const wanted = new Set(tweetIds);
+  const refIndex = getUnifiedTwitterRefIndex();
+  for (const tweetId of wanted) {
+    const ref = refIndex.get(tweetId);
+    if (ref) return ref;
   }
   return {};
 };
@@ -696,7 +763,6 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
 };
 
 const ingestRows = (map: Map<string, MarketTokenRow>, items: MarketTokenEventDetail[]) => {
-  const beforeSize = map.size;
   const debugStats = {
     built: 0,
     droppedInvalidAddress: 0,
@@ -1259,31 +1325,30 @@ export function NewPoolMonitorContent({
   useEffect(() => {
     if (!active) return;
     let disposed = false;
+    let syncTimer: ReturnType<typeof setTimeout> | null = null;
     tokenMapRef.current.clear();
-    const syncIds = () => {
+    const syncIdsNow = () => {
       if (disposed) return;
       const map = tokenMapRef.current;
-      const startedAt = performance.now();
       const nextIds = Array.from(map.values())
         .sort((a, b) => b.sortAtMs - a.sortAtMs)
         .slice(0, MARKET_TOKEN_CACHE_LIMIT)
         .map((item) => normalizeMonitorTokenAddressKey(item.tokenAddress));
       setTokenIds(nextIds);
-      return {
-        mapSize: map.size,
-        nextIdsSize: nextIds.length,
-        sortMs: performance.now() - startedAt,
-      };
+    };
+    const scheduleSyncIds = (delayMs = TOKEN_ID_SYNC_DEBOUNCE_MS) => {
+      if (syncTimer != null) return;
+      syncTimer = setTimeout(() => {
+        syncTimer = null;
+        syncIdsNow();
+      }, Math.max(0, delayMs));
     };
     const onBatch = (message: any) => {
       if (message?.type !== 'bg:newpool:batch') return;
       const items = Array.isArray(message?.items) ? message.items as MarketTokenEventDetail[] : [];
       if (!items.length) return;
-      const startedAt = performance.now();
       ingestRows(tokenMapRef.current, items);
-      const syncInfo = syncIds();
-      (() => {
-      })();
+      scheduleSyncIds();
     };
     browser.runtime.onMessage.addListener(onBatch);
     void call({ type: 'newpool:getSnapshot' } as const)
@@ -1291,15 +1356,16 @@ export function NewPoolMonitorContent({
         if (disposed) return;
         const items = Array.isArray((res as any)?.items) ? (res as any).items as MarketTokenEventDetail[] : [];
         tokenMapRef.current.clear();
-        const startedAt = performance.now();
         if (items.length) ingestRows(tokenMapRef.current, items);
-        const syncInfo = syncIds();
-        (() => {
-        })();
+        syncIdsNow();
       })
       .catch(() => { });
     return () => {
       disposed = true;
+      if (syncTimer != null) {
+        clearTimeout(syncTimer);
+        syncTimer = null;
+      }
       browser.runtime.onMessage.removeListener(onBatch);
     };
   }, [active]);

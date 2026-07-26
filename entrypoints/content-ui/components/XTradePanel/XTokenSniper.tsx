@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { TRADE_SUCCESS_SOUND_PRESETS, type Settings, type TokenSnipeBuyMethod, type TokenSnipeTask, type TokenSnipeTaskRuntimeStatus, type TradeSuccessSoundPreset } from '@/types/extention';
 import { call } from '@/utils/messaging';
 import { defaultSettings } from '@/utils/defaults';
 import { type SiteInfo } from '@/utils/sites';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
-import { TOKEN_SNIPER_HISTORY_STORAGE_KEY, TOKEN_SNIPER_STATUS_STORAGE_KEY } from '@/services/tokenSniper/tokenSniperTrade';
+import {
+  clearTokenSniperOrderHistory,
+  loadTokenSniperOrderHistory,
+  loadTokenSniperTaskStatus,
+  TOKEN_SNIPER_HISTORY_STORAGE_KEY,
+  TOKEN_SNIPER_STATUS_STORAGE_KEY,
+} from '@/services/tokenSniper/tokenSniperTrade';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import { normalizeAddress } from '@/services/xSniper/engine/metrics';
 import { XTokenSniperTaskList } from '@/entrypoints/content-ui/components/XTradePanel/XTokenSniperTaskList';
@@ -82,6 +88,22 @@ const normalizeTokenSnipe = (settings: Settings | null | undefined): TokenSnipeD
   };
 };
 
+const dedupeOrderHistory = (records: TokenSniperOrderRecord[]) => {
+  const byId = new Map<string, TokenSniperOrderRecord>();
+  for (const record of records) {
+    if (!record || typeof record.id !== 'string' || !record.id.trim()) continue;
+    byId.set(record.id, record);
+  }
+  return Array.from(byId.values())
+    .sort((a, b) => {
+      const ta = Number(a.tsMs) || 0;
+      const tb = Number(b.tsMs) || 0;
+      if (tb !== ta) return tb - ta;
+      return String(b.id).localeCompare(String(a.id));
+    })
+    .slice(0, 300);
+};
+
 export function XTokenSniperContent({
   siteInfo,
   active,
@@ -108,8 +130,6 @@ export function XTokenSniperContent({
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [editTaskId, setEditTaskId] = useState<string | null>(null);
   const [expandedTaskById, setExpandedTaskById] = useState<Record<string, boolean>>({});
-  const reloadTimerRef = useRef<number | null>(null);
-  const reloadingRef = useRef(false);
 
   const [tokenAddressInput, setTokenAddressInput] = useState('');
   const [tokenSymbolInput, setTokenSymbolInput] = useState('');
@@ -136,71 +156,69 @@ export function XTokenSniperContent({
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
-    const reloadWindowMs = 100;
     const loadStatus = async () => {
       try {
-        const res = await browser.storage.local.get(TOKEN_SNIPER_STATUS_STORAGE_KEY);
-        const raw = (res as any)?.[TOKEN_SNIPER_STATUS_STORAGE_KEY];
+        const raw = await loadTokenSniperTaskStatus();
         if (cancelled) return;
-        if (!raw || typeof raw !== 'object') {
-          setTaskStatusById({});
-          return;
-        }
-        setTaskStatusById(raw as Record<string, TokenSnipeTaskRuntimeStatus>);
+        setTaskStatusById(raw);
       } catch {
       }
-    };
-    const reloadAll = async () => {
-      if (reloadingRef.current) return;
-      reloadingRef.current = true;
-      try {
-        await Promise.all([loadStatus(), loadOrderHistory()]);
-      } finally {
-        reloadingRef.current = false;
-      }
-    };
-    const scheduleReload = () => {
-      if (reloadTimerRef.current != null) return;
-      reloadTimerRef.current = window.setTimeout(() => {
-        reloadTimerRef.current = null;
-        void reloadAll();
-      }, reloadWindowMs);
     };
     const loadOrderHistory = async () => {
       try {
-        const res = await browser.storage.local.get(TOKEN_SNIPER_HISTORY_STORAGE_KEY);
-        const raw = (res as any)?.[TOKEN_SNIPER_HISTORY_STORAGE_KEY];
+        const raw = await loadTokenSniperOrderHistory();
         if (cancelled) return;
-        if (!Array.isArray(raw)) {
-          setOrderHistory([]);
-          return;
-        }
-        setOrderHistory(raw as TokenSniperOrderRecord[]);
+        setOrderHistory(dedupeOrderHistory(raw));
       } catch {
       }
     };
-    void reloadAll();
+    void Promise.all([loadStatus(), loadOrderHistory()]);
+    const onChanged = (changes: Record<string, any>, areaName: string) => {
+      if (areaName !== 'local') return;
+      if (changes?.[TOKEN_SNIPER_STATUS_STORAGE_KEY]) {
+        const next = changes[TOKEN_SNIPER_STATUS_STORAGE_KEY]?.newValue;
+        if (!next || typeof next !== 'object') {
+          setTaskStatusById({});
+        } else {
+          setTaskStatusById(next as Record<string, TokenSnipeTaskRuntimeStatus>);
+        }
+      }
+      if (changes?.[TOKEN_SNIPER_HISTORY_STORAGE_KEY]) {
+        const next = changes[TOKEN_SNIPER_HISTORY_STORAGE_KEY]?.newValue;
+        if (!Array.isArray(next)) {
+          if (next == null) setOrderHistory([]);
+          return;
+        }
+        setOrderHistory(dedupeOrderHistory(next as TokenSniperOrderRecord[]));
+      }
+    };
     const onMessage = (message: any) => {
       if (!message || typeof message.type !== 'string') return;
-      if (message.type === 'bg:stateChanged' || message.type === 'bg:tokenSniper:matched') {
-        scheduleReload();
+      if (message.type === 'bg:tokenSniper:matched') {
+        const taskId = typeof message.taskId === 'string' ? message.taskId : '';
+        if (!taskId) return;
+        setTaskStatusById((prev) => ({
+          ...prev,
+          [taskId]: {
+            ...prev[taskId],
+            taskId,
+            state: 'matched',
+            updatedAt: Date.now(),
+            message: '已命中',
+          },
+        }));
         return;
       }
       if (message.type === 'bg:tradeSuccess' && message?.source === 'tokenSniper') {
-        scheduleReload();
+        void loadOrderHistory();
         return;
       }
-      if (message.type === 'bg:tradeSuccess') {
-        scheduleReload();
-      }
     };
+    browser.storage.onChanged.addListener(onChanged as any);
     browser.runtime.onMessage.addListener(onMessage);
     return () => {
       cancelled = true;
-      if (reloadTimerRef.current != null) {
-        window.clearTimeout(reloadTimerRef.current);
-        reloadTimerRef.current = null;
-      }
+      browser.storage.onChanged.removeListener(onChanged as any);
       browser.runtime.onMessage.removeListener(onMessage);
     };
   }, [active]);
@@ -368,7 +386,7 @@ export function XTokenSniperContent({
 
   const clearOrderHistory = async () => {
     try {
-      await browser.storage.local.set({ [TOKEN_SNIPER_HISTORY_STORAGE_KEY]: [] } as any);
+      await clearTokenSniperOrderHistory();
       setOrderHistory([]);
     } catch {
     }

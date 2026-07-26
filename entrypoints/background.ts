@@ -2555,10 +2555,13 @@ export default defineBackground(() => {
 
           case 'twitter:signal': {
             const signal = msg.payload as any;
+            const channel = typeof signal?.channel === 'string' ? signal.channel.trim() : '';
             const tasks: Array<Promise<unknown>> = [
               (AutoTrade as any).handleTwitterSignal(signal),
-              (TokenSniperTrade as any).handleTwitterSignal(signal),
             ];
+            if (channel !== 'twitter_monitor_token') {
+              tasks.push((TokenSniperTrade as any).handleTwitterSignal(signal));
+            }
             await Promise.all(tasks);
             return { ok: true };
           }
@@ -2566,6 +2569,7 @@ export default defineBackground(() => {
           case 'market:signal': {
             const signal = msg.payload as any;
             const tasks: Array<Promise<unknown>> = [];
+            tasks.push((AutoTrade as any).handleMarketSignal(signal));
             if ((await SettingsService.get())?.ui?.newCoinSniperEnabled === true) {
               tasks.push((NewCoinSniperTrade as any).handleMarketSignal(signal));
             }
