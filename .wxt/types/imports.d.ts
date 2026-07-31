@@ -73,6 +73,7 @@ declare global {
   const loadContractAbi: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi').loadContractAbi
   const navigateToUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').navigateToUrl
   const normalizeGmgnChainName: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeGmgnChainName
+  const normalizeHexPrivateKey: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').normalizeHexPrivateKey
   const normalizeInlineWebpData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeInlineWebpData
   const normalizeLocale: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n').normalizeLocale
   const normalizeNewPoolTokenData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeNewPoolTokenData

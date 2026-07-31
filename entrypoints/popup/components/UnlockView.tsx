@@ -10,9 +10,10 @@ type UnlockViewProps = {
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
   chainId: number;
+  onChainChange: (chainId: number) => void;
 };
 
-export function UnlockView({ onRefresh, onError, locale, onLocaleChange, chainId }: UnlockViewProps) {
+export function UnlockView({ onRefresh, onError, locale, onLocaleChange, chainId, onChainChange }: UnlockViewProps) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
@@ -38,7 +39,7 @@ export function UnlockView({ onRefresh, onError, locale, onLocaleChange, chainId
 
   return (
     <div className="w-[360px]  h-full bg-zinc-950 text-zinc-100 flex flex-col">
-      <Header locale={locale} onLocaleChange={onLocaleChange} />
+      <Header locale={locale} onLocaleChange={onLocaleChange} chainId={chainId} onChainChange={onChainChange} />
       <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-4">
         <div className="w-16 h-16 bg-zinc-900 rounded-full flex items-center justify-center mb-2">
           <Lock className="text-emerald-500" size={24} />

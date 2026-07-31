@@ -187,6 +187,15 @@ function App() {
         locale={locale}
         onLocaleChange={handleLocaleChange}
         chainId={state?.settings.chainId ?? defaultSettings().chainId}
+        onChainChange={(chainId: number) =>
+          void call({
+            type: 'settings:set',
+            settings: {
+              ...(state?.settings ?? defaultSettings()),
+              chainId,
+            },
+          }).then(refresh)
+        }
       />
     );
   } else if (view === 'unlock') {
@@ -197,6 +206,15 @@ function App() {
         locale={locale}
         onLocaleChange={handleLocaleChange}
         chainId={state?.settings.chainId ?? defaultSettings().chainId}
+        onChainChange={(chainId: number) =>
+          void call({
+            type: 'settings:set',
+            settings: {
+              ...(state?.settings ?? defaultSettings()),
+              chainId,
+            },
+          }).then(refresh)
+        }
       />
     );
   } else if (view === 'settings') {

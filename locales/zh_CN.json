@@ -27,7 +27,15 @@
       "passwordNotMatch": "两次输入的密码不一致",
       "createWallet": "创建新钱包",
       "importPlaceholder": "粘贴助记词或私钥",
-      "importWallet": "导入钱包"
+      "importWallet": "导入钱包",
+      "importByMnemonic": "导入助记词",
+      "importByPrivateKey": "导入私钥",
+      "importMnemonicPlaceholder": "粘贴助记词",
+      "importPrivateKeyPlaceholderEvm": "粘贴私钥（支持 0x... 或 64 位十六进制）",
+      "importPrivateKeyPlaceholderSolana": "粘贴 Solana 私钥（base58 或 JSON 数组）",
+      "importMnemonicHint": "助记词会按当前所选链生成对应账户。",
+      "importPrivateKeyHintEvm": "EVM 私钥支持带或不带 0x 前缀。",
+      "importPrivateKeyHintSolana": "Solana 私钥支持 base58 字符串或导出的 JSON 数组。"
     },
     "unlock": {
       "title": "欢迎回来",

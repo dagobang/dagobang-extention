@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { call } from '@/utils/messaging';
 import { Header } from './Header';
-import { isHexPrivateKey } from '@/utils/format';
+import { isHexPrivateKey, normalizeHexPrivateKey } from '@/utils/format';
 import type { WalletImportInput } from '@/types/extention';
 import { t, type Locale } from '@/utils/i18n';
+import { ChainId } from '@/constants/chains/chainId';
 
 type WelcomeViewProps = {
   onBackup: (mnemonic: string) => void;
@@ -12,14 +13,27 @@ type WelcomeViewProps = {
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
   chainId: number;
+  onChainChange: (chainId: number) => void;
 };
 
-export function WelcomeView({ onBackup, onRefresh, onError, locale, onLocaleChange, chainId }: WelcomeViewProps) {
+export function WelcomeView({ onBackup, onRefresh, onError, locale, onLocaleChange, chainId, onChainChange }: WelcomeViewProps) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [importText, setImportText] = useState('');
+  const [importMode, setImportMode] = useState<'mnemonic' | 'privateKey'>('mnemonic');
   const [busy, setBusy] = useState(false);
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
+  const isSolana = chainId === ChainId.SOL;
+  const importPlaceholder = importMode === 'mnemonic'
+    ? tt('popup.welcome.importMnemonicPlaceholder')
+    : isSolana
+      ? tt('popup.welcome.importPrivateKeyPlaceholderSolana')
+      : tt('popup.welcome.importPrivateKeyPlaceholderEvm');
+  const importHint = importMode === 'mnemonic'
+    ? tt('popup.welcome.importMnemonicHint')
+    : isSolana
+      ? tt('popup.welcome.importPrivateKeyHintSolana')
+      : tt('popup.welcome.importPrivateKeyHintEvm');
 
   async function withBusy(fn: () => Promise<void>) {
     if (busy) return;
@@ -37,7 +51,7 @@ export function WelcomeView({ onBackup, onRefresh, onError, locale, onLocaleChan
 
   return (
     <div className="w-[360px]  h-full bg-zinc-950 text-zinc-100 flex flex-col">
-      <Header locale={locale} onLocaleChange={onLocaleChange} />
+      <Header locale={locale} onLocaleChange={onLocaleChange} chainId={chainId} onChainChange={onChainChange} />
       <div className="p-4 flex-1 flex flex-col justify-center space-y-4">
         <div className="text-center mb-4">
           <div className="text-lg font-bold">{tt('popup.welcome.title')}</div>
@@ -87,12 +101,35 @@ export function WelcomeView({ onBackup, onRefresh, onError, locale, onLocaleChan
         </div>
 
         <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${importMode === 'mnemonic'
+                ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300'
+                : 'border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700'
+                }`}
+              disabled={busy}
+              onClick={() => setImportMode('mnemonic')}
+            >
+              {tt('popup.welcome.importByMnemonic')}
+            </button>
+            <button
+              className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${importMode === 'privateKey'
+                ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300'
+                : 'border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700'
+                }`}
+              disabled={busy}
+              onClick={() => setImportMode('privateKey')}
+            >
+              {tt('popup.welcome.importByPrivateKey')}
+            </button>
+          </div>
           <textarea
             className="w-full h-16 rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs outline-none focus:border-emerald-500 resize-none"
-            placeholder={tt('popup.welcome.importPlaceholder')}
+            placeholder={importPlaceholder}
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
           />
+          <div className="text-[10px] leading-relaxed text-zinc-500">{importHint}</div>
           <button
             className="w-full rounded-md bg-zinc-800 px-3 py-2 text-xs font-semibold disabled:opacity-60 hover:bg-zinc-700 transition-colors"
             disabled={busy || !passwordsMatch || !importText.trim()}
@@ -100,8 +137,13 @@ export function WelcomeView({ onBackup, onRefresh, onError, locale, onLocaleChan
               withBusy(async () => {
                 const trimmed = importText.trim();
                 const input: WalletImportInput = { password: newPassword, chainId };
-                if (isHexPrivateKey(trimmed)) input.privateKey = trimmed;
-                else input.mnemonic = trimmed;
+                if (importMode === 'privateKey') {
+                  input.privateKey = isSolana ? trimmed : (normalizeHexPrivateKey(trimmed) ?? trimmed);
+                } else if (isHexPrivateKey(trimmed) && !isSolana) {
+                  input.privateKey = normalizeHexPrivateKey(trimmed) ?? trimmed;
+                } else {
+                  input.mnemonic = trimmed;
+                }
                 const res = await call({ type: 'wallet:import', input });
                 if (res.mnemonic) onBackup(res.mnemonic);
                 await onRefresh();

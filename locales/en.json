@@ -27,7 +27,15 @@
       "passwordNotMatch": "Passwords do not match",
       "createWallet": "Create New Wallet",
       "importPlaceholder": "Paste mnemonic or private key",
-      "importWallet": "Import Wallet"
+      "importWallet": "Import Wallet",
+      "importByMnemonic": "Import Mnemonic",
+      "importByPrivateKey": "Import Private Key",
+      "importMnemonicPlaceholder": "Paste mnemonic phrase",
+      "importPrivateKeyPlaceholderEvm": "Paste private key (supports 0x... or 64 hex chars)",
+      "importPrivateKeyPlaceholderSolana": "Paste Solana private key (base58 or JSON array)",
+      "importMnemonicHint": "Mnemonic import derives the account for the currently selected chain.",
+      "importPrivateKeyHintEvm": "EVM private keys can be pasted with or without the 0x prefix.",
+      "importPrivateKeyHintSolana": "Solana private keys can be pasted as base58 strings or exported JSON arrays."
     },
     "unlock": {
       "title": "Welcome Back",

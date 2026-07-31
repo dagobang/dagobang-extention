@@ -1,6 +1,7 @@
 import { generateMnemonic, english, mnemonicToAccount, privateKeyToAccount } from 'viem/accounts';
 import { toHex } from 'viem';
 import { encryptJson, decryptJson } from '../utils/crypto';
+import { normalizeHexPrivateKey } from '../utils/format';
 import { getStoredWallet, setStoredWallet, getUnlockedState, setUnlockedState, clearUnlockedState, getSettings, setSettings } from './storage';
 import type { WalletPayload, Account } from '../types/extention';
 
@@ -51,16 +52,16 @@ export class WalletService {
     let address: string;
 
     if (input.privateKey) {
-      const pk = input.privateKey.trim();
-      if (!/^0x[a-fA-F0-9]{64}$/.test(pk)) throw new Error('Invalid private key');
-      const account = privateKeyToAccount(pk as `0x${string}`);
+      const pk = normalizeHexPrivateKey(input.privateKey);
+      if (!pk) throw new Error('Invalid private key');
+      const account = privateKeyToAccount(pk);
       address = account.address;
       
       const accObj: Account = {
         address: account.address,
         name: 'Account 1',
         type: 'imported',
-        privateKey: pk as `0x${string}`
+        privateKey: pk
       };
       
       payload = {
@@ -119,8 +120,9 @@ export class WalletService {
     // Migration: if accounts is missing (old wallet)
     if (!payload.accounts) {
         const old = payload as any;
-        const pk = old.privateKey;
+        const pk = normalizeHexPrivateKey(old.privateKey);
         const mnemonic = old.mnemonic;
+        if (!pk) throw new Error('Invalid private key');
         const account = privateKeyToAccount(pk);
         
         const newPayload: WalletPayload = {
@@ -211,9 +213,9 @@ export class WalletService {
 
       if (privateKey) {
           // Import Private Key
-          const pk = privateKey.trim();
-          if (!/^0x[a-fA-F0-9]{64}$/.test(pk)) throw new Error('Invalid private key');
-          const account = privateKeyToAccount(pk as `0x${string}`);
+          const pk = normalizeHexPrivateKey(privateKey);
+          if (!pk) throw new Error('Invalid private key');
+          const account = privateKeyToAccount(pk);
           
           // Check if already exists
           if (payload.accounts.some(a => a.address.toLowerCase() === account.address.toLowerCase())) {
@@ -224,7 +226,7 @@ export class WalletService {
               address: account.address,
               name: name || `Imported ${payload.accounts.length + 1}`,
               type: 'imported',
-              privateKey: pk as `0x${string}`
+              privateKey: pk
           };
       } else {
           // Derive from Mnemonic

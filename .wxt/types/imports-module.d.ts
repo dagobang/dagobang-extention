@@ -29,7 +29,7 @@ declare module '#imports' {
   export { encryptJson, decryptJson } from '../utils/crypto';
   export { defaultSettings } from '../utils/defaults';
   export { getDexPoolPrefer, parseGweiToWei } from '../utils/dexUtils';
-  export { isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime, formatAgeShort, formatCountShort, formatCompactNumber, formatBnbAmount, formatShortAddress, formatBroadcastProvider, formatRpcEndpointLabel } from '../utils/format';
+  export { normalizeHexPrivateKey, isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime, formatAgeShort, formatCountShort, formatCompactNumber, formatBnbAmount, formatShortAddress, formatBroadcastProvider, formatRpcEndpointLabel } from '../utils/format';
   export { isObject, asAddress, normalizeGmgnChainName, toArrayPayload, normalizeInlineWebpData, shouldUseMergedTokenValue, normalizePublicTokenData, normalizeNewPoolTokenData, resolveTrenchesStageByFid, normalizeTrenchesTokenData, normalizeTokenPageTokenData, normalizeTokenStatTokenData, extractPublicBroadcastCreates, extractFirstFromObject, extractNumber, normalizeTokenAddressKey, extractTokenAddress, extractTokenAddresses, extractTweetId, extractText, extractMedia, extractGmgnTweetText, extractGmgnUserFields, extractUser, extractTimestampMs, parseGmgnEnvelope, extractGmgnWsConnectionInfo, TrenchesStage } from '../utils/gmgnWs';
   export { t, normalizeLocale, Locale } from '../utils/i18n';
   export { call } from '../utils/messaging';

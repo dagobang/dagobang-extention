@@ -1,5 +1,12 @@
+export function normalizeHexPrivateKey(key: string): `0x${string}` | null {
+  const trimmed = String(key || '').trim();
+  if (/^0x[a-fA-F0-9]{64}$/.test(trimmed)) return trimmed as `0x${string}`;
+  if (/^[a-fA-F0-9]{64}$/.test(trimmed)) return `0x${trimmed}` as `0x${string}`;
+  return null;
+}
+
 export function isHexPrivateKey(key: string): boolean {
-  return /^0x[a-fA-F0-9]{64}$/.test(key);
+  return normalizeHexPrivateKey(key) != null;
 }
 
 export const parseNumberLoose = (v: string) => {
@@ -67,7 +74,6 @@ export const formatAgeShort = (ts?: number) => {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
-  const r = s % 60;
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   return `${h}h`;
