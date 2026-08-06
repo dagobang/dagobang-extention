@@ -21,7 +21,8 @@ declare module '#imports' {
   export { BNBCoinIcon, ETHCoinIcon, HYPECoinIcon, SOLCoinIcon, USDCCoinIcon, ChainCoinIcon, SymbolCoinIcon } from '../components/Coins';
   export { Logo } from '../components/Logo';
   export { default as AxiomAPI, AxiomAPI, AxiomPairInfoResponse } from '../hooks/AxiomAPI';
-  export { default as FlapAPI, FlapAPI } from '../hooks/FlapAPI';
+  export { default as DexScreenerAPI, DexScreenerAPI, DexScreenerTokenRef, DexScreenerPair } from '../hooks/DexScreenerAPI';
+  export { default as FlapAPI, FlapAPI, FlapCoinApiResponse } from '../hooks/FlapAPI';
   export { default as GmgnAPI, extractGmgnAuthData, GmgnAPI, MultiTokenInfoResponse, GmgnSearchTokenItem, GmgnTokenHolding, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams, TokenHoldingDetail, TokenHoldingDetailResponse } from '../hooks/GmgnAPI';
   export { TokenAPI, TokenAPI } from '../hooks/TokenAPI';
   export { loadContractAbi, useContractAbi, ContractAddress } from '../hooks/useContractAbi';

@@ -416,9 +416,80 @@ export class GmgnAPI {
   private static readonly HOLDINGS_BASE_URL = 'https://gmgn.ai/td/api/v1';
   private static readonly PROFIT_BASE_URL = 'https://gmgn.ai/pf/api/v1';
   private static readonly SEARCH_BASE_URL = 'https://gmgn.ai/vas/api/v1';
+  private static readonly TOKEN_TRADE_INFO_CACHE_MS = 5 * 60_000;
+  private static readonly tokenTradeInfoCache = new Map<string, { ts: number; value: TokenInfo | null }>();
+  private static readonly tokenTradeInfoInFlight = new Map<string, Promise<TokenInfo | null>>();
 
   private static normalizeChainName(chain: string): string {
     return String(chain || '').trim().toLowerCase();
+  }
+
+  public static async getTokenTradeInfo(chain: string, address: string): Promise<TokenInfo | null> {
+    const normalizedChain = this.normalizeChainName(chain);
+    const normalizedAddress = this.normalizeQueryAddress(normalizedChain, address);
+    if (!normalizedChain || !normalizedAddress) return null;
+
+    const key = `${normalizedChain}:${normalizedAddress}`;
+    const now = Date.now();
+    const cached = this.tokenTradeInfoCache.get(key);
+    if (cached && now - cached.ts < this.TOKEN_TRADE_INFO_CACHE_MS) {
+      return cached.value;
+    }
+
+    const inFlight = this.tokenTradeInfoInFlight.get(key);
+    if (inFlight) return await inFlight;
+
+    const task = (async (): Promise<TokenInfo | null> => {
+      try {
+        let mergedInfo = await this.fetchTokenInfoByEndpoint(
+          '/multi_token_info',
+          this.TOKEN_INFO_BASE_URL,
+          normalizedChain,
+          normalizedAddress
+        );
+        const needsLatestFallback = !mergedInfo
+          || !mergedInfo.symbol
+          || !mergedInfo.name
+          || !(mergedInfo.decimals >= 0)
+          || (!mergedInfo.quote_token_address && !mergedInfo.pool_pair);
+        if (needsLatestFallback) {
+          const latestInfo = await this.fetchTokenInfoByEndpoint(
+            '/mutil_window_token_info',
+            this.CANDLES_BASE_URL,
+            normalizedChain,
+            normalizedAddress
+          ).catch(() => null);
+          if (!mergedInfo) {
+            mergedInfo = latestInfo;
+          } else if (latestInfo) {
+            mergedInfo = {
+              ...mergedInfo,
+              symbol: mergedInfo.symbol || latestInfo.symbol,
+              name: mergedInfo.name || latestInfo.name,
+              decimals: mergedInfo.decimals > 0 ? mergedInfo.decimals : latestInfo.decimals,
+              logo: mergedInfo.logo || latestInfo.logo,
+              quote_token: mergedInfo.quote_token || latestInfo.quote_token,
+              quote_token_address: mergedInfo.quote_token_address || latestInfo.quote_token_address,
+              pool_pair: mergedInfo.pool_pair || latestInfo.pool_pair,
+              biggest_pool_address: mergedInfo.biggest_pool_address || latestInfo.biggest_pool_address,
+              tpool_exchange: mergedInfo.tpool_exchange || latestInfo.tpool_exchange,
+              tpool_launch_type: mergedInfo.tpool_launch_type || latestInfo.tpool_launch_type,
+              tpool_pool_address: mergedInfo.tpool_pool_address || latestInfo.tpool_pool_address,
+              dex_type: mergedInfo.dex_type || latestInfo.dex_type,
+              tokenPrice: mergedInfo.tokenPrice ?? latestInfo.tokenPrice,
+              totalSupply: mergedInfo.totalSupply || latestInfo.totalSupply,
+            };
+          }
+        }
+        this.tokenTradeInfoCache.set(key, { ts: Date.now(), value: mergedInfo });
+        return mergedInfo;
+      } finally {
+        this.tokenTradeInfoInFlight.delete(key);
+      }
+    })();
+
+    this.tokenTradeInfoInFlight.set(key, task);
+    return await task;
   }
 
   private static normalizeQueryAddress(chain: string, address: string): string {
@@ -1158,7 +1229,16 @@ export class GmgnAPI {
   }
 
   private static normalizeTokenInfo(tokenData: MultiTokenInfoResponse['data'][number], chain: string): TokenInfo {
-    const quoteTokenAddress = tokenData.tpool?.quote_address || tokenData.pool?.quote_address;
+      const selfAddress = String(tokenData.address || '').trim().toLowerCase();
+      const tpoolQuoteAddress = String(tokenData.tpool?.quote_address || '').trim();
+      const poolQuoteAddress = String(tokenData.pool?.quote_address || '').trim();
+      const quoteTokenAddress = (() => {
+        if (tpoolQuoteAddress && tpoolQuoteAddress.toLowerCase() !== selfAddress) return tpoolQuoteAddress;
+        if (poolQuoteAddress && poolQuoteAddress.toLowerCase() !== selfAddress) return poolQuoteAddress;
+        if (tpoolQuoteAddress) return tpoolQuoteAddress;
+        if (poolQuoteAddress) return poolQuoteAddress;
+        return undefined;
+      })();
     const quoteToken = tokenData.migration_market_cap_quote || tokenData.pool?.quote_symbol || '';
     const exchange = tokenData.tpool?.exchange;
     const launchType = String(tokenData.tpool?.launch_type || '').trim().toLowerCase();

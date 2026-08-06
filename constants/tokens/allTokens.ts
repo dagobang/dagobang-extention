@@ -58,6 +58,7 @@ export function getBridgeTokenDexPreference(chainId: ChainId, address: string): 
     const addr = address.toLowerCase();
     if (addr === bscTokens.usdt.address.toLowerCase()) return 'v2';
     if (addr === bscTokens.usdc.address.toLowerCase()) return 'v3';
+    if (addr === bscTokens.busd.address.toLowerCase()) return 'v2';
     if (addr === bscTokens.u.address.toLowerCase()) return 'v3';
     if (addr === bscTokens.aster.address.toLowerCase()) return 'v3';
     if (addr === bscTokens.usd1.address.toLowerCase()) return 'v3';

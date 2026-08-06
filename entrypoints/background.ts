@@ -1896,6 +1896,13 @@ export default defineBackground(() => {
             const startedAt = Date.now();
             let submittedTxHash: ChainTxId | null = null;
             let submittedElapsedMs: number | undefined;
+            const isReceiptTimeoutError = (err: any) => {
+              const text = collectErrorText(err, true);
+              return text.includes('transaction receipt wait timeout')
+                || text.includes('receipt wait timeout')
+                || (text.includes('receipt') && text.includes('timeout'))
+                || text.includes('timeout after');
+            };
             console.log('[bg.buy.auto.request]', {
               chainId: msg.input.chainId,
               token: msg.input.tokenAddress,
@@ -1934,6 +1941,24 @@ export default defineBackground(() => {
               };
             };
             const returnBuyFailure = async (e: any) => {
+              if (submittedTxHash && isReceiptTimeoutError(e)) {
+                buyInputByTxHash.set(submittedTxHash, { input, receiptRetried: false });
+                console.warn('[bg.buy.auto][receipt.pending]', {
+                  flowId,
+                  chainId: msg.input.chainId,
+                  token: msg.input.tokenAddress,
+                  txHash: submittedTxHash,
+                  elapsedMs: Date.now() - startedAt,
+                  error: String(e?.shortMessage || e?.message || e || ''),
+                });
+                return {
+                  ok: true,
+                  txHash: submittedTxHash,
+                  submitElapsedMs: submittedElapsedMs,
+                  totalElapsedMs: Date.now() - startedAt,
+                  backgroundPending: true,
+                };
+              }
               console.error('[bg.buy.auto.failed.detail]', {
                 chainId: msg.input.chainId,
                 token: msg.input.tokenAddress,
@@ -2055,6 +2080,7 @@ export default defineBackground(() => {
                 onSubmitted: async (ctx: BuySubmittedContext) => {
                   submittedTxHash = ctx.txHash;
                   submittedElapsedMs = ctx.submitElapsedMs;
+                  buyInputByTxHash.set(ctx.txHash, { input, receiptRetried: false });
                   await broadcastTradeSuccess(
                     {
                       type: 'bg:tradeSubmitted',
@@ -2195,8 +2221,32 @@ export default defineBackground(() => {
             const start = Date.now();
             let submittedTxHash: ChainTxId | null = null;
             let submittedElapsedMs: number | undefined;
+            const isReceiptTimeoutError = (err: any) => {
+              const text = collectErrorText(err, true);
+              return text.includes('transaction receipt wait timeout')
+                || text.includes('receipt wait timeout')
+                || (text.includes('receipt') && text.includes('timeout'))
+                || text.includes('timeout after');
+            };
             console.log('[bg.sell.auto][start]', { flowId, chainId: msg.input.chainId, token: msg.input.tokenAddress });
             const returnSellFailure = async (e: any) => {
+              if (submittedTxHash && isReceiptTimeoutError(e)) {
+                console.warn('[bg.sell.auto][receipt.pending]', {
+                  flowId,
+                  chainId: msg.input.chainId,
+                  token: msg.input.tokenAddress,
+                  txHash: submittedTxHash,
+                  elapsedMs: Date.now() - start,
+                  error: String(e?.shortMessage || e?.message || e || ''),
+                });
+                return {
+                  ok: true,
+                  txHash: submittedTxHash,
+                  submitElapsedMs: submittedElapsedMs,
+                  totalElapsedMs: Date.now() - start,
+                  backgroundPending: true,
+                };
+              }
               console.warn('[trade.sell.auto.failed]', {
                 flowId,
                 chainId: msg.input.chainId,
@@ -2300,7 +2350,7 @@ export default defineBackground(() => {
             try {
               const rsp = await getTrade(input.chainId).sellWithReceiptAndAutoRecovery(input, {
                 maxRetry: 1,
-                timeoutMs: input.chainId === ChainId.SOL ? 20_000 : 8_000,
+                timeoutMs: 5_000,
                 onSubmitted: async (ctx: SellSubmittedContext) => {
                   submittedTxHash = ctx.txHash;
                   submittedElapsedMs = ctx.submitElapsedMs;

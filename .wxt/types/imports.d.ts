@@ -6,6 +6,7 @@ declare global {
   const ChainCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').ChainCoinIcon
   const ContentScriptContext: typeof import('wxt/utils/content-script-context').ContentScriptContext
   const DEFAULT_SOLANA_TIP_PRESET_VALUES: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').DEFAULT_SOLANA_TIP_PRESET_VALUES
+  const DexScreenerAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/DexScreenerAPI').default
   const ETHCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').ETHCoinIcon
   const FlapAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI').default
   const GmgnAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI').default
@@ -146,7 +147,10 @@ declare global {
   export type { AxiomAPI, AxiomPairInfoResponse } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/AxiomAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/AxiomAPI')
   // @ts-ignore
-  export type { FlapAPI } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI'
+  export type { DexScreenerAPI, DexScreenerTokenRef, DexScreenerPair } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/DexScreenerAPI'
+  import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/DexScreenerAPI')
+  // @ts-ignore
+  export type { FlapAPI, FlapCoinApiResponse } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI')
   // @ts-ignore
   export type { GmgnAPI, MultiTokenInfoResponse, GmgnSearchTokenItem, GmgnTokenHolding, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams, TokenHoldingDetail, TokenHoldingDetailResponse } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI'

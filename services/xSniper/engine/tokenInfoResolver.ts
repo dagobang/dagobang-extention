@@ -112,6 +112,10 @@ export const createTokenInfoResolvers = () => {
             quote_token_address: quote,
             pool_pair: state.pool || '',
             dex_type: 'flap',
+            nativeToQuoteSwapEnabled: state.nativeToQuoteSwapEnabled,
+            tokenVersion: state.tokenVersion,
+            extensionID: state.extensionID,
+            dexId: state.dexId,
             tokenPrice: {
               price: '0',
               marketCap: '0',

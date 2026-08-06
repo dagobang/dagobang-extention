@@ -51,6 +51,25 @@ export interface TokenInfo {
   // Normalized human-readable supply, not raw on-chain units.
   totalSupply?: string;
   aiCreator?: boolean;
+  nativeToQuoteSwapEnabled?: boolean;
+  tokenVersion?: number;
+  extensionID?: string;
+  dexId?: number;
+  flap_lp_fee_profile?: number;
+  flap_pool_model?: 'classic' | 'v4_cl' | 'infinity_cl';
+  flap_pool_compat_address?: string;
+  flap_cl_pool_id?: string;
+  flap_v4_fee?: number;
+  flap_v4_tick_spacing?: number;
+  flap_v4_hooks?: string;
+  flap_dividend_token?: string;
+  flap_vault_address?: string;
+  flap_vault_factory?: string;
+  flap_vault_is_official?: boolean;
+  flap_vault_is_ai_consumer?: boolean;
+  flap_stocks_vault_version?: 1 | 2 | 3;
+  flap_basket_token?: string;
+  flap_supported_assets?: string[];
 }
 
 export interface FourmemeTokenInfo {
@@ -85,8 +104,24 @@ export interface FlapTokenStateV7 {
   nativeToQuoteSwapEnabled: boolean;
   extensionID: string;
   taxRate: string;
+  buyTaxRate?: string;
+  sellTaxRate?: string;
   pool: string;
   progress: string;
   lpFeeProfile: number;
   dexId: number;
+  poolModel?: 'classic' | 'v4_cl' | 'infinity_cl';
+  poolCompatAddress?: string;
+  clPoolId?: string;
+  v4Fee?: number;
+  v4TickSpacing?: number;
+  v4Hooks?: string;
+  dividendToken?: string;
+  vaultAddress?: string;
+  vaultFactory?: string;
+  vaultIsOfficial?: boolean;
+  vaultIsAIConsumer?: boolean;
+  stocksVaultVersion?: 1 | 2 | 3;
+  basketToken?: string;
+  supportedAssets?: string[];
 }

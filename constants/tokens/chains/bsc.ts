@@ -26,6 +26,14 @@ export const bscTokens = {
     'Binance-Peg USD Coin',
     'https://www.centre.io/usdc',
   ),
+  busd: new ERC20Token(
+    ChainId.BNB,
+    '0xe9e7cea3dedca5984780bafc599bd69add087d56',
+    18,
+    'BUSD',
+    'Binance USD',
+    'https://www.binance.com/en/busd',
+  ),
   u: new ERC20Token(
     ChainId.BNB,
     '0xce24439f2d9c6a2289f741120fe202248b666666',
@@ -71,6 +79,7 @@ export const bscBridgeTokenAddresses = [
   bscTokens.cake.address,
   bscTokens.usdt.address,
   bscTokens.usdc.address,
+  bscTokens.busd.address,
   bscTokens.u.address,
   bscTokens.aster.address,
   bscTokens.usd1.address,

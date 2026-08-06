@@ -1,4 +1,6 @@
 import GmgnAPI from "./GmgnAPI";
+import FlapAPI from "./FlapAPI";
+import DexScreenerAPI, { DexScreenerPair } from "./DexScreenerAPI";
 import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "@/types/token";
 import { call } from "@/utils/messaging";
 import { parseEther, zeroAddress } from "viem";
@@ -20,12 +22,26 @@ const FLAP_LIKE_LAUNCHPADS = new Set([
     'flap_aioracle',
 ]);
 
+const BSC_FLAP_TERMINAL_QUOTES = new Set([
+    zeroAddress.toLowerCase(),
+    '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c',
+    '0x55d398326f99059ff775485246999027b3197955',
+    '0xe9e7cea3dedca5984780bafc599bd69add087d56',
+    '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
+    '0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d',
+]);
+
+const isFlapSuffixAddress = (address: string) => {
+    const lower = String(address || '').trim().toLowerCase();
+    return lower.endsWith('7777') || lower.endsWith('8888');
+};
 
 export class TokenAPI {
     private static balanceCache = new Map<string, { ts: number; value: string | null }>();
     private static balanceInFlight = new Map<string, Promise<string | null>>();
     private static tokenInfoCache = new Map<string, { ts: number; value: TokenInfo | null }>();
     private static tokenInfoInFlight = new Map<string, Promise<TokenInfo | null>>();
+    private static flapEnrichInFlight = new Map<string, Promise<void>>();
     private static readonly altfunGraduatedTokenInfoCacheTtlMs = 15000;
     private static shouldDebugAltfunTokenInfo() {
         return (window as any).__DAGOBANG_SETTINGS__?.ui?.consoleLogsEnabled === true;
@@ -47,6 +63,179 @@ export class TokenAPI {
             return Math.max(requestedTtlMs, this.altfunGraduatedTokenInfoCacheTtlMs);
         }
         return requestedTtlMs;
+    }
+
+    private static mergeFlapEnrichedTokenInfo(base: TokenInfo | null | undefined, enriched: TokenInfo | null | undefined): TokenInfo | null {
+        if (!base && !enriched) return null;
+        if (!base) return enriched ?? null;
+        if (!enriched) return base;
+
+        return {
+            ...base,
+            ...enriched,
+            chain: base.chain || enriched.chain,
+            address: base.address || enriched.address,
+            name: base.name || enriched.name,
+            symbol: base.symbol || enriched.symbol,
+            decimals: base.decimals || enriched.decimals,
+            logo: base.logo || enriched.logo,
+            website: base.website || enriched.website,
+            twitterUrl: base.twitterUrl || enriched.twitterUrl,
+            gmgnUrl: base.gmgnUrl || enriched.gmgnUrl,
+            launchpad: base.launchpad || enriched.launchpad,
+            launchpad_platform: enriched.launchpad_platform || base.launchpad_platform,
+            launchpad_status: base.launchpad_status ?? enriched.launchpad_status,
+            launchpad_progress: base.launchpad_progress ?? enriched.launchpad_progress,
+            quote_token: base.quote_token || enriched.quote_token,
+            quote_token_address: enriched.quote_token_address || base.quote_token_address,
+            pool_pair: enriched.pool_pair || base.pool_pair,
+            biggest_pool_address: enriched.biggest_pool_address || base.biggest_pool_address,
+            tpool_pool_address: enriched.tpool_pool_address || base.tpool_pool_address,
+            dex_type: enriched.dex_type || base.dex_type,
+            nativeToQuoteSwapEnabled: enriched.nativeToQuoteSwapEnabled ?? base.nativeToQuoteSwapEnabled,
+            tokenVersion: enriched.tokenVersion ?? base.tokenVersion,
+            extensionID: enriched.extensionID ?? base.extensionID,
+            dexId: enriched.dexId ?? base.dexId,
+            flap_dividend_token: enriched.flap_dividend_token || base.flap_dividend_token,
+            flap_vault_address: enriched.flap_vault_address || base.flap_vault_address,
+            flap_vault_factory: enriched.flap_vault_factory || base.flap_vault_factory,
+            flap_vault_is_official: enriched.flap_vault_is_official ?? base.flap_vault_is_official,
+            flap_vault_is_ai_consumer: enriched.flap_vault_is_ai_consumer ?? base.flap_vault_is_ai_consumer,
+            flap_stocks_vault_version: enriched.flap_stocks_vault_version ?? base.flap_stocks_vault_version,
+            flap_basket_token: enriched.flap_basket_token || base.flap_basket_token,
+            flap_supported_assets: enriched.flap_supported_assets ?? base.flap_supported_assets,
+            tokenPrice: base.tokenPrice ?? enriched.tokenPrice,
+        };
+    }
+
+    private static prewarmFlapEnrichedTokenInfo(
+        key: string,
+        platform: string,
+        chain: string,
+        address: string,
+        seed?: TokenInfo | null,
+    ) {
+        if (this.flapEnrichInFlight.has(key)) return;
+        const task = (async () => {
+            try {
+                const flapTokenInfo = await this.getTokenInfoByFlap(platform, chain, address);
+                if (!flapTokenInfo) return;
+                const current = this.tokenInfoCache.get(key)?.value ?? seed ?? null;
+                const merged = this.mergeFlapEnrichedTokenInfo(current, flapTokenInfo);
+                this.tokenInfoCache.set(key, { ts: Date.now(), value: merged });
+            } catch {
+            }
+        })().finally(() => {
+            this.flapEnrichInFlight.delete(key);
+        });
+        this.flapEnrichInFlight.set(key, task);
+    }
+
+    private static prewarmFlapOuterQuoteToken(chain: string, tokenInfo?: TokenInfo | null) {
+        if (!this.shouldPrewarmFlapOuterQuote(chain, tokenInfo) || !tokenInfo?.quote_token_address) return;
+        void FlapAPI.getTokenInfo(chain, tokenInfo.quote_token_address).catch(() => null);
+    }
+
+    private static shouldPrewarmFlapOuterQuote(chain: string, tokenInfo?: TokenInfo | null): boolean {
+        if (!tokenInfo) return false;
+        const chainId = getChainIdByName(chain);
+        if (chainId !== ChainId.BNB) return false;
+        if (Number(tokenInfo.launchpad_status ?? 0) !== 1) return false;
+        const quote = String(tokenInfo.quote_token_address || '').trim().toLowerCase();
+        if (!quote || BSC_FLAP_TERMINAL_QUOTES.has(quote)) return false;
+        return tokenInfo.launchpad_platform === 'flap_stocks'
+            || tokenInfo.flap_stocks_vault_version != null
+            || !!tokenInfo.flap_dividend_token
+            || !!tokenInfo.flap_vault_factory
+            || !!tokenInfo.flap_basket_token
+            || Array.isArray(tokenInfo.flap_supported_assets);
+    }
+
+    private static hasFlapStocksMetadata(
+        tokenInfo?: Pick<TokenInfo, 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'> | null,
+    ): boolean {
+        if (!tokenInfo) return false;
+        return tokenInfo.flap_stocks_vault_version != null
+            || !!tokenInfo.flap_dividend_token
+            || !!tokenInfo.flap_vault_factory
+            || !!tokenInfo.flap_basket_token
+            || Array.isArray(tokenInfo.flap_supported_assets);
+    }
+
+    private static resolveFlapLaunchpadPlatform(
+        requestedPlatform: string,
+        tokenInfo?: Partial<Pick<TokenInfo, 'launchpad_platform' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'>> | null,
+    ): string {
+        if (this.hasFlapStocksMetadata(tokenInfo)) return 'flap_stocks';
+        return normalizeLaunchpadPlatform(tokenInfo?.launchpad_platform)
+            ?? normalizeLaunchpadPlatform(requestedPlatform)
+            ?? 'flap';
+    }
+
+    private static mapDexScreenerPairDexType(pair: DexScreenerPair | null | undefined): string | undefined {
+        if (!pair) return undefined;
+        const labels = Array.isArray(pair.labels) ? pair.labels.map((item) => String(item).toLowerCase()) : [];
+        if (labels.some((item) => item.includes('v3') || item.includes('cl'))) {
+            return 'PANCAKE_SWAP_V3';
+        }
+        return 'PANCAKE_SWAP';
+    }
+
+    private static async buildDexTokenInfoFromDexScreener(chain: string, tokenAddress: string): Promise<TokenInfo | null> {
+        const chainId = getChainIdByName(chain);
+        if (!Number.isFinite(chainId) || chainId === ChainId.SOL) return null;
+        const tokenLower = tokenAddress.toLowerCase();
+        const pairs = await DexScreenerAPI.getPairsByToken(chain, tokenAddress);
+        const selected = pairs
+            .filter((pair) => {
+                const base = String(pair.baseToken?.address || '').toLowerCase();
+                const quote = String(pair.quoteToken?.address || '').toLowerCase();
+                return base === tokenLower || quote === tokenLower;
+            })
+            .sort((a, b) => Number(b.liquidity?.usd ?? 0) - Number(a.liquidity?.usd ?? 0))[0];
+        if (!selected?.pairAddress) return null;
+
+        const baseAddress = String(selected.baseToken?.address || '');
+        const quoteAddress = String(selected.quoteToken?.address || '');
+        const counterpartyAddress = baseAddress.toLowerCase() === tokenLower ? quoteAddress : baseAddress;
+        if (!counterpartyAddress) return null;
+
+        const meta = await call({
+            type: 'token:getMeta',
+            tokenAddress: tokenAddress as `0x${string}`,
+            chainId,
+        } as const).catch(() => null);
+
+        const tokenRef = baseAddress.toLowerCase() === tokenLower ? selected.baseToken : selected.quoteToken;
+        const counterpartyRef = baseAddress.toLowerCase() === tokenLower ? selected.quoteToken : selected.baseToken;
+
+        return {
+            chain,
+            address: tokenAddress,
+            name: String((meta as any)?.name || tokenRef?.name || tokenAddress),
+            symbol: String((meta as any)?.symbol || tokenRef?.symbol || tokenAddress.slice(0, 6)),
+            decimals: Number((meta as any)?.decimals ?? 18),
+            logo: selected.info?.imageUrl || '',
+            launchpad: 'dex',
+            launchpad_progress: 1,
+            launchpad_platform: 'dex',
+            launchpad_status: 1,
+            quote_token: String(counterpartyRef?.symbol || counterpartyAddress),
+            quote_token_address: counterpartyAddress,
+            pool_pair: selected.pairAddress,
+            biggest_pool_address: selected.pairAddress,
+            tpool_pool_address: selected.pairAddress,
+            tpool_launch_type: 'migrated',
+            dex_type: this.mapDexScreenerPairDexType(selected),
+            tokenPrice: selected.priceUsd
+                ? {
+                    price: String(selected.priceUsd),
+                    marketCap: String(selected.marketCap ?? selected.fdv ?? 0),
+                    liquidity: String(selected.liquidity?.usd ?? 0),
+                    timestamp: Date.now(),
+                }
+                : undefined,
+        };
     }
 
     static async getTokenInfo(
@@ -110,6 +299,10 @@ export class TokenAPI {
                 nextValue = res.tokenInfo;
             } else {
                 let address = tokenAddress;
+                const shouldParallelFlapLookup = FLAP_LIKE_LAUNCHPADS.has(normalizedRequestedPlatform) || isFlapSuffixAddress(address);
+                const parallelFlapInfoPromise = shouldParallelFlapLookup
+                    ? this.getTokenInfoByFlap(normalizedRequestedPlatform || 'flap', chain, address).catch(() => null)
+                    : null;
                 if (platform === 'gmgn' || platform === 'axiom') {
                     try {
                         const tokenInfo = platform === 'gmgn'
@@ -130,6 +323,7 @@ export class TokenAPI {
                                 ? new Set(getSupportedLaunchpads(chainId))
                                 : new Set<string>();
                             const isFourMemeLike = FOUR_MEME_LIKE_LAUNCHPADS.has(normalizedLaunchpad);
+                            const isFlapLike = FLAP_LIKE_LAUNCHPADS.has(normalizedLaunchpad);
                             const isSupportedLaunchpad = normalizedLaunchpad !== '' && supportedLaunchpads.has(normalizedLaunchpad);
 
                             if (isFourMemeLike && tokenInfo.quote_token != "BNB") {
@@ -139,14 +333,28 @@ export class TokenAPI {
                                 } else {
                                     nextValue = tokenInfo;
                                 }
+                            } else if (isFlapLike) {
+                                const flapTokenInfo = parallelFlapInfoPromise
+                                    ? await parallelFlapInfoPromise
+                                    : await this.getTokenInfoByFlap(normalizedLaunchpad || platform, chain, address).catch(() => null);
+                                nextValue = this.mergeFlapEnrichedTokenInfo(tokenInfo, flapTokenInfo) ?? tokenInfo;
                             } else if (
                                 MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
                                 isFourMemeLike ||
                                 isSupportedLaunchpad
                             ) {
                                 nextValue = tokenInfo;
+                                if (parallelFlapInfoPromise) {
+                                    this.prewarmFlapEnrichedTokenInfo(
+                                        key,
+                                        normalizedRequestedPlatform || 'flap',
+                                        chain,
+                                        address,
+                                        tokenInfo,
+                                    );
+                                }
                             } else {
-                                nextValue = null;
+                                nextValue = parallelFlapInfoPromise ? await parallelFlapInfoPromise : null;
                             }
                             }
                         }
@@ -161,7 +369,7 @@ export class TokenAPI {
                     } else if (FOUR_MEME_LIKE_LAUNCHPADS.has(normalizedRequestedPlatform)) {
                         nextValue = await this.getTokenInfoByFourmeme(platform, chain, address);
                     } else {
-                        nextValue = null;
+                        nextValue = await this.buildDexTokenInfoFromDexScreener(chain, address);
                     }
                 }
             }
@@ -299,17 +507,51 @@ export class TokenAPI {
     static async getTokenInfoByFlap(platform: string, chain: string, address: string): Promise<TokenInfo | null> {
         const [contractInfo, httpInfo] = await Promise.all([
             this.getTokenInfoByFlapContract(chain, address),
-            platform === 'flap'
-                ? call({
-                    type: 'thirdParty:getTokenInfo',
-                    platform: 'flap',
-                    chain,
-                    address,
-                } as const).then((res) => res.tokenInfo)
-                : null,
+            FlapAPI.getTokenInfo(chain, address).catch(() => null),
         ]);
+        const isListedOnDex = !!contractInfo && (
+            Number(contractInfo.status ?? 0) === 1
+            || String(contractInfo.pool || '').toLowerCase() !== zeroAddress.toLowerCase()
+        );
+        const resolvedPlatform = this.resolveFlapLaunchpadPlatform(platform, {
+            launchpad_platform: httpInfo?.launchpad_platform,
+            flap_stocks_vault_version: contractInfo?.stocksVaultVersion,
+            flap_dividend_token: contractInfo?.dividendToken,
+            flap_vault_factory: contractInfo?.vaultFactory,
+            flap_basket_token: contractInfo?.basketToken,
+            flap_supported_assets: contractInfo?.supportedAssets,
+        });
         if (contractInfo && httpInfo) {
             httpInfo.quote_token_address = contractInfo.quoteTokenAddress;
+            httpInfo.nativeToQuoteSwapEnabled = contractInfo.nativeToQuoteSwapEnabled;
+            httpInfo.tokenVersion = contractInfo.tokenVersion;
+            httpInfo.extensionID = contractInfo.extensionID;
+            httpInfo.dexId = contractInfo.dexId;
+            httpInfo.flap_lp_fee_profile = contractInfo.lpFeeProfile;
+            httpInfo.flap_pool_model = contractInfo.poolModel;
+            httpInfo.flap_pool_compat_address = contractInfo.poolCompatAddress;
+            httpInfo.flap_cl_pool_id = contractInfo.clPoolId;
+            httpInfo.flap_v4_fee = contractInfo.v4Fee;
+            httpInfo.flap_v4_tick_spacing = contractInfo.v4TickSpacing;
+            httpInfo.flap_v4_hooks = contractInfo.v4Hooks;
+            httpInfo.flap_dividend_token = contractInfo.dividendToken;
+            httpInfo.flap_vault_address = contractInfo.vaultAddress;
+            httpInfo.flap_vault_factory = contractInfo.vaultFactory;
+            httpInfo.flap_vault_is_official = contractInfo.vaultIsOfficial;
+            httpInfo.flap_vault_is_ai_consumer = contractInfo.vaultIsAIConsumer;
+            httpInfo.flap_stocks_vault_version = contractInfo.stocksVaultVersion;
+            httpInfo.flap_basket_token = contractInfo.basketToken;
+            httpInfo.flap_supported_assets = contractInfo.supportedAssets;
+            httpInfo.launchpad = 'flap';
+            httpInfo.launchpad_platform = resolvedPlatform;
+            httpInfo.launchpad_status = isListedOnDex ? 1 : Number(httpInfo.launchpad_status ?? 0);
+            httpInfo.tpool_launch_type = httpInfo.launchpad_status === 1 ? 'migrated' : (httpInfo.tpool_launch_type || 'launching');
+            if (contractInfo.poolModel === 'classic' && String(contractInfo.pool || '').toLowerCase() !== zeroAddress.toLowerCase()) {
+                httpInfo.pool_pair = httpInfo.pool_pair || contractInfo.pool;
+                httpInfo.biggest_pool_address = httpInfo.biggest_pool_address || contractInfo.pool;
+                httpInfo.tpool_pool_address = httpInfo.tpool_pool_address || contractInfo.pool;
+            }
+            this.prewarmFlapOuterQuoteToken(chain, httpInfo);
             return httpInfo;
         }
         if (contractInfo) {
@@ -318,8 +560,7 @@ export class TokenAPI {
                 const n = Number.isFinite(v) && v > 0 ? v / 1e18 : 0;
                 return Number.isFinite(n) ? n : 0;
             })();
-
-            return {
+            const contractOnlyInfo = {
                 chain,
                 address,
                 name: contractInfo.symbol,
@@ -328,18 +569,44 @@ export class TokenAPI {
                 logo: '',
                 launchpad: 'flap',
                 launchpad_progress: progress,
-                launchpad_platform: 'flap',
-                launchpad_status: contractInfo.pool === zeroAddress ? 0 : 1,
+                launchpad_platform: resolvedPlatform,
+                launchpad_status: isListedOnDex ? 1 : 0,
                 quote_token: contractInfo.quoteTokenAddress,
-                pool_pair: contractInfo.pool === zeroAddress ? undefined : contractInfo.pool,
+                quote_token_address: contractInfo.quoteTokenAddress,
+                pool_pair: contractInfo.poolModel === 'classic' && contractInfo.pool !== zeroAddress ? contractInfo.pool : undefined,
+                biggest_pool_address: contractInfo.poolModel === 'classic' && contractInfo.pool !== zeroAddress ? contractInfo.pool : undefined,
+                tpool_pool_address: contractInfo.poolModel === 'classic' && contractInfo.pool !== zeroAddress ? contractInfo.pool : undefined,
+                tpool_launch_type: isListedOnDex ? 'migrated' : 'launching',
+                nativeToQuoteSwapEnabled: contractInfo.nativeToQuoteSwapEnabled,
+                tokenVersion: contractInfo.tokenVersion,
+                extensionID: contractInfo.extensionID,
+                dexId: contractInfo.dexId,
+                flap_lp_fee_profile: contractInfo.lpFeeProfile,
+                flap_pool_model: contractInfo.poolModel,
+                flap_pool_compat_address: contractInfo.poolCompatAddress,
+                flap_cl_pool_id: contractInfo.clPoolId,
+                flap_v4_fee: contractInfo.v4Fee,
+                flap_v4_tick_spacing: contractInfo.v4TickSpacing,
+                flap_v4_hooks: contractInfo.v4Hooks,
+                flap_dividend_token: contractInfo.dividendToken,
+                flap_vault_address: contractInfo.vaultAddress,
+                flap_vault_factory: contractInfo.vaultFactory,
+                flap_vault_is_official: contractInfo.vaultIsOfficial,
+                flap_vault_is_ai_consumer: contractInfo.vaultIsAIConsumer,
+                flap_stocks_vault_version: contractInfo.stocksVaultVersion,
+                flap_basket_token: contractInfo.basketToken,
+                flap_supported_assets: contractInfo.supportedAssets,
                 // tokenPrice: {
                 //     price: contractInfo.price,
                 //     marketCap: contractInfo.circulatingSupply,
                 //     timestamp: Date.now(),
                 // }
-            }
+            } as TokenInfo;
+            this.prewarmFlapOuterQuoteToken(chain, contractOnlyInfo);
+            return contractOnlyInfo;
         }
-        return null;
+        this.prewarmFlapOuterQuoteToken(chain, httpInfo);
+        return httpInfo;
     }
 
     static async getPoolPair(chain: string, address: string): Promise<{ token0: string; token1: string } | null> {
