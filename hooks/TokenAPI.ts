@@ -172,6 +172,11 @@ export class TokenAPI {
             ?? 'flap';
     }
 
+    private static hasDexRouteMinimum(tokenInfo?: Pick<TokenInfo, 'quote_token_address' | 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address'> | null): boolean {
+        if (!tokenInfo?.quote_token_address) return false;
+        return !!(tokenInfo.pool_pair || tokenInfo.biggest_pool_address || tokenInfo.tpool_pool_address);
+    }
+
     private static mapDexScreenerPairDexType(pair: DexScreenerPair | null | undefined): string | undefined {
         if (!pair) return undefined;
         const labels = Array.isArray(pair.labels) ? pair.labels.map((item) => String(item).toLowerCase()) : [];
@@ -334,10 +339,26 @@ export class TokenAPI {
                                     nextValue = tokenInfo;
                                 }
                             } else if (isFlapLike) {
-                                const flapTokenInfo = parallelFlapInfoPromise
-                                    ? await parallelFlapInfoPromise
-                                    : await this.getTokenInfoByFlap(normalizedLaunchpad || platform, chain, address).catch(() => null);
-                                nextValue = this.mergeFlapEnrichedTokenInfo(tokenInfo, flapTokenInfo) ?? tokenInfo;
+                                const canUseThirdPartyOuterInfoImmediately =
+                                    Number(tokenInfo.launchpad_status ?? 0) === 1
+                                    && this.hasDexRouteMinimum(tokenInfo);
+                                if (canUseThirdPartyOuterInfoImmediately) {
+                                    nextValue = tokenInfo;
+                                    if (parallelFlapInfoPromise) {
+                                        this.prewarmFlapEnrichedTokenInfo(
+                                            key,
+                                            normalizedRequestedPlatform || normalizedLaunchpad || 'flap',
+                                            chain,
+                                            address,
+                                            tokenInfo,
+                                        );
+                                    }
+                                } else {
+                                    const flapTokenInfo = parallelFlapInfoPromise
+                                        ? await parallelFlapInfoPromise
+                                        : await this.getTokenInfoByFlap(normalizedLaunchpad || platform, chain, address).catch(() => null);
+                                    nextValue = this.mergeFlapEnrichedTokenInfo(tokenInfo, flapTokenInfo) ?? tokenInfo;
+                                }
                             } else if (
                                 MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
                                 isFourMemeLike ||

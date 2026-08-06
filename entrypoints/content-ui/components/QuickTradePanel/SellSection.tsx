@@ -229,8 +229,8 @@ export function SellSection({
     : undefined;
 
   return (
-    <div className={isAltfunLayout ? 'p-3.5' : 'p-3'}>
-      <div className={`mb-2 flex items-center justify-between ${isAltfunLayout ? 'text-[13px]' : 'text-xs'}`}>
+    <div className={isAltfunLayout ? 'p-3' : 'p-2.5'}>
+      <div className={`mb-1.5 flex items-center justify-between ${isAltfunLayout ? 'text-[13px]' : 'text-xs'}`}>
         <div className="flex items-center gap-2">
           <span className={`font-bold text-zinc-200 ${isAltfunLayout ? 'text-[15px]' : 'text-sm'}`}>{t('contentUi.section.sell', locale)}</span>
           {gmgnVisible && (
@@ -251,13 +251,13 @@ export function SellSection({
         </div>
       </div>
 
-      <div className={`grid grid-cols-4 gap-2 ${isAltfunLayout ? 'mb-2.5' : 'mb-2'}`}>
+      <div className={`grid grid-cols-4 gap-1.5 ${isAltfunLayout ? 'mb-1.5' : 'mb-1.5'}`}>
         {sellPresets.map((pct, idx) => (
           isEditing ? (
             <div key={idx} className="relative">
               <input
                 type="number"
-                className={`w-full rounded border border-rose-500/30 bg-zinc-900 text-center font-medium text-rose-400 outline-none focus:border-rose-500 pr-3 select-text ${isAltfunLayout ? 'py-2 text-[13px]' : 'py-1.5 text-xs'}`}
+                  className={`w-full rounded border border-rose-500/30 bg-zinc-900 text-center font-medium text-rose-400 outline-none focus:border-rose-500 pr-3 select-text ${isAltfunLayout ? 'py-1.5 text-[13px]' : 'py-1 text-xs'}`}
                 value={pct}
                 onChange={(e) => onUpdatePreset(idx, e.target.value)}
               />
@@ -271,7 +271,7 @@ export function SellSection({
               onClick={() => onSell(Number(pct))}
               onMouseEnter={() => setActivePreviewIndex(idx)}
               onFocus={() => setActivePreviewIndex(idx)}
-              className={`relative rounded border border-rose-500/30 bg-rose-500/10 text-center font-medium text-rose-400 hover:bg-rose-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isAltfunLayout ? 'py-2 text-[13px]' : 'py-1.5 text-xs'}`}
+                className={`relative rounded border border-rose-500/30 bg-rose-500/10 text-center font-medium leading-none text-rose-400 hover:bg-rose-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isAltfunLayout ? 'py-1.5 text-[13px]' : 'py-1 text-xs'}`}
             >
               {showHotkeys && hotkeyLabels?.[idx] && (
                 <span className="absolute right-1 top-0.5 text-[12px] font-semibold text-zinc-300">
@@ -285,10 +285,10 @@ export function SellSection({
       </div>
 
       <div
-        className={`mb-2 border-rose-500/10 bg-rose-500/[0.04] text-zinc-400 ${isAltfunLayout ? 'px-3 py-1.5 text-[12px]' : 'px-2.5 py-1 text-[11px]'}`}
+        className={`mb-1.5 border-rose-500/10 bg-rose-500/[0.04] text-zinc-400 ${isAltfunLayout ? 'px-2.5 py-1 text-[12px]' : 'px-2 py-1 text-[11px]'}`}
         title={previewRouteLabel || undefined}
       >
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 truncate">
             <span className="text-zinc-200">
               {activePreviewPct != null ? `${formatAmount(activePreviewPct)}% ${tokenSymbol || t('contentUi.common.token', locale)}` : '--'}
@@ -304,7 +304,7 @@ export function SellSection({
       </div>
 
       <div className="flex items-center justify-between text-[12px] text-zinc-500">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <div
             className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
             title={t('contentUi.slippage.toggleMode', locale)}

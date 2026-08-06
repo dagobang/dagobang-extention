@@ -104,7 +104,7 @@ export function FooterStats({ holdingStats }: FooterStatsProps) {
   return (
     <button
       type="button"
-      className="flex w-full items-start gap-3 border-t border-zinc-800/80 bg-zinc-950/20 px-2 py-2 text-left transition-colors hover:bg-zinc-950/35"
+      className="flex w-full items-start gap-2.5 border-t border-zinc-800/80 bg-zinc-950/20 px-2 py-1.5 text-left transition-colors hover:bg-zinc-950/35"
       onClick={() => setHoldingMode((prev) => prev === 'current' ? 'total' : 'current')}
       title={`点击切换${holdingMode === 'current' ? '总' : '当前'}维度`}
     >

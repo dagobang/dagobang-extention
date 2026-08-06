@@ -265,8 +265,8 @@ export function BuySection({
   };
 
   return (
-    <div className={isAltfunLayout ? 'p-3.5' : 'p-3'}>
-      <div className={`mb-2 flex items-center justify-between ${isAltfunLayout ? 'text-[13px]' : 'text-xs'}`}>
+    <div className={isAltfunLayout ? 'p-3' : 'p-2.5'}>
+      <div className={`mb-1.5 flex items-center justify-between ${isAltfunLayout ? 'text-[13px]' : 'text-xs'}`}>
         <div className="flex items-center gap-2">
           <span className={`font-bold text-zinc-200 ${isAltfunLayout ? 'text-[15px]' : 'text-sm'}`}>{t('contentUi.section.buy', locale)}</span>
           <ChannelSwitcher
@@ -298,23 +298,23 @@ export function BuySection({
             chainId={settings?.chainId}
             size={{
               width: isAltfunLayout
-                ? (isHypeBaseSymbol ? '14px' : '13px')
-                : (isHypeBaseSymbol ? '13px' : '12px'),
+                ? (isHypeBaseSymbol ? '13px' : '12px')
+                : (isHypeBaseSymbol ? '12px' : '11px'),
               height: isAltfunLayout
-                ? (isHypeBaseSymbol ? '14px' : '13px')
-                : (isHypeBaseSymbol ? '13px' : '12px'),
+                ? (isHypeBaseSymbol ? '13px' : '12px')
+                : (isHypeBaseSymbol ? '12px' : '11px'),
             }}
           />
           <span>{formattedNativeBalance} {baseSymbol}</span>
         </div>
       </div>
 
-      <div className={`grid grid-cols-4 gap-2 ${isAltfunLayout ? 'mb-2' : 'mb-1.5'}`}>
+      <div className={`grid grid-cols-4 gap-1.5 ${isAltfunLayout ? 'mb-1.5' : 'mb-1.5'}`}>
         {buyPresets.map((amt, idx) => (
           isEditing ? (
             <input
               key={idx}
-              className={`w-full rounded border border-emerald-500/30 bg-zinc-900 text-center font-medium text-emerald-400 outline-none focus:border-emerald-500 select-text ${isAltfunLayout ? 'py-2 text-[13px]' : 'py-1.5 text-xs'}`}
+                className={`w-full rounded border border-emerald-500/30 bg-zinc-900 text-center font-medium text-emerald-400 outline-none focus:border-emerald-500 select-text ${isAltfunLayout ? 'py-1.5 text-[13px]' : 'py-1 text-xs'}`}
               value={amt}
               onChange={(e) => onUpdatePreset(idx, e.target.value)}
             />
@@ -339,7 +339,7 @@ export function BuySection({
                   onClick={() => onBuy(amt, idx)}
                   onMouseEnter={() => setActivePreviewIndex(idx)}
                   onFocus={() => setActivePreviewIndex(idx)}
-                  className={`relative rounded border border-emerald-500/30 bg-emerald-500/10 text-center font-medium text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isAltfunLayout ? 'py-2 text-[13px]' : 'py-1.5 text-xs'}`}
+                    className={`relative rounded border border-emerald-500/30 bg-emerald-500/10 text-center font-medium leading-none text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isAltfunLayout ? 'py-1.5 text-[13px]' : 'py-1 text-xs'}`}
                   title={buttonTitle || undefined}
                 >
                   {!!childPresetActiveWalletCounts?.[idx] && childPresetActiveWalletCounts[idx] > 0 && (
@@ -369,7 +369,7 @@ export function BuySection({
       </div>
 
       {isEditing && (
-        <div className="mb-2 space-y-2 rounded-md border border-zinc-800/70 bg-zinc-950/35 px-2.5 py-2">
+        <div className="mb-1.5 space-y-1.5 rounded-md border border-zinc-800/70 bg-zinc-950/35 px-2 py-1.5">
           <button
             type="button"
             className={`inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
@@ -384,7 +384,7 @@ export function BuySection({
           </button>
 
           {quickBuyAdvancedEnabled && (
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-4 gap-1.5">
               {buyPresets.map((_, idx) => {
                 const override = quickBuyPresetOverrides[idx] ?? {};
                 const overrideGasPreset = override.gasPreset;
@@ -392,7 +392,7 @@ export function BuySection({
                 const gasText = overrideGasPreset ? t(`popup.settings.gas.${overrideGasPreset}`, locale) : '默认';
                 const priorityText = overridePriorityPreset ? t(`contentUi.priorityFee.${overridePriorityPreset}`, locale) : '默认';
                 return (
-                  <div key={`adv-${idx}`} className="rounded border border-zinc-800/80 bg-zinc-900/50 p-1.5 text-[10px]">
+                  <div key={`adv-${idx}`} className="rounded border border-zinc-800/80 bg-zinc-900/50 p-1 text-[10px]">
                     <div className="mb-1 text-center font-semibold text-zinc-500">{['Q', 'W', 'E', 'R'][idx]}</div>
                     <button
                       type="button"
@@ -424,10 +424,10 @@ export function BuySection({
       )}
 
       <div
-        className={`mb-2 border-emerald-500/10 bg-emerald-500/[0.04] text-zinc-400 ${isAltfunLayout ? 'px-3 py-1.5 text-[12px]' : 'px-2.5 py-1 text-[11px]'}`}
+        className={`mb-1.5 border-emerald-500/10 bg-emerald-500/[0.04] text-zinc-400 ${isAltfunLayout ? 'px-2.5 py-1 text-[12px]' : 'px-2 py-1 text-[11px]'}`}
         title={previewRouteLabel || undefined}
       >
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 truncate">
             <span className="text-zinc-200">
               {activePreviewAmount != null ? `${formatAmount(activePreviewAmount)} ${baseSymbol}` : '--'}
@@ -443,7 +443,7 @@ export function BuySection({
       </div>
 
       <div className="flex items-center justify-between text-[12px] text-zinc-500">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <div
             className="flex items-center gap-1 cursor-pointer hover:text-zinc-300"
             title={t('contentUi.slippage.toggleMode', locale)}

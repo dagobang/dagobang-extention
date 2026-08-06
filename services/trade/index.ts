@@ -380,7 +380,10 @@ export class TradeService {
     }
 
     const task = (async () => {
-      await prewarmNonce(client, input.chainId, account.address, { submitChannel: input.submitChannel });
+      const criticalWarmTasks: Array<Promise<unknown>> = [
+        prewarmNonce(client, input.chainId, account.address, { submitChannel: input.submitChannel }).catch(() => null),
+      ];
+      const backgroundWarmTasks: Array<Promise<unknown>> = [];
 
       const token = input.tokenAddress;
       const bridgeToken = getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
@@ -392,15 +395,14 @@ export class TradeService {
       const isFlapStocks = !!rawQuoteToken && this.isFlapStocksPlatform(launchpadPlatform, tokenInfo, input.chainId);
 
       const amountIn = 0n;
-      const warmTasks: Array<Promise<unknown>> = [];
 
       if (tokenInfo.pool_pair && tokenPrefer === 'v2') {
-        warmTasks.push(resolveDexExactIn(input.chainId, ZERO_ADDRESS, token, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v2' }, true, false));
-        warmTasks.push(resolveDexExactIn(input.chainId, token, ZERO_ADDRESS, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v2' }, true, false));
+        criticalWarmTasks.push(resolveDexExactIn(input.chainId, ZERO_ADDRESS, token, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v2' }, true, false).catch(() => null));
+        backgroundWarmTasks.push(resolveDexExactIn(input.chainId, token, ZERO_ADDRESS, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v2' }, true, false).catch(() => null));
       }
 
       if (tokenInfo.pool_pair && tokenPrefer === 'v3') {
-        warmTasks.push(
+        criticalWarmTasks.push(
           resolveDexExactIn(
             input.chainId,
             ZERO_ADDRESS,
@@ -409,9 +411,9 @@ export class TradeService {
             { poolPair: tokenInfo.pool_pair, prefer: 'v3' },
             true,
             false
-          )
+          ).catch(() => null)
         );
-        warmTasks.push(
+        backgroundWarmTasks.push(
           resolveDexExactIn(
             input.chainId,
             token,
@@ -420,12 +422,12 @@ export class TradeService {
             { poolPair: tokenInfo.pool_pair, prefer: 'v3' },
             true,
             false
-          )
+          ).catch(() => null)
         );
       }
 
       if (bridgeToken) {
-        warmTasks.push(resolveBridgeHopExactIn(
+        criticalWarmTasks.push(resolveBridgeHopExactIn(
           input.chainId,
           ZERO_ADDRESS,
           bridgeToken,
@@ -433,8 +435,8 @@ export class TradeService {
           bridgePrefer,
           true,
           false,
-        ));
-        warmTasks.push(resolveBridgeHopExactIn(
+        ).catch(() => null));
+        backgroundWarmTasks.push(resolveBridgeHopExactIn(
           input.chainId,
           bridgeToken,
           ZERO_ADDRESS,
@@ -442,39 +444,16 @@ export class TradeService {
           bridgePrefer,
           true,
           false,
-        ));
+        ).catch(() => null));
       }
 
       if (bridgeToken && tokenInfo.pool_pair && tokenPrefer === 'v3') {
-        warmTasks.push(resolveDexExactIn(input.chainId, token, bridgeToken, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v3' }, true, false));
-        warmTasks.push(resolveDexExactIn(input.chainId, bridgeToken, token, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v3' }, true, false));
+        criticalWarmTasks.push(resolveDexExactIn(input.chainId, bridgeToken, token, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v3' }, true, false).catch(() => null));
+        backgroundWarmTasks.push(resolveDexExactIn(input.chainId, token, bridgeToken, amountIn, { poolPair: tokenInfo.pool_pair, prefer: 'v3' }, true, false).catch(() => null));
       }
 
       if (isFlapStocks && rawQuoteToken) {
-          warmTasks.push((async () => {
-            const rawQuoteInfo = await this.getFlapOuterQuoteTokenInfo(input.chainId, rawQuoteToken, consoleLogsEnabled);
-            const rawQuotePool = this.getKnownDexPoolAddress(rawQuoteInfo);
-            if (rawQuotePool) {
-              await this.primeKnownPoolCounterpartyToken(input.chainId, rawQuotePool, rawQuoteToken, consoleLogsEnabled);
-            }
-          })().catch(() => null));
-        warmTasks.push(
-          this.buildFlapOuterBuyQuoteRoute({
-            chainId: input.chainId,
-            currentToken: ZERO_ADDRESS,
-            targetToken: rawQuoteToken,
-              debug: consoleLogsEnabled,
-          }).catch(() => null)
-        );
-        warmTasks.push(
-          this.buildFlapOuterSellQuoteRoute({
-            chainId: input.chainId,
-            currentToken: rawQuoteToken,
-            targetToken: ZERO_ADDRESS,
-            debug: consoleLogsEnabled,
-          }).catch(() => null)
-        );
-        const outerTargetPool = await this.getPreferredFlapOuterTargetPool({
+        const outerTargetPoolTask = this.getPreferredFlapOuterTargetPool({
           chainId: input.chainId,
           tokenAddress: token,
           quoteTokenAddress: rawQuoteToken,
@@ -482,36 +461,79 @@ export class TradeService {
           debug: consoleLogsEnabled,
           logEvent: 'prewarm.target_pool.selected',
         }).catch(() => ({ poolAddress: null, preferHint: null as 'v2' | 'v3' | null, fee: undefined }));
-        if (outerTargetPool.poolAddress) {
-          warmTasks.push(
-            this.resolveKnownPoolRouteDesc({
-              chainId: input.chainId,
-              tokenIn: rawQuoteToken,
-              tokenOut: token,
-              poolAddress: outerTargetPool.poolAddress,
-              preferHint: outerTargetPool.preferHint,
-            }).catch(() => null)
-          );
-          warmTasks.push(
-            this.resolveKnownPoolRouteDesc({
-              chainId: input.chainId,
-              tokenIn: token,
-              tokenOut: rawQuoteToken,
-              poolAddress: outerTargetPool.poolAddress,
-              preferHint: outerTargetPool.preferHint,
-            }).catch(() => null)
-          );
-        }
+
+        backgroundWarmTasks.push((async () => {
+          const rawQuoteInfo = await this.getFlapOuterQuoteTokenInfo(input.chainId, rawQuoteToken, consoleLogsEnabled);
+          const rawQuotePool = this.getKnownDexPoolAddress(rawQuoteInfo);
+          if (rawQuotePool) {
+            await this.primeKnownPoolCounterpartyToken(input.chainId, rawQuotePool, rawQuoteToken, consoleLogsEnabled);
+          }
+        })().catch(() => null));
+        criticalWarmTasks.push(
+          this.buildFlapOuterBuyQuoteRoute({
+            chainId: input.chainId,
+            currentToken: ZERO_ADDRESS,
+            targetToken: rawQuoteToken,
+            debug: consoleLogsEnabled,
+          }).catch(() => null)
+        );
+        backgroundWarmTasks.push(
+          this.buildFlapOuterSellQuoteRoute({
+            chainId: input.chainId,
+            currentToken: rawQuoteToken,
+            targetToken: ZERO_ADDRESS,
+            debug: consoleLogsEnabled,
+          }).catch(() => null)
+        );
+        criticalWarmTasks.push((async () => {
+          const outerTargetPool = await outerTargetPoolTask;
+          if (!outerTargetPool.poolAddress) return null;
+          return await this.resolveKnownPoolRouteDesc({
+            chainId: input.chainId,
+            tokenIn: rawQuoteToken,
+            tokenOut: token,
+            poolAddress: outerTargetPool.poolAddress,
+            preferHint: outerTargetPool.preferHint,
+          });
+        })().catch(() => null));
+        backgroundWarmTasks.push((async () => {
+          const outerTargetPool = await outerTargetPoolTask;
+          if (!outerTargetPool.poolAddress) return null;
+          return await this.resolveKnownPoolRouteDesc({
+            chainId: input.chainId,
+            tokenIn: token,
+            tokenOut: rawQuoteToken,
+            poolAddress: outerTargetPool.poolAddress,
+            preferHint: outerTargetPool.preferHint,
+          });
+        })().catch(() => null));
       }
 
-      await Promise.allSettled(warmTasks);
+      await Promise.allSettled(criticalWarmTasks);
+      if (backgroundWarmTasks.length > 0) {
+        void Promise.allSettled(backgroundWarmTasks).then(() => {
+          const backgroundElapsedMs = Date.now() - startedAt;
+          if (consoleLogsEnabled && backgroundElapsedMs >= 600) {
+            console.info('[trade.buy.prewarm.background]', {
+              chainId: input.chainId,
+              tokenAddress: input.tokenAddress,
+              fromAddress: account.address,
+              backgroundTaskCount: backgroundWarmTasks.length,
+              elapsedMs: backgroundElapsedMs,
+              warmKey,
+            });
+          }
+        });
+      }
       const elapsedMs = Date.now() - startedAt;
       if (consoleLogsEnabled || elapsedMs >= 600) {
         console.info('[trade.buy.prewarm]', {
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
           fromAddress: account.address,
-          warmTaskCount: warmTasks.length,
+          warmTaskCount: criticalWarmTasks.length + backgroundWarmTasks.length,
+          criticalWarmTaskCount: criticalWarmTasks.length,
+          backgroundWarmTaskCount: backgroundWarmTasks.length,
           hasBridgeToken: !!bridgeToken,
           tokenPrefer,
           elapsedMs,

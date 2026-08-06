@@ -368,9 +368,9 @@ export function QuickTradePanel({
             prewarmIndicatorTitle={prewarmIndicatorTitle}
           />
 
-          <div className="mx-3 h-px bg-zinc-800/80" />
+          <div className="mx-2.5 h-px bg-zinc-800/80" />
 
-          <div className="pt-0.5">
+          <div>
             <SellSection {...sellSectionProps} />
           </div>
 
