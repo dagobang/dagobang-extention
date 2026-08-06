@@ -1826,10 +1826,27 @@ export class TradeService {
     return normalized === poolManager || normalized === infinityVault;
   }
 
-  private static getKnownDexPoolAddress(tokenInfo?: Pick<TokenInfo, 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address'> | null): Address | null {
-    const candidate = tokenInfo?.pool_pair || tokenInfo?.biggest_pool_address || tokenInfo?.tpool_pool_address;
-    if (this.isFlapCompatPoolAddress(candidate)) return null;
-    return isAddressLike(candidate) ? candidate as Address : null;
+  private static getKnownDexPoolAddress(tokenInfo?: Partial<Pick<TokenInfo, 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address' | 'launchpad' | 'launchpad_platform' | 'launchpad_status'>> | null): Address | null {
+    const launchpadPlatform = tokenInfo ? resolveTradeLaunchpadPlatform(tokenInfo as TokenInfo) : '';
+    const preferBiggestFirst = Number(tokenInfo?.launchpad_status ?? 0) === 1
+      && typeof launchpadPlatform === 'string'
+      && launchpadPlatform.toLowerCase().startsWith('flap');
+    const candidates = preferBiggestFirst
+      ? [
+        tokenInfo?.biggest_pool_address,
+        tokenInfo?.pool_pair,
+        tokenInfo?.tpool_pool_address,
+      ]
+      : [
+        tokenInfo?.pool_pair,
+        tokenInfo?.biggest_pool_address,
+        tokenInfo?.tpool_pool_address,
+      ];
+    for (const candidate of candidates) {
+      if (this.isFlapCompatPoolAddress(candidate)) continue;
+      if (isAddressLike(candidate)) return candidate as Address;
+    }
+    return null;
   }
 
   private static logFlapStocksRoute(debug: boolean | undefined, event: string, payload: Record<string, unknown>) {

@@ -170,9 +170,10 @@ export class FlapAPI {
 
     return {
       ...input.tokenInfo,
-      pool_pair: input.tokenInfo.pool_pair || pairAddress,
+      // For migrated Flap tokens, prefer DexScreener's live pool over static coin.pool.
+      pool_pair: pairAddress,
       biggest_pool_address: pairAddress,
-      tpool_pool_address: input.tokenInfo.tpool_pool_address || pairAddress,
+      tpool_pool_address: pairAddress,
       dex_type: this.mapDexScreenerPairDexType(bestPair) || input.tokenInfo.dex_type,
     };
   }
