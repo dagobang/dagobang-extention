@@ -66,11 +66,17 @@ declare global {
   const getSolanaTipMinimumNative: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getSolanaTipMinimumNative
   const getSolanaTipPresetValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getSolanaTipPresetValue
   const getSolanaTipProviderLabel: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getSolanaTipProviderLabel
+  const hasConfirmedFlapOuterRoute: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').hasConfirmedFlapOuterRoute
+  const hasConfirmedFlapStocksIdentity: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').hasConfirmedFlapStocksIdentity
+  const inferLaunchpadFamilyByAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/launchpadFamily').inferLaunchpadFamilyByAddress
   const injectScript: typeof import('wxt/utils/inject-script').injectScript
   const isAllowanceLikeText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').isAllowanceLikeText
+  const isFlapSuffixAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/launchpadFamily').isFlapSuffixAddress
+  const isFourMemeSuffixAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/launchpadFamily').isFourMemeSuffixAddress
   const isHexPrivateKey: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').isHexPrivateKey
   const isInFlightLimitLikeText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').isInFlightLimitLikeText
   const isObject: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').isObject
+  const isUsableFlapDexPoolAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').isUsableFlapDexPoolAddress
   const loadContractAbi: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi').loadContractAbi
   const navigateToUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').navigateToUrl
   const normalizeGmgnChainName: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeGmgnChainName
@@ -97,6 +103,7 @@ declare global {
   const resolveEnabledSolanaSwqosProviderTypes: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').resolveEnabledSolanaSwqosProviderTypes
   const resolveSingleEnabledSolanaTipProvider: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').resolveSingleEnabledSolanaTipProvider
   const resolveSolanaTipConfig: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').resolveSolanaTipConfig
+  const resolveTokenLaunchpadPlatform: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/launchpadFamily').resolveTokenLaunchpadPlatform
   const resolveTrenchesStageByFid: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').resolveTrenchesStageByFid
   const shouldUseMergedTokenValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').shouldUseMergedTokenValue
   const storage: typeof import('wxt/utils/storage').storage
@@ -167,6 +174,9 @@ declare global {
   // @ts-ignore
   export type { Locale } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/i18n')
+  // @ts-ignore
+  export type { LaunchpadFamily } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/launchpadFamily'
+  import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/launchpadFamily')
   // @ts-ignore
   export type { SiteInfo } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites')

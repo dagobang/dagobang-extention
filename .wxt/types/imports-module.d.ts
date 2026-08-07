@@ -30,9 +30,11 @@ declare module '#imports' {
   export { encryptJson, decryptJson } from '../utils/crypto';
   export { defaultSettings } from '../utils/defaults';
   export { getDexPoolPrefer, parseGweiToWei } from '../utils/dexUtils';
+  export { isUsableFlapDexPoolAddress, hasConfirmedFlapStocksIdentity, hasConfirmedFlapOuterRoute } from '../utils/flap';
   export { normalizeHexPrivateKey, isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime, formatAgeShort, formatCountShort, formatCompactNumber, formatBnbAmount, formatShortAddress, formatBroadcastProvider, formatRpcEndpointLabel } from '../utils/format';
   export { isObject, asAddress, normalizeGmgnChainName, toArrayPayload, normalizeInlineWebpData, shouldUseMergedTokenValue, normalizePublicTokenData, normalizeNewPoolTokenData, resolveTrenchesStageByFid, normalizeTrenchesTokenData, normalizeTokenPageTokenData, normalizeTokenStatTokenData, extractPublicBroadcastCreates, extractFirstFromObject, extractNumber, normalizeTokenAddressKey, extractTokenAddress, extractTokenAddresses, extractTweetId, extractText, extractMedia, extractGmgnTweetText, extractGmgnUserFields, extractUser, extractTimestampMs, parseGmgnEnvelope, extractGmgnWsConnectionInfo, TrenchesStage } from '../utils/gmgnWs';
   export { t, normalizeLocale, Locale } from '../utils/i18n';
+  export { isFlapSuffixAddress, isFourMemeSuffixAddress, inferLaunchpadFamilyByAddress, resolveTokenLaunchpadPlatform, LaunchpadFamily } from '../utils/launchpadFamily';
   export { call } from '../utils/messaging';
   export { parsePlatformTokenLink, navigateToUrl, parseCurrentUrl, parseCurrentUrlFull, SiteInfo } from '../utils/sites';
   export { DEFAULT_SOLANA_TIP_PRESET_VALUES, getSolanaTipProviderLabel, getSolanaTipMinimumNative, getSolanaTipAccounts, getRandomSolanaTipRecipient, getSolanaTipPresetValue, resolveEnabledSolanaSwqosProviderTypes, resolveSingleEnabledSolanaTipProvider, resolveSolanaTipConfig } from '../utils/solanaTip';

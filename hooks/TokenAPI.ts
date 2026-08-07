@@ -7,6 +7,8 @@ import { chainNames, getChainIdByName } from "@/constants/chains";
 import { ChainId } from "@/constants/chains/chainId";
 import { MEME_SUFFIXS } from "@/constants/meme";
 import { getSupportedLaunchpads, normalizeLaunchpadPlatform } from "@/constants/launchpad";
+import { hasConfirmedFlapOuterRoute, hasConfirmedFlapStocksIdentity, isUsableFlapDexPoolAddress } from "@/utils/flap";
+import { inferLaunchpadFamilyByAddress, resolveTokenLaunchpadPlatform } from "@/utils/launchpadFamily";
 
 const FOUR_MEME_LIKE_LAUNCHPADS = new Set([
     'fourmeme',
@@ -30,11 +32,6 @@ const BSC_FLAP_TERMINAL_QUOTES = new Set([
     '0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d',
 ]);
 
-const isFlapSuffixAddress = (address: string) => {
-    const lower = String(address || '').trim().toLowerCase();
-    return lower.endsWith('7777') || lower.endsWith('8888');
-};
-
 export class TokenAPI {
     private static balanceCache = new Map<string, { ts: number; value: string | null }>();
     private static balanceInFlight = new Map<string, Promise<string | null>>();
@@ -56,6 +53,7 @@ export class TokenAPI {
         const tokenKey = chainId === ChainId.SOL ? tokenAddress : tokenAddress.toLowerCase();
         return `${platform}:${chain}:${tokenKey}`;
     }
+
     private static resolveTokenInfoCacheTtlMs(platform: string, requestedTtlMs: number, value: TokenInfo | null | undefined) {
         if (!(requestedTtlMs > 0)) return 0;
         if (platform === 'altfun' && value?.launchpad_status === 1) {
@@ -150,25 +148,17 @@ export class TokenAPI {
             || Array.isArray(tokenInfo.flap_supported_assets);
     }
 
-    private static hasFlapStocksMetadata(
-        tokenInfo?: Pick<TokenInfo, 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'> | null,
-    ): boolean {
-        if (!tokenInfo) return false;
-        return tokenInfo.flap_stocks_vault_version != null
-            || !!tokenInfo.flap_dividend_token
-            || !!tokenInfo.flap_vault_factory
-            || !!tokenInfo.flap_basket_token
-            || Array.isArray(tokenInfo.flap_supported_assets);
-    }
-
     private static resolveFlapLaunchpadPlatform(
+        chainId: number,
         requestedPlatform: string,
-        tokenInfo?: Partial<Pick<TokenInfo, 'launchpad_platform' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'>> | null,
+        tokenInfo?: Partial<Pick<TokenInfo, 'address' | 'launchpad_platform' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'>> | null,
     ): string {
-        if (this.hasFlapStocksMetadata(tokenInfo)) return 'flap_stocks';
-        return normalizeLaunchpadPlatform(tokenInfo?.launchpad_platform)
-            ?? normalizeLaunchpadPlatform(requestedPlatform)
-            ?? 'flap';
+        if (hasConfirmedFlapStocksIdentity(chainId, tokenInfo)) return 'flap_stocks';
+        return resolveTokenLaunchpadPlatform({
+            address: tokenInfo?.address,
+            launchpad_platform: tokenInfo?.launchpad_platform,
+            requestedPlatform,
+        }) || 'flap';
     }
 
     private static hasDexRouteMinimum(tokenInfo?: Pick<TokenInfo, 'quote_token_address' | 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address'> | null): boolean {
@@ -303,7 +293,8 @@ export class TokenAPI {
                 nextValue = res.tokenInfo;
             } else {
                 let address = tokenAddress;
-                const shouldParallelFlapLookup = FLAP_LIKE_LAUNCHPADS.has(normalizedRequestedPlatform) || isFlapSuffixAddress(address);
+                const suffixLaunchpadFamily = inferLaunchpadFamilyByAddress(address);
+                const shouldParallelFlapLookup = FLAP_LIKE_LAUNCHPADS.has(normalizedRequestedPlatform) || suffixLaunchpadFamily === 'flap';
                 const parallelFlapInfoPromise = shouldParallelFlapLookup
                     ? this.getTokenInfoByFlap(normalizedRequestedPlatform || 'flap', chain, address).catch(() => null)
                     : null;
@@ -322,7 +313,12 @@ export class TokenAPI {
                             if (platform === 'gmgn' && chainId === ChainId.SOL) {
                                 nextValue = tokenInfo;
                             } else {
-                            const normalizedLaunchpad = normalizeLaunchpadPlatform(tokenInfo.launchpad_platform) ?? '';
+                            const normalizedLaunchpad = resolveTokenLaunchpadPlatform({
+                                address,
+                                launchpad: tokenInfo.launchpad,
+                                launchpad_platform: tokenInfo.launchpad_platform,
+                                requestedPlatform: normalizedRequestedPlatform,
+                            });
                             const supportedLaunchpads = Number.isFinite(chainId)
                                 ? new Set(getSupportedLaunchpads(chainId))
                                 : new Set<string>();
@@ -384,9 +380,9 @@ export class TokenAPI {
                 }
 
                 if (nextValue == null) {
-                    if (FLAP_LIKE_LAUNCHPADS.has(normalizedRequestedPlatform) || address.endsWith("7777") || address.endsWith("8888")) {
+                    if (FLAP_LIKE_LAUNCHPADS.has(normalizedRequestedPlatform) || suffixLaunchpadFamily === 'flap') {
                         nextValue = await this.getTokenInfoByFlap(platform, chain, address);
-                    } else if (FOUR_MEME_LIKE_LAUNCHPADS.has(normalizedRequestedPlatform)) {
+                    } else if (FOUR_MEME_LIKE_LAUNCHPADS.has(normalizedRequestedPlatform) || suffixLaunchpadFamily === 'fourmeme') {
                         nextValue = await this.getTokenInfoByFourmeme(platform, chain, address);
                     } else {
                         nextValue = await this.buildDexTokenInfoFromDexScreener(chain, address);
@@ -539,11 +535,21 @@ export class TokenAPI {
         const httpInfo = contractInfo
             ? null
             : await this.getTokenInfoByFlapHttp(platform, chain, address).catch(() => null);
-        const isListedOnDex = !!contractInfo && (
-            Number(contractInfo.status ?? 0) === 1
-            || String(contractInfo.pool || '').toLowerCase() !== zeroAddress.toLowerCase()
-        );
-        const resolvedPlatform = this.resolveFlapLaunchpadPlatform(platform, {
+        const rawLaunchpadStatus = Number(contractInfo?.status ?? Number.NaN);
+        const hasUsableDexPool = !!contractInfo && isUsableFlapDexPoolAddress(address, contractInfo.pool);
+        const isListedOnDex = !!contractInfo && hasConfirmedFlapOuterRoute({
+            address,
+            flap_pool_model: contractInfo.poolModel,
+            flap_pool_compat_address: contractInfo.poolCompatAddress,
+            flap_cl_pool_id: contractInfo.clPoolId,
+            flap_v4_fee: contractInfo.v4Fee,
+            flap_v4_tick_spacing: contractInfo.v4TickSpacing,
+            pool_pair: hasUsableDexPool ? contractInfo.pool : undefined,
+            biggest_pool_address: hasUsableDexPool ? contractInfo.pool : undefined,
+            tpool_pool_address: hasUsableDexPool ? contractInfo.pool : undefined,
+        });
+        const resolvedPlatform = this.resolveFlapLaunchpadPlatform(getChainIdByName(chain), platform, {
+            address,
             launchpad_platform: httpInfo?.launchpad_platform,
             flap_stocks_vault_version: contractInfo?.stocksVaultVersion,
             flap_dividend_token: contractInfo?.dividendToken,
@@ -574,9 +580,11 @@ export class TokenAPI {
             httpInfo.flap_supported_assets = contractInfo.supportedAssets;
             httpInfo.launchpad = 'flap';
             httpInfo.launchpad_platform = resolvedPlatform;
-            httpInfo.launchpad_status = isListedOnDex ? 1 : Number(httpInfo.launchpad_status ?? 0);
+              httpInfo.launchpad_status = Number.isFinite(rawLaunchpadStatus)
+                  ? rawLaunchpadStatus
+                  : Number(httpInfo.launchpad_status ?? 0);
             httpInfo.tpool_launch_type = httpInfo.launchpad_status === 1 ? 'migrated' : (httpInfo.tpool_launch_type || 'launching');
-            if (contractInfo.poolModel === 'classic' && String(contractInfo.pool || '').toLowerCase() !== zeroAddress.toLowerCase()) {
+            if (contractInfo.poolModel === 'classic' && hasUsableDexPool) {
                 httpInfo.pool_pair = httpInfo.pool_pair || contractInfo.pool;
                 httpInfo.biggest_pool_address = httpInfo.biggest_pool_address || contractInfo.pool;
                 httpInfo.tpool_pool_address = httpInfo.tpool_pool_address || contractInfo.pool;
@@ -600,12 +608,12 @@ export class TokenAPI {
                 launchpad: 'flap',
                 launchpad_progress: progress,
                 launchpad_platform: resolvedPlatform,
-                launchpad_status: isListedOnDex ? 1 : 0,
+                  launchpad_status: Number.isFinite(rawLaunchpadStatus) ? rawLaunchpadStatus : 0,
                 quote_token: contractInfo.quoteTokenAddress,
                 quote_token_address: contractInfo.quoteTokenAddress,
-                pool_pair: contractInfo.poolModel === 'classic' && contractInfo.pool !== zeroAddress ? contractInfo.pool : undefined,
-                biggest_pool_address: contractInfo.poolModel === 'classic' && contractInfo.pool !== zeroAddress ? contractInfo.pool : undefined,
-                tpool_pool_address: contractInfo.poolModel === 'classic' && contractInfo.pool !== zeroAddress ? contractInfo.pool : undefined,
+                pool_pair: contractInfo.poolModel === 'classic' && hasUsableDexPool ? contractInfo.pool : undefined,
+                biggest_pool_address: contractInfo.poolModel === 'classic' && hasUsableDexPool ? contractInfo.pool : undefined,
+                tpool_pool_address: contractInfo.poolModel === 'classic' && hasUsableDexPool ? contractInfo.pool : undefined,
                 tpool_launch_type: isListedOnDex ? 'migrated' : 'launching',
                 nativeToQuoteSwapEnabled: contractInfo.nativeToQuoteSwapEnabled,
                 tokenVersion: contractInfo.tokenVersion,

@@ -39,6 +39,8 @@ import { OpenFourInnerLaunchpadManager, OpenFourRegistryAddress } from '@/consta
 import FlapAPI from '@/hooks/FlapAPI';
 import DexScreenerAPI, { type DexScreenerPair } from '@/hooks/DexScreenerAPI';
 import { GmgnAPI } from '@/hooks/GmgnAPI';
+import { hasConfirmedFlapOuterRoute, hasConfirmedFlapStocksIdentity, isUsableFlapDexPoolAddress } from '@/utils/flap';
+import { isFlapSuffixAddress, resolveTokenLaunchpadPlatform } from '@/utils/launchpadFamily';
 import { call } from '@/utils/messaging';
 
 function getDefaultBridgeV3Fee(chainId: number): number {
@@ -81,14 +83,6 @@ const OPEN_FOUR_PLATFORMS = new Set([
 ]);
 
 const OPEN_FOUR_RUNTIME_PLATFORMS = new Set(OPEN_FOUR_PLATFORMS);
-const FLAP_STOCKS_PLATFORMS = new Set([
-  'flap_stocks',
-]);
-
-const isFlapSuffixAddress = (address?: string | null) => {
-  const lower = String(address || '').trim().toLowerCase();
-  return lower.endsWith('7777') || lower.endsWith('8888');
-};
 
 const openFourRegistryAbi = parseAbi([
   'function openFourCore() view returns (address)',
@@ -132,6 +126,23 @@ type OpenFourTradeEstimate = {
   executionPrice: bigint;
 };
 
+type FlapStocksQuoteTopology = {
+  rawQuoteToken: Address;
+  terminalQuoteToken: Address;
+  rawQuotePoolAddress: Address;
+  rawQuotePoolPrefer: 'v2' | 'v3' | null;
+};
+
+type LaunchpadRouteClassification = {
+  platform: string;
+  isHyperAltfun: boolean;
+  isFlap: boolean;
+  isFlapStocks: boolean;
+  isInner: boolean;
+  rawLaunchpadStatus: number | null;
+  hasConfirmedOuterRoute: boolean;
+};
+
 const DEFAULT_SWAP_GAS_LIMIT = 2000000n;
 const OPEN_FOUR_SWAP_GAS_LIMIT = 2500000n;
 
@@ -139,10 +150,14 @@ function resolveLaunchpadPlatform(platform: string | undefined): string {
   return normalizeLaunchpadPlatform(platform) ?? String(platform || '').trim().toLowerCase();
 }
 
-function resolveTradeLaunchpadPlatform(tokenInfo: Pick<TokenInfo, 'launchpad' | 'launchpad_platform'>): string {
+function resolveTradeLaunchpadPlatform(tokenInfo: Pick<TokenInfo, 'launchpad' | 'launchpad_platform'> & Partial<Pick<TokenInfo, 'address'>>): string {
   const launchpad = resolveLaunchpadPlatform(tokenInfo.launchpad);
   if (launchpad === 'openfour') return 'openfour';
-  return resolveLaunchpadPlatform(tokenInfo.launchpad_platform || tokenInfo.launchpad);
+  return resolveTokenLaunchpadPlatform({
+    address: tokenInfo.address,
+    launchpad: tokenInfo.launchpad,
+    launchpad_platform: tokenInfo.launchpad_platform,
+  });
 }
 
 function isFourMemePlatform(platform: string): boolean {
@@ -385,14 +400,15 @@ export class TradeService {
       ];
       const backgroundWarmTasks: Array<Promise<unknown>> = [];
 
-      const token = input.tokenAddress;
-      const bridgeToken = getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
-      const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
-      const dexPrefer = getDexPoolPrefer(tokenInfo.dex_type);
-      const tokenPrefer = dexPrefer === 'v2' || dexPrefer === 'v3' ? dexPrefer : (bridgePrefer ?? 'v2');
-      const launchpadPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
-      const rawQuoteToken = this.getLaunchpadRawQuoteToken(input.chainId, tokenInfo, launchpadPlatform);
-      const isFlapStocks = !!rawQuoteToken && this.isFlapStocksPlatform(launchpadPlatform, tokenInfo, input.chainId);
+        const token = input.tokenAddress;
+        const bridgeToken = getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
+        const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
+        const dexPrefer = getDexPoolPrefer(tokenInfo.dex_type);
+        const tokenPrefer = dexPrefer === 'v2' || dexPrefer === 'v3' ? dexPrefer : (bridgePrefer ?? 'v2');
+        const launchpadRoute = this.classifyLaunchpadRoute(input.chainId, tokenInfo);
+        const launchpadPlatform = launchpadRoute.platform;
+        const rawQuoteToken = this.getLaunchpadRawQuoteToken(input.chainId, tokenInfo, launchpadPlatform);
+        const isFlapStocks = !!rawQuoteToken && launchpadRoute.isFlapStocks;
 
       const amountIn = 0n;
 
@@ -712,7 +728,7 @@ export class TradeService {
       ? false
       : usesOpenFourRuntime(platform)
         ? !!openFourRuntime && openFourRuntime.phase === 1 && !openFourRuntime.paused
-        : this.isInnerDisk(input.tokenInfo);
+        : this.isInnerDisk(input.tokenInfo, input.chainId, openFourRuntime);
     if (!isInner) return null;
 
     const launchpadConfig = this.getLaunchpadConfig(input.tokenInfo, input.chainId, openFourRuntime);
@@ -747,14 +763,42 @@ export class TradeService {
     return routeManager !== ZERO_ADDRESS ? routeManager : null;
   }
 
-  private static isInnerDisk(tokenInfo: TokenInfo): boolean {
-    if (tokenInfo.launchpad) {
-      const platform = resolveTradeLaunchpadPlatform(tokenInfo);
-      if (INNER_LAUNCHPAD_PLATFORMS.has(platform)) {
-        return tokenInfo.launchpad_status !== 1;
-      }
-    }
-    return false;
+  private static classifyLaunchpadRoute(
+    chainId: number,
+    tokenInfo: TokenInfo,
+    openFourRuntime?: OpenFourRuntimeState | null,
+  ): LaunchpadRouteClassification {
+    const rawPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
+    const isHyperAltfun = chainId === ChainId.HYPER && isHyperAltfunPlatform(rawPlatform);
+    const isFlap = rawPlatform.startsWith('flap');
+    const isFlapStocks = isFlap && hasConfirmedFlapStocksIdentity(chainId, tokenInfo);
+    const platform = isFlap ? (isFlapStocks ? 'flap_stocks' : 'flap') : rawPlatform;
+    const rawLaunchpadStatus = Number(tokenInfo.launchpad_status ?? Number.NaN);
+    const normalizedLaunchpadStatus = Number.isFinite(rawLaunchpadStatus) ? rawLaunchpadStatus : null;
+    const hasConfirmedOuterRoute = isFlap && hasConfirmedFlapOuterRoute(tokenInfo);
+    const isInner = isHyperAltfun
+      ? false
+      : usesOpenFourRuntime(platform)
+        ? !!openFourRuntime && openFourRuntime.phase === 1 && !openFourRuntime.paused
+        : isFlap
+          ? normalizedLaunchpadStatus != null
+            ? normalizedLaunchpadStatus !== 1
+            : !hasConfirmedOuterRoute
+          : INNER_LAUNCHPAD_PLATFORMS.has(platform) && tokenInfo.launchpad_status !== 1;
+
+    return {
+      platform,
+      isHyperAltfun,
+      isFlap,
+      isFlapStocks,
+      isInner,
+      rawLaunchpadStatus: normalizedLaunchpadStatus,
+      hasConfirmedOuterRoute,
+    };
+  }
+
+  private static isInnerDisk(tokenInfo: TokenInfo, chainId: number, openFourRuntime?: OpenFourRuntimeState | null): boolean {
+    return this.classifyLaunchpadRoute(chainId, tokenInfo, openFourRuntime).isInner;
   }
 
   private static async getOpenFourNetworkContracts(client: any, chainId: number): Promise<OpenFourNetworkContracts | null> {
@@ -1018,14 +1062,197 @@ export class TradeService {
     return null;
   }
 
+  private static async resolveFlapStocksQuoteTopology(input: {
+    chainId: number;
+    rawQuoteToken: Address;
+    anchorToken: Address;
+    debug?: boolean;
+    logEvent?: string;
+  }): Promise<FlapStocksQuoteTopology | null> {
+    if (this.isFlapOuterRouteTerminalToken(input.chainId, input.rawQuoteToken)) return null;
+
+    let rawQuoteInfo = await this.getFlapOuterQuoteTokenInfo(input.chainId, input.rawQuoteToken, input.debug);
+    if (!rawQuoteInfo) {
+      rawQuoteInfo = await this.buildDexTokenInfoFromDexScreener({
+        chainId: input.chainId,
+        tokenAddress: input.rawQuoteToken,
+        baseTokenAddress: input.anchorToken,
+        debug: input.debug,
+      }) ?? null;
+    }
+    if (!rawQuoteInfo) {
+      this.logFlapStocksRoute(input.debug, `${input.logEvent ?? 'quote.topology'}.no_raw_quote_metadata`, {
+        chainId: input.chainId,
+        rawQuoteToken: input.rawQuoteToken,
+        anchorToken: input.anchorToken,
+      });
+      return null;
+    }
+
+    const metadataQuote = this.normalizeFlapPoolCounterpartyToken(input.chainId, rawQuoteInfo.quote_token_address);
+    const preferredQuoteToken = metadataQuote ?? this.getDefaultFlapStocksBridgeToken(input.chainId);
+    if (!preferredQuoteToken) {
+      this.logFlapStocksRoute(input.debug, `${input.logEvent ?? 'quote.topology'}.missing_terminal_quote`, {
+        chainId: input.chainId,
+        rawQuoteToken: input.rawQuoteToken,
+        anchorToken: input.anchorToken,
+        rawQuotePoolPair: rawQuoteInfo.pool_pair ?? null,
+        rawQuoteBiggestPoolAddress: rawQuoteInfo.biggest_pool_address ?? null,
+      });
+      return null;
+    }
+
+    const rawQuotePool = await this.getPreferredFlapOuterTargetPool({
+      chainId: input.chainId,
+      tokenAddress: input.rawQuoteToken,
+      quoteTokenAddress: preferredQuoteToken,
+      tokenInfo: rawQuoteInfo,
+      debug: input.debug,
+      logEvent: `${input.logEvent ?? 'quote.topology'}.target_pool.selected`,
+    });
+    if (!rawQuotePool.poolAddress) {
+      this.logFlapStocksRoute(input.debug, `${input.logEvent ?? 'quote.topology'}.missing_raw_quote_pool`, {
+        chainId: input.chainId,
+        rawQuoteToken: input.rawQuoteToken,
+        anchorToken: input.anchorToken,
+        preferredQuoteToken,
+      });
+      return null;
+    }
+
+    const poolCounterparty = await this.primeKnownPoolCounterpartyToken(
+      input.chainId,
+      rawQuotePool.poolAddress,
+      input.rawQuoteToken,
+      input.debug,
+    );
+    const terminalQuoteToken = poolCounterparty ?? metadataQuote ?? this.getDefaultFlapStocksBridgeToken(input.chainId);
+    if (!terminalQuoteToken || !this.isFlapOuterRouteTerminalToken(input.chainId, terminalQuoteToken)) {
+      this.logFlapStocksRoute(input.debug, `${input.logEvent ?? 'quote.topology'}.non_terminal_quote`, {
+        chainId: input.chainId,
+        rawQuoteToken: input.rawQuoteToken,
+        anchorToken: input.anchorToken,
+        terminalQuoteToken: terminalQuoteToken ?? null,
+      });
+      return null;
+    }
+
+    this.logFlapStocksRoute(input.debug, `${input.logEvent ?? 'quote.topology'}.resolved`, {
+      chainId: input.chainId,
+      rawQuoteToken: input.rawQuoteToken,
+      anchorToken: input.anchorToken,
+      terminalQuoteToken,
+      rawQuotePoolAddress: rawQuotePool.poolAddress,
+      rawQuotePoolPrefer: rawQuotePool.preferHint ?? null,
+      rawQuotePoolFee: rawQuotePool.fee ?? null,
+    });
+    return {
+      rawQuoteToken: input.rawQuoteToken,
+      terminalQuoteToken,
+      rawQuotePoolAddress: rawQuotePool.poolAddress,
+      rawQuotePoolPrefer: rawQuotePool.preferHint,
+    };
+  }
+
+  private static async buildDeterministicFlapStocksBuyQuoteRoute(input: {
+    chainId: number;
+    currentToken: Address;
+    targetToken: Address;
+    debug?: boolean;
+    depth?: number;
+  }): Promise<SwapDescLike[] | null> {
+    const topology = await this.resolveFlapStocksQuoteTopology({
+      chainId: input.chainId,
+      rawQuoteToken: input.targetToken,
+      anchorToken: input.currentToken,
+      debug: input.debug,
+      logEvent: 'buy.route.fixed',
+    });
+    if (!topology) return null;
+
+    const descs: SwapDescLike[] = [];
+    let routeCurrentToken = input.currentToken;
+    if (routeCurrentToken.toLowerCase() !== topology.terminalQuoteToken.toLowerCase()) {
+      descs.push(await this.resolveRouteHopDesc({
+        chainId: input.chainId,
+        tokenIn: routeCurrentToken,
+        tokenOut: topology.terminalQuoteToken,
+        prefer: getBridgeTokenDexPreference(input.chainId as ChainId, topology.terminalQuoteToken) ?? null,
+      }));
+      routeCurrentToken = topology.terminalQuoteToken;
+    }
+
+    this.logFlapStocksRoute(input.debug, 'buy.route.fixed.apply', {
+      chainId: input.chainId,
+      depth: input.depth ?? 0,
+      currentToken: input.currentToken,
+      targetToken: input.targetToken,
+      terminalQuoteToken: topology.terminalQuoteToken,
+      rawQuotePoolAddress: topology.rawQuotePoolAddress,
+      rawQuotePoolPrefer: topology.rawQuotePoolPrefer ?? null,
+    });
+    descs.push(await this.resolveKnownPoolRouteDesc({
+      chainId: input.chainId,
+      tokenIn: routeCurrentToken,
+      tokenOut: input.targetToken,
+      poolAddress: topology.rawQuotePoolAddress,
+      preferHint: topology.rawQuotePoolPrefer,
+    }));
+    return descs;
+  }
+
+  private static async buildDeterministicFlapStocksSellQuoteRoute(input: {
+    chainId: number;
+    currentToken: Address;
+    targetToken: Address;
+    debug?: boolean;
+  }): Promise<SwapDescLike[] | null> {
+    const topology = await this.resolveFlapStocksQuoteTopology({
+      chainId: input.chainId,
+      rawQuoteToken: input.currentToken,
+      anchorToken: input.targetToken,
+      debug: input.debug,
+      logEvent: 'sell.route.fixed',
+    });
+    if (!topology) return null;
+
+    const descs: SwapDescLike[] = [];
+    this.logFlapStocksRoute(input.debug, 'sell.route.fixed.apply', {
+      chainId: input.chainId,
+      currentToken: input.currentToken,
+      targetToken: input.targetToken,
+      terminalQuoteToken: topology.terminalQuoteToken,
+      rawQuotePoolAddress: topology.rawQuotePoolAddress,
+      rawQuotePoolPrefer: topology.rawQuotePoolPrefer ?? null,
+    });
+    descs.push(await this.resolveKnownPoolRouteDesc({
+      chainId: input.chainId,
+      tokenIn: input.currentToken,
+      tokenOut: topology.terminalQuoteToken,
+      poolAddress: topology.rawQuotePoolAddress,
+      preferHint: topology.rawQuotePoolPrefer,
+    }));
+    if (topology.terminalQuoteToken.toLowerCase() === input.targetToken.toLowerCase()) {
+      return descs;
+    }
+    descs.push(await this.resolveRouteHopDesc({
+      chainId: input.chainId,
+      tokenIn: topology.terminalQuoteToken,
+      tokenOut: input.targetToken,
+      prefer: getBridgeTokenDexPreference(input.chainId as ChainId, topology.terminalQuoteToken) ?? null,
+    }));
+    return descs;
+  }
+
   private static buildKnownLaunchpadBuyRouteDesc(input: {
     chainId: number;
     tokenIn: Address;
     tokenInfo: TokenInfo;
   }): SwapDescLike | null {
-    const platform = resolveTradeLaunchpadPlatform(input.tokenInfo);
-    if (!INNER_LAUNCHPAD_PLATFORMS.has(platform) || !this.isInnerDisk(input.tokenInfo)) return null;
-    if ((platform === 'flap' || platform === 'flap_stocks') && !this.hasConfirmedFlapLaunchpadIdentity(input.tokenInfo)) {
+    const classification = this.classifyLaunchpadRoute(input.chainId, input.tokenInfo);
+    const platform = classification.platform;
+    if (!INNER_LAUNCHPAD_PLATFORMS.has(platform) || !classification.isInner) return null;
+    if (classification.isFlap && !this.hasConfirmedFlapLaunchpadIdentity(input.tokenInfo)) {
       return null;
     }
 
@@ -1229,30 +1456,10 @@ export class TradeService {
     return !!extensionID && extensionID !== '0x' && extensionID !== '0x0';
   }
 
-  private static resolveFlapStocksLaunchpadPlatform(tokenInfo?: Pick<TokenInfo, 'launchpad_platform' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'> | null): string {
-    if (this.hasFlapStocksMetadata(tokenInfo as TokenInfo | undefined)) return 'flap_stocks';
-    return resolveTradeLaunchpadPlatform((tokenInfo ?? { launchpad: 'flap', launchpad_platform: 'flap' }) as TokenInfo);
-  }
-
-  private static isFlapStocksPlatform(platform: string, tokenInfo?: TokenInfo, chainId?: number): boolean {
-    if (FLAP_STOCKS_PLATFORMS.has(platform)) return true;
-    if (platform !== 'flap' || !tokenInfo || !chainId) return false;
-
-    const rawQuote = typeof tokenInfo.quote_token_address === 'string' ? tokenInfo.quote_token_address.trim() : '';
-    if (!/^0x[a-fA-F0-9]{40}$/.test(rawQuote)) return false;
-    const normalizedQuote = rawQuote.toLowerCase();
-    const wrappedNative = getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
-    if (normalizedQuote === ZERO_ADDRESS.toLowerCase() || normalizedQuote === wrappedNative) return false;
-    if (getBridgeToken(chainId, tokenInfo.address, rawQuote)) return false;
-
-    const launchType = String(tokenInfo.tpool_launch_type || '').trim().toLowerCase();
-    if (launchType === 'migrated') return true;
-
-    if (Number(tokenInfo.launchpad_status ?? 0) !== 1 && this.hasFlapStocksMetadata(tokenInfo)) {
-      return true;
-    }
-
-    return false;
+  private static resolveFlapStocksLaunchpadPlatform(chainId: number, tokenInfo?: Pick<TokenInfo, 'launchpad_platform' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'> | null): string {
+    if (hasConfirmedFlapStocksIdentity(chainId, tokenInfo)) return 'flap_stocks';
+    const platform = resolveTradeLaunchpadPlatform((tokenInfo ?? { launchpad: 'flap', launchpad_platform: 'flap' }) as TokenInfo);
+    return platform.startsWith('flap') ? 'flap' : platform;
   }
 
   private static isUsableDexQuote(q: DexExactInQuote, isTurbo: boolean): boolean {
@@ -1342,8 +1549,7 @@ export class TradeService {
         ) ?? undefined;
         const onchainPoolModel = onchain?.poolModel;
         const onchainPoolPair = onchainPoolModel === 'classic' && typeof onchain?.pool === 'string'
-          && /^0x[a-fA-F0-9]{40}$/.test(onchain.pool)
-          && onchain.pool !== ZERO_ADDRESS
+          && isUsableFlapDexPoolAddress(tokenAddress, onchain.pool)
           ? onchain.pool
           : undefined;
         const hasKnownPoolAddress = (info?: Pick<TokenInfo, 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address'> | null) =>
@@ -1395,18 +1601,23 @@ export class TradeService {
         const mergedStocksVaultVersion = onchain?.stocksVaultVersion;
         const mergedBasketToken = onchain?.basketToken;
         const mergedSupportedAssets = onchain?.supportedAssets;
-        const onchainHasOuterPool =
-          !!onchainPoolPair
-          || mergedPoolModel === 'v4_cl'
-          || mergedPoolModel === 'infinity_cl'
-          || (typeof mergedPoolCompatAddress === 'string'
-            && /^0x[a-fA-F0-9]{40}$/.test(mergedPoolCompatAddress)
-            && mergedPoolCompatAddress.toLowerCase() !== ZERO_ADDRESS.toLowerCase());
-        const onchainLaunchpadStatus = onchainHasOuterPool ? 1 : 0;
+          const rawOnchainLaunchpadStatus = Number(onchain?.status ?? Number.NaN);
+          const onchainHasOuterPool = hasConfirmedFlapOuterRoute({
+            address: tokenAddress,
+            flap_pool_model: mergedPoolModel,
+            flap_pool_compat_address: mergedPoolCompatAddress,
+            flap_cl_pool_id: mergedClPoolId,
+            flap_v4_fee: mergedV4Fee,
+            flap_v4_tick_spacing: mergedV4TickSpacing,
+            pool_pair: onchainPoolPair,
+          });
+          const onchainLaunchpadStatus = Number.isFinite(rawOnchainLaunchpadStatus)
+            ? rawOnchainLaunchpadStatus
+            : null;
         const officialLaunchpadStatus = Number(officialInfo?.launchpad_status ?? Number.NaN);
         const tradeLaunchpadStatus = Number(tradeInfo?.launchpad_status ?? Number.NaN);
         const mergedLaunchpad = officialInfo?.launchpad || tradeInfo?.launchpad || 'flap';
-        const mergedLaunchpadPlatform = this.resolveFlapStocksLaunchpadPlatform({
+          const mergedLaunchpadPlatform = this.resolveFlapStocksLaunchpadPlatform(chainId, {
           launchpad_platform: officialInfo?.launchpad_platform || tradeInfo?.launchpad_platform || mergedLaunchpad,
           flap_stocks_vault_version: mergedStocksVaultVersion,
           flap_dividend_token: mergedDividendToken,
@@ -1414,13 +1625,13 @@ export class TradeService {
           flap_basket_token: mergedBasketToken,
           flap_supported_assets: mergedSupportedAssets,
         });
-        const mergedLaunchpadStatus = onchainHasOuterPool
-          ? 1
-          : Number.isFinite(officialLaunchpadStatus)
+          const mergedLaunchpadStatus = onchainLaunchpadStatus != null
+            ? onchainLaunchpadStatus
+            : Number.isFinite(officialLaunchpadStatus)
             ? officialLaunchpadStatus
             : Number.isFinite(tradeLaunchpadStatus)
               ? tradeLaunchpadStatus
-              : onchainLaunchpadStatus;
+              : null;
         const mergedTpoolExchange = officialInfo?.tpool_exchange || tradeInfo?.tpool_exchange;
         const mergedTpoolLaunchType = onchainHasOuterPool
           ? 'migrated'
@@ -1848,11 +2059,12 @@ export class TradeService {
     return normalized === poolManager || normalized === infinityVault;
   }
 
-  private static getKnownDexPoolAddress(tokenInfo?: Partial<Pick<TokenInfo, 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address' | 'launchpad' | 'launchpad_platform' | 'launchpad_status'>> | null): Address | null {
+  private static getKnownDexPoolAddress(tokenInfo?: Partial<Pick<TokenInfo, 'address' | 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address' | 'launchpad' | 'launchpad_platform' | 'launchpad_status'>> | null): Address | null {
     const launchpadPlatform = tokenInfo ? resolveTradeLaunchpadPlatform(tokenInfo as TokenInfo) : '';
     const preferBiggestFirst = Number(tokenInfo?.launchpad_status ?? 0) === 1
       && typeof launchpadPlatform === 'string'
       && launchpadPlatform.toLowerCase().startsWith('flap');
+    const tokenAddress = typeof tokenInfo?.address === 'string' ? tokenInfo.address : undefined;
     const candidates = preferBiggestFirst
       ? [
         tokenInfo?.biggest_pool_address,
@@ -1866,6 +2078,10 @@ export class TradeService {
       ];
     for (const candidate of candidates) {
       if (this.isFlapCompatPoolAddress(candidate)) continue;
+      if (tokenAddress) {
+        if (isUsableFlapDexPoolAddress(tokenAddress, candidate)) return candidate as Address;
+        continue;
+      }
       if (isAddressLike(candidate)) return candidate as Address;
     }
     return null;
@@ -1975,6 +2191,16 @@ export class TradeService {
         tokenOut: targetToken,
         prefer: getBridgeTokenDexPreference(chainId as ChainId, targetToken) ?? null,
       })];
+    }
+    const fixedRoute = await this.buildDeterministicFlapStocksBuyQuoteRoute({
+      chainId,
+      currentToken,
+      targetToken,
+      debug,
+      depth,
+    });
+    if (fixedRoute?.length) {
+      return fixedRoute;
     }
     let targetInfo = await this.getFlapOuterQuoteTokenInfo(chainId, targetToken, debug);
     if (!targetInfo) {
@@ -2202,6 +2428,15 @@ export class TradeService {
         tokenOut: targetToken,
         prefer: getBridgeTokenDexPreference(chainId as ChainId, currentToken) ?? null,
       })];
+    }
+    const fixedRoute = await this.buildDeterministicFlapStocksSellQuoteRoute({
+      chainId,
+      currentToken,
+      targetToken,
+      debug,
+    });
+    if (fixedRoute?.length) {
+      return fixedRoute;
     }
     let currentInfo = await this.getFlapOuterQuoteTokenInfo(chainId, currentToken);
     if (!currentInfo) {
@@ -2612,16 +2847,15 @@ export class TradeService {
       : undefined;
 
     const tokenOut = this.resolveEvmAddress(input.tokenAddress, 'token address') as Address;
-    const launchpadPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
-    const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(launchpadPlatform);
-    const openFourRuntime = (isHyperAltfun || !usesOpenFourRuntime(launchpadPlatform))
+      const initialPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
+      const initialIsHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(initialPlatform);
+      const openFourRuntime = (initialIsHyperAltfun || !usesOpenFourRuntime(initialPlatform))
       ? null
       : await this.getOpenFourRuntimeState(client, input.chainId, tokenOut);
-    const isInner = isHyperAltfun
-      ? false
-      : usesOpenFourRuntime(launchpadPlatform)
-        ? !!openFourRuntime && openFourRuntime.phase === 1 && !openFourRuntime.paused
-        : this.isInnerDisk(tokenInfo);
+      const launchpadRoute = this.classifyLaunchpadRoute(input.chainId, tokenInfo, openFourRuntime);
+      const launchpadPlatform = launchpadRoute.platform;
+      const isHyperAltfun = launchpadRoute.isHyperAltfun;
+      const isInner = launchpadRoute.isInner;
     const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId, openFourRuntime) : null;
 
     const bridgeToken = isHyperAltfun
@@ -2711,7 +2945,7 @@ export class TradeService {
         data: encodeHyperZapBuyData(minOut),
       }));
     } else {
-      const isFlapStocks = this.isFlapStocksPlatform(launchpadPlatform, tokenInfo, input.chainId);
+        const isFlapStocks = launchpadRoute.isFlapStocks;
       const needsStocksQuoteRoute = !!rawQuoteToken && isFlapStocks && currentRouterToken.toLowerCase() !== rawQuoteToken.toLowerCase();
       const preferExactQuoteForStocks = false;
       const turboRouteMode = isTurbo && !preferExactQuoteForStocks;
@@ -3284,8 +3518,9 @@ export class TradeService {
     const client = await RpcService.getClient(chainId);
 
     const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
-    const platform = resolveTradeLaunchpadPlatform(tokenInfo);
-    const isInner = this.isInnerDisk(tokenInfo);
+      const classification = this.classifyLaunchpadRoute(chainId, tokenInfo);
+      const platform = classification.platform;
+      const isInner = classification.isInner;
     const isInnerFourMeme = isInner && platform.includes('four');
     const resolvedRouteManager = await this.resolveSellRouteManagerForAllowance({
       chainId,
@@ -3377,7 +3612,7 @@ export class TradeService {
         const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
         return cfg?.manager ?? null;
       },
-      isInnerDisk: (ti) => this.isInnerDisk(ti),
+        isInnerDisk: (ti) => this.isInnerDisk(ti, chainId),
     });
   }
 
@@ -3453,16 +3688,15 @@ export class TradeService {
         : undefined;
 
       const sellToken = this.resolveEvmAddress(input.tokenAddress, 'token address') as Address;
-      const platformLower = resolveTradeLaunchpadPlatform(tokenInfo);
-      const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(platformLower);
-      const openFourRuntime = (isHyperAltfun || !usesOpenFourRuntime(platformLower))
+        const initialPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
+        const initialIsHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(initialPlatform);
+        const openFourRuntime = (initialIsHyperAltfun || !usesOpenFourRuntime(initialPlatform))
         ? null
         : await this.getOpenFourRuntimeState(client, input.chainId, sellToken);
-      const isInner = isHyperAltfun
-        ? false
-        : usesOpenFourRuntime(platformLower)
-          ? !!openFourRuntime && openFourRuntime.phase === 1 && !openFourRuntime.paused
-          : this.isInnerDisk(tokenInfo);
+        const launchpadRoute = this.classifyLaunchpadRoute(input.chainId, tokenInfo, openFourRuntime);
+        const platformLower = launchpadRoute.platform;
+        const isHyperAltfun = launchpadRoute.isHyperAltfun;
+        const isInner = launchpadRoute.isInner;
       const isInnerFourMeme = isInner && isFourMemePlatform(platformLower);
       const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId, openFourRuntime) : null;
       const bridgeToken = isHyperAltfun ? null : this.getLaunchpadQuoteRouterToken(input.chainId as ChainId, tokenInfo, platformLower, openFourRuntime, {
@@ -3474,7 +3708,7 @@ export class TradeService {
       const hasBridgeRouteToken = !!bridgeToken;
       const needsBridgeHop2 = !!bridgeToken && bridgeToken.toLowerCase() !== ZERO_ADDRESS.toLowerCase();
       const bridgePrefer = needsBridgeHop2 ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
-      const isFlapStocks = this.isFlapStocksPlatform(platformLower, tokenInfo, input.chainId);
+        const isFlapStocks = launchpadRoute.isFlapStocks;
       const needsStocksQuoteRoute = !!rawQuoteToken && isFlapStocks && rawQuoteToken.toLowerCase() !== baseTokenAddress.toLowerCase();
       console.log('sell input.tokenInfo', tokenInfo, isInner, launchpadConfig)
       console.log('sell bridgeToken', bridgeToken, bridgePrefer, 'rawQuoteToken', rawQuoteToken);
@@ -3935,7 +4169,7 @@ export class TradeService {
             const cfg = platform ? this.getLaunchpadConfig(ti, cid) : null;
             return cfg?.manager ?? null;
           },
-          isInnerDisk: (ti) => this.isInnerDisk(ti),
+        isInnerDisk: (ti) => this.isInnerDisk(ti, input.chainId),
         });
         console.log('[trade.sell.allowance.check]', {
           chainId: input.chainId,
