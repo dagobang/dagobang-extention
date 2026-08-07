@@ -111,11 +111,14 @@ export class TokenAPI {
         chain: string,
         address: string,
         seed?: TokenInfo | null,
+        flapInfoPromise?: Promise<TokenInfo | null> | null,
     ) {
         if (this.flapEnrichInFlight.has(key)) return;
         const task = (async () => {
             try {
-                const flapTokenInfo = await this.getTokenInfoByFlap(platform, chain, address);
+                const flapTokenInfo = flapInfoPromise
+                    ? await flapInfoPromise
+                    : await this.getTokenInfoByFlap(platform, chain, address);
                 if (!flapTokenInfo) return;
                 const current = this.tokenInfoCache.get(key)?.value ?? seed ?? null;
                 const merged = this.mergeFlapEnrichedTokenInfo(current, flapTokenInfo);
@@ -140,12 +143,7 @@ export class TokenAPI {
         if (Number(tokenInfo.launchpad_status ?? 0) !== 1) return false;
         const quote = String(tokenInfo.quote_token_address || '').trim().toLowerCase();
         if (!quote || BSC_FLAP_TERMINAL_QUOTES.has(quote)) return false;
-        return tokenInfo.launchpad_platform === 'flap_stocks'
-            || tokenInfo.flap_stocks_vault_version != null
-            || !!tokenInfo.flap_dividend_token
-            || !!tokenInfo.flap_vault_factory
-            || !!tokenInfo.flap_basket_token
-            || Array.isArray(tokenInfo.flap_supported_assets);
+        return hasConfirmedFlapStocksIdentity(chainId, tokenInfo);
     }
 
     private static hasNonTerminalFlapOuterQuote(chain: string, tokenInfo?: Pick<TokenInfo, 'launchpad_status' | 'quote_token_address'> | null): boolean {
@@ -173,6 +171,128 @@ export class TokenAPI {
     private static hasDexRouteMinimum(tokenInfo?: Pick<TokenInfo, 'quote_token_address' | 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address'> | null): boolean {
         if (!tokenInfo?.quote_token_address) return false;
         return !!(tokenInfo.pool_pair || tokenInfo.biggest_pool_address || tokenInfo.tpool_pool_address);
+    }
+
+    private static isFlapOuterStatus(
+        tokenInfo?: Partial<Pick<TokenInfo, 'launchpad_status'>> | null,
+    ): boolean {
+        return Number(tokenInfo?.launchpad_status ?? Number.NaN) === 1;
+    }
+
+    private static hasFlapQuoteRouteMinimum(
+        tokenInfo?: Partial<Pick<TokenInfo, 'address' | 'quote_token_address'>> | null,
+    ): boolean {
+        const tokenAddress = String(tokenInfo?.address || '').trim().toLowerCase();
+        const quote = String(tokenInfo?.quote_token_address || '').trim();
+        if (!/^0x[a-fA-F0-9]{40}$/.test(quote)) return false;
+        return quote.toLowerCase() !== tokenAddress;
+    }
+
+    private static normalizeFlapThirdPartyTokenInfo(
+        chainId: number,
+        requestedPlatform: string,
+        address: string,
+        tokenInfo: TokenInfo,
+    ): TokenInfo {
+        return {
+            ...tokenInfo,
+            address,
+            launchpad: 'flap',
+            launchpad_platform: this.resolveFlapLaunchpadPlatform(chainId, requestedPlatform, {
+                address,
+                launchpad_platform: tokenInfo.launchpad_platform,
+                flap_stocks_vault_version: tokenInfo.flap_stocks_vault_version,
+                flap_dividend_token: tokenInfo.flap_dividend_token,
+                flap_vault_factory: tokenInfo.flap_vault_factory,
+                flap_basket_token: tokenInfo.flap_basket_token,
+                flap_supported_assets: tokenInfo.flap_supported_assets,
+            }),
+        };
+    }
+
+    private static hasFlapRouteReadyMinimum(
+        chain: string,
+        requestedPlatform: string,
+        tokenInfo?: Partial<Pick<TokenInfo,
+            'address'
+            | 'launchpad_platform'
+            | 'launchpad_status'
+            | 'quote_token_address'
+            | 'pool_pair'
+            | 'biggest_pool_address'
+            | 'tpool_pool_address'
+            | 'flap_pool_model'
+            | 'flap_pool_compat_address'
+            | 'flap_cl_pool_id'
+            | 'flap_v4_fee'
+            | 'flap_v4_tick_spacing'
+            | 'flap_stocks_vault_version'
+            | 'flap_dividend_token'
+            | 'flap_vault_factory'
+            | 'flap_basket_token'
+            | 'flap_supported_assets'
+        >> | null,
+    ): boolean {
+        if (!tokenInfo?.address || !this.hasFlapQuoteRouteMinimum(tokenInfo)) return false;
+        const chainId = getChainIdByName(chain);
+        const launchpadStatus = Number(tokenInfo.launchpad_status ?? Number.NaN);
+        if (!Number.isFinite(launchpadStatus)) return false;
+
+        const platform = this.resolveFlapLaunchpadPlatform(chainId, requestedPlatform, tokenInfo);
+        const isStocks = platform === 'flap_stocks';
+
+        if (launchpadStatus === 1) {
+            if (!hasConfirmedFlapOuterRoute(tokenInfo as TokenInfo) && !this.hasDexRouteMinimum(tokenInfo as TokenInfo)) {
+                return false;
+            }
+            return !isStocks || this.hasNonTerminalFlapOuterQuote(chain, tokenInfo as Pick<TokenInfo, 'launchpad_status' | 'quote_token_address'>);
+        }
+
+        return true;
+    }
+
+    private static resolveFlapTokenInfoCandidate(input: {
+        key: string;
+        chain: string;
+        requestedPlatform: string;
+        address: string;
+        thirdPartyInfo?: TokenInfo | null;
+        flapInfoPromise?: Promise<TokenInfo | null> | null;
+    }): Promise<TokenInfo | null> | TokenInfo | null {
+        const chainId = getChainIdByName(input.chain);
+        const normalizedThirdParty = input.thirdPartyInfo
+            ? this.normalizeFlapThirdPartyTokenInfo(chainId, input.requestedPlatform, input.address, input.thirdPartyInfo)
+            : null;
+
+        if (normalizedThirdParty && this.hasFlapRouteReadyMinimum(input.chain, input.requestedPlatform, normalizedThirdParty)) {
+            if (!this.isFlapOuterStatus(normalizedThirdParty)) {
+                if (input.flapInfoPromise) {
+                    this.prewarmFlapEnrichedTokenInfo(
+                        input.key,
+                        input.requestedPlatform || normalizedThirdParty.launchpad_platform || 'flap',
+                        input.chain,
+                        input.address,
+                        normalizedThirdParty,
+                        input.flapInfoPromise,
+                    );
+                }
+                return normalizedThirdParty;
+            }
+        }
+
+        if (!input.flapInfoPromise) return normalizedThirdParty;
+
+        return (async () => {
+            const flapTokenInfo = await input.flapInfoPromise;
+            const merged = this.mergeFlapEnrichedTokenInfo(normalizedThirdParty, flapTokenInfo);
+            if (merged && this.hasFlapRouteReadyMinimum(input.chain, input.requestedPlatform, merged)) {
+                return merged;
+            }
+            if (flapTokenInfo && this.hasFlapRouteReadyMinimum(input.chain, input.requestedPlatform, flapTokenInfo)) {
+                return flapTokenInfo;
+            }
+            return merged ?? normalizedThirdParty;
+        })();
     }
 
     private static mapDexScreenerPairDexType(pair: DexScreenerPair | null | undefined): string | undefined {
@@ -342,31 +462,16 @@ export class TokenAPI {
                                 } else {
                                     nextValue = tokenInfo;
                                 }
-                            } else if (isFlapLike) {
-                                const shouldAwaitConfirmedFlapInfo =
-                                    suffixLaunchpadFamily === 'flap'
-                                    && !hasConfirmedFlapStocksIdentity(chainId, tokenInfo)
-                                    && this.hasNonTerminalFlapOuterQuote(chain, tokenInfo);
-                                const canUseThirdPartyOuterInfoImmediately =
-                                    Number(tokenInfo.launchpad_status ?? 0) === 1
-                                    && this.hasDexRouteMinimum(tokenInfo);
-                                if (canUseThirdPartyOuterInfoImmediately && !shouldAwaitConfirmedFlapInfo) {
-                                    nextValue = tokenInfo;
-                                    if (parallelFlapInfoPromise) {
-                                        this.prewarmFlapEnrichedTokenInfo(
-                                            key,
-                                            normalizedRequestedPlatform || normalizedLaunchpad || 'flap',
-                                            chain,
-                                            address,
-                                            tokenInfo,
-                                        );
-                                    }
-                                } else {
-                                    const flapTokenInfo = parallelFlapInfoPromise
-                                        ? await parallelFlapInfoPromise
-                                        : await this.getTokenInfoByFlap(normalizedLaunchpad || platform, chain, address).catch(() => null);
-                                    nextValue = this.mergeFlapEnrichedTokenInfo(tokenInfo, flapTokenInfo) ?? tokenInfo;
-                                }
+                              } else if (isFlapLike) {
+                                  const flapCandidate = this.resolveFlapTokenInfoCandidate({
+                                      key,
+                                      chain,
+                                      requestedPlatform: normalizedRequestedPlatform || normalizedLaunchpad || 'flap',
+                                      address,
+                                      thirdPartyInfo: tokenInfo,
+                                      flapInfoPromise: parallelFlapInfoPromise,
+                                  });
+                                  nextValue = flapCandidate instanceof Promise ? await flapCandidate : flapCandidate;
                             } else if (
                                 MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
                                 isFourMemeLike ||
@@ -380,6 +485,7 @@ export class TokenAPI {
                                         chain,
                                         address,
                                         tokenInfo,
+                                        parallelFlapInfoPromise,
                                     );
                                 }
                             } else {

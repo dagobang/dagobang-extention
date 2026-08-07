@@ -5,6 +5,10 @@ function isAddressLike(value: string | undefined | null): value is `0x${string}`
   return /^0x[a-fA-F0-9]{40}$/.test(String(value || '').trim());
 }
 
+function isNonZeroAddressLike(value: string | undefined | null): value is `0x${string}` {
+  return isAddressLike(value) && String(value).trim().toLowerCase() !== '0x0000000000000000000000000000000000000000';
+}
+
 export function isUsableFlapDexPoolAddress(tokenAddress: string, poolAddress?: string | null): poolAddress is `0x${string}` {
   const token = String(tokenAddress || '').trim().toLowerCase();
   const pool = String(poolAddress || '').trim();
@@ -18,11 +22,11 @@ export function hasConfirmedFlapStocksIdentity(
   tokenInfo?: Pick<TokenInfo, 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'> | null,
 ): boolean {
   if (!tokenInfo) return false;
-  if (tokenInfo.flap_stocks_vault_version != null) return true;
-  if (getFlapStocksVaultVersion(chainId, tokenInfo.flap_vault_factory) != null) return true;
-  if (!!tokenInfo.flap_dividend_token) return true;
-  if (!!tokenInfo.flap_basket_token) return true;
-  return Array.isArray(tokenInfo.flap_supported_assets) && tokenInfo.flap_supported_assets.length > 0;
+  const stocksVaultVersion = tokenInfo.flap_stocks_vault_version ?? getFlapStocksVaultVersion(chainId, tokenInfo.flap_vault_factory);
+  if (stocksVaultVersion == null) return false;
+  if (!isNonZeroAddressLike(tokenInfo.flap_dividend_token)) return false;
+  if (isNonZeroAddressLike(tokenInfo.flap_basket_token)) return true;
+  return Array.isArray(tokenInfo.flap_supported_assets) && tokenInfo.flap_supported_assets.some((item) => isNonZeroAddressLike(item));
 }
 
 export function hasConfirmedFlapOuterRoute(

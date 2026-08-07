@@ -477,15 +477,30 @@ export class TradeService {
           debug: consoleLogsEnabled,
           logEvent: 'prewarm.target_pool.selected',
         }).catch(() => ({ poolAddress: null, preferHint: null as 'v2' | 'v3' | null, fee: undefined }));
+        const quoteTopologyTask = this.resolveFlapStocksQuoteTopology({
+          chainId: input.chainId,
+          rawQuoteToken,
+          anchorToken: token,
+          debug: consoleLogsEnabled,
+          logEvent: 'prewarm.quote_topology',
+        }).catch(() => null);
 
-        backgroundWarmTasks.push((async () => {
-          const rawQuoteInfo = await this.getFlapOuterQuoteTokenInfo(input.chainId, rawQuoteToken, consoleLogsEnabled);
-          const rawQuotePool = this.getKnownDexPoolAddress(rawQuoteInfo);
-          if (rawQuotePool) {
-            await this.primeKnownPoolCounterpartyToken(input.chainId, rawQuotePool, rawQuoteToken, consoleLogsEnabled);
-          }
+        criticalWarmTasks.push((async () => {
+          const topology = await quoteTopologyTask;
+          if (!topology) return null;
+          if (topology.terminalQuoteToken.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return null;
+          const topologyBridgePrefer = getBridgeTokenDexPreference(input.chainId as ChainId, topology.terminalQuoteToken) ?? null;
+          return await resolveBridgeHopExactIn(
+            input.chainId,
+            ZERO_ADDRESS,
+            topology.terminalQuoteToken,
+            amountIn,
+            topologyBridgePrefer,
+            true,
+            false,
+          );
         })().catch(() => null));
-        criticalWarmTasks.push(
+        backgroundWarmTasks.push(
           this.buildFlapOuterBuyQuoteRoute({
             chainId: input.chainId,
             currentToken: ZERO_ADDRESS,
@@ -504,13 +519,11 @@ export class TradeService {
         criticalWarmTasks.push((async () => {
           const outerTargetPool = await outerTargetPoolTask;
           if (!outerTargetPool.poolAddress) return null;
-          return await this.resolveKnownPoolRouteDesc({
-            chainId: input.chainId,
-            tokenIn: rawQuoteToken,
-            tokenOut: token,
-            poolAddress: outerTargetPool.poolAddress,
-            preferHint: outerTargetPool.preferHint,
-          });
+          return await this.getKnownPoolRouteMeta(
+            input.chainId,
+            outerTargetPool.poolAddress,
+            outerTargetPool.preferHint,
+          );
         })().catch(() => null));
         backgroundWarmTasks.push((async () => {
           const outerTargetPool = await outerTargetPoolTask;
@@ -1437,11 +1450,14 @@ export class TradeService {
 
   private static hasFlapStocksMetadata(tokenInfo?: TokenInfo): boolean {
     if (!tokenInfo) return false;
+    const isNonZeroAddressLike = (value?: string | null): boolean => (
+      isAddressLike(value) && String(value).trim().toLowerCase() !== ZERO_ADDRESS.toLowerCase()
+    );
     return tokenInfo.flap_stocks_vault_version != null
-      || !!tokenInfo.flap_dividend_token
-      || !!tokenInfo.flap_vault_factory
-      || !!tokenInfo.flap_basket_token
-      || Array.isArray(tokenInfo.flap_supported_assets);
+      || isNonZeroAddressLike(tokenInfo.flap_dividend_token)
+      || isNonZeroAddressLike(tokenInfo.flap_vault_factory)
+      || isNonZeroAddressLike(tokenInfo.flap_basket_token)
+      || (Array.isArray(tokenInfo.flap_supported_assets) && tokenInfo.flap_supported_assets.some((item) => isNonZeroAddressLike(item)));
   }
 
   private static hasConfirmedFlapLaunchpadIdentity(
