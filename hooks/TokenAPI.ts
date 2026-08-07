@@ -148,6 +148,15 @@ export class TokenAPI {
             || Array.isArray(tokenInfo.flap_supported_assets);
     }
 
+    private static hasNonTerminalFlapOuterQuote(chain: string, tokenInfo?: Pick<TokenInfo, 'launchpad_status' | 'quote_token_address'> | null): boolean {
+        if (!tokenInfo) return false;
+        const chainId = getChainIdByName(chain);
+        if (chainId !== ChainId.BNB) return false;
+        if (Number(tokenInfo.launchpad_status ?? 0) !== 1) return false;
+        const quote = String(tokenInfo.quote_token_address || '').trim().toLowerCase();
+        return !!quote && !BSC_FLAP_TERMINAL_QUOTES.has(quote);
+    }
+
     private static resolveFlapLaunchpadPlatform(
         chainId: number,
         requestedPlatform: string,
@@ -334,10 +343,14 @@ export class TokenAPI {
                                     nextValue = tokenInfo;
                                 }
                             } else if (isFlapLike) {
+                                const shouldAwaitConfirmedFlapInfo =
+                                    suffixLaunchpadFamily === 'flap'
+                                    && !hasConfirmedFlapStocksIdentity(chainId, tokenInfo)
+                                    && this.hasNonTerminalFlapOuterQuote(chain, tokenInfo);
                                 const canUseThirdPartyOuterInfoImmediately =
                                     Number(tokenInfo.launchpad_status ?? 0) === 1
                                     && this.hasDexRouteMinimum(tokenInfo);
-                                if (canUseThirdPartyOuterInfoImmediately) {
+                                if (canUseThirdPartyOuterInfoImmediately && !shouldAwaitConfirmedFlapInfo) {
                                     nextValue = tokenInfo;
                                     if (parallelFlapInfoPromise) {
                                         this.prewarmFlapEnrichedTokenInfo(
