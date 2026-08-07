@@ -39,7 +39,7 @@ import { OpenFourInnerLaunchpadManager, OpenFourRegistryAddress } from '@/consta
 import FlapAPI from '@/hooks/FlapAPI';
 import DexScreenerAPI, { type DexScreenerPair } from '@/hooks/DexScreenerAPI';
 import { GmgnAPI } from '@/hooks/GmgnAPI';
-import { hasConfirmedFlapOuterRoute, hasConfirmedFlapStocksIdentity, isUsableFlapDexPoolAddress } from '@/utils/flap';
+import { classifyFlapRoute, hasConfirmedFlapOuterRoute, isUsableFlapDexPoolAddress } from '@/utils/flap';
 import { isFlapSuffixAddress, resolveTokenLaunchpadPlatform } from '@/utils/launchpadFamily';
 import { call } from '@/utils/messaging';
 
@@ -784,19 +784,17 @@ export class TradeService {
     const rawPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
     const isHyperAltfun = chainId === ChainId.HYPER && isHyperAltfunPlatform(rawPlatform);
     const isFlap = rawPlatform.startsWith('flap');
-    const isFlapStocks = isFlap && hasConfirmedFlapStocksIdentity(chainId, tokenInfo);
-    const platform = isFlap ? (isFlapStocks ? 'flap_stocks' : 'flap') : rawPlatform;
-    const rawLaunchpadStatus = Number(tokenInfo.launchpad_status ?? Number.NaN);
-    const normalizedLaunchpadStatus = Number.isFinite(rawLaunchpadStatus) ? rawLaunchpadStatus : null;
-    const hasConfirmedOuterRoute = isFlap && hasConfirmedFlapOuterRoute(tokenInfo);
+    const flapRoute = isFlap ? classifyFlapRoute(chainId, tokenInfo) : null;
+    const isFlapStocks = !!flapRoute?.isFlapStocks;
+    const platform = isFlap ? flapRoute?.platform || 'flap' : rawPlatform;
+    const normalizedLaunchpadStatus = flapRoute?.rawLaunchpadStatus ?? null;
+    const hasConfirmedOuterRoute = !!flapRoute?.hasConfirmedOuterRoute;
     const isInner = isHyperAltfun
       ? false
       : usesOpenFourRuntime(platform)
         ? !!openFourRuntime && openFourRuntime.phase === 1 && !openFourRuntime.paused
         : isFlap
-          ? normalizedLaunchpadStatus != null
-            ? normalizedLaunchpadStatus !== 1
-            : !hasConfirmedOuterRoute
+          ? !!flapRoute?.isInner
           : INNER_LAUNCHPAD_PLATFORMS.has(platform) && tokenInfo.launchpad_status !== 1;
 
     return {
@@ -1472,10 +1470,11 @@ export class TradeService {
     return !!extensionID && extensionID !== '0x' && extensionID !== '0x0';
   }
 
-  private static resolveFlapStocksLaunchpadPlatform(chainId: number, tokenInfo?: Pick<TokenInfo, 'launchpad_platform' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'> | null): string {
-    if (hasConfirmedFlapStocksIdentity(chainId, tokenInfo)) return 'flap_stocks';
-    const platform = resolveTradeLaunchpadPlatform((tokenInfo ?? { launchpad: 'flap', launchpad_platform: 'flap' }) as TokenInfo);
-    return platform.startsWith('flap') ? 'flap' : platform;
+  private static resolveFlapStocksLaunchpadPlatform(chainId: number, tokenInfo?: Partial<Pick<TokenInfo, 'address' | 'launchpad_platform' | 'launchpad_status' | 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address' | 'flap_pool_model' | 'flap_pool_compat_address' | 'flap_cl_pool_id' | 'flap_v4_fee' | 'flap_v4_tick_spacing' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_address' | 'flap_vault_factory' | 'flap_vault_is_official' | 'flap_basket_token' | 'flap_supported_assets'>> | null): string {
+    return classifyFlapRoute(chainId, {
+      launchpad_platform: 'flap',
+      ...(tokenInfo ?? {}),
+    } as TokenInfo).platform;
   }
 
   private static isUsableDexQuote(q: DexExactInQuote, isTurbo: boolean): boolean {
@@ -1637,7 +1636,9 @@ export class TradeService {
           launchpad_platform: officialInfo?.launchpad_platform || tradeInfo?.launchpad_platform || mergedLaunchpad,
           flap_stocks_vault_version: mergedStocksVaultVersion,
           flap_dividend_token: mergedDividendToken,
+            flap_vault_address: mergedVaultAddress,
           flap_vault_factory: mergedVaultFactory,
+            flap_vault_is_official: mergedVaultIsOfficial,
           flap_basket_token: mergedBasketToken,
           flap_supported_assets: mergedSupportedAssets,
         });

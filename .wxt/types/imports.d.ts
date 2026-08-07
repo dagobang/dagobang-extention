@@ -22,6 +22,7 @@ declare global {
   const browser: typeof import('wxt/browser').browser
   const call: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/messaging').call
   const classifyBroadcastError: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').classifyBroadcastError
+  const classifyFlapRoute: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').classifyFlapRoute
   const collectErrorText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').collectErrorText
   const createIframeUi: typeof import('wxt/utils/content-script-ui/iframe').createIframeUi
   const createIntegratedUi: typeof import('wxt/utils/content-script-ui/integrated').createIntegratedUi

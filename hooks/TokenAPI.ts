@@ -7,7 +7,7 @@ import { chainNames, getChainIdByName } from "@/constants/chains";
 import { ChainId } from "@/constants/chains/chainId";
 import { MEME_SUFFIXS } from "@/constants/meme";
 import { getSupportedLaunchpads, normalizeLaunchpadPlatform } from "@/constants/launchpad";
-import { hasConfirmedFlapOuterRoute, hasConfirmedFlapStocksIdentity, isUsableFlapDexPoolAddress } from "@/utils/flap";
+import { classifyFlapRoute, hasConfirmedFlapOuterRoute, isUsableFlapDexPoolAddress } from "@/utils/flap";
 import { inferLaunchpadFamilyByAddress, resolveTokenLaunchpadPlatform } from "@/utils/launchpadFamily";
 
 const FOUR_MEME_LIKE_LAUNCHPADS = new Set([
@@ -143,7 +143,7 @@ export class TokenAPI {
         if (Number(tokenInfo.launchpad_status ?? 0) !== 1) return false;
         const quote = String(tokenInfo.quote_token_address || '').trim().toLowerCase();
         if (!quote || BSC_FLAP_TERMINAL_QUOTES.has(quote)) return false;
-        return hasConfirmedFlapStocksIdentity(chainId, tokenInfo);
+        return classifyFlapRoute(chainId, tokenInfo).isFlapStocks;
     }
 
     private static hasNonTerminalFlapOuterQuote(chain: string, tokenInfo?: Pick<TokenInfo, 'launchpad_status' | 'quote_token_address'> | null): boolean {
@@ -158,14 +158,17 @@ export class TokenAPI {
     private static resolveFlapLaunchpadPlatform(
         chainId: number,
         requestedPlatform: string,
-        tokenInfo?: Partial<Pick<TokenInfo, 'address' | 'launchpad_platform' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'>> | null,
+        tokenInfo?: Partial<Pick<TokenInfo, 'address' | 'launchpad_platform' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_address' | 'flap_vault_factory' | 'flap_vault_is_official' | 'flap_basket_token' | 'flap_supported_assets'>> | null,
     ): string {
-        if (hasConfirmedFlapStocksIdentity(chainId, tokenInfo)) return 'flap_stocks';
-        return resolveTokenLaunchpadPlatform({
+        const requested = resolveTokenLaunchpadPlatform({
             address: tokenInfo?.address,
             launchpad_platform: tokenInfo?.launchpad_platform,
             requestedPlatform,
         }) || 'flap';
+        return classifyFlapRoute(chainId, {
+            ...(tokenInfo ?? {}),
+            launchpad_platform: requested,
+        } as TokenInfo).platform;
     }
 
     private static hasDexRouteMinimum(tokenInfo?: Pick<TokenInfo, 'quote_token_address' | 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address'> | null): boolean {
@@ -203,7 +206,9 @@ export class TokenAPI {
                 launchpad_platform: tokenInfo.launchpad_platform,
                 flap_stocks_vault_version: tokenInfo.flap_stocks_vault_version,
                 flap_dividend_token: tokenInfo.flap_dividend_token,
+                flap_vault_address: tokenInfo.flap_vault_address,
                 flap_vault_factory: tokenInfo.flap_vault_factory,
+                flap_vault_is_official: tokenInfo.flap_vault_is_official,
                 flap_basket_token: tokenInfo.flap_basket_token,
                 flap_supported_assets: tokenInfo.flap_supported_assets,
             }),
@@ -228,7 +233,9 @@ export class TokenAPI {
             | 'flap_v4_tick_spacing'
             | 'flap_stocks_vault_version'
             | 'flap_dividend_token'
+            | 'flap_vault_address'
             | 'flap_vault_factory'
+            | 'flap_vault_is_official'
             | 'flap_basket_token'
             | 'flap_supported_assets'
         >> | null,
@@ -238,8 +245,11 @@ export class TokenAPI {
         const launchpadStatus = Number(tokenInfo.launchpad_status ?? Number.NaN);
         if (!Number.isFinite(launchpadStatus)) return false;
 
-        const platform = this.resolveFlapLaunchpadPlatform(chainId, requestedPlatform, tokenInfo);
-        const isStocks = platform === 'flap_stocks';
+        const flapRoute = classifyFlapRoute(chainId, {
+            ...(tokenInfo ?? {}),
+            launchpad_platform: this.resolveFlapLaunchpadPlatform(chainId, requestedPlatform, tokenInfo),
+        } as TokenInfo);
+        const isStocks = flapRoute.isFlapStocks;
 
         if (launchpadStatus === 1) {
             if (!hasConfirmedFlapOuterRoute(tokenInfo as TokenInfo) && !this.hasDexRouteMinimum(tokenInfo as TokenInfo)) {
@@ -672,7 +682,9 @@ export class TokenAPI {
             launchpad_platform: httpInfo?.launchpad_platform,
             flap_stocks_vault_version: contractInfo?.stocksVaultVersion,
             flap_dividend_token: contractInfo?.dividendToken,
+            flap_vault_address: contractInfo?.vaultAddress,
             flap_vault_factory: contractInfo?.vaultFactory,
+            flap_vault_is_official: contractInfo?.vaultIsOfficial,
             flap_basket_token: contractInfo?.basketToken,
             flap_supported_assets: contractInfo?.supportedAssets,
         });
