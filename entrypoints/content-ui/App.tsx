@@ -3167,11 +3167,7 @@ export default function App() {
           if (pendingAutoSell) {
             pendingAutoSellOrdersRef.current.delete(pendingKey);
             void createAutoSellOrdersForWallet(pendingAutoSell)
-              .then((createdCount) => {
-                if (createdCount > 0) {
-                  toast.success(`已创建自动卖出挂单 ${createdCount} 个`, { icon: '✅' });
-                }
-              })
+                .then(() => {})
               .catch((error) => {
                 console.error('auto sell create orders on trade success failed', error);
               });
@@ -3193,11 +3189,9 @@ export default function App() {
               } as const).catch(() => { });
             }
           }
-        const eventToastId = getTradeEventToastId(side, rawAddr, String(message?.txHash || ''));
-        toast.dismiss(eventToastId);
-        toast.dismiss(getTradeToastId(side, rawAddr));
+          const flowToastId = getTradeToastId(side, rawAddr);
         toast.success(renderTradeSuccessToast({ side, symbol, provider, timing, submitNode, confirmNode, stage: 'confirmed' }), {
-          id: `${eventToastId}:confirmed`,
+            id: flowToastId,
           icon: '✅',
           duration: 5000,
         });
@@ -3222,21 +3216,18 @@ export default function App() {
         const title = locale === 'en'
           ? `[${symbol}] ${side === 'buy' ? 'Buy' : 'Sell'} failed (${stage})`
           : `[${symbol}] ${side === 'buy' ? '买入失败' : '卖出失败'}（${stage}）`;
-        const eventToastId = getTradeEventToastId(side, rawAddr, String(message?.txHash || ''));
-        toast.dismiss(eventToastId);
+          const flowToastId = getTradeToastId(side, rawAddr);
         toast.error(
           <div className="space-y-1">
             <div className="font-medium">{title}</div>
             {errorMessage ? <div className="text-[12px] opacity-90">{errorMessage}</div> : null}
           </div>,
           {
-            id: `${eventToastId}:failed`,
+              id: flowToastId,
             icon: '❌',
             duration: 5000,
           }
         );
-        // Also dismiss the early "交易执行中..." fallback toast if it still exists.
-        toast.dismiss(getTradeToastId(side, rawAddr));
         return;
       }
       if (message.type === 'bg:tradeSubmitted') {
@@ -3261,11 +3252,9 @@ export default function App() {
           void refreshGmgnHoldingStats(true, 'tradeSubmitted');
           startFastPolling();
         }
-        const eventToastId = getTradeEventToastId(side, rawAddr, String(message?.txHash || ''));
-        // Replace the initial "交易执行中..." flow toast as soon as tx hash is submitted.
-        toast.dismiss(getTradeToastId(side, rawAddr));
+          const flowToastId = getTradeToastId(side, rawAddr);
         toast.success(renderTradeSuccessToast({ side, symbol, provider, timing, submitNode, stage: 'submitted' }), {
-          id: eventToastId,
+            id: flowToastId,
           icon: <SatelliteDish size={14} className="text-cyan-300" />,
           // Keep this visible until replaced by confirmed/failed event.
           duration: Infinity,
@@ -3865,6 +3854,7 @@ export default function App() {
     timing: { submitLabel: string; submitValue: string; receiptLabel: string; receiptValue: string };
     submitNode?: string | null;
     confirmNode?: string | null;
+      summaryText?: string | null;
     stage?: 'submitted' | 'confirmed';
   }) => {
     const isSubmitted = input.stage === 'submitted';
@@ -3890,16 +3880,15 @@ export default function App() {
             {input.confirmNode ? <div>{locale === 'en' ? 'Confirm RPC' : '确认节点'}: <span className="font-medium">{input.confirmNode}</span></div> : null}
           </div>
         ) : null}
+          {input.summaryText ? (
+            <div className="text-[12px] opacity-90">{input.summaryText}</div>
+          ) : null}
       </div>
     );
   };
 
   const getTradeToastId = (side: 'buy' | 'sell', tokenAddress?: string | null) =>
     `trade-flow:${side}:${normalizeGenericTxOrAddressKey(tokenAddress)}`;
-  const getTradeEventToastId = (side: 'buy' | 'sell', tokenAddress?: string | null, txHash?: string | null) =>
-    txHash
-      ? `trade-event:${side}:${normalizeGenericTxOrAddressKey(txHash)}`
-      : `trade-event:${side}:${normalizeGenericTxOrAddressKey(tokenAddress)}`;
   const getSolTradeOutcomeKey = (side: 'buy' | 'sell', tokenAddress?: string | null) =>
     `${side}:${normalizeGenericTxOrAddressKey(tokenAddress)}`;
   const getSolTradeOutcomeStatus = (side: 'buy' | 'sell', tokenAddress?: string | null) =>
@@ -3984,8 +3973,8 @@ export default function App() {
       }
       ensureTradeSuccessAudioReady();
       const sym = resolvedTokenSymbol ?? '';
-      const flowToastId = getTradeToastId('buy', tokenAddressNormalized);
-      const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
+        const flowToastId = getTradeToastId('buy', tokenAddressNormalized);
+        toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
       let buyLoadingClosed = false;
       const buyGasPreset = hasValidPresetIndex ? resolveBuyGasPresetForPreset(presetIndex) : (effectiveChainSettings?.buyGasPreset ?? effectiveChainSettings?.gasPreset ?? 'standard');
       const buyExecutionMode = effectiveChainSettings?.executionMode === 'turbo' ? 'turbo' : 'default';
@@ -4001,7 +3990,6 @@ export default function App() {
           const launchTrade = async () => {
             let pendingTradeBaseDeltaId: string | null = null;
             const tradePromise = (async () => {
-              const uiRequestStartedAt = Date.now();
               if (chainId === ChainId.SOL) {
                 pendingTradeBaseDeltaId = addPendingSolTradeBaseDeltaWei(tradeBaseTokenAddress, walletAddress, `-${amountWei.toString()}`);
                 applyOptimisticSolWalletTradeBaseDeltaWei(walletAddress, -amountWei);
@@ -4040,7 +4028,6 @@ export default function App() {
                 }
                 throw e;
               }
-              const buyMetrics = res as any;
               if (!res.ok) {
                 const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
                 throw new Error(detail || 'Transaction failed');
@@ -4089,15 +4076,6 @@ export default function App() {
         if (first?.txHash) setTxHash(first.txHash);
         setPendingBuyQuotedOutWei(quotedOutWei);
         if (confirmedSuccesses.length > 0) {
-          toast.success(`买入成功 ${confirmedSuccesses.length}/${executablePlan.length} 个钱包`, { icon: '✅', duration: 2500 });
-        }
-        if (pendingCount > 0) {
-          toast(`后台继续处理中 ${pendingCount}/${executablePlan.length} 个钱包`, { icon: '⏳', duration: 2500 });
-        }
-        if (failures.length > 0) {
-          toast.error(`买入失败 ${failures.length} 个钱包`, { icon: '⚠️' });
-        }
-        if (confirmedSuccesses.length > 0) {
           buyLoadingClosed = true;
         }
 
@@ -4113,7 +4091,8 @@ export default function App() {
           setPendingBuyQuotedOutWei(null);
         }
 
-        try {
+          let createdOrderCount = 0;
+          try {
           const config = settings.advancedAutoSell;
           if (!config?.enabled) return;
           if (!siteInfo) return;
@@ -4130,7 +4109,6 @@ export default function App() {
               tokenSymbol: resolvedTokenSymbol ?? null,
             } satisfies PendingAutoSellOrderContext,
           }));
-          let createdOrderCount = 0;
           for (const item of autoSellContexts) {
             if ((item.res as any)?.backgroundPending) continue;
             createdOrderCount += await createAutoSellOrdersForWallet(item.ctx);
@@ -4140,14 +4118,44 @@ export default function App() {
             const pendingKey = getPendingAutoSellOrderKey(chainId, tokenAddressNormalized, item.walletAddress);
             pendingAutoSellOrdersRef.current.set(pendingKey, item.ctx);
           }
-          if (createdOrderCount > 0) {
-            toast.success(`已创建自动卖出挂单 ${createdOrderCount} 个`, { icon: '✅' });
-          }
         } catch (e) {
           console.error('auto sell xsniper create orders failed', e);
+          } finally {
+            if (confirmedSuccesses.length > 0) {
+              const providerRaw = formatBroadcastProvider(first?.broadcastVia, first?.broadcastUrl, first?.isBundle);
+              const provider = providerRaw === '-' ? 'RPC' : providerRaw;
+              const timing = formatTradeTiming({
+                submitElapsedMs: Number(first?.submitElapsedMs ?? 0),
+                receiptElapsedMs: Number(first?.receiptElapsedMs ?? 0),
+              });
+              const summaryParts = [
+                `成功 ${confirmedSuccesses.length}/${executablePlan.length} 个钱包`,
+                createdOrderCount > 0 ? `已创建自动卖出挂单 ${createdOrderCount} 个` : '',
+                pendingCount > 0 ? `后台继续处理中 ${pendingCount}/${executablePlan.length} 个钱包` : '',
+                failures.length > 0 ? `失败 ${failures.length} 个钱包` : '',
+              ].filter(Boolean);
+              toast.success(renderTradeSuccessToast({
+                side: 'buy',
+                symbol: sym,
+                provider,
+                timing,
+                stage: 'confirmed',
+                summaryText: summaryParts.join('，'),
+              }), {
+                id: flowToastId,
+                icon: '✅',
+                duration: 5000,
+              });
+            }
         }
       })().catch((e: any) => {
-        if (!buyLoadingClosed) toast.dismiss(flowToastId);
+          if (!buyLoadingClosed) {
+            toast.error(`买入失败${e?.message ? `：${String(e.message)}` : ''}`, {
+              id: flowToastId,
+              icon: '❌',
+              duration: 5000,
+            });
+          }
         throw e;
       });
 
@@ -4193,7 +4201,7 @@ export default function App() {
       ensureTradeSuccessAudioReady();
       const sym = resolvedTokenSymbol ?? '';
       const flowToastId = getTradeToastId('sell', tokenAddressNormalized);
-      const toastId = toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
+        toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
       let sellLoadingClosed = false;
       const sellGasPreset = effectiveChainSettings?.sellGasPreset ?? effectiveChainSettings?.gasPreset ?? 'standard';
 
@@ -4218,7 +4226,6 @@ export default function App() {
             let expectedTokenInWeiHint: string | undefined;
             let pendingSellDeltaId: string | null = null;
             const shouldResolveSellAmountBeforeSubmit = !isTurbo || chainId === ChainId.SOL;
-            const sellPrepStartedAt = Date.now();
             if (shouldResolveSellAmountBeforeSubmit) {
               const trackedSolSellableBalanceWei = chainId === ChainId.SOL
                 ? getTrackedSolWalletSellableTokenBalanceWei(tokenAddressNormalized, walletAddress)
@@ -4279,7 +4286,6 @@ export default function App() {
               });
             }
             const tradePromise = (async () => {
-              const uiRequestStartedAt = Date.now();
               const resolvedSellPriorityFeeNative = resolvePriorityFee('sell');
               const resolvedSellTip = resolveSolanaTip('sell');
               const hasSellPriorityFee = !!resolvedSellPriorityFeeNative && resolvedSellPriorityFeeNative !== '0';
@@ -4309,7 +4315,6 @@ export default function App() {
                   type: 'tx:sellWithReceiptAuto',
                   input: sellInput,
                 } as const);
-                const sellMetrics = res as any;
                 if (!res.ok) {
                   const detail = res.revertReason || res.error?.shortMessage || res.error?.message || 'Transaction failed';
                   throw new Error(detail);
@@ -4368,18 +4373,33 @@ export default function App() {
         const firstConfirmedSuccess = confirmedSuccesses[0];
         if (firstConfirmedSuccess?.res?.txHash) setTxHash(firstConfirmedSuccess.res.txHash);
         if (confirmedSuccesses.length > 0) {
-          toast.success(`卖出成功 ${confirmedSuccesses.length}/${wallets.length} 个钱包`, { icon: '✅', duration: 2500 });
-        }
-        if (pendingCount > 0) {
-          toast(`后台继续处理中 ${pendingCount}/${wallets.length} 个钱包`, { icon: '⏳', duration: 2500 });
-        }
-        if (failures.length > 0) {
-          toast.error(`卖出失败 ${failures.length} 个钱包`, { icon: '⚠️' });
-        }
-        if (confirmedSuccesses.length > 0) {
           sellLoadingClosed = true;
           triggerPostTradeRefresh('sell');
           setPendingBuyQuotedOutWei(null);
+            const first = firstConfirmedSuccess?.res;
+            const providerRaw = formatBroadcastProvider(first?.broadcastVia, first?.broadcastUrl, first?.isBundle);
+            const provider = providerRaw === '-' ? 'RPC' : providerRaw;
+            const timing = formatTradeTiming({
+              submitElapsedMs: Number(first?.submitElapsedMs ?? 0),
+              receiptElapsedMs: Number(first?.receiptElapsedMs ?? 0),
+            });
+            const summaryParts = [
+              `成功 ${confirmedSuccesses.length}/${wallets.length} 个钱包`,
+              pendingCount > 0 ? `后台继续处理中 ${pendingCount}/${wallets.length} 个钱包` : '',
+              failures.length > 0 ? `失败 ${failures.length} 个钱包` : '',
+            ].filter(Boolean);
+            toast.success(renderTradeSuccessToast({
+              side: 'sell',
+              symbol: sym,
+              provider,
+              timing,
+              stage: 'confirmed',
+              summaryText: summaryParts.join('，'),
+            }), {
+              id: flowToastId,
+              icon: '✅',
+              duration: 5000,
+            });
         }
 
           // Clear remaining sell orders for wallets that fully exited.
@@ -4404,7 +4424,13 @@ export default function App() {
           error: String(e?.message || e || ''),
           ts: Date.now(),
         });
-        if (!sellLoadingClosed) toast.dismiss(flowToastId);
+          if (!sellLoadingClosed) {
+            toast.error(`卖出失败${e?.message ? `：${String(e.message)}` : ''}`, {
+              id: flowToastId,
+              icon: '❌',
+              duration: 5000,
+            });
+          }
         throw e;
       });
 
