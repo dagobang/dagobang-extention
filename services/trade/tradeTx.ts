@@ -422,7 +422,7 @@ export async function sendTransaction(
       return nonce;
     })();
 
-  let gasLimit = opts?.gasLimit ?? 900000n;
+  let gasLimit = opts?.gasLimit ?? 2000000n;
   if (!opts?.skipEstimateGas && opts?.gasLimit === undefined) {
     try {
       const start = Date.now();

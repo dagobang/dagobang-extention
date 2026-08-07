@@ -346,8 +346,7 @@ export class FlapAPI {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       return await response.json() as FlapCoinApiResponse;
-    } catch (error) {
-      console.error("Failed to fetch coin info from Flap REST API:", error);
+    } catch {
       return null;
     }
   }

@@ -132,7 +132,7 @@ type OpenFourTradeEstimate = {
   executionPrice: bigint;
 };
 
-const DEFAULT_SWAP_GAS_LIMIT = 900000n;
+const DEFAULT_SWAP_GAS_LIMIT = 2000000n;
 const OPEN_FOUR_SWAP_GAS_LIMIT = 2500000n;
 
 function resolveLaunchpadPlatform(platform: string | undefined): string {
@@ -1354,10 +1354,10 @@ export class TradeService {
         let officialInfo: TokenInfo | null = null;
         let tradeInfo: TokenInfo | null = null;
         if (!onchainPoolPair || !onchainQuoteTokenAddress) {
-          officialInfo = await FlapAPI.getTokenInfo(chain, tokenAddress).catch(() => null);
-        }
-        if (!hasRouteMinimum(officialInfo) || (!officialInfo?.quote_token_address && !onchainQuoteTokenAddress)) {
           tradeInfo = await GmgnAPI.getTokenTradeInfo(chain, tokenAddress).catch(() => null);
+          if (!hasRouteMinimum(tradeInfo) || (!tradeInfo?.quote_token_address && !onchainQuoteTokenAddress)) {
+            officialInfo = await FlapAPI.getTokenInfo(chain, tokenAddress).catch(() => null);
+          }
         }
 
         const officialQuoteTokenAddress = this.sanitizeFlapQuoteTokenAddress(tokenAddress, officialInfo?.quote_token_address) ?? undefined;

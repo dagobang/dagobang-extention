@@ -1,5 +1,4 @@
 import GmgnAPI from "./GmgnAPI";
-import FlapAPI from "./FlapAPI";
 import DexScreenerAPI, { DexScreenerPair } from "./DexScreenerAPI";
 import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "@/types/token";
 import { call } from "@/utils/messaging";
@@ -133,7 +132,7 @@ export class TokenAPI {
 
     private static prewarmFlapOuterQuoteToken(chain: string, tokenInfo?: TokenInfo | null) {
         if (!this.shouldPrewarmFlapOuterQuote(chain, tokenInfo) || !tokenInfo?.quote_token_address) return;
-        void FlapAPI.getTokenInfo(chain, tokenInfo.quote_token_address).catch(() => null);
+        void this.getTokenInfoByFlapHttp('flap', chain, tokenInfo.quote_token_address).catch(() => null);
     }
 
     private static shouldPrewarmFlapOuterQuote(chain: string, tokenInfo?: TokenInfo | null): boolean {
@@ -510,6 +509,16 @@ export class TokenAPI {
         return res.tokenInfo;
     }
 
+    static async getTokenInfoByFlapHttp(platform: string, chain: string, address: string): Promise<TokenInfo | null> {
+        const res = await call({
+            type: 'token:getTokenInfo:flapHttp',
+            platform,
+            chain,
+            address,
+        });
+        return res.tokenInfo;
+    }
+
     static async getTokenInfoByFourmeme(platform: string, chain: string, address: string): Promise<TokenInfo | null> {
         const [contractInfo, httpInfo] = await Promise.all([
             this.getTokenInfoByFourmemeContract(chain, address),
@@ -526,10 +535,10 @@ export class TokenAPI {
     }
 
     static async getTokenInfoByFlap(platform: string, chain: string, address: string): Promise<TokenInfo | null> {
-        const [contractInfo, httpInfo] = await Promise.all([
-            this.getTokenInfoByFlapContract(chain, address),
-            FlapAPI.getTokenInfo(chain, address).catch(() => null),
-        ]);
+        const contractInfo = await this.getTokenInfoByFlapContract(chain, address);
+        const httpInfo = contractInfo
+            ? null
+            : await this.getTokenInfoByFlapHttp(platform, chain, address).catch(() => null);
         const isListedOnDex = !!contractInfo && (
             Number(contractInfo.status ?? 0) === 1
             || String(contractInfo.pool || '').toLowerCase() !== zeroAddress.toLowerCase()

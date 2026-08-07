@@ -1239,6 +1239,11 @@ export default defineBackground(() => {
             return { ok: true, tokenInfo };
           }
 
+          case 'token:getTokenInfo:flapHttp': {
+            const tokenInfo = await FlapAPI.getTokenInfo(msg.chain, msg.address);
+            return { ok: true, tokenInfo };
+          }
+
           case 'token:createFourmeme': {
             const settings = await SettingsService.get();
             const fromAddress = (msg.input.fromAddress && isAddress(msg.input.fromAddress))
