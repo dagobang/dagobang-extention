@@ -42,6 +42,7 @@ import FlapAPI from '@/hooks/FlapAPI';
 import { resolveMigratedSolanaTokenInfo, shouldTryRefreshMigratedSolanaTokenInfo } from '@/services/limitOrders/solanaTokenInfoRefresh';
 import { SolanaBroadcastService } from '@/services/chain/solana/broadcast';
 import { ensureSolanaTradePrewarm, scheduleSolanaTradePrewarm } from '@/services/chain/solana/trade/prewarmScheduler';
+import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 
 if (!(globalThis as any).Buffer) {
   (globalThis as any).Buffer = Buffer;
@@ -60,6 +61,7 @@ export default defineBackground(() => {
     return getWallet(chainId);
   };
   const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
+  const { fetchTokenInfoFresh, buildGenericTokenInfo } = createTokenInfoResolvers();
   const EIP7702_DELEGATION_PREFIX = '0xef0100';
   const STATE_CHANGE_BROADCAST_DEBOUNCE_MS = 250;
   const GMGN_TOKEN_SNAPSHOT_CACHE_LIMIT = 1500;
@@ -683,7 +685,40 @@ export default defineBackground(() => {
     tokenInfo?: any | null;
   }) => {
     const currentTokenInfo = input.tokenInfo ?? null;
-    if (input.chainId !== ChainId.SOL) return currentTokenInfo;
+    const mergeTokenInfoForLimitOrder = (nextTokenInfo: any | null) => {
+      if (!nextTokenInfo) return currentTokenInfo;
+      if (!currentTokenInfo) return nextTokenInfo;
+      const nextPrice = Number(
+        nextTokenInfo?.priceUsd
+        ?? nextTokenInfo?.price
+        ?? nextTokenInfo?.tokenPrice?.price
+        ?? 0,
+      );
+      const currentPrice = Number(
+        currentTokenInfo?.priceUsd
+        ?? currentTokenInfo?.price
+        ?? currentTokenInfo?.tokenPrice?.price
+        ?? 0,
+      );
+      return {
+        ...currentTokenInfo,
+        ...nextTokenInfo,
+        tokenPrice: nextPrice > 0
+          ? nextTokenInfo?.tokenPrice
+          : (nextTokenInfo?.tokenPrice ?? currentTokenInfo?.tokenPrice),
+        priceUsd: nextPrice > 0 ? nextTokenInfo?.priceUsd : (nextTokenInfo?.priceUsd ?? currentTokenInfo?.priceUsd),
+        price: nextPrice > 0 ? nextTokenInfo?.price : (nextTokenInfo?.price ?? currentTokenInfo?.price),
+        market_cap: nextPrice > 0 ? nextTokenInfo?.market_cap : (nextTokenInfo?.market_cap ?? currentTokenInfo?.market_cap),
+        marketCap: nextPrice > 0 ? nextTokenInfo?.marketCap : (nextTokenInfo?.marketCap ?? currentTokenInfo?.marketCap),
+        _limitOrderMergedPriceSource: nextPrice > 0 ? 'refreshed' : (currentPrice > 0 ? 'current' : 'none'),
+      };
+    };
+    if (input.chainId !== ChainId.SOL) {
+      const refreshed = await fetchTokenInfoFresh(input.chainId, input.tokenAddress).catch(() => null);
+      if (refreshed) return mergeTokenInfoForLimitOrder(refreshed);
+      const generic = await buildGenericTokenInfo(input.chainId, input.tokenAddress).catch(() => null);
+      return mergeTokenInfoForLimitOrder(generic);
+    }
     const isMeaningfulSolanaLabel = (value: unknown) => {
       const text = String(value || '').trim();
       if (!text) return false;

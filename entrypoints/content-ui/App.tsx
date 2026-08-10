@@ -2418,7 +2418,8 @@ export default function App() {
     }
     const reqCtxKey = `${tokenContextSiteInfo.platform ?? ''}:${tokenContextSiteInfo.chain ?? ''}:${tokenAddressNormalized ?? ''}`;
     const now = Date.now();
-    if (!force && now - lastTokenPriceRefresh.current < 5000) return;
+    const minRefreshIntervalMs = Math.max(200, tokenBalancePollIntervalMs);
+    if (!force && now - lastTokenPriceRefresh.current < minRefreshIntervalMs) return;
     lastTokenPriceRefresh.current = now;
 
     const tokenAddr = tokenAddressNormalized;

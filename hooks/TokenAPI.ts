@@ -2,12 +2,12 @@ import GmgnAPI from "./GmgnAPI";
 import DexScreenerAPI, { DexScreenerPair } from "./DexScreenerAPI";
 import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "@/types/token";
 import { call } from "@/utils/messaging";
-import { parseEther, zeroAddress } from "viem";
+import { parseEther } from "viem";
 import { chainNames, getChainIdByName } from "@/constants/chains";
 import { ChainId } from "@/constants/chains/chainId";
 import { MEME_SUFFIXS } from "@/constants/meme";
 import { getSupportedLaunchpads, normalizeLaunchpadPlatform } from "@/constants/launchpad";
-import { classifyFlapRoute, hasConfirmedFlapOuterRoute, isUsableFlapDexPoolAddress } from "@/utils/flap";
+import { classifyFlapRoute, hasConfirmedFlapOuterRoute, hasNonTerminalFlapOuterQuote, isUsableFlapDexPoolAddress, resolveFlapPlatform, resolveFlapPlatformByQuoteLineage } from "@/utils/flap";
 import { inferLaunchpadFamilyByAddress, resolveTokenLaunchpadPlatform } from "@/utils/launchpadFamily";
 
 const FOUR_MEME_LIKE_LAUNCHPADS = new Set([
@@ -21,15 +21,6 @@ const FLAP_LIKE_LAUNCHPADS = new Set([
     'flap',
     'flap_stocks',
     'flap_aioracle',
-]);
-
-const BSC_FLAP_TERMINAL_QUOTES = new Set([
-    zeroAddress.toLowerCase(),
-    '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c',
-    '0x55d398326f99059ff775485246999027b3197955',
-    '0xe9e7cea3dedca5984780bafc599bd69add087d56',
-    '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
-    '0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d',
 ]);
 
 export class TokenAPI {
@@ -67,7 +58,7 @@ export class TokenAPI {
         if (!base) return enriched ?? null;
         if (!enriched) return base;
 
-        return {
+        const merged: TokenInfo = {
             ...base,
             ...enriched,
             chain: base.chain || enriched.chain,
@@ -97,12 +88,27 @@ export class TokenAPI {
             flap_vault_address: enriched.flap_vault_address || base.flap_vault_address,
             flap_vault_factory: enriched.flap_vault_factory || base.flap_vault_factory,
             flap_vault_is_official: enriched.flap_vault_is_official ?? base.flap_vault_is_official,
+            flap_vault_is_vault: enriched.flap_vault_is_vault ?? base.flap_vault_is_vault,
             flap_vault_is_ai_consumer: enriched.flap_vault_is_ai_consumer ?? base.flap_vault_is_ai_consumer,
             flap_stocks_vault_version: enriched.flap_stocks_vault_version ?? base.flap_stocks_vault_version,
+            flap_outer_quote_is_stocks: enriched.flap_outer_quote_is_stocks ?? base.flap_outer_quote_is_stocks,
             flap_basket_token: enriched.flap_basket_token || base.flap_basket_token,
             flap_supported_assets: enriched.flap_supported_assets ?? base.flap_supported_assets,
             tokenPrice: base.tokenPrice ?? enriched.tokenPrice,
         };
+
+        const chainId = getChainIdByName(merged.chain);
+        const requestedPlatform = resolveTokenLaunchpadPlatform({
+            address: merged.address,
+            launchpad: merged.launchpad,
+            launchpad_platform: base.launchpad_platform || enriched.launchpad_platform,
+            requestedPlatform: enriched.launchpad_platform || base.launchpad_platform,
+        });
+        if (Number.isFinite(chainId) && (FLAP_LIKE_LAUNCHPADS.has(requestedPlatform) || inferLaunchpadFamilyByAddress(merged.address) === 'flap')) {
+            merged.launchpad_platform = resolveFlapPlatform(chainId, merged, requestedPlatform || 'flap');
+        }
+
+        return merged;
     }
 
     private static prewarmFlapEnrichedTokenInfo(
@@ -140,35 +146,8 @@ export class TokenAPI {
         if (!tokenInfo) return false;
         const chainId = getChainIdByName(chain);
         if (chainId !== ChainId.BNB) return false;
-        if (Number(tokenInfo.launchpad_status ?? 0) !== 1) return false;
-        const quote = String(tokenInfo.quote_token_address || '').trim().toLowerCase();
-        if (!quote || BSC_FLAP_TERMINAL_QUOTES.has(quote)) return false;
-        return classifyFlapRoute(chainId, tokenInfo).isFlapStocks;
-    }
-
-    private static hasNonTerminalFlapOuterQuote(chain: string, tokenInfo?: Pick<TokenInfo, 'launchpad_status' | 'quote_token_address'> | null): boolean {
-        if (!tokenInfo) return false;
-        const chainId = getChainIdByName(chain);
-        if (chainId !== ChainId.BNB) return false;
-        if (Number(tokenInfo.launchpad_status ?? 0) !== 1) return false;
-        const quote = String(tokenInfo.quote_token_address || '').trim().toLowerCase();
-        return !!quote && !BSC_FLAP_TERMINAL_QUOTES.has(quote);
-    }
-
-    private static resolveFlapLaunchpadPlatform(
-        chainId: number,
-        requestedPlatform: string,
-        tokenInfo?: Partial<Pick<TokenInfo, 'address' | 'launchpad_platform' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_address' | 'flap_vault_factory' | 'flap_vault_is_official' | 'flap_basket_token' | 'flap_supported_assets'>> | null,
-    ): string {
-        const requested = resolveTokenLaunchpadPlatform({
-            address: tokenInfo?.address,
-            launchpad_platform: tokenInfo?.launchpad_platform,
-            requestedPlatform,
-        }) || 'flap';
-        return classifyFlapRoute(chainId, {
-            ...(tokenInfo ?? {}),
-            launchpad_platform: requested,
-        } as TokenInfo).platform;
+        return hasNonTerminalFlapOuterQuote(chainId, tokenInfo)
+            && classifyFlapRoute(chainId, tokenInfo).isFlapStocks;
     }
 
     private static hasDexRouteMinimum(tokenInfo?: Pick<TokenInfo, 'quote_token_address' | 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address'> | null): boolean {
@@ -201,17 +180,28 @@ export class TokenAPI {
             ...tokenInfo,
             address,
             launchpad: 'flap',
-            launchpad_platform: this.resolveFlapLaunchpadPlatform(chainId, requestedPlatform, {
+            launchpad_platform: resolveFlapPlatform(chainId, {
                 address,
                 launchpad_platform: tokenInfo.launchpad_platform,
+                launchpad_status: tokenInfo.launchpad_status,
+                quote_token_address: tokenInfo.quote_token_address,
+                pool_pair: tokenInfo.pool_pair,
+                biggest_pool_address: tokenInfo.biggest_pool_address,
+                tpool_pool_address: tokenInfo.tpool_pool_address,
+                flap_pool_model: tokenInfo.flap_pool_model,
+                flap_pool_compat_address: tokenInfo.flap_pool_compat_address,
+                flap_cl_pool_id: tokenInfo.flap_cl_pool_id,
+                flap_v4_fee: tokenInfo.flap_v4_fee,
+                flap_v4_tick_spacing: tokenInfo.flap_v4_tick_spacing,
                 flap_stocks_vault_version: tokenInfo.flap_stocks_vault_version,
                 flap_dividend_token: tokenInfo.flap_dividend_token,
                 flap_vault_address: tokenInfo.flap_vault_address,
                 flap_vault_factory: tokenInfo.flap_vault_factory,
                 flap_vault_is_official: tokenInfo.flap_vault_is_official,
+                flap_vault_is_vault: tokenInfo.flap_vault_is_vault,
                 flap_basket_token: tokenInfo.flap_basket_token,
                 flap_supported_assets: tokenInfo.flap_supported_assets,
-            }),
+            }, requestedPlatform),
         };
     }
 
@@ -236,6 +226,7 @@ export class TokenAPI {
             | 'flap_vault_address'
             | 'flap_vault_factory'
             | 'flap_vault_is_official'
+            | 'flap_vault_is_vault'
             | 'flap_basket_token'
             | 'flap_supported_assets'
         >> | null,
@@ -247,7 +238,7 @@ export class TokenAPI {
 
         const flapRoute = classifyFlapRoute(chainId, {
             ...(tokenInfo ?? {}),
-            launchpad_platform: this.resolveFlapLaunchpadPlatform(chainId, requestedPlatform, tokenInfo),
+            launchpad_platform: resolveFlapPlatform(chainId, tokenInfo as TokenInfo, requestedPlatform),
         } as TokenInfo);
         const isStocks = flapRoute.isFlapStocks;
 
@@ -255,7 +246,7 @@ export class TokenAPI {
             if (!hasConfirmedFlapOuterRoute(tokenInfo as TokenInfo) && !this.hasDexRouteMinimum(tokenInfo as TokenInfo)) {
                 return false;
             }
-            return !isStocks || this.hasNonTerminalFlapOuterQuote(chain, tokenInfo as Pick<TokenInfo, 'launchpad_status' | 'quote_token_address'>);
+              return !isStocks || hasNonTerminalFlapOuterQuote(chainId, tokenInfo as Pick<TokenInfo, 'launchpad_status' | 'quote_token_address'>);
         }
 
         return true;
@@ -677,17 +668,34 @@ export class TokenAPI {
             biggest_pool_address: hasUsableDexPool ? contractInfo.pool : undefined,
             tpool_pool_address: hasUsableDexPool ? contractInfo.pool : undefined,
         });
-        const resolvedPlatform = this.resolveFlapLaunchpadPlatform(getChainIdByName(chain), platform, {
+        const baseFlapTokenInfo = {
             address,
             launchpad_platform: httpInfo?.launchpad_platform,
+            launchpad_status: Number.isFinite(rawLaunchpadStatus) ? rawLaunchpadStatus : httpInfo?.launchpad_status,
+            quote_token_address: contractInfo?.quoteTokenAddress || httpInfo?.quote_token_address,
+            pool_pair: hasUsableDexPool ? contractInfo?.pool : httpInfo?.pool_pair,
+            biggest_pool_address: hasUsableDexPool ? contractInfo?.pool : httpInfo?.biggest_pool_address,
+            tpool_pool_address: hasUsableDexPool ? contractInfo?.pool : httpInfo?.tpool_pool_address,
+            flap_pool_model: contractInfo?.poolModel,
+            flap_pool_compat_address: contractInfo?.poolCompatAddress,
+            flap_cl_pool_id: contractInfo?.clPoolId,
+            flap_v4_fee: contractInfo?.v4Fee,
+            flap_v4_tick_spacing: contractInfo?.v4TickSpacing,
             flap_stocks_vault_version: contractInfo?.stocksVaultVersion,
             flap_dividend_token: contractInfo?.dividendToken,
             flap_vault_address: contractInfo?.vaultAddress,
             flap_vault_factory: contractInfo?.vaultFactory,
             flap_vault_is_official: contractInfo?.vaultIsOfficial,
+            flap_vault_is_vault: contractInfo?.vaultIsVault,
             flap_basket_token: contractInfo?.basketToken,
             flap_supported_assets: contractInfo?.supportedAssets,
+        };
+        const directResolvedPlatform = resolveFlapPlatform(getChainIdByName(chain), baseFlapTokenInfo, platform);
+        const resolvedPlatform = await resolveFlapPlatformByQuoteLineage(getChainIdByName(chain), baseFlapTokenInfo, platform, async (quoteTokenAddress) => {
+            if (quoteTokenAddress.toLowerCase() === address.toLowerCase()) return null;
+            return await this.getTokenInfoByFlap('flap', chain, quoteTokenAddress);
         });
+        const resolvedOuterQuoteIsStocks = directResolvedPlatform !== 'flap_stocks' && resolvedPlatform === 'flap_stocks';
         if (contractInfo && httpInfo) {
             httpInfo.quote_token_address = contractInfo.quoteTokenAddress;
             httpInfo.nativeToQuoteSwapEnabled = contractInfo.nativeToQuoteSwapEnabled;
@@ -705,8 +713,10 @@ export class TokenAPI {
             httpInfo.flap_vault_address = contractInfo.vaultAddress;
             httpInfo.flap_vault_factory = contractInfo.vaultFactory;
             httpInfo.flap_vault_is_official = contractInfo.vaultIsOfficial;
+            httpInfo.flap_vault_is_vault = contractInfo.vaultIsVault;
             httpInfo.flap_vault_is_ai_consumer = contractInfo.vaultIsAIConsumer;
             httpInfo.flap_stocks_vault_version = contractInfo.stocksVaultVersion;
+            httpInfo.flap_outer_quote_is_stocks = resolvedOuterQuoteIsStocks || undefined;
             httpInfo.flap_basket_token = contractInfo.basketToken;
             httpInfo.flap_supported_assets = contractInfo.supportedAssets;
             httpInfo.launchpad = 'flap';
@@ -761,8 +771,10 @@ export class TokenAPI {
                 flap_vault_address: contractInfo.vaultAddress,
                 flap_vault_factory: contractInfo.vaultFactory,
                 flap_vault_is_official: contractInfo.vaultIsOfficial,
+                flap_vault_is_vault: contractInfo.vaultIsVault,
                 flap_vault_is_ai_consumer: contractInfo.vaultIsAIConsumer,
                 flap_stocks_vault_version: contractInfo.stocksVaultVersion,
+                flap_outer_quote_is_stocks: resolvedOuterQuoteIsStocks || undefined,
                 flap_basket_token: contractInfo.basketToken,
                 flap_supported_assets: contractInfo.supportedAssets,
                 // tokenPrice: {

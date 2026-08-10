@@ -166,6 +166,7 @@ export const createLimitOrderScanner = (deps: {
           return observed;
         })();
         try {
+            const allowTokenInfoPriceFallback = String(resolvedTokenInfo?.launchpad_platform || '').toLowerCase().includes('flap');
           if (observedExternalPrice) {
             priceUsd = observedExternalPrice.priceUsd;
           } else {
@@ -174,7 +175,7 @@ export const createLimitOrderScanner = (deps: {
               tokenAddress,
               tokenInfo: resolvedTokenInfo,
               cacheTtlMs: limitScanIntervalMs,
-              allowTokenInfoPriceFallback: chainId === ChainId.SOL,
+                allowTokenInfoPriceFallback: chainId === ChainId.SOL || allowTokenInfoPriceFallback,
             });
           }
         } catch (e: any) {

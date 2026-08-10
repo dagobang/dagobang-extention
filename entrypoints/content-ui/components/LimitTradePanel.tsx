@@ -225,6 +225,7 @@ export function LimitTradePanel({
     sell: '',
     stage: 'none',
   });
+  const lastLimitOrderTickRef = useRef<{ key: string | null; priceUsd: number; ts: number }>({ key: null, priceUsd: 0, ts: 0 });
 
   const locale: Locale = normalizeLocale(settings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
@@ -644,14 +645,23 @@ export function LimitTradePanel({
   useEffect(() => {
     if (!visible) return;
     if (!tokenAddress) return;
-    if (!isSolanaChain(chainId)) return;
     void call({
       type: 'limitOrder:trackPrice',
       chainId,
       tokenAddress,
       tokenInfo: tokenInfo ?? null,
       active: true,
-    }).then(() => {
+    }).then((res) => {
+      const trackedPriceUsd = Number((res as any)?.priceUsd ?? 0);
+      if (Number.isFinite(trackedPriceUsd) && trackedPriceUsd > 0) {
+        setScanPriceByTokenKey((prev) => ({
+          ...prev,
+          [`${chainId}:${tokenAddress.toLowerCase()}`]: {
+            priceUsd: trackedPriceUsd,
+            ts: Date.now(),
+          },
+        }));
+      }
       requestRefreshScanStatus(0).catch(() => { });
     }).catch(() => { });
     return () => {
@@ -663,7 +673,31 @@ export function LimitTradePanel({
         active: false,
       }).catch(() => { });
     };
-  }, [visible, chainId, tokenAddress, tokenInfo]);
+  }, [visible, chainId, tokenAddress]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (!tokenAddress) return;
+    if (!isSolanaChain(chainId)) return;
+    const priceUsd = tokenPrice != null && Number.isFinite(tokenPrice) && tokenPrice > 0 ? tokenPrice : null;
+    if (priceUsd == null) return;
+    const tokenKey = `${chainId}:${tokenAddress.toLowerCase()}`;
+    const last = lastLimitOrderTickRef.current;
+    const now = Date.now();
+    if (last.key === tokenKey && Math.abs(last.priceUsd - priceUsd) < 1e-12 && now - last.ts < 800) return;
+    lastLimitOrderTickRef.current = { key: tokenKey, priceUsd, ts: now };
+    void call({
+      type: 'limitOrder:tick',
+      chainId,
+      tokenAddress,
+      priceUsd,
+    }).then((res) => {
+      if ((res as any)?.triggered?.length || (res as any)?.executed?.length || (res as any)?.failed?.length) {
+        requestRefreshOrders(0).catch(() => { });
+        requestRefreshScanStatus(0).catch(() => { });
+      }
+    }).catch(() => { });
+  }, [visible, chainId, tokenAddress, tokenPrice]);
 
   useEffect(() => {
     if (!visible) return;

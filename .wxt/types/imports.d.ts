@@ -67,8 +67,10 @@ declare global {
   const getSolanaTipMinimumNative: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getSolanaTipMinimumNative
   const getSolanaTipPresetValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getSolanaTipPresetValue
   const getSolanaTipProviderLabel: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').getSolanaTipProviderLabel
+  const hasConfirmedFlapLaunchpadIdentity: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').hasConfirmedFlapLaunchpadIdentity
   const hasConfirmedFlapOuterRoute: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').hasConfirmedFlapOuterRoute
   const hasConfirmedFlapStocksIdentity: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').hasConfirmedFlapStocksIdentity
+  const hasNonTerminalFlapOuterQuote: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').hasNonTerminalFlapOuterQuote
   const inferLaunchpadFamilyByAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/launchpadFamily').inferLaunchpadFamilyByAddress
   const injectScript: typeof import('wxt/utils/inject-script').injectScript
   const isAllowanceLikeText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').isAllowanceLikeText
@@ -102,6 +104,8 @@ declare global {
   const pickMaxFiniteNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickMaxFiniteNumber
   const pickMaxPercentValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickMaxPercentValue
   const resolveEnabledSolanaSwqosProviderTypes: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').resolveEnabledSolanaSwqosProviderTypes
+  const resolveFlapPlatform: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').resolveFlapPlatform
+  const resolveFlapPlatformByQuoteLineage: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').resolveFlapPlatformByQuoteLineage
   const resolveSingleEnabledSolanaTipProvider: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').resolveSingleEnabledSolanaTipProvider
   const resolveSolanaTipConfig: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').resolveSolanaTipConfig
   const resolveTokenLaunchpadPlatform: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/launchpadFamily').resolveTokenLaunchpadPlatform

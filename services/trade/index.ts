@@ -39,8 +39,8 @@ import { OpenFourInnerLaunchpadManager, OpenFourRegistryAddress } from '@/consta
 import FlapAPI from '@/hooks/FlapAPI';
 import DexScreenerAPI, { type DexScreenerPair } from '@/hooks/DexScreenerAPI';
 import { GmgnAPI } from '@/hooks/GmgnAPI';
-import { classifyFlapRoute, hasConfirmedFlapOuterRoute, isUsableFlapDexPoolAddress } from '@/utils/flap';
-import { isFlapSuffixAddress, resolveTokenLaunchpadPlatform } from '@/utils/launchpadFamily';
+import { classifyFlapRoute, hasConfirmedFlapLaunchpadIdentity, hasConfirmedFlapOuterRoute, isUsableFlapDexPoolAddress, resolveFlapPlatform, resolveFlapPlatformByQuoteLineage } from '@/utils/flap';
+import { resolveTokenLaunchpadPlatform } from '@/utils/launchpadFamily';
 import { call } from '@/utils/messaging';
 
 function getDefaultBridgeV3Fee(chainId: number): number {
@@ -257,9 +257,13 @@ export class TradeService {
     return `${chainId}:${owner.toLowerCase()}:${token.toLowerCase()}:${spender.toLowerCase()}`;
   }
 
-  private static getTurboWarmFingerprint(tokenInfo: TokenInfo) {
+  private static getTurboWarmFingerprint(chainId: number, tokenInfo: TokenInfo) {
+    const rawPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
+    const effectivePlatform = rawPlatform.startsWith('flap')
+      ? resolveFlapPlatform(chainId, tokenInfo)
+      : rawPlatform;
     return [
-      resolveTradeLaunchpadPlatform(tokenInfo),
+      effectivePlatform,
       String(tokenInfo.launchpad_status ?? ''),
       String(tokenInfo.pool_pair || '').toLowerCase(),
       String(tokenInfo.dex_type || '').toLowerCase(),
@@ -277,7 +281,7 @@ export class TradeService {
       input.chainId,
       input.owner.toLowerCase(),
       input.tokenAddress.toLowerCase(),
-      this.getTurboWarmFingerprint(input.tokenInfo),
+      this.getTurboWarmFingerprint(input.chainId, input.tokenInfo),
     ].join(':');
   }
 
@@ -368,8 +372,10 @@ export class TradeService {
     const settings = await SettingsService.get();
     const consoleLogsEnabled = settings.ui?.consoleLogsEnabled === true;
     const startedAt = Date.now();
-    const tokenInfo = input.tokenInfo;
+    let tokenInfo = input.tokenInfo;
     if (!tokenInfo) return;
+    tokenInfo = await this.ensureFlapTradeTokenInfo(input.chainId, tokenInfo, consoleLogsEnabled);
+    input.tokenInfo = tokenInfo;
 
     const client = await RpcService.getClient(input.chainId);
     const fromAddress = this.resolveOptionalEvmAddress(input.fromAddress, 'from address');
@@ -962,6 +968,7 @@ export class TradeService {
     }
     if (!isOpenFourPlatform(platform)) return getBridgeToken(chainId, tokenInfo.address, tokenInfo.quote_token_address);
     const raw = typeof tokenInfo.quote_token_address === 'string' ? tokenInfo.quote_token_address.trim() : '';
+    if (this.isLikelySentinelFlapQuoteToken(raw)) return null;
     if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) return null;
     const wrappedNative = getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
     return raw.toLowerCase() === wrappedNative ? ZERO_ADDRESS : raw as Address;
@@ -979,6 +986,7 @@ export class TradeService {
       if (runtimeToken !== null) return runtimeToken;
     }
     const raw = typeof tokenInfo.quote_token_address === 'string' ? tokenInfo.quote_token_address.trim() : '';
+    if (this.isLikelySentinelFlapQuoteToken(raw)) return null;
     if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) return null;
     const normalized = raw.toLowerCase();
     const wrappedNative = getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
@@ -988,9 +996,20 @@ export class TradeService {
 
   private static sanitizeFlapQuoteTokenAddress(tokenAddress: Address, quoteTokenAddress?: string | null): Address | null {
     const raw = typeof quoteTokenAddress === 'string' ? quoteTokenAddress.trim() : '';
+    if (this.isLikelySentinelFlapQuoteToken(raw)) return null;
     if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) return null;
     if (raw.toLowerCase() === tokenAddress.toLowerCase()) return null;
     return raw as Address;
+  }
+
+  private static isLikelySentinelFlapQuoteToken(quoteTokenAddress?: string | null): boolean {
+    const raw = String(quoteTokenAddress || '').trim().toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(raw) || raw === ZERO_ADDRESS.toLowerCase()) return false;
+    try {
+      return BigInt(raw) <= 0xffffn;
+    } catch {
+      return false;
+    }
   }
 
   private static normalizeFlapPoolCounterpartyToken(chainId: number, tokenAddress?: string | null): Address | null {
@@ -1263,7 +1282,7 @@ export class TradeService {
     const classification = this.classifyLaunchpadRoute(input.chainId, input.tokenInfo);
     const platform = classification.platform;
     if (!INNER_LAUNCHPAD_PLATFORMS.has(platform) || !classification.isInner) return null;
-    if (classification.isFlap && !this.hasConfirmedFlapLaunchpadIdentity(input.tokenInfo)) {
+    if (classification.isFlap && !hasConfirmedFlapLaunchpadIdentity(input.chainId, input.tokenInfo)) {
       return null;
     }
 
@@ -1446,35 +1465,100 @@ export class TradeService {
     return descs;
   }
 
-  private static hasFlapStocksMetadata(tokenInfo?: TokenInfo): boolean {
-    if (!tokenInfo) return false;
-    const isNonZeroAddressLike = (value?: string | null): boolean => (
-      isAddressLike(value) && String(value).trim().toLowerCase() !== ZERO_ADDRESS.toLowerCase()
-    );
-    return tokenInfo.flap_stocks_vault_version != null
-      || isNonZeroAddressLike(tokenInfo.flap_dividend_token)
-      || isNonZeroAddressLike(tokenInfo.flap_vault_factory)
-      || isNonZeroAddressLike(tokenInfo.flap_basket_token)
-      || (Array.isArray(tokenInfo.flap_supported_assets) && tokenInfo.flap_supported_assets.some((item) => isNonZeroAddressLike(item)));
+  private static mergeFlapTradeTokenInfo(base: TokenInfo, enriched: TokenInfo): TokenInfo {
+    return {
+      ...base,
+      ...enriched,
+      chain: base.chain || enriched.chain,
+      address: base.address || enriched.address,
+      name: base.name || enriched.name,
+      symbol: base.symbol || enriched.symbol,
+      decimals: base.decimals || enriched.decimals,
+      logo: base.logo || enriched.logo,
+      website: base.website || enriched.website,
+      twitterUrl: base.twitterUrl || enriched.twitterUrl,
+      gmgnUrl: base.gmgnUrl || enriched.gmgnUrl,
+      launchpad: base.launchpad || enriched.launchpad,
+      launchpad_platform: enriched.launchpad_platform || base.launchpad_platform,
+      launchpad_status: enriched.launchpad_status ?? base.launchpad_status,
+      launchpad_progress: enriched.launchpad_progress ?? base.launchpad_progress,
+      quote_token: enriched.quote_token || base.quote_token,
+      quote_token_address: enriched.quote_token_address || base.quote_token_address,
+      pool_pair: enriched.pool_pair || base.pool_pair,
+      biggest_pool_address: enriched.biggest_pool_address || base.biggest_pool_address,
+      tpool_pool_address: enriched.tpool_pool_address || base.tpool_pool_address,
+      dex_type: enriched.dex_type || base.dex_type,
+      nativeToQuoteSwapEnabled: enriched.nativeToQuoteSwapEnabled ?? base.nativeToQuoteSwapEnabled,
+      tokenVersion: enriched.tokenVersion ?? base.tokenVersion,
+      extensionID: enriched.extensionID ?? base.extensionID,
+      dexId: enriched.dexId ?? base.dexId,
+      flap_lp_fee_profile: enriched.flap_lp_fee_profile ?? base.flap_lp_fee_profile,
+      flap_pool_model: enriched.flap_pool_model ?? base.flap_pool_model,
+      flap_pool_compat_address: enriched.flap_pool_compat_address ?? base.flap_pool_compat_address,
+      flap_cl_pool_id: enriched.flap_cl_pool_id ?? base.flap_cl_pool_id,
+      flap_v4_fee: enriched.flap_v4_fee ?? base.flap_v4_fee,
+      flap_v4_tick_spacing: enriched.flap_v4_tick_spacing ?? base.flap_v4_tick_spacing,
+      flap_v4_hooks: enriched.flap_v4_hooks ?? base.flap_v4_hooks,
+      flap_dividend_token: enriched.flap_dividend_token || base.flap_dividend_token,
+      flap_vault_address: enriched.flap_vault_address || base.flap_vault_address,
+      flap_vault_factory: enriched.flap_vault_factory || base.flap_vault_factory,
+      flap_vault_is_official: enriched.flap_vault_is_official ?? base.flap_vault_is_official,
+      flap_vault_is_vault: enriched.flap_vault_is_vault ?? base.flap_vault_is_vault,
+      flap_vault_is_ai_consumer: enriched.flap_vault_is_ai_consumer ?? base.flap_vault_is_ai_consumer,
+      flap_stocks_vault_version: enriched.flap_stocks_vault_version ?? base.flap_stocks_vault_version,
+      flap_outer_quote_is_stocks: enriched.flap_outer_quote_is_stocks ?? base.flap_outer_quote_is_stocks,
+      flap_basket_token: enriched.flap_basket_token || base.flap_basket_token,
+      flap_supported_assets: enriched.flap_supported_assets ?? base.flap_supported_assets,
+      tokenPrice: base.tokenPrice ?? enriched.tokenPrice,
+    };
   }
 
-  private static hasConfirmedFlapLaunchpadIdentity(
-    tokenInfo?: Pick<TokenInfo, 'address' | 'tokenVersion' | 'extensionID' | 'nativeToQuoteSwapEnabled' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_factory' | 'flap_basket_token' | 'flap_supported_assets'> | null
-  ): boolean {
-    if (!tokenInfo) return false;
-    if (this.hasFlapStocksMetadata(tokenInfo as TokenInfo)) return true;
-    if (isFlapSuffixAddress(tokenInfo.address)) return true;
-    if (Number(tokenInfo.tokenVersion ?? 0) > 0) return true;
-    if (tokenInfo.nativeToQuoteSwapEnabled === true) return true;
-    const extensionID = String(tokenInfo.extensionID || '').trim().toLowerCase();
-    return !!extensionID && extensionID !== '0x' && extensionID !== '0x0';
+  private static async ensureFlapTradeTokenInfo(chainId: number, tokenInfo: TokenInfo, debug?: boolean): Promise<TokenInfo> {
+    const platform = resolveTradeLaunchpadPlatform(tokenInfo);
+    if (!platform.startsWith('flap')) return tokenInfo;
+    const rawStatus = Number(tokenInfo.launchpad_status ?? Number.NaN);
+    const isOuter = Number.isFinite(rawStatus)
+      ? rawStatus === 1
+      : hasConfirmedFlapOuterRoute(tokenInfo);
+    if (!isOuter) return tokenInfo;
+    const tokenAddress = this.resolveEvmAddress(tokenInfo.address, 'token address') as Address;
+    const enriched = await this.getFlapOuterQuoteTokenInfo(chainId, tokenAddress, debug).catch(() => null);
+    if (!enriched) return tokenInfo;
+    return this.mergeFlapTradeTokenInfo(tokenInfo, enriched);
   }
 
-  private static resolveFlapStocksLaunchpadPlatform(chainId: number, tokenInfo?: Partial<Pick<TokenInfo, 'address' | 'launchpad_platform' | 'launchpad_status' | 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address' | 'flap_pool_model' | 'flap_pool_compat_address' | 'flap_cl_pool_id' | 'flap_v4_fee' | 'flap_v4_tick_spacing' | 'flap_stocks_vault_version' | 'flap_dividend_token' | 'flap_vault_address' | 'flap_vault_factory' | 'flap_vault_is_official' | 'flap_basket_token' | 'flap_supported_assets'>> | null): string {
-    return classifyFlapRoute(chainId, {
-      launchpad_platform: 'flap',
-      ...(tokenInfo ?? {}),
-    } as TokenInfo).platform;
+  private static async getFlapTokenIdentityInfo(chainId: number, tokenAddress: Address): Promise<Partial<TokenInfo> | null> {
+    try {
+      const res = await call({
+        type: 'token:getTokenInfo:flap',
+        chainId,
+        tokenAddress,
+      } as const);
+      if ((res as any)?.ok === false) return null;
+      const state = res as unknown as FlapTokenStateV7;
+      return {
+        address: tokenAddress,
+        launchpad: 'flap',
+        launchpad_status: Number.isFinite(Number(state?.status ?? Number.NaN))
+          ? Number(state?.status)
+          : undefined,
+        quote_token_address: typeof state?.quoteTokenAddress === 'string' ? state.quoteTokenAddress : undefined,
+        nativeToQuoteSwapEnabled: state?.nativeToQuoteSwapEnabled,
+        tokenVersion: state?.tokenVersion,
+        extensionID: state?.extensionID,
+        flap_dividend_token: state?.dividendToken,
+        flap_vault_address: state?.vaultAddress,
+        flap_vault_factory: state?.vaultFactory,
+        flap_vault_is_official: state?.vaultIsOfficial,
+        flap_vault_is_vault: state?.vaultIsVault,
+        flap_vault_is_ai_consumer: state?.vaultIsAIConsumer,
+        flap_stocks_vault_version: state?.stocksVaultVersion,
+        flap_basket_token: state?.basketToken,
+        flap_supported_assets: state?.supportedAssets,
+      };
+    } catch {
+      return null;
+    }
   }
 
   private static isUsableDexQuote(q: DexExactInQuote, isTurbo: boolean): boolean {
@@ -1612,6 +1696,7 @@ export class TradeService {
         const mergedVaultAddress = onchain?.vaultAddress;
         const mergedVaultFactory = onchain?.vaultFactory;
         const mergedVaultIsOfficial = onchain?.vaultIsOfficial;
+          const mergedVaultIsVault = onchain?.vaultIsVault;
         const mergedVaultIsAIConsumer = onchain?.vaultIsAIConsumer;
         const mergedStocksVaultVersion = onchain?.stocksVaultVersion;
         const mergedBasketToken = onchain?.basketToken;
@@ -1632,16 +1717,71 @@ export class TradeService {
         const officialLaunchpadStatus = Number(officialInfo?.launchpad_status ?? Number.NaN);
         const tradeLaunchpadStatus = Number(tradeInfo?.launchpad_status ?? Number.NaN);
         const mergedLaunchpad = officialInfo?.launchpad || tradeInfo?.launchpad || 'flap';
-          const mergedLaunchpadPlatform = this.resolveFlapStocksLaunchpadPlatform(chainId, {
-          launchpad_platform: officialInfo?.launchpad_platform || tradeInfo?.launchpad_platform || mergedLaunchpad,
-          flap_stocks_vault_version: mergedStocksVaultVersion,
-          flap_dividend_token: mergedDividendToken,
+          const directLaunchpadPlatform = resolveFlapPlatform(chainId, {
+            address: tokenAddress,
+            launchpad_platform: officialInfo?.launchpad_platform || tradeInfo?.launchpad_platform || mergedLaunchpad,
+            launchpad_status: onchainLaunchpadStatus != null
+              ? onchainLaunchpadStatus
+              : Number.isFinite(officialLaunchpadStatus)
+                ? officialLaunchpadStatus
+                : Number.isFinite(tradeLaunchpadStatus)
+                  ? tradeLaunchpadStatus
+                  : undefined,
+            quote_token_address: mergedQuoteTokenAddress,
+            pool_pair: mergedPoolPair,
+            biggest_pool_address: officialInfo?.biggest_pool_address || tradeInfo?.biggest_pool_address,
+            tpool_pool_address: officialInfo?.tpool_pool_address || tradeInfo?.tpool_pool_address,
+            flap_pool_model: mergedPoolModel,
+            flap_pool_compat_address: mergedPoolCompatAddress,
+            flap_cl_pool_id: mergedClPoolId,
+            flap_v4_fee: mergedV4Fee,
+            flap_v4_tick_spacing: mergedV4TickSpacing,
+            flap_stocks_vault_version: mergedStocksVaultVersion,
+            flap_dividend_token: mergedDividendToken,
             flap_vault_address: mergedVaultAddress,
-          flap_vault_factory: mergedVaultFactory,
+            flap_vault_factory: mergedVaultFactory,
             flap_vault_is_official: mergedVaultIsOfficial,
-          flap_basket_token: mergedBasketToken,
-          flap_supported_assets: mergedSupportedAssets,
-        });
+            flap_vault_is_vault: mergedVaultIsVault,
+            flap_basket_token: mergedBasketToken,
+            flap_supported_assets: mergedSupportedAssets,
+          }, officialInfo?.launchpad_platform || tradeInfo?.launchpad_platform || mergedLaunchpad);
+          const mergedLaunchpadPlatform = await resolveFlapPlatformByQuoteLineage(
+            chainId,
+            {
+              address: tokenAddress,
+              launchpad_platform: officialInfo?.launchpad_platform || tradeInfo?.launchpad_platform || mergedLaunchpad,
+                launchpad_status: onchainLaunchpadStatus != null
+                  ? onchainLaunchpadStatus
+                  : Number.isFinite(officialLaunchpadStatus)
+                    ? officialLaunchpadStatus
+                    : Number.isFinite(tradeLaunchpadStatus)
+                      ? tradeLaunchpadStatus
+                      : undefined,
+              quote_token_address: mergedQuoteTokenAddress,
+              pool_pair: mergedPoolPair,
+              biggest_pool_address: officialInfo?.biggest_pool_address || tradeInfo?.biggest_pool_address,
+              tpool_pool_address: officialInfo?.tpool_pool_address || tradeInfo?.tpool_pool_address,
+              flap_pool_model: mergedPoolModel,
+              flap_pool_compat_address: mergedPoolCompatAddress,
+              flap_cl_pool_id: mergedClPoolId,
+              flap_v4_fee: mergedV4Fee,
+              flap_v4_tick_spacing: mergedV4TickSpacing,
+              flap_stocks_vault_version: mergedStocksVaultVersion,
+              flap_dividend_token: mergedDividendToken,
+              flap_vault_address: mergedVaultAddress,
+              flap_vault_factory: mergedVaultFactory,
+              flap_vault_is_official: mergedVaultIsOfficial,
+              flap_vault_is_vault: mergedVaultIsVault,
+              flap_basket_token: mergedBasketToken,
+              flap_supported_assets: mergedSupportedAssets,
+            },
+            officialInfo?.launchpad_platform || tradeInfo?.launchpad_platform || mergedLaunchpad,
+            async (quoteTokenAddress) => {
+              if (quoteTokenAddress.toLowerCase() === tokenAddress.toLowerCase()) return null;
+              return await this.getFlapTokenIdentityInfo(chainId, quoteTokenAddress);
+            },
+          );
+          const mergedOuterQuoteIsStocks = directLaunchpadPlatform !== 'flap_stocks' && mergedLaunchpadPlatform === 'flap_stocks';
           const mergedLaunchpadStatus = onchainLaunchpadStatus != null
             ? onchainLaunchpadStatus
             : Number.isFinite(officialLaunchpadStatus)
@@ -1705,8 +1845,10 @@ export class TradeService {
             flap_vault_address: mergedVaultAddress,
             flap_vault_factory: mergedVaultFactory,
             flap_vault_is_official: mergedVaultIsOfficial,
+              flap_vault_is_vault: mergedVaultIsVault,
             flap_vault_is_ai_consumer: mergedVaultIsAIConsumer,
             flap_stocks_vault_version: mergedStocksVaultVersion,
+            flap_outer_quote_is_stocks: mergedOuterQuoteIsStocks || undefined,
             flap_basket_token: mergedBasketToken,
             flap_supported_assets: mergedSupportedAssets,
           } as TokenInfo;
@@ -1731,6 +1873,7 @@ export class TradeService {
             mergedLaunchpadStatus: mergedInfo.launchpad_status ?? null,
             mergedDexType: mergedInfo.dex_type ?? null,
             mergedLaunchpadPlatform: mergedInfo.launchpad_platform ?? null,
+            mergedOuterQuoteIsStocks: mergedInfo.flap_outer_quote_is_stocks ?? null,
             mergedLaunchType: mergedInfo.tpool_launch_type ?? null,
             mergedLpFeeProfile: mergedInfo.flap_lp_fee_profile ?? null,
             mergedDexId: mergedInfo.dexId ?? null,
@@ -1826,6 +1969,7 @@ export class TradeService {
 
   private static normalizeFlapQuoteTokenAddress(chainId: number, quoteTokenAddress?: string): Address | null {
     const raw = typeof quoteTokenAddress === 'string' ? quoteTokenAddress.trim() : '';
+    if (this.isLikelySentinelFlapQuoteToken(raw)) return null;
     if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) return null;
     const normalized = raw.toLowerCase();
     const wrappedNative = getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
@@ -2818,6 +2962,8 @@ export class TradeService {
       }
     }
     if (!tokenInfo) throw new Error('Token info required');
+    tokenInfo = await this.ensureFlapTradeTokenInfo(input.chainId, tokenInfo, settings.ui?.consoleLogsEnabled === true);
+    input.tokenInfo = tokenInfo;
     const baseTokenSymbol = this.resolveBaseTokenSymbol(input.chainId, baseTokenAddress);
     const baseFee = input.poolFee ?? 2500;
     const executionMode = input.executionModeOverride ?? settings.chains[input.chainId]?.executionMode ?? 'default';
@@ -3675,6 +3821,8 @@ export class TradeService {
         }
       }
       if (!tokenInfo) throw new Error('Token info required');
+      tokenInfo = await this.ensureFlapTradeTokenInfo(input.chainId, tokenInfo, settings.ui?.consoleLogsEnabled === true);
+      input.tokenInfo = tokenInfo;
 
       const baseTokenSymbol = this.resolveBaseTokenSymbol(input.chainId, baseTokenAddress);
       const baseFee = input.poolFee ?? 2500;

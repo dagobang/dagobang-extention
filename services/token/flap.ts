@@ -79,11 +79,37 @@ export class TokenFlapService {
     const token = String(tokenAddress || '').trim().toLowerCase();
     const quote = String(quoteTokenAddress || '').trim();
     if (!quote || quote.toLowerCase() === ZERO_ADDRESS) return null;
+    if (this.isLikelySentinelQuoteTokenAddress(quote)) return null;
     if (quote.toLowerCase() === token) return null;
     if (chainId === ChainId.BNB && quote.toLowerCase() === bscTokens.wbnb.address.toLowerCase()) {
       return ZERO_ADDRESS;
     }
     return quote;
+  }
+
+  private static isLikelySentinelQuoteTokenAddress(address?: string | null): boolean {
+    const raw = String(address || '').trim().toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(raw) || raw === ZERO_ADDRESS.toLowerCase()) return false;
+    try {
+      return BigInt(raw) <= 0xffffn;
+    } catch {
+      return false;
+    }
+  }
+
+  private static resolvePreferredQuoteTokenAddress(input: {
+    chainId: number;
+    tokenAddress: string;
+    managerQuoteTokenAddress?: string | null;
+    helperQuoteTokenAddress?: string | null;
+  }): string {
+    const managerQuote = String(input.managerQuoteTokenAddress || '').trim();
+    const helperQuote = String(input.helperQuoteTokenAddress || '').trim();
+    const hasUsableManagerQuote = !!this.normalizeQuoteTokenForPoolLookup(input.chainId, input.tokenAddress, managerQuote);
+    if (hasUsableManagerQuote) return managerQuote;
+    const hasUsableHelperQuote = !!this.normalizeQuoteTokenForPoolLookup(input.chainId, input.tokenAddress, helperQuote);
+    if (hasUsableHelperQuote) return helperQuote;
+    return ZERO_ADDRESS;
   }
 
   private static pickBestV4InitializeLog(input: {
@@ -246,7 +272,7 @@ export class TokenFlapService {
         vaultIsAIConsumer,
         stocksVaultVersion,
         basketToken,
-        supportedAssets,
+          supportedAssets,
       };
     } catch {
       return null;
@@ -297,11 +323,12 @@ export class TokenFlapService {
       const progress = state?.progress ?? (functionName === 'getTokenV8Safe' ? state?.[15] : state?.[14]);
       const lpFeeProfile = state?.lpFeeProfile ?? (functionName === 'getTokenV8Safe' ? state?.[16] : state?.[15]);
       const dexId = state?.dexId ?? (functionName === 'getTokenV8Safe' ? state?.[17] : state?.[16]);
-      const resolvedQuoteTokenAddress = String(
-        quoteTokenAddress && String(quoteTokenAddress) !== ZERO_ADDRESS
-          ? quoteTokenAddress
-          : (taxInfo?.quoteToken ?? ZERO_ADDRESS)
-      );
+      const resolvedQuoteTokenAddress = this.resolvePreferredQuoteTokenAddress({
+        chainId,
+        tokenAddress,
+        managerQuoteTokenAddress: typeof quoteTokenAddress === 'string' ? quoteTokenAddress : String(quoteTokenAddress ?? ''),
+        helperQuoteTokenAddress: taxInfo?.quoteToken ?? ZERO_ADDRESS,
+      });
       const poolModel = this.resolvePoolModel(chainId, String(pool ?? ZERO_ADDRESS));
       const v4PoolMetadata = poolModel === 'v4_cl'
         ? await this.getV4PoolMetadata({
@@ -345,6 +372,7 @@ export class TokenFlapService {
         vaultAddress: taxInfo?.vaultAddress,
         vaultFactory: taxInfo?.vaultFactory,
         vaultIsOfficial: taxInfo?.vaultIsOfficial,
+          vaultIsVault: taxInfo?.vaultIsVault,
         vaultIsAIConsumer: taxInfo?.vaultIsAIConsumer,
         stocksVaultVersion: taxInfo?.stocksVaultVersion,
         basketToken: taxInfo?.basketToken,

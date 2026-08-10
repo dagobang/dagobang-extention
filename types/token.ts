@@ -66,8 +66,10 @@ export interface TokenInfo {
   flap_vault_address?: string;
   flap_vault_factory?: string;
   flap_vault_is_official?: boolean;
+  flap_vault_is_vault?: boolean;
   flap_vault_is_ai_consumer?: boolean;
   flap_stocks_vault_version?: 1 | 2 | 3;
+  flap_outer_quote_is_stocks?: boolean;
   flap_basket_token?: string;
   flap_supported_assets?: string[];
 }
@@ -120,6 +122,7 @@ export interface FlapTokenStateV7 {
   vaultAddress?: string;
   vaultFactory?: string;
   vaultIsOfficial?: boolean;
+  vaultIsVault?: boolean;
   vaultIsAIConsumer?: boolean;
   stocksVaultVersion?: 1 | 2 | 3;
   basketToken?: string;
