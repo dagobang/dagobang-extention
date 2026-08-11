@@ -229,6 +229,28 @@ export function LimitTradePanel({
 
   const locale: Locale = normalizeLocale(settings?.locale ?? 'zh_CN');
   const tt = (key: string, subs?: Array<string | number>) => t(key, locale, subs);
+  const trackedTokenInfoFingerprint = useMemo(() => JSON.stringify({
+    launchpad_platform: tokenInfo?.launchpad_platform ?? null,
+    launchpad_status: tokenInfo?.launchpad_status ?? null,
+    quote_token_address: tokenInfo?.quote_token_address ?? null,
+    pool_pair: tokenInfo?.pool_pair ?? null,
+    biggest_pool_address: tokenInfo?.biggest_pool_address ?? null,
+    tpool_pool_address: tokenInfo?.tpool_pool_address ?? null,
+    dex_type: tokenInfo?.dex_type ?? null,
+    flap_pool_model: tokenInfo?.flap_pool_model ?? null,
+    flap_pool_compat_address: tokenInfo?.flap_pool_compat_address ?? null,
+    flap_cl_pool_id: tokenInfo?.flap_cl_pool_id ?? null,
+    flap_v4_fee: tokenInfo?.flap_v4_fee ?? null,
+    flap_v4_tick_spacing: tokenInfo?.flap_v4_tick_spacing ?? null,
+    flap_stocks_vault_version: tokenInfo?.flap_stocks_vault_version ?? null,
+    flap_vault_factory: tokenInfo?.flap_vault_factory ?? null,
+    flap_vault_is_vault: tokenInfo?.flap_vault_is_vault ?? null,
+    flap_outer_quote_is_stocks: (tokenInfo as any)?.flap_outer_quote_is_stocks ?? null,
+    priceUsd: (tokenInfo as any)?.priceUsd ?? null,
+    price: (tokenInfo as any)?.price ?? null,
+    tokenPrice: tokenInfo?.tokenPrice?.price ?? null,
+    tokenMarketCap: tokenInfo?.tokenPrice?.marketCap ?? null,
+  }), [tokenInfo]);
 
   const siteChainId = useMemo(() => {
     if (!siteInfo?.chain) return null;
@@ -674,6 +696,30 @@ export function LimitTradePanel({
       }).catch(() => { });
     };
   }, [visible, chainId, tokenAddress]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (!tokenAddress) return;
+    void call({
+      type: 'limitOrder:trackPrice',
+      chainId,
+      tokenAddress,
+      tokenInfo: tokenInfo ?? null,
+      active: true,
+    }).then((res) => {
+      const trackedPriceUsd = Number((res as any)?.priceUsd ?? 0);
+      if (Number.isFinite(trackedPriceUsd) && trackedPriceUsd > 0) {
+        setScanPriceByTokenKey((prev) => ({
+          ...prev,
+          [`${chainId}:${tokenAddress.toLowerCase()}`]: {
+            priceUsd: trackedPriceUsd,
+            ts: Date.now(),
+          },
+        }));
+      }
+      requestRefreshScanStatus(0).catch(() => { });
+    }).catch(() => { });
+  }, [visible, chainId, tokenAddress, trackedTokenInfoFingerprint]);
 
   useEffect(() => {
     if (!visible) return;

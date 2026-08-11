@@ -7,6 +7,7 @@ import { applyTrailingStopUpdate, hitLimitOrder, normalizeLimitOrderType, patchL
 import { getWalletAdapter } from '@/services/chain/registry';
 import { buildScopedTokenKey } from '@/services/xSniper/engine/metrics';
 import { normalizePriceValue } from '@/utils/format';
+import { classifyFlapRoute } from '@/utils/flap';
 import type { LimitOrder, LimitOrderScanStatus } from '@/types/extention';
 
 const LIMIT_SCAN_ALARM = 'limitOrder:scan';
@@ -166,7 +167,27 @@ export const createLimitOrderScanner = (deps: {
           return observed;
         })();
         try {
-            const allowTokenInfoPriceFallback = String(resolvedTokenInfo?.launchpad_platform || '').toLowerCase().includes('flap');
+          const flapRoute = String(resolvedTokenInfo?.launchpad_platform || '').toLowerCase().includes('flap')
+            ? classifyFlapRoute(chainId, resolvedTokenInfo)
+            : null;
+          const allowTokenInfoPriceFallback = String(resolvedTokenInfo?.launchpad_platform || '').toLowerCase().includes('flap');
+          if (flapRoute?.isOuter) {
+            console.info('[limitOrder.price.request]', {
+              chainId,
+              tokenAddress,
+              platform: resolvedTokenInfo?.launchpad_platform ?? null,
+              resolvedPlatform: flapRoute.platform,
+              isFlapStocks: flapRoute.isFlapStocks,
+              launchpadStatus: resolvedTokenInfo?.launchpad_status ?? null,
+              quoteTokenAddress: resolvedTokenInfo?.quote_token_address ?? null,
+              poolPair: resolvedTokenInfo?.pool_pair ?? null,
+              biggestPoolAddress: resolvedTokenInfo?.biggest_pool_address ?? null,
+              tpoolPoolAddress: resolvedTokenInfo?.tpool_pool_address ?? null,
+              flapOuterQuoteIsStocks: resolvedTokenInfo?.flap_outer_quote_is_stocks ?? null,
+              flapVaultIsVault: resolvedTokenInfo?.flap_vault_is_vault ?? null,
+              flapStocksVaultVersion: resolvedTokenInfo?.flap_stocks_vault_version ?? null,
+            });
+          }
           if (observedExternalPrice) {
             priceUsd = observedExternalPrice.priceUsd;
           } else {
@@ -178,10 +199,42 @@ export const createLimitOrderScanner = (deps: {
                 allowTokenInfoPriceFallback: chainId === ChainId.SOL || allowTokenInfoPriceFallback,
             });
           }
+          if (flapRoute?.isOuter) {
+            console.info('[limitOrder.price.result]', {
+              chainId,
+              tokenAddress,
+              priceUsd,
+            });
+          }
         } catch (e: any) {
           const msg = typeof e?.message === 'string' ? e.message : String(e);
+          if (String(resolvedTokenInfo?.launchpad_platform || '').toLowerCase().includes('flap')) {
+            console.warn('[limitOrder.price.error]', {
+              chainId,
+              tokenAddress,
+              platform: resolvedTokenInfo?.launchpad_platform ?? null,
+              launchpadStatus: resolvedTokenInfo?.launchpad_status ?? null,
+              quoteTokenAddress: resolvedTokenInfo?.quote_token_address ?? null,
+              error: msg,
+            });
+          }
           softError = msg;
           continue;
+        }
+        if (
+          (!Number.isFinite(priceUsd) || priceUsd <= 0)
+          && String(resolvedTokenInfo?.launchpad_platform || '').toLowerCase().includes('flap')
+        ) {
+          console.warn('[limitOrder.price.zero]', {
+            chainId,
+            tokenAddress,
+            platform: resolvedTokenInfo?.launchpad_platform ?? null,
+            launchpadStatus: resolvedTokenInfo?.launchpad_status ?? null,
+            quoteTokenAddress: resolvedTokenInfo?.quote_token_address ?? null,
+            poolPair: resolvedTokenInfo?.pool_pair ?? null,
+            biggestPoolAddress: resolvedTokenInfo?.biggest_pool_address ?? null,
+            tpoolPoolAddress: resolvedTokenInfo?.tpool_pool_address ?? null,
+          });
         }
         if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
         const scanPriceUsd = normalizePriceValue(priceUsd, 4, 6);
@@ -325,10 +378,17 @@ export const createLimitOrderScanner = (deps: {
     setTrackedToken: async (input: { chainId: number; tokenAddress: string; tokenInfo?: any | null; active: boolean }) => {
       const priceKey = toPriceKey(input.chainId, input.tokenAddress);
       if (input.active) {
+        const prev = trackedTokensByKey.get(priceKey);
         trackedTokensByKey.set(priceKey, {
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
-          tokenInfo: input.tokenInfo ?? null,
+          tokenInfo: input.tokenInfo
+            ? {
+              ...(prev?.tokenInfo ?? {}),
+              ...input.tokenInfo,
+              tokenPrice: input.tokenInfo?.tokenPrice ?? prev?.tokenInfo?.tokenPrice,
+            }
+            : (prev?.tokenInfo ?? null),
         });
       } else {
         trackedTokensByKey.delete(priceKey);

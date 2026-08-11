@@ -62,6 +62,27 @@ export function hasConfirmedFlapOuterRoute(
   ].some((poolAddress) => isUsableFlapDexPoolAddress(tokenAddress, poolAddress));
 }
 
+export function normalizeFlapLaunchpadStatus(
+  chainId: number,
+  tokenInfo?: Partial<Pick<TokenInfo,
+    'address'
+    | 'launchpad_status'
+    | 'pool_pair'
+    | 'biggest_pool_address'
+    | 'tpool_pool_address'
+    | 'flap_pool_model'
+    | 'flap_pool_compat_address'
+    | 'flap_cl_pool_id'
+    | 'flap_v4_fee'
+    | 'flap_v4_tick_spacing'
+  >> | null,
+): 0 | 1 {
+  void chainId;
+  const rawLaunchpadStatus = Number(tokenInfo?.launchpad_status ?? Number.NaN);
+  if (Number.isFinite(rawLaunchpadStatus) && rawLaunchpadStatus === 1) return 1;
+  return hasConfirmedFlapOuterRoute(tokenInfo) ? 1 : 0;
+}
+
 function normalizeFlapPlatform(platform?: string | null): 'flap' | 'flap_stocks' {
   return String(platform || '').trim().toLowerCase() === 'flap_stocks' ? 'flap_stocks' : 'flap';
 }
@@ -79,7 +100,7 @@ export function hasNonTerminalFlapOuterQuote(
 ): boolean {
   if (!tokenInfo) return false;
   if (chainId !== 56) return false;
-  if (Number(tokenInfo.launchpad_status ?? Number.NaN) !== 1) return false;
+  if (normalizeFlapLaunchpadStatus(chainId, tokenInfo) !== 1) return false;
   const quote = String(tokenInfo.quote_token_address || '').trim();
   if (!isAddressLike(quote)) return false;
   return !isTerminalFlapQuoteToken(chainId, quote);
@@ -254,7 +275,8 @@ export function classifyFlapRoute(
   const rawLaunchpadStatus = Number(tokenInfo?.launchpad_status ?? Number.NaN);
   const normalizedLaunchpadStatus = Number.isFinite(rawLaunchpadStatus) ? rawLaunchpadStatus : null;
   const hasConfirmedOuterRoute = hasConfirmedFlapOuterRoute(tokenInfo);
-  const isOuter = normalizedLaunchpadStatus != null ? normalizedLaunchpadStatus === 1 : hasConfirmedOuterRoute;
+  const businessLaunchpadStatus = normalizeFlapLaunchpadStatus(chainId, tokenInfo);
+  const isOuter = businessLaunchpadStatus === 1;
   const isInner = !isOuter;
   const isFlapStocks = isInner
     ? normalizeFlapPlatform(tokenInfo?.launchpad_platform) === 'flap_stocks'

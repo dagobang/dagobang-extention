@@ -7,7 +7,7 @@ import { TokenService } from '@/services/token';
 import type { TokenInfo } from '@/types/token';
 import { formatUnits, isAddress } from 'viem';
 import { isSolanaAddress, normalizeAddress } from '@/services/xSniper/engine/metrics';
-import { resolveFlapPlatform } from '@/utils/flap';
+import { normalizeFlapLaunchpadStatus, resolveFlapPlatform } from '@/utils/flap';
 
 const isFlapAddress = (addr: string) => {
   const low = addr.toLowerCase();
@@ -150,6 +150,7 @@ export const createTokenInfoResolvers = () => {
           },
         };
         draftInfo.launchpad_platform = resolveFlapPlatform(chainId, draftInfo);
+        draftInfo.launchpad_status = normalizeFlapLaunchpadStatus(chainId, draftInfo);
         return {
           tokenInfo: draftInfo,
         };

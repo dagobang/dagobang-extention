@@ -7,7 +7,7 @@ import { chainNames, getChainIdByName } from "@/constants/chains";
 import { ChainId } from "@/constants/chains/chainId";
 import { MEME_SUFFIXS } from "@/constants/meme";
 import { getSupportedLaunchpads, normalizeLaunchpadPlatform } from "@/constants/launchpad";
-import { classifyFlapRoute, hasConfirmedFlapOuterRoute, hasNonTerminalFlapOuterQuote, isUsableFlapDexPoolAddress, resolveFlapPlatform, resolveFlapPlatformByQuoteLineage } from "@/utils/flap";
+import { classifyFlapRoute, hasConfirmedFlapOuterRoute, hasNonTerminalFlapOuterQuote, isUsableFlapDexPoolAddress, normalizeFlapLaunchpadStatus, resolveFlapPlatform, resolveFlapPlatformByQuoteLineage } from "@/utils/flap";
 import { inferLaunchpadFamilyByAddress, resolveTokenLaunchpadPlatform } from "@/utils/launchpadFamily";
 
 const FOUR_MEME_LIKE_LAUNCHPADS = new Set([
@@ -696,6 +696,9 @@ export class TokenAPI {
             return await this.getTokenInfoByFlap('flap', chain, quoteTokenAddress);
         });
         const resolvedOuterQuoteIsStocks = directResolvedPlatform !== 'flap_stocks' && resolvedPlatform === 'flap_stocks';
+        const normalizedLaunchpadStatus = normalizeFlapLaunchpadStatus(getChainIdByName(chain), {
+            ...baseFlapTokenInfo,
+        });
         if (contractInfo && httpInfo) {
             httpInfo.quote_token_address = contractInfo.quoteTokenAddress;
             httpInfo.nativeToQuoteSwapEnabled = contractInfo.nativeToQuoteSwapEnabled;
@@ -721,10 +724,8 @@ export class TokenAPI {
             httpInfo.flap_supported_assets = contractInfo.supportedAssets;
             httpInfo.launchpad = 'flap';
             httpInfo.launchpad_platform = resolvedPlatform;
-              httpInfo.launchpad_status = Number.isFinite(rawLaunchpadStatus)
-                  ? rawLaunchpadStatus
-                  : Number(httpInfo.launchpad_status ?? 0);
-            httpInfo.tpool_launch_type = httpInfo.launchpad_status === 1 ? 'migrated' : (httpInfo.tpool_launch_type || 'launching');
+            httpInfo.launchpad_status = normalizedLaunchpadStatus;
+            httpInfo.tpool_launch_type = normalizedLaunchpadStatus === 1 ? 'migrated' : (httpInfo.tpool_launch_type || 'launching');
             if (contractInfo.poolModel === 'classic' && hasUsableDexPool) {
                 httpInfo.pool_pair = httpInfo.pool_pair || contractInfo.pool;
                 httpInfo.biggest_pool_address = httpInfo.biggest_pool_address || contractInfo.pool;
@@ -749,7 +750,7 @@ export class TokenAPI {
                 launchpad: 'flap',
                 launchpad_progress: progress,
                 launchpad_platform: resolvedPlatform,
-                  launchpad_status: Number.isFinite(rawLaunchpadStatus) ? rawLaunchpadStatus : 0,
+                launchpad_status: normalizedLaunchpadStatus,
                 quote_token: contractInfo.quoteTokenAddress,
                 quote_token_address: contractInfo.quoteTokenAddress,
                 pool_pair: contractInfo.poolModel === 'classic' && hasUsableDexPool ? contractInfo.pool : undefined,

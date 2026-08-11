@@ -126,7 +126,7 @@ type OpenFourTradeEstimate = {
   executionPrice: bigint;
 };
 
-type FlapStocksQuoteTopology = {
+export type FlapStocksQuoteTopology = {
   rawQuoteToken: Address;
   terminalQuoteToken: Address;
   rawQuotePoolAddress: Address;
@@ -1182,6 +1182,35 @@ export class TradeService {
       rawQuotePoolAddress: rawQuotePool.poolAddress,
       rawQuotePoolPrefer: rawQuotePool.preferHint,
     };
+  }
+
+  static async resolveFlapStocksPricingTopology(input: {
+    chainId: number;
+    rawQuoteToken: Address;
+    anchorToken: Address;
+    debug?: boolean;
+  }): Promise<FlapStocksQuoteTopology | null> {
+    return await this.resolveFlapStocksQuoteTopology({
+      chainId: input.chainId,
+      rawQuoteToken: input.rawQuoteToken,
+      anchorToken: input.anchorToken,
+      debug: input.debug,
+      logEvent: 'price.topology',
+    });
+  }
+
+  static async buildFlapOuterSellPricingRoute(input: {
+    chainId: number;
+    currentToken: Address;
+    targetToken: Address;
+    debug?: boolean;
+  }): Promise<SwapDescLike[] | null> {
+    return await this.buildFlapOuterSellQuoteRoute({
+      chainId: input.chainId,
+      currentToken: input.currentToken,
+      targetToken: input.targetToken,
+      debug: input.debug,
+    });
   }
 
   private static async buildDeterministicFlapStocksBuyQuoteRoute(input: {

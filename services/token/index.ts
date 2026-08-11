@@ -8,6 +8,7 @@ import { hyperTokens } from '@/constants/tokens/chains/hyper';
 
 import { RpcService } from '../rpc';
 import { TradeService } from '../trade';
+import { SwapType } from '../trade/tradeTypes';
 import { TokenFourmemeService } from './fourmeme';
 import { TokenFlapService } from './flap';
 import { getSolanaTokenPriceUsdFromQuote } from './solanaPrice';
@@ -15,7 +16,7 @@ import { isHyperAltfunPlatform, quoteHyperSellToUsdc } from '../trade/tradeHyper
 import { SolanaRpcService } from '@/services/chain/solana/rpc';
 import type { ChainAddress } from '@/types/chain/address';
 import { buildScopedTokenKey, normalizeAddressKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
-import { classifyFlapRoute, resolveFlapPlatform } from '@/utils/flap';
+import { classifyFlapRoute, normalizeFlapLaunchpadStatus, resolveFlapPlatform } from '@/utils/flap';
 import DexScreenerAPI from '@/hooks/DexScreenerAPI';
 import { chainNames } from '@/constants/chains/chainName';
 
@@ -23,6 +24,8 @@ export class TokenService {
   private static poolPairCache = new Map<string, { token0: `0x${string}`; token1: `0x${string}` }>();
   private static nativeUsdCache = new Map<number, { ts: number; value: number }>();
   private static tokenUsdCache = new Map<string, { ts: number; value: number }>();
+  private static flapSharedQuoteUsdCache = new Map<string, { ts: number; value: number }>();
+  private static flapSharedQuoteUsdInFlight = new Map<string, Promise<number>>();
   private static flapOuterPricingTopologyCache = new Map<string, {
     ts: number;
     value: {
@@ -31,6 +34,9 @@ export class TokenService {
       prefer?: 'v2' | 'v3';
       pairPriceUsd?: number;
       quoteTokenInfo?: TokenInfo | null;
+      terminalQuoteToken?: `0x${string}`;
+      terminalPoolPair?: string;
+      terminalPoolPrefer?: 'v2' | 'v3';
     } | null;
   }>();
   private static flapOuterPricingTopologyInFlight = new Map<string, Promise<{
@@ -39,9 +45,13 @@ export class TokenService {
     prefer?: 'v2' | 'v3';
     pairPriceUsd?: number;
     quoteTokenInfo?: TokenInfo | null;
+    terminalQuoteToken?: `0x${string}`;
+    terminalPoolPair?: string;
+    terminalPoolPrefer?: 'v2' | 'v3';
   } | null>>();
   private static readonly ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
   private static readonly flapOuterPricingTopologyTtlMs = 30_000;
+  private static readonly flapSharedQuoteUsdTtlMs = 30_000;
   private static flapOuterDirectQuoteCache = new Map<string, { ts: number; amountOut: bigint }>();
   private static readonly Q192 = (1n << 96n) * (1n << 96n);
   private static balanceCacheTtlMs = 1000;
@@ -143,6 +153,9 @@ export class TokenService {
     prefer?: 'v2' | 'v3';
     pairPriceUsd?: number;
     quoteTokenInfo?: TokenInfo | null;
+    terminalQuoteToken?: `0x${string}`;
+    terminalPoolPair?: string;
+    terminalPoolPrefer?: 'v2' | 'v3';
   } | null> {
     const token = normalizeAddressKey(input.tokenAddress);
     const rawQuote = normalizeAddressKey(input.rawQuoteToken);
@@ -177,16 +190,72 @@ export class TokenService {
         poolPair,
         prefer,
         pairPriceUsd,
-        quoteTokenInfo: input.quoteIsStable || input.quoteIsNative
-          ? null
-          : await input.resolveQuoteTokenInfo(input.rawQuoteToken as `0x${string}`),
+        quoteTokenInfo: null as TokenInfo | null,
+        terminalQuoteToken: undefined as `0x${string}` | undefined,
+        terminalPoolPair: undefined as string | undefined,
+        terminalPoolPrefer: undefined as 'v2' | 'v3' | undefined,
       };
+      if (!input.quoteIsStable && !input.quoteIsNative) {
+        topology.quoteTokenInfo = await input.resolveQuoteTokenInfo(input.rawQuoteToken as `0x${string}`);
+        const tradeTopology = await TradeService.resolveFlapStocksPricingTopology({
+          chainId: input.chainId,
+          rawQuoteToken: input.rawQuoteToken as `0x${string}`,
+          anchorToken: input.tokenAddress as `0x${string}`,
+        }).catch(() => null);
+        if (tradeTopology?.rawQuotePoolAddress) {
+          topology.terminalQuoteToken = tradeTopology.terminalQuoteToken as `0x${string}`;
+          topology.terminalPoolPair = tradeTopology.rawQuotePoolAddress;
+          topology.terminalPoolPrefer = tradeTopology.rawQuotePoolPrefer ?? undefined;
+        }
+      }
       this.flapOuterPricingTopologyCache.set(cacheKey, { ts: Date.now(), value: topology });
       return topology;
     })().finally(() => {
       this.flapOuterPricingTopologyInFlight.delete(cacheKey);
     });
     this.flapOuterPricingTopologyInFlight.set(cacheKey, task);
+    return await task;
+  }
+
+  private static async getFlapSharedQuoteUsd(input: {
+    chainId: number;
+    tokenAddress: `0x${string}`;
+    tokenInfo?: TokenInfo | null;
+    allowTokenInfoPriceFallback?: boolean;
+    cacheTtlMs?: number;
+  }): Promise<number> {
+    const tokenKey = normalizeAddressKey(input.tokenAddress);
+    if (!tokenKey || tokenKey === this.ZERO_ADDRESS) return 0;
+    const cacheKey = `${input.chainId}:${tokenKey}`;
+    const ttlMs = Math.max(
+      this.flapSharedQuoteUsdTtlMs,
+      Number(input.cacheTtlMs ?? 0),
+    );
+    const cached = this.flapSharedQuoteUsdCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < ttlMs) {
+      return cached.value;
+    }
+    const inFlight = this.flapSharedQuoteUsdInFlight.get(cacheKey);
+    if (inFlight) return await inFlight;
+
+    const task = (async () => {
+      const priceUsd = await this.getPriceUsdFromRpc({
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+        tokenInfo: input.tokenInfo,
+        cacheTtlMs: ttlMs,
+        allowTokenInfoPriceFallback: input.allowTokenInfoPriceFallback,
+      }).catch(() => 0);
+      if (priceUsd > 0) {
+        this.flapSharedQuoteUsdCache.set(cacheKey, { ts: Date.now(), value: priceUsd });
+      } else {
+        this.flapSharedQuoteUsdCache.delete(cacheKey);
+      }
+      return priceUsd;
+    })().finally(() => {
+      this.flapSharedQuoteUsdInFlight.delete(cacheKey);
+    });
+    this.flapSharedQuoteUsdInFlight.set(cacheKey, task);
     return await task;
   }
 
@@ -557,7 +626,7 @@ export class TokenService {
         ? hyperTokens.whype.address
         : bscTokens.wbnb.address) as `0x${string}`;
     const wNativeDecimals = isEth ? ethTokens.weth.decimals : isHyper ? hyperTokens.whype.decimals : bscTokens.wbnb.decimals;
-    const usdtToken = isEth ? ethTokens.usdt : null;
+    const usdtToken = isEth ? ethTokens.usdt : isHyper ? null : bscTokens.usdt;
     const usdcToken = isHyper ? hyperTokens.usdc : isEth ? ethTokens.usdc : bscTokens.usdc;
     const stableByAddress = new Map<string, { address: `0x${string}`; decimals: number }>();
     if (usdtToken) {
@@ -565,6 +634,7 @@ export class TokenService {
     }
     stableByAddress.set(usdcToken.address.toLowerCase(), { address: usdcToken.address as `0x${string}`, decimals: usdcToken.decimals });
     if (!isEth && !isHyper) {
+      stableByAddress.set(bscTokens.busd.address.toLowerCase(), { address: bscTokens.busd.address as `0x${string}`, decimals: bscTokens.busd.decimals });
       stableByAddress.set(bscTokens.usd1.address.toLowerCase(), { address: bscTokens.usd1.address as `0x${string}`, decimals: bscTokens.usd1.decimals });
     }
 
@@ -586,6 +656,132 @@ export class TokenService {
         this.nativeUsdCache.set(chainId, { ts: now2, value: v });
       }
       return v;
+    };
+
+    const quoteByFixedFlapOuterSellRouteToUsd = async (pricingTokenAddress: `0x${string}`): Promise<number> => {
+      const candidateTargets = [
+        ...(Array.from(stableByAddress.values()).map((item) => item.address)),
+        wNativeAddress as `0x${string}`,
+      ].filter((value, index, list) =>
+        list.findIndex((item) => item.toLowerCase() === value.toLowerCase()) === index,
+      );
+
+      logFlapOuterPricing('info', 'fixed_route.start', {
+        pricingTokenAddress,
+        candidateTargets,
+        oneToken: oneToken.toString(),
+      });
+      for (const targetToken of candidateTargets) {
+        const routeDescs = await TradeService.buildFlapOuterSellPricingRoute({
+          chainId,
+          currentToken: pricingTokenAddress,
+          targetToken,
+        }).catch(() => null);
+        if (!routeDescs?.length) {
+          logFlapOuterPricing('warn', 'fixed_route.missing', { targetToken });
+          continue;
+        }
+
+        logFlapOuterPricing('info', 'fixed_route.route', {
+          targetToken,
+          routeLength: routeDescs.length,
+          route: routeDescs.map((desc, index) => ({
+            index,
+            swapType: desc.swapType,
+            tokenIn: desc.tokenIn,
+            tokenOut: desc.tokenOut,
+            poolAddress: desc.poolAddress,
+            fee: desc.fee,
+          })),
+        });
+
+        let currentAmount = oneToken;
+        let finalToken = pricingTokenAddress;
+        for (const [index, desc] of routeDescs.entries()) {
+          const amountInBefore = currentAmount;
+          const tokenInAddr = (String(desc.tokenIn).toLowerCase() === this.ZERO_ADDRESS
+            ? wNativeAddress
+            : desc.tokenIn) as `0x${string}`;
+          const tokenOutAddr = (String(desc.tokenOut).toLowerCase() === this.ZERO_ADDRESS
+            ? wNativeAddress
+            : desc.tokenOut) as `0x${string}`;
+          if (desc.swapType === SwapType.V2_EXACT_IN) {
+            currentAmount = await this.quoteV2ExactInByKnownPair({
+              chainId,
+              pair: desc.poolAddress as `0x${string}`,
+              tokenIn: tokenInAddr,
+              tokenOut: tokenOutAddr,
+              amountIn: currentAmount,
+              cacheTtlMs: ttl,
+            });
+          } else if (desc.swapType === SwapType.V3_EXACT_IN) {
+            currentAmount = await this.quoteV3ExactInByKnownPool({
+              chainId,
+              pool: desc.poolAddress as `0x${string}`,
+              tokenIn: tokenInAddr,
+              tokenOut: tokenOutAddr,
+              amountIn: currentAmount,
+              cacheTtlMs: ttl,
+            });
+          } else {
+            currentAmount = 0n;
+          }
+          logFlapOuterPricing(currentAmount > 0n ? 'info' : 'warn', 'fixed_route.step', {
+            targetToken,
+            stepIndex: index,
+            swapType: desc.swapType,
+            tokenIn: tokenInAddr,
+            tokenOut: tokenOutAddr,
+            poolAddress: desc.poolAddress,
+            amountIn: amountInBefore.toString(),
+            amountOut: currentAmount.toString(),
+          });
+          if (currentAmount <= 0n) break;
+          finalToken = tokenOutAddr;
+        }
+
+        if (currentAmount <= 0n) {
+          logFlapOuterPricing('warn', 'fixed_route.zero_out', {
+            targetToken,
+            finalToken,
+          });
+          continue;
+        }
+        const finalTokenLower = finalToken.toLowerCase();
+        const stable = stableByAddress.get(finalTokenLower);
+        if (stable) {
+          const stableAmount = toNumberFromUnits(currentAmount, stable.decimals);
+          if (stableAmount > 0) {
+            logFlapOuterPricing('info', 'fixed_route.resolved_stable', {
+              targetToken,
+              finalToken,
+              amountOut: currentAmount.toString(),
+              stableAmount,
+            });
+            return stableAmount;
+          }
+          continue;
+        }
+        if (finalTokenLower === wNativeAddress.toLowerCase()) {
+          const nativeAmount = toNumberFromUnits(currentAmount, wNativeDecimals);
+          const nativeUsd = await getNativePriceUsd();
+          if (nativeAmount > 0 && nativeUsd > 0) {
+            const resolvedPriceUsd = nativeAmount * nativeUsd;
+            logFlapOuterPricing('info', 'fixed_route.resolved_native', {
+              targetToken,
+              finalToken,
+              amountOut: currentAmount.toString(),
+              nativeAmount,
+              nativeUsd,
+              resolvedPriceUsd,
+            });
+            return resolvedPriceUsd;
+          }
+        }
+      }
+
+      logFlapOuterPricing('warn', 'fixed_route.unresolved', {});
+      return 0;
     };
 
     const buildFlapTokenInfoForPricing = async (address: `0x${string}`): Promise<TokenInfo | null> => {
@@ -647,6 +843,7 @@ export class TokenService {
           },
         };
         draft.launchpad_platform = resolveFlapPlatform(chainId, draft);
+        draft.launchpad_status = normalizeFlapLaunchpadStatus(chainId, draft);
         return draft;
       } catch {
         return null;
@@ -667,6 +864,28 @@ export class TokenService {
     let priceUsd = 0;
     const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
     const isInnerDisk = tokenInfo?.launchpad_status !== 1;
+    const flapRoute = platform.includes('flap') ? classifyFlapRoute(chainId, tokenInfo) : null;
+    const flapOuterDebugEnabled = !!flapRoute?.isOuter;
+    const logFlapOuterPricing = (level: 'info' | 'warn', event: string, payload: Record<string, unknown>) => {
+      if (!flapOuterDebugEnabled) return;
+      const logger = level === 'warn' ? console.warn : console.info;
+      logger(`[price.flap.outer][${event}]`, {
+        chainId,
+        tokenAddress,
+        platform,
+        resolvedPlatform: flapRoute?.platform ?? null,
+        isFlapStocks: flapRoute?.isFlapStocks ?? null,
+        launchpadStatus: tokenInfo?.launchpad_status ?? null,
+        quoteTokenAddress: tokenInfo?.quote_token_address ?? null,
+        poolPair: tokenInfo?.pool_pair ?? null,
+        biggestPoolAddress: tokenInfo?.biggest_pool_address ?? null,
+        tpoolPoolAddress: tokenInfo?.tpool_pool_address ?? null,
+        flapOuterQuoteIsStocks: (tokenInfo as any)?.flap_outer_quote_is_stocks ?? null,
+        flapVaultIsVault: tokenInfo?.flap_vault_is_vault ?? null,
+        flapStocksVaultVersion: tokenInfo?.flap_stocks_vault_version ?? null,
+        ...payload,
+      });
+    };
 
     if (chainId === ChainId.HYPER && isHyperAltfunPlatform(platform)) {
       try {
@@ -743,22 +962,55 @@ export class TokenService {
       }
     }
 
-    const flapRoute = platform.includes('flap') ? classifyFlapRoute(chainId, tokenInfo) : null;
     if (!(priceUsd > 0) && flapRoute?.isOuter) {
       const quoteAddrRaw = String(tokenInfo?.quote_token_address || '').trim();
       const quoteAddrLower = quoteAddrRaw.toLowerCase();
-      if (quoteAddrRaw && quoteAddrLower !== this.ZERO_ADDRESS && quoteAddrLower !== normalizeAddressKey(tokenAddress)) {
-          const stable = stableByAddress.get(quoteAddrLower);
-          const quoteIsNative = quoteAddrLower === wNativeAddress.toLowerCase();
+      const effectiveQuoteAddr = !quoteAddrRaw || quoteAddrLower === this.ZERO_ADDRESS
+        ? wNativeAddress
+        : (quoteAddrRaw as `0x${string}`);
+      const effectiveQuoteAddrLower = effectiveQuoteAddr.toLowerCase();
+      if (effectiveQuoteAddrLower !== normalizeAddressKey(tokenAddress)) {
+          const stable = stableByAddress.get(effectiveQuoteAddrLower);
+          const quoteIsNative = effectiveQuoteAddrLower === wNativeAddress.toLowerCase();
+          logFlapOuterPricing('info', 'outer_branch.start', {
+            effectiveQuoteAddr,
+            quoteIsStable: !!stable,
+            quoteIsNative,
+          });
+          if (!stable && !quoteIsNative) {
+            const fixedRoutePriceUsd = await quoteByFixedFlapOuterSellRouteToUsd(tokenAddress as `0x${string}`).catch(() => 0);
+            if (fixedRoutePriceUsd > 0) {
+              logFlapOuterPricing('info', 'outer_branch.fixed_route_hit', {
+                fixedRoutePriceUsd,
+              });
+              priceUsd = fixedRoutePriceUsd;
+            } else {
+              logFlapOuterPricing('warn', 'outer_branch.fixed_route_miss', {});
+            }
+          }
+          if (!(priceUsd > 0)) {
           const pricingTopology = await this.resolveFlapOuterPricingTopology({
             chainId,
             tokenAddress: String(tokenAddress),
-            rawQuoteToken: quoteAddrRaw,
+            rawQuoteToken: effectiveQuoteAddr,
             tokenInfo,
             quoteIsStable: !!stable,
             quoteIsNative,
             resolveQuoteTokenInfo: buildFlapTokenInfoForPricing,
           }).catch(() => null);
+          logFlapOuterPricing('info', 'outer_branch.topology', {
+            topology: pricingTopology
+              ? {
+                rawQuoteToken: pricingTopology.rawQuoteToken,
+                poolPair: pricingTopology.poolPair ?? null,
+                prefer: pricingTopology.prefer ?? null,
+                pairPriceUsd: pricingTopology.pairPriceUsd ?? 0,
+                terminalQuoteToken: pricingTopology.terminalQuoteToken ?? null,
+                terminalPoolPair: pricingTopology.terminalPoolPair ?? null,
+                terminalPoolPrefer: pricingTopology.terminalPoolPrefer ?? null,
+              }
+              : null,
+          });
           if (pricingTopology?.pairPriceUsd && pricingTopology.pairPriceUsd > 0) {
             priceUsd = pricingTopology.pairPriceUsd;
           }
@@ -769,7 +1021,7 @@ export class TokenService {
                   chainId,
                   pair: pricingTopology.poolPair as `0x${string}`,
                   tokenIn: tokenAddress as `0x${string}`,
-                  tokenOut: quoteAddrRaw as `0x${string}`,
+                  tokenOut: effectiveQuoteAddr,
                   amountIn: oneToken,
                   cacheTtlMs: ttl,
                 }),
@@ -780,7 +1032,7 @@ export class TokenService {
                     chainId,
                     pool: pricingTopology.poolPair as `0x${string}`,
                     tokenIn: tokenAddress as `0x${string}`,
-                    tokenOut: quoteAddrRaw as `0x${string}`,
+                    tokenOut: effectiveQuoteAddr,
                     amountIn: oneToken,
                     cacheTtlMs: ttl,
                   }),
@@ -788,7 +1040,7 @@ export class TokenService {
                 : await TradeService.quoteBestExactIn(
                   chainId,
                   tokenAddress as `0x${string}`,
-                  quoteAddrRaw as `0x${string}`,
+                  effectiveQuoteAddr,
                   oneToken,
                   {
                     poolPair: pricingTopology?.poolPair,
@@ -796,34 +1048,133 @@ export class TokenService {
                     cacheTtlMs: ttl,
                   }
                 );
+          logFlapOuterPricing(directQuote.amountOut > 0n ? 'info' : 'warn', 'outer_branch.direct_quote', {
+            poolPair: pricingTopology?.poolPair ?? null,
+            prefer: pricingTopology?.prefer ?? null,
+            amountOut: directQuote.amountOut.toString(),
+            effectiveQuoteAddr,
+          });
           if (directQuote.amountOut > 0n) {
               const quoteTokenInfo = stable || quoteIsNative
-              ? null
-                : (pricingTopology?.quoteTokenInfo ?? await buildFlapTokenInfoForPricing(quoteAddrRaw as `0x${string}`));
+                ? null
+                : (pricingTopology?.quoteTokenInfo ?? await buildFlapTokenInfoForPricing(effectiveQuoteAddr));
             const quoteTokenDecimals = stable?.decimals
               ?? quoteTokenInfo?.decimals
-              ?? (await this.getMeta(quoteAddrRaw, chainId)).decimals;
+              ?? (await this.getMeta(effectiveQuoteAddr, chainId)).decimals;
             const quoteAmount = toNumberFromUnits(directQuote.amountOut, quoteTokenDecimals);
             let quoteUsd = 0;
             if (stable) {
               quoteUsd = 1;
-              } else if (quoteIsNative) {
+            } else if (quoteIsNative) {
               quoteUsd = await getNativePriceUsd();
-            } else {
-              quoteUsd = await this.getPriceUsdFromRpc({
+            } else if (pricingTopology?.terminalQuoteToken && pricingTopology?.terminalPoolPair) {
+              const terminalQuoteAddr = pricingTopology.terminalQuoteToken.toLowerCase() === this.ZERO_ADDRESS
+                ? wNativeAddress
+                : pricingTopology.terminalQuoteToken;
+              const terminalStable = stableByAddress.get(terminalQuoteAddr.toLowerCase());
+              const terminalIsNative =
+                pricingTopology.terminalQuoteToken.toLowerCase() === this.ZERO_ADDRESS
+                || terminalQuoteAddr.toLowerCase() === wNativeAddress.toLowerCase();
+              const oneRawQuote = 10n ** BigInt(quoteTokenDecimals);
+              const rawQuoteToTerminalOut = pricingTopology.terminalPoolPrefer === 'v2'
+                ? await this.quoteV2ExactInByKnownPair({
+                  chainId,
+                  pair: pricingTopology.terminalPoolPair as `0x${string}`,
+                  tokenIn: effectiveQuoteAddr,
+                  tokenOut: terminalQuoteAddr,
+                  amountIn: oneRawQuote,
+                  cacheTtlMs: ttl,
+                })
+                : pricingTopology.terminalPoolPrefer === 'v3'
+                  ? await this.quoteV3ExactInByKnownPool({
+                    chainId,
+                    pool: pricingTopology.terminalPoolPair as `0x${string}`,
+                    tokenIn: effectiveQuoteAddr,
+                    tokenOut: terminalQuoteAddr,
+                    amountIn: oneRawQuote,
+                    cacheTtlMs: ttl,
+                  })
+                  : (await TradeService.quoteBestExactIn(
+                    chainId,
+                    effectiveQuoteAddr,
+                    terminalQuoteAddr as `0x${string}`,
+                    oneRawQuote,
+                    {
+                      poolPair: pricingTopology.terminalPoolPair,
+                      prefer: pricingTopology.terminalPoolPrefer,
+                      cacheTtlMs: ttl,
+                    }
+                  )).amountOut;
+              logFlapOuterPricing(rawQuoteToTerminalOut > 0n ? 'info' : 'warn', 'outer_branch.raw_quote_to_terminal', {
+                terminalQuoteAddr,
+                terminalPoolPair: pricingTopology.terminalPoolPair ?? null,
+                terminalPoolPrefer: pricingTopology.terminalPoolPrefer ?? null,
+                amountOut: rawQuoteToTerminalOut.toString(),
+              });
+              if (rawQuoteToTerminalOut > 0n) {
+                const terminalQuoteDecimals = terminalStable?.decimals
+                  ?? (terminalIsNative
+                    ? wNativeDecimals
+                    : (await this.getMeta(terminalQuoteAddr, chainId)).decimals);
+                const terminalQuoteAmount = toNumberFromUnits(rawQuoteToTerminalOut, terminalQuoteDecimals);
+                let terminalQuoteUsd = 0;
+                if (terminalStable) {
+                  terminalQuoteUsd = 1;
+                } else if (terminalIsNative) {
+                  terminalQuoteUsd = await getNativePriceUsd();
+                } else if (normalizeAddressKey(terminalQuoteAddr) !== normalizeAddressKey(effectiveQuoteAddr)) {
+                  terminalQuoteUsd = await this.getFlapSharedQuoteUsd({
+                    chainId,
+                    tokenAddress: terminalQuoteAddr,
+                    tokenInfo: pricingTopology?.quoteTokenInfo ?? null,
+                    cacheTtlMs: ttl,
+                    allowTokenInfoPriceFallback,
+                  });
+                }
+                logFlapOuterPricing(terminalQuoteUsd > 0 ? 'info' : 'warn', 'outer_branch.terminal_quote_usd', {
+                  terminalQuoteAddr,
+                  terminalQuoteAmount,
+                  terminalQuoteUsd,
+                });
+                if (terminalQuoteUsd > 0 && terminalQuoteAmount > 0) {
+                  quoteUsd = terminalQuoteAmount * terminalQuoteUsd;
+                }
+              }
+            }
+            if (!(quoteUsd > 0)) {
+              quoteUsd = await this.getFlapSharedQuoteUsd({
                 chainId,
-                tokenAddress: quoteAddrRaw as `0x${string}`,
+                tokenAddress: effectiveQuoteAddr,
                 tokenInfo: quoteTokenInfo,
                 cacheTtlMs: ttl,
                 allowTokenInfoPriceFallback,
               });
+              logFlapOuterPricing(quoteUsd > 0 ? 'info' : 'warn', 'outer_branch.quote_usd_fallback', {
+                effectiveQuoteAddr,
+                quoteUsd,
+              });
             }
             if (quoteUsd > 0 && quoteAmount > 0) {
               priceUsd = quoteAmount * quoteUsd;
+              logFlapOuterPricing('info', 'outer_branch.resolved', {
+                quoteAmount,
+                quoteUsd,
+                priceUsd,
+              });
+            } else {
+              logFlapOuterPricing('warn', 'outer_branch.unresolved_after_direct_quote', {
+                quoteAmount,
+                quoteUsd,
+              });
             }
+          } else {
+            logFlapOuterPricing('warn', 'outer_branch.direct_quote_zero', {
+              effectiveQuoteAddr,
+            });
           }
         } catch {
         }
+          }
       }
     }
 
@@ -871,8 +1222,15 @@ export class TokenService {
       }
     }
     if (priceUsd > 0) {
+      logFlapOuterPricing('info', 'return_price', {
+        priceUsd,
+      });
       this.tokenUsdCache.set(key, { ts: now, value: priceUsd });
     } else {
+      logFlapOuterPricing('warn', 'return_zero', {
+        allowTokenInfoPriceFallback: allowTokenInfoPriceFallback ?? null,
+        tokenInfoPrice: (tokenInfo as any)?.tokenPrice?.price ?? null,
+      });
       this.tokenUsdCache.delete(key);
     }
     return priceUsd;

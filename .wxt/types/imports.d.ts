@@ -82,6 +82,7 @@ declare global {
   const isUsableFlapDexPoolAddress: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').isUsableFlapDexPoolAddress
   const loadContractAbi: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi').loadContractAbi
   const navigateToUrl: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/sites').navigateToUrl
+  const normalizeFlapLaunchpadStatus: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').normalizeFlapLaunchpadStatus
   const normalizeGmgnChainName: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeGmgnChainName
   const normalizeHexPrivateKey: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/format').normalizeHexPrivateKey
   const normalizeInlineWebpData: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs').normalizeInlineWebpData
