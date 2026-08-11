@@ -3191,9 +3191,10 @@ export default function App() {
             }
           }
           const flowToastId = getTradeToastId(side, rawAddr);
-        toast.success(renderTradeSuccessToast({ side, symbol, provider, timing, submitNode, confirmNode, stage: 'confirmed' }), {
-            id: flowToastId,
-          icon: '✅',
+        toast(renderTradeSuccessToast({ side, symbol, provider, timing, submitNode, confirmNode, stage: 'confirmed' }), {
+          id: flowToastId,
+          className: getTradeFlowToastClassName('confirmed'),
+          icon: <SatelliteDish size={14} className="text-emerald-300" />,
           duration: 5000,
         });
         return;
@@ -3254,9 +3255,10 @@ export default function App() {
           startFastPolling();
         }
           const flowToastId = getTradeToastId(side, rawAddr);
-        toast.success(renderTradeSuccessToast({ side, symbol, provider, timing, submitNode, stage: 'submitted' }), {
-            id: flowToastId,
-          icon: <SatelliteDish size={14} className="text-cyan-300" />,
+        toast(renderTradeSuccessToast({ side, symbol, provider, timing, submitNode, stage: 'submitted' }), {
+          id: flowToastId,
+          className: getTradeFlowToastClassName('submitted'),
+          icon: <SatelliteDish size={14} className="text-emerald-300/85" />,
           // Keep this visible until replaced by confirmed/failed event.
           duration: Infinity,
         });
@@ -3860,32 +3862,66 @@ export default function App() {
   }) => {
     const isSubmitted = input.stage === 'submitted';
     const title = locale === 'en'
-      ? `[${input.symbol}] ${input.side === 'buy' ? 'Buy' : 'Sell'} ${isSubmitted ? 'submitted' : 'succeeded'} (${input.provider})`
-      : `[${input.symbol}] ${input.side === 'buy' ? (isSubmitted ? '买入已提交' : '买入成功') : (isSubmitted ? '卖出已提交' : '卖出成功')}（${input.provider}）`;
+      ? `[${input.symbol}] ${input.side === 'buy' ? (isSubmitted ? 'Buy Submitted' : 'Buy Succeeded') : (isSubmitted ? 'Sell Submitted' : 'Sell Succeeded')}`
+      : `[${input.symbol}] ${input.side === 'buy' ? (isSubmitted ? '买入已提交' : '买入成功') : (isSubmitted ? '卖出已提交' : '卖出成功')}`;
+    const stageLabel = locale === 'en'
+      ? (isSubmitted ? 'Processing' : 'Confirmed')
+      : (isSubmitted ? '处理中' : '已确认');
     return (
-      <div className="space-y-1">
-        <div className="font-medium">{title}</div>
-        <div className="flex items-center gap-2 text-[12px] opacity-90 whitespace-nowrap">
-          <span className="inline-flex items-center gap-1">
-            <SatelliteDish size={12} className="text-cyan-300" />
-            <span>
-              {input.timing.submitLabel} <span className="font-semibold text-cyan-300">{input.timing.submitValue}</span>
-            </span>
-          </span>
-          <span className="opacity-50">|</span>
-          <span>⛓️ {input.timing.receiptLabel} <span className="font-semibold text-emerald-300">{input.timing.receiptValue}</span></span>
+      <div className="space-y-2 text-zinc-100 transition-all duration-300 ease-out">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1 text-[15px] font-semibold leading-5 text-zinc-50 break-words">
+            {title}
+          </div>
+          <div className={`mt-0.5 inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium ${
+            isSubmitted ? 'text-emerald-300/80' : 'text-emerald-300'
+          }`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${isSubmitted ? 'bg-emerald-300 animate-pulse' : 'bg-emerald-300'}`} />
+            <span>{stageLabel}</span>
+          </div>
         </div>
-        {(input.submitNode || input.confirmNode) ? (
-          <div className="space-y-0.5 text-[11px] opacity-80">
-            {input.submitNode ? <div>{locale === 'en' ? 'Submit RPC' : '提交节点'}: <span className="font-medium">{input.submitNode}</span></div> : null}
-            {input.confirmNode ? <div>{locale === 'en' ? 'Confirm RPC' : '确认节点'}: <span className="font-medium">{input.confirmNode}</span></div> : null}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-zinc-400">
+          <span className="text-zinc-300">{input.provider}</span>
+          <span className="text-zinc-600">/</span>
+          <span>
+            {input.timing.submitLabel} <span className="font-semibold text-cyan-300">{input.timing.submitValue}</span>
+          </span>
+          <span className="text-zinc-600">/</span>
+          <span>
+            {input.timing.receiptLabel} <span className="font-semibold text-emerald-300">{input.timing.receiptValue}</span>
+          </span>
+        </div>
+        {input.summaryText ? (
+          <div className="text-[13px] text-zinc-200">
+            {input.summaryText}
           </div>
         ) : null}
-          {input.summaryText ? (
-            <div className="text-[12px] opacity-90">{input.summaryText}</div>
-          ) : null}
+        {(input.submitNode || input.confirmNode) ? (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-zinc-500">
+            {input.submitNode ? (
+              <span>
+                {locale === 'en' ? 'Submit RPC' : '提交节点'} <span className="text-zinc-300">{input.submitNode}</span>
+              </span>
+            ) : null}
+            {input.submitNode && input.confirmNode ? (
+              <span className="text-zinc-700">/</span>
+            ) : null}
+            {input.confirmNode ? (
+              <span>
+                {locale === 'en' ? 'Confirm RPC' : '确认节点'} <span className="text-zinc-300">{input.confirmNode}</span>
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     );
+  };
+
+  const getTradeFlowToastClassName = (stage: 'submitted' | 'confirmed') => {
+    if (stage === 'submitted') {
+      return '!border-emerald-500/30 !ring-emerald-500/10';
+    }
+    return '!border-emerald-500/45 !ring-emerald-500/16';
   };
 
   const getTradeToastId = (side: 'buy' | 'sell', tokenAddress?: string | null) =>
@@ -4135,7 +4171,7 @@ export default function App() {
                 pendingCount > 0 ? `后台继续处理中 ${pendingCount}/${executablePlan.length} 个钱包` : '',
                 failures.length > 0 ? `失败 ${failures.length} 个钱包` : '',
               ].filter(Boolean);
-              toast.success(renderTradeSuccessToast({
+              toast(renderTradeSuccessToast({
                 side: 'buy',
                 symbol: sym,
                 provider,
@@ -4144,7 +4180,8 @@ export default function App() {
                 summaryText: summaryParts.join('，'),
               }), {
                 id: flowToastId,
-                icon: '✅',
+                className: getTradeFlowToastClassName('confirmed'),
+                icon: <SatelliteDish size={14} className="text-emerald-300" />,
                 duration: 5000,
               });
             }
@@ -4389,7 +4426,7 @@ export default function App() {
               pendingCount > 0 ? `后台继续处理中 ${pendingCount}/${wallets.length} 个钱包` : '',
               failures.length > 0 ? `失败 ${failures.length} 个钱包` : '',
             ].filter(Boolean);
-            toast.success(renderTradeSuccessToast({
+            toast(renderTradeSuccessToast({
               side: 'sell',
               symbol: sym,
               provider,
@@ -4398,7 +4435,8 @@ export default function App() {
               summaryText: summaryParts.join('，'),
             }), {
               id: flowToastId,
-              icon: '✅',
+              className: getTradeFlowToastClassName('confirmed'),
+              icon: <SatelliteDish size={14} className="text-emerald-300" />,
               duration: 5000,
             });
         }
