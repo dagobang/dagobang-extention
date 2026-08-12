@@ -3758,10 +3758,6 @@ export default function App() {
     return override.priorityFeePreset ?? ((chainSettings?.buyPriorityFeePreset ?? 'standard') as PriorityFeePreset);
   };
 
-  const tradingLoadingIcon = (
-    <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-300 border-t-transparent" />
-  );
-
   const formatTradeTiming = (res: { submitElapsedMs?: number; receiptElapsedMs?: number }, pendingReceipt = false) => {
     const submitMs = Number(res.submitElapsedMs ?? 0);
     const receiptMs = Number(res.receiptElapsedMs ?? 0);
@@ -3858,29 +3854,35 @@ export default function App() {
     submitNode?: string | null;
     confirmNode?: string | null;
       summaryText?: string | null;
-    stage?: 'submitted' | 'confirmed';
+    stage?: 'executing' | 'submitted' | 'confirmed';
   }) => {
-    const isSubmitted = input.stage === 'submitted';
+    const stage = input.stage ?? 'confirmed';
+    const isExecuting = stage === 'executing';
+    const isSubmitted = stage === 'submitted';
+    const isConfirmed = stage === 'confirmed';
     const title = locale === 'en'
-      ? `[${input.symbol}] ${input.side === 'buy' ? (isSubmitted ? 'Buy Submitted' : 'Buy Succeeded') : (isSubmitted ? 'Sell Submitted' : 'Sell Succeeded')}`
-      : `[${input.symbol}] ${input.side === 'buy' ? (isSubmitted ? '买入已提交' : '买入成功') : (isSubmitted ? '卖出已提交' : '卖出成功')}`;
+      ? `[${input.symbol}] ${input.side === 'buy'
+        ? (isExecuting ? 'Buy Executing' : isSubmitted ? 'Buy Submitted' : 'Buy Succeeded')
+        : (isExecuting ? 'Sell Executing' : isSubmitted ? 'Sell Submitted' : 'Sell Succeeded')}`
+      : `[${input.symbol}] ${input.side === 'buy'
+        ? (isExecuting ? '买入执行中' : isSubmitted ? '买入已提交' : '买入成功')
+        : (isExecuting ? '卖出执行中' : isSubmitted ? '卖出已提交' : '卖出成功')}`;
     const stageLabel = locale === 'en'
-      ? (isSubmitted ? 'Processing' : 'Confirmed')
-      : (isSubmitted ? '处理中' : '已确认');
+      ? (isExecuting ? 'Executing' : isSubmitted ? 'Processing' : 'Confirmed')
+      : (isExecuting ? '执行中' : isSubmitted ? '处理中' : '已确认');
+    const stageTextClass = isConfirmed ? 'text-emerald-300' : 'text-emerald-300/80';
     return (
-      <div className="space-y-2 text-zinc-100 transition-all duration-300 ease-out">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1 text-[15px] font-semibold leading-5 text-zinc-50 break-words">
+      <div className="space-y-1.5 text-zinc-100 transition-all duration-300 ease-out">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1 text-[15px] font-semibold leading-[1.3] text-zinc-50 break-words">
             {title}
           </div>
-          <div className={`mt-0.5 inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium ${
-            isSubmitted ? 'text-emerald-300/80' : 'text-emerald-300'
-          }`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${isSubmitted ? 'bg-emerald-300 animate-pulse' : 'bg-emerald-300'}`} />
+          <div className={`mt-0.5 inline-flex shrink-0 items-center gap-1 text-[11px] font-medium ${stageTextClass}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${isConfirmed ? 'bg-emerald-300' : 'bg-emerald-300 animate-pulse'}`} />
             <span>{stageLabel}</span>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-zinc-400">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] leading-4 text-zinc-400">
           <span className="text-zinc-300">{input.provider}</span>
           <span className="text-zinc-600">/</span>
           <span>
@@ -3892,12 +3894,12 @@ export default function App() {
           </span>
         </div>
         {input.summaryText ? (
-          <div className="text-[13px] text-zinc-200">
+          <div className="text-[13px] leading-[1.35] text-zinc-200">
             {input.summaryText}
           </div>
         ) : null}
         {(input.submitNode || input.confirmNode) ? (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-zinc-500">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-zinc-500">
             {input.submitNode ? (
               <span>
                 {locale === 'en' ? 'Submit RPC' : '提交节点'} <span className="text-zinc-300">{input.submitNode}</span>
@@ -3917,7 +3919,10 @@ export default function App() {
     );
   };
 
-  const getTradeFlowToastClassName = (stage: 'submitted' | 'confirmed') => {
+  const getTradeFlowToastClassName = (stage: 'executing' | 'submitted' | 'confirmed') => {
+    if (stage === 'executing') {
+      return '!border-emerald-500/22 !ring-emerald-500/8';
+    }
     if (stage === 'submitted') {
       return '!border-emerald-500/30 !ring-emerald-500/10';
     }
@@ -4011,7 +4016,18 @@ export default function App() {
       ensureTradeSuccessAudioReady();
       const sym = resolvedTokenSymbol ?? '';
         const flowToastId = getTradeToastId('buy', tokenAddressNormalized);
-        toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
+      toast(renderTradeSuccessToast({
+        side: 'buy',
+        symbol: sym,
+        provider: locale === 'en' ? 'Preparing' : '准备提交',
+        timing: formatTradeTiming({}, true),
+        stage: 'executing',
+      }), {
+        id: flowToastId,
+        className: getTradeFlowToastClassName('executing'),
+        icon: <SatelliteDish size={14} className="text-emerald-300/75" />,
+        duration: Infinity,
+      });
       let buyLoadingClosed = false;
       const buyGasPreset = hasValidPresetIndex ? resolveBuyGasPresetForPreset(presetIndex) : (effectiveChainSettings?.buyGasPreset ?? effectiveChainSettings?.gasPreset ?? 'standard');
       const buyExecutionMode = effectiveChainSettings?.executionMode === 'turbo' ? 'turbo' : 'default';
@@ -4239,7 +4255,18 @@ export default function App() {
       ensureTradeSuccessAudioReady();
       const sym = resolvedTokenSymbol ?? '';
       const flowToastId = getTradeToastId('sell', tokenAddressNormalized);
-        toast.loading(t('contentUi.toast.trading', locale, [sym]), { icon: tradingLoadingIcon, id: flowToastId });
+      toast(renderTradeSuccessToast({
+        side: 'sell',
+        symbol: sym,
+        provider: locale === 'en' ? 'Preparing' : '准备提交',
+        timing: formatTradeTiming({}, true),
+        stage: 'executing',
+      }), {
+        id: flowToastId,
+        className: getTradeFlowToastClassName('executing'),
+        icon: <SatelliteDish size={14} className="text-emerald-300/75" />,
+        duration: Infinity,
+      });
       let sellLoadingClosed = false;
       const sellGasPreset = effectiveChainSettings?.sellGasPreset ?? effectiveChainSettings?.gasPreset ?? 'standard';
 

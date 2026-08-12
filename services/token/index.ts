@@ -20,38 +20,25 @@ import { classifyFlapRoute, normalizeFlapLaunchpadStatus, resolveFlapPlatform } 
 import DexScreenerAPI from '@/hooks/DexScreenerAPI';
 import { chainNames } from '@/constants/chains/chainName';
 
+type FlapRawQuoteTopology = {
+  rawQuoteToken: `0x${string}`;
+  quoteTokenInfo?: TokenInfo | null;
+  terminalQuoteToken?: `0x${string}`;
+  terminalPoolPair?: string;
+  terminalPoolPrefer?: 'v2' | 'v3';
+};
+
 export class TokenService {
   private static poolPairCache = new Map<string, { token0: `0x${string}`; token1: `0x${string}` }>();
   private static nativeUsdCache = new Map<number, { ts: number; value: number }>();
   private static tokenUsdCache = new Map<string, { ts: number; value: number }>();
   private static flapSharedQuoteUsdCache = new Map<string, { ts: number; value: number }>();
   private static flapSharedQuoteUsdInFlight = new Map<string, Promise<number>>();
-  private static flapOuterPricingTopologyCache = new Map<string, {
-    ts: number;
-    value: {
-      rawQuoteToken: `0x${string}`;
-      poolPair?: string;
-      prefer?: 'v2' | 'v3';
-      pairPriceUsd?: number;
-      quoteTokenInfo?: TokenInfo | null;
-      terminalQuoteToken?: `0x${string}`;
-      terminalPoolPair?: string;
-      terminalPoolPrefer?: 'v2' | 'v3';
-    } | null;
-  }>();
-  private static flapOuterPricingTopologyInFlight = new Map<string, Promise<{
-    rawQuoteToken: `0x${string}`;
-    poolPair?: string;
-    prefer?: 'v2' | 'v3';
-    pairPriceUsd?: number;
-    quoteTokenInfo?: TokenInfo | null;
-    terminalQuoteToken?: `0x${string}`;
-    terminalPoolPair?: string;
-    terminalPoolPrefer?: 'v2' | 'v3';
-  } | null>>();
+  private static flapRawQuoteTopologyCache = new Map<string, { ts: number; value: FlapRawQuoteTopology }>();
+  private static flapRawQuoteTopologyInFlight = new Map<string, Promise<FlapRawQuoteTopology | null>>();
   private static readonly ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-  private static readonly flapOuterPricingTopologyTtlMs = 30_000;
-  private static readonly flapSharedQuoteUsdTtlMs = 30_000;
+  private static readonly flapRawQuoteTopologyTtlMs = 30_000;
+  private static readonly flapSharedQuoteUsdTtlMs = 15_000;
   private static flapOuterDirectQuoteCache = new Map<string, { ts: number; amountOut: bigint }>();
   private static readonly Q192 = (1n << 96n) * (1n << 96n);
   private static balanceCacheTtlMs = 1000;
@@ -131,7 +118,7 @@ export class TokenService {
     return null;
   }
 
-  private static async resolveFlapOuterPricingTopology(input: {
+  private static async resolveFlapOuterDirectQuotePlan(input: {
     chainId: number;
     tokenAddress: string;
     rawQuoteToken: string;
@@ -144,76 +131,70 @@ export class TokenService {
       | 'flap_pool_model'
       | 'flap_pool_compat_address'
     > | null;
-    quoteIsStable: boolean;
-    quoteIsNative: boolean;
+  }): Promise<{ poolPair?: string; prefer?: 'v2' | 'v3' }> {
+    const fallback = this.resolveOuterPoolQuoteOpts(input.tokenAddress, input.tokenInfo);
+    if (fallback.poolPair) return fallback;
+
+    let poolPair = fallback.poolPair;
+    let prefer = fallback.prefer;
+    const chain = String(chainNames[input.chainId as any] || '').trim().toLowerCase();
+    if (chain) {
+      const pair = await DexScreenerAPI.getBestPairBetweenTokens(chain, input.tokenAddress, input.rawQuoteToken).catch(() => null);
+      if (pair?.pairAddress && /^0x[a-fA-F0-9]{40}$/.test(String(pair.pairAddress))) {
+        poolPair = pair.pairAddress;
+        prefer = this.normalizeDexPreferFromDexScreenerPair(pair) ?? prefer;
+      }
+    }
+    return {
+      poolPair,
+      prefer,
+    };
+  }
+
+  private static async resolveFlapRawQuoteTopology(input: {
+    chainId: number;
+    rawQuoteToken: string;
+    anchorToken: string;
     resolveQuoteTokenInfo: (address: `0x${string}`) => Promise<TokenInfo | null>;
-  }): Promise<{
-    rawQuoteToken: `0x${string}`;
-    poolPair?: string;
-    prefer?: 'v2' | 'v3';
-    pairPriceUsd?: number;
-    quoteTokenInfo?: TokenInfo | null;
-    terminalQuoteToken?: `0x${string}`;
-    terminalPoolPair?: string;
-    terminalPoolPrefer?: 'v2' | 'v3';
-  } | null> {
-    const token = normalizeAddressKey(input.tokenAddress);
+  }): Promise<FlapRawQuoteTopology | null> {
     const rawQuote = normalizeAddressKey(input.rawQuoteToken);
-    if (!token || !rawQuote || rawQuote === this.ZERO_ADDRESS || rawQuote === token) return null;
-    const cacheKey = `${input.chainId}:${token}:${rawQuote}:flap_outer_pricing`;
-    const cached = this.flapOuterPricingTopologyCache.get(cacheKey);
-    if (cached && Date.now() - cached.ts < this.flapOuterPricingTopologyTtlMs) {
+    if (!rawQuote || rawQuote === this.ZERO_ADDRESS) return null;
+    const cacheKey = `${input.chainId}:${rawQuote}:flap_raw_quote_topology`;
+    const cached = this.flapRawQuoteTopologyCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < this.flapRawQuoteTopologyTtlMs) {
       return cached.value;
     }
-    const inFlight = this.flapOuterPricingTopologyInFlight.get(cacheKey);
+    const inFlight = this.flapRawQuoteTopologyInFlight.get(cacheKey);
     if (inFlight) return await inFlight;
 
     const task = (async () => {
-      const fallback = this.resolveOuterPoolQuoteOpts(input.tokenAddress, input.tokenInfo);
-      let poolPair = fallback.poolPair;
-      let prefer = fallback.prefer;
-      let pairPriceUsd = 0;
-      const chain = String(chainNames[input.chainId as any] || '').trim().toLowerCase();
-      if (chain) {
-        const pair = await DexScreenerAPI.getBestPairBetweenTokens(chain, input.tokenAddress, input.rawQuoteToken).catch(() => null);
-        if (pair?.pairAddress && /^0x[a-fA-F0-9]{40}$/.test(String(pair.pairAddress))) {
-          poolPair = pair.pairAddress;
-          prefer = this.normalizeDexPreferFromDexScreenerPair(pair) ?? prefer;
-          const dexPairPriceUsd = Number(pair.priceUsd ?? 0);
-          if (Number.isFinite(dexPairPriceUsd) && dexPairPriceUsd > 0) {
-            pairPriceUsd = dexPairPriceUsd;
-          }
-        }
-      }
-      const topology = {
+      const topology: FlapRawQuoteTopology = {
         rawQuoteToken: input.rawQuoteToken as `0x${string}`,
-        poolPair,
-        prefer,
-        pairPriceUsd,
-        quoteTokenInfo: null as TokenInfo | null,
+        quoteTokenInfo: null,
         terminalQuoteToken: undefined as `0x${string}` | undefined,
         terminalPoolPair: undefined as string | undefined,
         terminalPoolPrefer: undefined as 'v2' | 'v3' | undefined,
       };
-      if (!input.quoteIsStable && !input.quoteIsNative) {
-        topology.quoteTokenInfo = await input.resolveQuoteTokenInfo(input.rawQuoteToken as `0x${string}`);
-        const tradeTopology = await TradeService.resolveFlapStocksPricingTopology({
-          chainId: input.chainId,
-          rawQuoteToken: input.rawQuoteToken as `0x${string}`,
-          anchorToken: input.tokenAddress as `0x${string}`,
-        }).catch(() => null);
-        if (tradeTopology?.rawQuotePoolAddress) {
-          topology.terminalQuoteToken = tradeTopology.terminalQuoteToken as `0x${string}`;
-          topology.terminalPoolPair = tradeTopology.rawQuotePoolAddress;
-          topology.terminalPoolPrefer = tradeTopology.rawQuotePoolPrefer ?? undefined;
-        }
+      topology.quoteTokenInfo = await input.resolveQuoteTokenInfo(input.rawQuoteToken as `0x${string}`).catch(() => null);
+      const tradeTopology = await TradeService.resolveFlapStocksPricingTopology({
+        chainId: input.chainId,
+        rawQuoteToken: input.rawQuoteToken as `0x${string}`,
+        anchorToken: input.anchorToken as `0x${string}`,
+      }).catch(() => null);
+      if (tradeTopology?.rawQuotePoolAddress) {
+        topology.terminalQuoteToken = tradeTopology.terminalQuoteToken as `0x${string}`;
+        topology.terminalPoolPair = tradeTopology.rawQuotePoolAddress;
+        topology.terminalPoolPrefer = tradeTopology.rawQuotePoolPrefer ?? undefined;
       }
-      this.flapOuterPricingTopologyCache.set(cacheKey, { ts: Date.now(), value: topology });
-      return topology;
+      if (topology.quoteTokenInfo || topology.terminalPoolPair) {
+        this.flapRawQuoteTopologyCache.set(cacheKey, { ts: Date.now(), value: topology });
+        return topology;
+      }
+      return null;
     })().finally(() => {
-      this.flapOuterPricingTopologyInFlight.delete(cacheKey);
+      this.flapRawQuoteTopologyInFlight.delete(cacheKey);
     });
-    this.flapOuterPricingTopologyInFlight.set(cacheKey, task);
+    this.flapRawQuoteTopologyInFlight.set(cacheKey, task);
     return await task;
   }
 
@@ -977,60 +958,48 @@ export class TokenService {
             quoteIsStable: !!stable,
             quoteIsNative,
           });
-          if (!stable && !quoteIsNative) {
-            const fixedRoutePriceUsd = await quoteByFixedFlapOuterSellRouteToUsd(tokenAddress as `0x${string}`).catch(() => 0);
-            if (fixedRoutePriceUsd > 0) {
-              logFlapOuterPricing('info', 'outer_branch.fixed_route_hit', {
-                fixedRoutePriceUsd,
-              });
-              priceUsd = fixedRoutePriceUsd;
-            } else {
-              logFlapOuterPricing('warn', 'outer_branch.fixed_route_miss', {});
-            }
-          }
           if (!(priceUsd > 0)) {
-          const pricingTopology = await this.resolveFlapOuterPricingTopology({
+          const directQuotePlan = await this.resolveFlapOuterDirectQuotePlan({
             chainId,
             tokenAddress: String(tokenAddress),
             rawQuoteToken: effectiveQuoteAddr,
             tokenInfo,
-            quoteIsStable: !!stable,
-            quoteIsNative,
-            resolveQuoteTokenInfo: buildFlapTokenInfoForPricing,
-          }).catch(() => null);
+          }).catch(() => ({ poolPair: undefined, prefer: undefined }));
+          const rawQuoteTopology = !stable && !quoteIsNative
+            ? await this.resolveFlapRawQuoteTopology({
+              chainId,
+              rawQuoteToken: effectiveQuoteAddr,
+              anchorToken: String(tokenAddress),
+              resolveQuoteTokenInfo: buildFlapTokenInfoForPricing,
+            }).catch(() => null)
+            : null;
           logFlapOuterPricing('info', 'outer_branch.topology', {
-            topology: pricingTopology
-              ? {
-                rawQuoteToken: pricingTopology.rawQuoteToken,
-                poolPair: pricingTopology.poolPair ?? null,
-                prefer: pricingTopology.prefer ?? null,
-                pairPriceUsd: pricingTopology.pairPriceUsd ?? 0,
-                terminalQuoteToken: pricingTopology.terminalQuoteToken ?? null,
-                terminalPoolPair: pricingTopology.terminalPoolPair ?? null,
-                terminalPoolPrefer: pricingTopology.terminalPoolPrefer ?? null,
-              }
-              : null,
+            topology: {
+              directQuotePoolPair: directQuotePlan.poolPair ?? null,
+              directQuotePrefer: directQuotePlan.prefer ?? null,
+              rawQuoteToken: rawQuoteTopology?.rawQuoteToken ?? effectiveQuoteAddr,
+              terminalQuoteToken: rawQuoteTopology?.terminalQuoteToken ?? null,
+              terminalPoolPair: rawQuoteTopology?.terminalPoolPair ?? null,
+              terminalPoolPrefer: rawQuoteTopology?.terminalPoolPrefer ?? null,
+            },
           });
-          if (pricingTopology?.pairPriceUsd && pricingTopology.pairPriceUsd > 0) {
-            priceUsd = pricingTopology.pairPriceUsd;
-          }
         try {
-            const directQuote = pricingTopology?.poolPair && pricingTopology.prefer === 'v2'
+            const directQuote = directQuotePlan.poolPair && directQuotePlan.prefer === 'v2'
               ? {
                 amountOut: await this.quoteV2ExactInByKnownPair({
                   chainId,
-                  pair: pricingTopology.poolPair as `0x${string}`,
+                  pair: directQuotePlan.poolPair as `0x${string}`,
                   tokenIn: tokenAddress as `0x${string}`,
                   tokenOut: effectiveQuoteAddr,
                   amountIn: oneToken,
                   cacheTtlMs: ttl,
                 }),
               }
-              : pricingTopology?.poolPair && pricingTopology.prefer === 'v3'
+              : directQuotePlan.poolPair && directQuotePlan.prefer === 'v3'
                 ? {
                   amountOut: await this.quoteV3ExactInByKnownPool({
                     chainId,
-                    pool: pricingTopology.poolPair as `0x${string}`,
+                    pool: directQuotePlan.poolPair as `0x${string}`,
                     tokenIn: tokenAddress as `0x${string}`,
                     tokenOut: effectiveQuoteAddr,
                     amountIn: oneToken,
@@ -1043,21 +1012,21 @@ export class TokenService {
                   effectiveQuoteAddr,
                   oneToken,
                   {
-                    poolPair: pricingTopology?.poolPair,
-                    prefer: pricingTopology?.prefer,
+                    poolPair: directQuotePlan.poolPair,
+                    prefer: directQuotePlan.prefer,
                     cacheTtlMs: ttl,
                   }
                 );
           logFlapOuterPricing(directQuote.amountOut > 0n ? 'info' : 'warn', 'outer_branch.direct_quote', {
-            poolPair: pricingTopology?.poolPair ?? null,
-            prefer: pricingTopology?.prefer ?? null,
+            poolPair: directQuotePlan.poolPair ?? null,
+            prefer: directQuotePlan.prefer ?? null,
             amountOut: directQuote.amountOut.toString(),
             effectiveQuoteAddr,
           });
           if (directQuote.amountOut > 0n) {
               const quoteTokenInfo = stable || quoteIsNative
                 ? null
-                : (pricingTopology?.quoteTokenInfo ?? await buildFlapTokenInfoForPricing(effectiveQuoteAddr));
+                : (rawQuoteTopology?.quoteTokenInfo ?? await buildFlapTokenInfoForPricing(effectiveQuoteAddr));
             const quoteTokenDecimals = stable?.decimals
               ?? quoteTokenInfo?.decimals
               ?? (await this.getMeta(effectiveQuoteAddr, chainId)).decimals;
@@ -1067,81 +1036,7 @@ export class TokenService {
               quoteUsd = 1;
             } else if (quoteIsNative) {
               quoteUsd = await getNativePriceUsd();
-            } else if (pricingTopology?.terminalQuoteToken && pricingTopology?.terminalPoolPair) {
-              const terminalQuoteAddr = pricingTopology.terminalQuoteToken.toLowerCase() === this.ZERO_ADDRESS
-                ? wNativeAddress
-                : pricingTopology.terminalQuoteToken;
-              const terminalStable = stableByAddress.get(terminalQuoteAddr.toLowerCase());
-              const terminalIsNative =
-                pricingTopology.terminalQuoteToken.toLowerCase() === this.ZERO_ADDRESS
-                || terminalQuoteAddr.toLowerCase() === wNativeAddress.toLowerCase();
-              const oneRawQuote = 10n ** BigInt(quoteTokenDecimals);
-              const rawQuoteToTerminalOut = pricingTopology.terminalPoolPrefer === 'v2'
-                ? await this.quoteV2ExactInByKnownPair({
-                  chainId,
-                  pair: pricingTopology.terminalPoolPair as `0x${string}`,
-                  tokenIn: effectiveQuoteAddr,
-                  tokenOut: terminalQuoteAddr,
-                  amountIn: oneRawQuote,
-                  cacheTtlMs: ttl,
-                })
-                : pricingTopology.terminalPoolPrefer === 'v3'
-                  ? await this.quoteV3ExactInByKnownPool({
-                    chainId,
-                    pool: pricingTopology.terminalPoolPair as `0x${string}`,
-                    tokenIn: effectiveQuoteAddr,
-                    tokenOut: terminalQuoteAddr,
-                    amountIn: oneRawQuote,
-                    cacheTtlMs: ttl,
-                  })
-                  : (await TradeService.quoteBestExactIn(
-                    chainId,
-                    effectiveQuoteAddr,
-                    terminalQuoteAddr as `0x${string}`,
-                    oneRawQuote,
-                    {
-                      poolPair: pricingTopology.terminalPoolPair,
-                      prefer: pricingTopology.terminalPoolPrefer,
-                      cacheTtlMs: ttl,
-                    }
-                  )).amountOut;
-              logFlapOuterPricing(rawQuoteToTerminalOut > 0n ? 'info' : 'warn', 'outer_branch.raw_quote_to_terminal', {
-                terminalQuoteAddr,
-                terminalPoolPair: pricingTopology.terminalPoolPair ?? null,
-                terminalPoolPrefer: pricingTopology.terminalPoolPrefer ?? null,
-                amountOut: rawQuoteToTerminalOut.toString(),
-              });
-              if (rawQuoteToTerminalOut > 0n) {
-                const terminalQuoteDecimals = terminalStable?.decimals
-                  ?? (terminalIsNative
-                    ? wNativeDecimals
-                    : (await this.getMeta(terminalQuoteAddr, chainId)).decimals);
-                const terminalQuoteAmount = toNumberFromUnits(rawQuoteToTerminalOut, terminalQuoteDecimals);
-                let terminalQuoteUsd = 0;
-                if (terminalStable) {
-                  terminalQuoteUsd = 1;
-                } else if (terminalIsNative) {
-                  terminalQuoteUsd = await getNativePriceUsd();
-                } else if (normalizeAddressKey(terminalQuoteAddr) !== normalizeAddressKey(effectiveQuoteAddr)) {
-                  terminalQuoteUsd = await this.getFlapSharedQuoteUsd({
-                    chainId,
-                    tokenAddress: terminalQuoteAddr,
-                    tokenInfo: pricingTopology?.quoteTokenInfo ?? null,
-                    cacheTtlMs: ttl,
-                    allowTokenInfoPriceFallback,
-                  });
-                }
-                logFlapOuterPricing(terminalQuoteUsd > 0 ? 'info' : 'warn', 'outer_branch.terminal_quote_usd', {
-                  terminalQuoteAddr,
-                  terminalQuoteAmount,
-                  terminalQuoteUsd,
-                });
-                if (terminalQuoteUsd > 0 && terminalQuoteAmount > 0) {
-                  quoteUsd = terminalQuoteAmount * terminalQuoteUsd;
-                }
-              }
-            }
-            if (!(quoteUsd > 0)) {
+            } else {
               quoteUsd = await this.getFlapSharedQuoteUsd({
                 chainId,
                 tokenAddress: effectiveQuoteAddr,
@@ -1149,8 +1044,11 @@ export class TokenService {
                 cacheTtlMs: ttl,
                 allowTokenInfoPriceFallback,
               });
-              logFlapOuterPricing(quoteUsd > 0 ? 'info' : 'warn', 'outer_branch.quote_usd_fallback', {
+              logFlapOuterPricing(quoteUsd > 0 ? 'info' : 'warn', 'outer_branch.raw_quote_usd', {
                 effectiveQuoteAddr,
+                terminalQuoteToken: rawQuoteTopology?.terminalQuoteToken ?? null,
+                terminalPoolPair: rawQuoteTopology?.terminalPoolPair ?? null,
+                terminalPoolPrefer: rawQuoteTopology?.terminalPoolPrefer ?? null,
                 quoteUsd,
               });
             }
@@ -1174,6 +1072,17 @@ export class TokenService {
           }
         } catch {
         }
+          }
+          if (!(priceUsd > 0) && !stable && !quoteIsNative) {
+            const fixedRoutePriceUsd = await quoteByFixedFlapOuterSellRouteToUsd(tokenAddress as `0x${string}`).catch(() => 0);
+            if (fixedRoutePriceUsd > 0) {
+              logFlapOuterPricing('info', 'outer_branch.fixed_route_hit', {
+                fixedRoutePriceUsd,
+              });
+              priceUsd = fixedRoutePriceUsd;
+            } else {
+              logFlapOuterPricing('warn', 'outer_branch.fixed_route_miss', {});
+            }
           }
       }
     }
