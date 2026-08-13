@@ -70,9 +70,15 @@ type MarketTokenRow = {
   marketCapChangedAtMs?: number;
   marketCapDirection?: 'up' | 'down';
   vol24hUsd?: number;
+  prevVol24hUsd?: number;
   holders?: number;
+  prevHolders?: number;
   kol?: number;
+  prevKol?: number;
+  smartMoney?: number;
+  prevSmartMoney?: number;
   viewerCount?: number;
+  prevViewerCount?: number;
   top10HoldRatio?: number;
   devHoldPercent?: number;
   devMaxBuyPercent?: number;
@@ -92,7 +98,7 @@ type MarketTokenRow = {
 };
 
 type GroupSourceFilter = 'all' | 'withTweet' | 'withoutTweet';
-type MonitorViewMode = 'grouped' | 'globalHot';
+type MonitorViewMode = 'grouped' | 'globalHot' | 'memeFlow';
 
 type MarketTokenGroup = {
   key: string;
@@ -199,6 +205,11 @@ const mergeTokenRow = (prev: MarketTokenRow | undefined, next: MarketTokenRow): 
     createdAtMs: mergedCreatedAtMs,
     sortAtMs: mergedCreatedAtMs ?? Math.max(prev.sortAtMs, next.sortAtMs),
   };
+  merged.prevVol24hUsd = undefined;
+  merged.prevHolders = undefined;
+  merged.prevKol = undefined;
+  merged.prevSmartMoney = undefined;
+  merged.prevViewerCount = undefined;
   if (
     typeof prev.marketCapUsd === 'number' &&
     Number.isFinite(prev.marketCapUsd) &&
@@ -209,6 +220,51 @@ const mergeTokenRow = (prev: MarketTokenRow | undefined, next: MarketTokenRow): 
     merged.prevMarketCapUsd = prev.marketCapUsd;
     merged.marketCapChangedAtMs = Date.now();
     merged.marketCapDirection = next.marketCapUsd > prev.marketCapUsd ? 'up' : 'down';
+  }
+  if (
+    typeof prev.vol24hUsd === 'number' &&
+    Number.isFinite(prev.vol24hUsd) &&
+    typeof next.vol24hUsd === 'number' &&
+    Number.isFinite(next.vol24hUsd) &&
+    next.vol24hUsd !== prev.vol24hUsd
+  ) {
+    merged.prevVol24hUsd = prev.vol24hUsd;
+  }
+  if (
+    typeof prev.holders === 'number' &&
+    Number.isFinite(prev.holders) &&
+    typeof next.holders === 'number' &&
+    Number.isFinite(next.holders) &&
+    next.holders !== prev.holders
+  ) {
+    merged.prevHolders = prev.holders;
+  }
+  if (
+    typeof prev.kol === 'number' &&
+    Number.isFinite(prev.kol) &&
+    typeof next.kol === 'number' &&
+    Number.isFinite(next.kol) &&
+    next.kol !== prev.kol
+  ) {
+    merged.prevKol = prev.kol;
+  }
+  if (
+    typeof prev.smartMoney === 'number' &&
+    Number.isFinite(prev.smartMoney) &&
+    typeof next.smartMoney === 'number' &&
+    Number.isFinite(next.smartMoney) &&
+    next.smartMoney !== prev.smartMoney
+  ) {
+    merged.prevSmartMoney = prev.smartMoney;
+  }
+  if (
+    typeof prev.viewerCount === 'number' &&
+    Number.isFinite(prev.viewerCount) &&
+    typeof next.viewerCount === 'number' &&
+    Number.isFinite(next.viewerCount) &&
+    next.viewerCount !== prev.viewerCount
+  ) {
+    merged.prevViewerCount = prev.viewerCount;
   }
   const keys = Object.keys(next) as Array<keyof MarketTokenRow>;
   for (const key of keys) {
@@ -737,6 +793,7 @@ const buildMarketTokenRow = (detail: MarketTokenEventDetail): MarketTokenRow | n
     vol24hUsd: toFiniteNumber(tokenData?.vol24hUsd ?? tokenData?.v24h),
     holders: toFiniteNumber(tokenData?.holders ?? tokenData?.hd),
     kol: toFiniteNumber(tokenData?.kol),
+    smartMoney: toFiniteNumber(tokenData?.smartMoney ?? tokenData?.smt),
     viewerCount: toFiniteNumber(tokenData?.viewerCount ?? tokenData?.v_c),
     top10HoldRatio: toFiniteNumber(tokenData?.top10HoldRatio ?? tokenData?.t10),
     devHoldPercent: devHoldPercentRaw != null ? (devHoldPercentRaw >= 0 && devHoldPercentRaw <= 1 ? devHoldPercentRaw * 100 : devHoldPercentRaw) : undefined,
@@ -976,6 +1033,133 @@ const compareByViewerAndMarketCapDesc = (a: MarketTokenRow, b: MarketTokenRow) =
   return compareByMarketCapDesc(a, b);
 };
 
+const getFiniteDelta = (current: number | undefined, previous: number | undefined) => {
+  if (
+    typeof current !== 'number' ||
+    !Number.isFinite(current) ||
+    typeof previous !== 'number' ||
+    !Number.isFinite(previous)
+  ) return 0;
+  return current - previous;
+};
+
+type MemeFlowRankMeta = {
+  score: number;
+  reason: string;
+};
+
+const getPercentileScore = (current: number | undefined, sortedValues: number[]) => {
+  if (typeof current !== 'number' || !Number.isFinite(current) || !sortedValues.length) return 0;
+  const index = sortedValues.findIndex((value) => current >= value);
+  if (index === -1) return 0;
+  const percentile = 1 - index / Math.max(1, sortedValues.length - 1);
+  return Math.max(0, Math.min(1, percentile));
+};
+
+const buildSortedMetricValues = (rows: MarketTokenRow[], getter: (row: MarketTokenRow) => number | undefined) =>
+  rows
+    .map(getter)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    .sort((a, b) => b - a);
+
+const getPositiveGrowthScore = (current: number | undefined, previous: number | undefined) => {
+  if (
+    typeof current !== 'number' ||
+    !Number.isFinite(current) ||
+    typeof previous !== 'number' ||
+    !Number.isFinite(previous)
+  ) return 0;
+  if (current <= previous) return 0;
+  const base = Math.max(Math.abs(previous), 1);
+  return Math.max(0, Math.min(1, (current - previous) / base));
+};
+
+const resolveMemeFlowRankMeta = (
+  row: MarketTokenRow,
+  context: {
+    viewerValues: number[];
+    holderValues: number[];
+    marketCapValues: number[];
+    kolValues: number[];
+    smartMoneyValues: number[];
+  },
+  tt: (key: string, subs?: Array<string | number>) => string,
+): MemeFlowRankMeta => {
+  const viewerScore = getPercentileScore(row.viewerCount, context.viewerValues);
+  const holderScore = getPercentileScore(row.holders, context.holderValues);
+  const marketCapScore = getPercentileScore(row.marketCapUsd, context.marketCapValues);
+  const kolScore = getPercentileScore(row.kol, context.kolValues);
+  const smartMoneyScore = getPercentileScore(row.smartMoney, context.smartMoneyValues);
+  const viewerDelta = getFiniteDelta(row.viewerCount, row.prevViewerCount);
+  const holderDelta = getFiniteDelta(row.holders, row.prevHolders);
+  const marketCapDelta = getFiniteDelta(row.marketCapUsd, row.prevMarketCapUsd);
+  const volDelta = getFiniteDelta(row.vol24hUsd, row.prevVol24hUsd);
+  const kolDelta = getFiniteDelta(row.kol, row.prevKol);
+  const smartMoneyDelta = getFiniteDelta(row.smartMoney, row.prevSmartMoney);
+  const viewerGrowthScore = getPositiveGrowthScore(row.viewerCount, row.prevViewerCount);
+  const holderGrowthScore = getPositiveGrowthScore(row.holders, row.prevHolders);
+  const marketCapGrowthScore = getPositiveGrowthScore(row.marketCapUsd, row.prevMarketCapUsd);
+  const volGrowthScore = getPositiveGrowthScore(row.vol24hUsd, row.prevVol24hUsd);
+  const kolGrowthScore = getPositiveGrowthScore(row.kol, row.prevKol);
+  const smartMoneyGrowthScore = getPositiveGrowthScore(row.smartMoney, row.prevSmartMoney);
+
+  // 热榜看的是“现在谁最热”；
+  // 发酵看的是“谁正在扩散、正在吸筹、正在往前排走”。
+  const heatLeadScore =
+    viewerScore * 0.38 +
+    viewerGrowthScore * 0.42 +
+    kolGrowthScore * 0.12 +
+    kolScore * 0.08;
+  const spreadScore =
+    holderGrowthScore * 0.4 +
+    holderScore * 0.18 +
+    volGrowthScore * 0.18 +
+    smartMoneyGrowthScore * 0.16 +
+    smartMoneyScore * 0.08;
+  const leaderShiftScore =
+    marketCapGrowthScore * 0.55 +
+    marketCapScore * 0.25 +
+    volGrowthScore * 0.2;
+  const synergyBonus =
+    viewerGrowthScore > 0 && holderGrowthScore > 0 && (marketCapGrowthScore > 0 || volGrowthScore > 0)
+      ? 0.08
+      : viewerGrowthScore > 0 && holderGrowthScore > 0
+        ? 0.05
+        : viewerScore >= 0.75 && holderGrowthScore > 0
+          ? 0.02
+          : 0;
+  const riskPenalty =
+    (row.devHasSold && holderGrowthScore <= 0 && marketCapGrowthScore <= 0 ? 0.08 : 0) +
+    ((typeof row.devHoldPercent === 'number' && row.devHoldPercent >= 10) ? 0.12 : 0) +
+    ((typeof row.top10HoldRatio === 'number' && row.top10HoldRatio >= 0.35) ? 0.08 : 0);
+  const score =
+    heatLeadScore * 0.36 +
+    spreadScore * 0.38 +
+    leaderShiftScore * 0.26 +
+    synergyBonus -
+    riskPenalty;
+
+  const reasonCandidates = [
+    { label: tt('contentUi.xMonitor.memeFlowReason.heatStrong'), weight: viewerScore >= 0.82 ? heatLeadScore + 0.14 : 0 },
+    { label: tt('contentUi.xMonitor.memeFlowReason.heatUp'), weight: viewerDelta > 0 ? viewerGrowthScore + 0.18 : 0 },
+    { label: tt('contentUi.xMonitor.memeFlowReason.holderStrong'), weight: holderScore >= 0.72 ? spreadScore + 0.12 : 0 },
+    { label: tt('contentUi.xMonitor.memeFlowReason.holderUp'), weight: holderDelta > 0 ? holderGrowthScore + 0.18 : 0 },
+    { label: tt('contentUi.xMonitor.memeFlowReason.leaderStrong'), weight: marketCapDelta > 0 ? leaderShiftScore + 0.16 : 0 },
+    { label: tt('contentUi.xMonitor.memeFlowReason.devOut'), weight: row.devHasSold && holderGrowthScore <= 0 ? riskPenalty + 0.04 : 0 },
+    { label: tt('contentUi.xMonitor.memeFlowReason.devHigh'), weight: typeof row.devHoldPercent === 'number' && row.devHoldPercent >= 10 ? riskPenalty + 0.08 : 0 },
+    { label: tt('contentUi.xMonitor.memeFlowReason.topHeavy'), weight: typeof row.top10HoldRatio === 'number' && row.top10HoldRatio >= 0.35 ? riskPenalty + 0.06 : 0 },
+    { label: tt('contentUi.xMonitor.memeFlowReason.leaderStrong'), weight: volDelta > 0 && marketCapGrowthScore > 0 ? leaderShiftScore + 0.08 : 0 },
+    { label: tt('contentUi.xMonitor.memeFlowReason.heatUp'), weight: kolDelta > 0 || smartMoneyDelta > 0 ? 0.06 : 0 },
+  ]
+    .filter((item) => item.weight > 0)
+    .sort((a, b) => b.weight - a.weight);
+
+  return {
+    score,
+    reason: Array.from(new Set(reasonCandidates.map((item) => item.label))).slice(0, 2).join(' / '),
+  };
+};
+
 type TokenRowCardProps = {
   row: MarketTokenRow;
   rank: number;
@@ -984,6 +1168,7 @@ type TokenRowCardProps = {
   tt: (key: string, subs?: Array<string | number>) => string;
   showSocialMeta?: boolean;
   highlightedByTwitterAccount?: boolean;
+  memeFlowReason?: string;
 };
 
 function TokenRowCard({
@@ -994,6 +1179,7 @@ function TokenRowCard({
   tt,
   showSocialMeta = false,
   highlightedByTwitterAccount = false,
+  memeFlowReason,
 }: TokenRowCardProps) {
   const chainLabel = (inferMonitorChainName(row.chain, row.tokenAddress) || 'bsc').toUpperCase();
   const shortAddr = `${row.tokenAddress.slice(0, 6)}...${row.tokenAddress.slice(-4)}`;
@@ -1171,11 +1357,18 @@ function TokenRowCard({
                 <span className={`rounded border px-1 py-0.5 text-[9px] ${getPlatformBadgeClassName(row.launchpadPlatform)}`}>{row.launchpadPlatform}</span>
               ) : null}
             </div>
-            {socialMetaText ? (
-              <div className="mt-1">
+            {memeFlowReason || socialMetaText ? (
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                {memeFlowReason ? (
+                  <span className="inline-flex max-w-full items-center rounded-full border border-emerald-500/20 bg-emerald-500/5 px-1.5 py-0.5 text-[10px] text-emerald-200">
+                    <span className="truncate">{memeFlowReason}</span>
+                  </span>
+                ) : null}
+                {socialMetaText ? (
                 <span className={`inline-flex max-w-full items-center rounded-full border px-1.5 py-0.5 text-[10px] ${socialMetaClassName}`}>
                   <span className="truncate">{socialMetaText}</span>
                 </span>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -1249,7 +1442,7 @@ export function NewPoolMonitorContent({
   const [viewMode, setViewMode] = useState<MonitorViewMode>(() => {
     try {
       const raw = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-      if (raw === 'grouped' || raw === 'globalHot') return raw;
+      if (raw === 'grouped' || raw === 'globalHot' || raw === 'memeFlow') return raw;
     } catch {
     }
     return 'grouped';
@@ -1526,13 +1719,40 @@ export function NewPoolMonitorContent({
     () => scopedTokens.slice().sort(compareByViewerAndMarketCapDesc),
     [scopedTokens]
   );
+  const memeFlowTokens = useMemo(() => {
+    const viewerValues = buildSortedMetricValues(scopedTokens, (row) => row.viewerCount);
+    const holderValues = buildSortedMetricValues(scopedTokens, (row) => row.holders);
+    const marketCapValues = buildSortedMetricValues(scopedTokens, (row) => row.marketCapUsd);
+    const kolValues = buildSortedMetricValues(scopedTokens, (row) => row.kol);
+    const smartMoneyValues = buildSortedMetricValues(scopedTokens, (row) => row.smartMoney);
+    return scopedTokens
+      .map((row) => ({
+        row,
+        meta: resolveMemeFlowRankMeta(
+          row,
+          { viewerValues, holderValues, marketCapValues, kolValues, smartMoneyValues },
+          tt,
+        ),
+      }))
+      .sort((a, b) => {
+        if (b.meta.score !== a.meta.score) return b.meta.score - a.meta.score;
+        return compareByViewerAndMarketCapDesc(a.row, b.row);
+      });
+  }, [scopedTokens, tt]);
   const globalHotTokensForDisplay = useMemo(() => {
-    if (!frozenGlobalTokenIds?.length) return globalHotTokens;
-    const tokenMap = new Map(globalHotTokens.map((row) => [row.tokenAddress, row] as const));
+    const targetList = viewMode === 'memeFlow'
+      ? memeFlowTokens.map((item) => item.row)
+      : globalHotTokens;
+    if (!frozenGlobalTokenIds?.length) return targetList;
+    const tokenMap = new Map(targetList.map((row) => [row.tokenAddress, row] as const));
     return frozenGlobalTokenIds
       .map((id) => tokenMap.get(id))
       .filter(Boolean) as MarketTokenRow[];
-  }, [globalHotTokens, frozenGlobalTokenIds]);
+  }, [globalHotTokens, memeFlowTokens, frozenGlobalTokenIds, viewMode]);
+  const memeFlowReasonMap = useMemo(
+    () => new Map(memeFlowTokens.map((item) => [item.row.tokenAddress, item.meta.reason] as const)),
+    [memeFlowTokens]
+  );
   const visibleGlobalHotTokens = useMemo(
     () => globalHotTokensForDisplay.slice(0, globalPage * HOT_PAGE_SIZE),
     [globalHotTokensForDisplay, globalPage]
@@ -1569,40 +1789,36 @@ export function NewPoolMonitorContent({
     <div className="flex min-h-0 flex-1 flex-col">
       <div
         className="dagobang-scrollbar min-h-0 flex-1 overflow-y-auto"
-        onMouseEnter={handleListMouseEnter}
-        onMouseLeave={handleListMouseLeave}
       >
-        <div className="sticky top-0 z-10 border-b border-zinc-800/60 bg-[#0F0F11] px-4 py-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">
+        <div className="sticky top-0 z-10 border-b border-zinc-800/60 bg-[#0F0F11] px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="inline-flex min-w-0 items-center rounded-2xl border border-zinc-800 bg-zinc-950/75 p-1">
+              <span className="mr-1 shrink-0 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-2 py-1 text-[11px] font-semibold text-emerald-200">
                 {currentChainLabel}
               </span>
-              <div className="inline-flex shrink-0 rounded-xl border border-zinc-800 bg-zinc-950/70 p-1">
-                {([
-                  ['grouped', '分组'],
-                  ['globalHot', '热榜'],
-                ] as Array<[MonitorViewMode, string]>).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    className={
-                      viewMode === value
-                        ? 'min-w-[58px] rounded-lg border border-sky-500/50 bg-sky-500/15 px-3 py-1.5 text-[12px] font-medium text-sky-200'
-                        : 'min-w-[58px] rounded-lg border border-transparent px-3 py-1.5 text-[12px] text-zinc-400 hover:text-zinc-200'
-                    }
-                    onClick={() => setViewMode(value)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              {([
+                ['grouped', '分组'],
+                ['globalHot', '热榜'],
+                ['memeFlow', '发酵'],
+              ] as Array<[MonitorViewMode, string]>).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={
+                    viewMode === value
+                      ? 'min-w-[52px] rounded-xl border border-sky-500/50 bg-sky-500/15 px-2.5 py-1 text-[12px] font-medium text-sky-200'
+                      : 'min-w-[52px] rounded-xl border border-transparent px-2.5 py-1 text-[12px] text-zinc-400 hover:text-zinc-200'
+                  }
+                  onClick={() => setViewMode(value)}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {listHovered ? <div className="text-[10px] text-amber-300">暂停</div> : null}
+            <div className="flex shrink-0 items-center gap-1.5">
               <button
                 type="button"
-                className="rounded-md border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-2.5 py-1 text-[11px] text-zinc-300 hover:border-zinc-700"
                 onClick={() => void handleClearCache()}
                 disabled={clearingCache}
               >
@@ -1610,32 +1826,47 @@ export function NewPoolMonitorContent({
               </button>
               <button
                 type="button"
-                className="rounded-md border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-700"
+                className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-2.5 py-1 text-[11px] text-zinc-300 hover:border-zinc-700"
                 onClick={() => setFilterOpen((v) => !v)}
               >
-                {filterOpen ? '收起' : '筛选'}
+                {filterOpen ? '收起筛选' : '筛选'}
               </button>
             </div>
           </div>
-          <div className="mt-2 flex items-center gap-2 overflow-x-auto">
-            {([
-              ['all', `全部 ${viewMode === 'grouped' ? groups.length : filteredTokens.length}`],
-              ['withTweet', `有推特 ${viewMode === 'grouped' ? groupsBySource.withTweet.length : tokensBySource.withTweet.length}`],
-              ['withoutTweet', `无推特 ${viewMode === 'grouped' ? groupsBySource.withoutTweet.length : tokensBySource.withoutTweet.length}`],
-            ] as Array<[GroupSourceFilter, string]>).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                className={
-                  groupSourceFilter === value
-                    ? 'rounded-full border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-200'
-                    : 'rounded-full border border-zinc-700 bg-zinc-900/40 px-2.5 py-1 text-[11px] text-zinc-400 hover:border-zinc-600'
-                }
-                onClick={() => setGroupSourceFilter(value)}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="mt-1.5 flex items-center gap-2 text-[11px]">
+            <div className="dagobang-scrollbar min-w-0 flex-1 overflow-x-auto">
+              <div className="flex min-w-max items-center gap-3 pr-1">
+              {([
+                ['all', `全部 ${viewMode === 'grouped' ? groups.length : filteredTokens.length}`],
+                ['withTweet', `有推特 ${viewMode === 'grouped' ? groupsBySource.withTweet.length : tokensBySource.withTweet.length}`],
+                ['withoutTweet', `无推特 ${viewMode === 'grouped' ? groupsBySource.withoutTweet.length : tokensBySource.withoutTweet.length}`],
+              ] as Array<[GroupSourceFilter, string]>).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={
+                    groupSourceFilter === value
+                      ? 'shrink-0 text-emerald-300'
+                      : 'shrink-0 text-zinc-500 hover:text-zinc-300'
+                  }
+                  onClick={() => setGroupSourceFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 text-[10px] text-zinc-600">
+              {listHovered ? (
+                <div className="inline-flex items-center gap-1 text-amber-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
+                  暂停
+                </div>
+              ) : null}
+              <span>
+                {viewMode === 'memeFlow' ? '扩散优先' : viewMode === 'globalHot' ? '热度优先' : '分组视图'}
+              </span>
+            </div>
           </div>
           {filterOpen ? (
             <div className="mt-2">
@@ -1653,7 +1884,11 @@ export function NewPoolMonitorContent({
             </div>
           ) : null}
         </div>
-        <div className="px-2 py-2">
+        <div
+          className="px-2 py-2"
+          onMouseEnter={handleListMouseEnter}
+          onMouseLeave={handleListMouseLeave}
+        >
         {viewMode === 'grouped' ? (
           visibleGroups.length === 0 ? (
             <div className="px-2 py-8 text-center text-[14px] text-zinc-500">暂无符合条件的新池分组</div>
@@ -1756,7 +1991,9 @@ export function NewPoolMonitorContent({
           )
         ) : (
           visibleGlobalHotTokens.length === 0 ? (
-            <div className="px-2 py-8 text-center text-[14px] text-zinc-500">暂无符合条件的新池热度数据</div>
+            <div className="px-2 py-8 text-center text-[14px] text-zinc-500">
+              {viewMode === 'memeFlow' ? '暂无符合条件的新池发酵数据' : '暂无符合条件的新池热度数据'}
+            </div>
           ) : (
             <div className="space-y-1">
               {visibleGlobalHotTokens.map((row, idx) => (
@@ -1768,6 +2005,7 @@ export function NewPoolMonitorContent({
                     resolvedSiteInfo={resolvedSiteInfo}
                     tt={tt}
                     showSocialMeta
+                    memeFlowReason={viewMode === 'memeFlow' ? (memeFlowReasonMap.get(row.tokenAddress) || '') : undefined}
                     highlightedByTwitterAccount={
                       highlightTwitterAccounts.size > 0 &&
                       highlightTwitterAccounts.has(extractTweetHandleForHighlight(row) || '')

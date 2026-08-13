@@ -359,6 +359,43 @@
         "kol": "KOL",
         "age": "年龄"
       },
+      "monitorTag": {
+        "watch": "可看",
+        "try": "可试",
+        "late": "晚了",
+        "watchHint": "有热度，但确认还不够，继续观察。",
+        "tryHint": "热度、筹码和风险结构都还在线，适合二次确认后小仓试单。",
+        "lateHint": "拥挤或风险偏高，更像最后一棒，先跳过。"
+      },
+      "monitorTagReason": {
+        "mcapUp": "市值跳",
+        "volumeUp": "量增",
+        "holderUp": "人增",
+        "viewerUp": "热增",
+        "kolUp": "K增",
+        "smartMoneyUp": "聪增",
+        "devSold": "Dev卖",
+        "devOut": "Dev出",
+        "devHigh": "Dev高",
+        "devRush": "Dev猛",
+        "topHeavy": "筹码重",
+        "overheat": "过热",
+        "stale": "转弱",
+        "hollow": "空热",
+        "tooEarly": "太早",
+        "baseWait": "等结构",
+        "noFlow": "没回流"
+      },
+      "memeFlowReason": {
+        "heatStrong": "热度强",
+        "heatUp": "热度升",
+        "holderStrong": "人气强",
+        "holderUp": "持有人升",
+        "leaderStrong": "市值强",
+        "devOut": "Dev出",
+        "devHigh": "Dev高",
+        "topHeavy": "筹码重"
+      },
       "notBought": {
         "prefix": "未买入：{0}",
         "reason": {

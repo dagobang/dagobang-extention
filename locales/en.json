@@ -359,6 +359,43 @@
         "kol": "KOL",
         "age": "Age"
       },
+      "monitorTag": {
+        "watch": "Watch",
+        "try": "Try",
+        "late": "Late",
+        "watchHint": "Attention is building, but confirmation is not there yet.",
+        "tryHint": "Heat, holder structure, and risk are still acceptable. Small probe only after confirmation.",
+        "lateHint": "Crowded or higher-risk structure. More likely a late entry than a clean setup."
+      },
+      "monitorTagReason": {
+        "mcapUp": "MC up",
+        "volumeUp": "Vol up",
+        "holderUp": "Holder+",
+        "viewerUp": "Heat+",
+        "kolUp": "KOL+",
+        "smartMoneyUp": "SM+",
+        "devSold": "Dev sold",
+        "devOut": "Dev out",
+        "devHigh": "Dev high",
+        "devRush": "Dev rush",
+        "topHeavy": "Top heavy",
+        "overheat": "Overheat",
+        "stale": "Weak",
+        "hollow": "Hollow",
+        "tooEarly": "Early",
+        "baseWait": "Wait base",
+        "noFlow": "No flow"
+      },
+      "memeFlowReason": {
+        "heatStrong": "Heat strong",
+        "heatUp": "Heat up",
+        "holderStrong": "Holder strong",
+        "holderUp": "Holder up",
+        "leaderStrong": "MC strong",
+        "devOut": "Dev out",
+        "devHigh": "Dev high",
+        "topHeavy": "Top heavy"
+      },
       "notBought": {
         "prefix": "Not bought: {0}",
         "reason": {
