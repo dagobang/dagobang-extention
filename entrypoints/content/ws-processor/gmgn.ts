@@ -147,6 +147,11 @@ const isNewPoolMonitorEnabled = (): boolean => {
   return settings?.ui?.newPoolMonitorEnabled === true;
 };
 
+const isGmgnLimitOrderPriceEnabled = (): boolean => {
+  const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
+  return settings?.ui?.gmgnLimitOrderPriceEnabled === true;
+};
+
 const shouldForwardMarketSignal = (): boolean => {
   const settings: Settings | null = (window as any).__DAGOBANG_SETTINGS__ ?? null;
   const newCoinSniperEnabled = settings?.ui?.newCoinSniperEnabled === true;
@@ -784,6 +789,7 @@ export function initGmgnWsMonitor(options: {
   const tokenByAddress = new Map<string, TokenSnapshot>();
   const pendingTokenSnapshotPersistByAddress = new Map<string, TokenSnapshot>();
   const TOKEN_SNAPSHOT_PERSIST_DEBOUNCE_MS = 8000;
+  const TOKEN_SNAPSHOT_PERSIST_FAST_DEBOUNCE_MS = 50;
   let pendingTokenSnapshotPersistTimer: number | null = null;
   const hydrateTokenSnapshots = (items: TokenSnapshot[]) => {
     for (const snapshot of items) {
@@ -811,10 +817,13 @@ export function initGmgnWsMonitor(options: {
   const scheduleTokenSnapshotPersist = (snapshot: TokenSnapshot) => {
     pendingTokenSnapshotPersistByAddress.set(snapshot.tokenAddress, snapshot);
     if (pendingTokenSnapshotPersistTimer != null) return;
+    const debounceMs = isGmgnLimitOrderPriceEnabled()
+      ? TOKEN_SNAPSHOT_PERSIST_FAST_DEBOUNCE_MS
+      : TOKEN_SNAPSHOT_PERSIST_DEBOUNCE_MS;
     pendingTokenSnapshotPersistTimer = window.setTimeout(() => {
       pendingTokenSnapshotPersistTimer = null;
       flushTokenSnapshotPersist();
-    }, TOKEN_SNAPSHOT_PERSIST_DEBOUNCE_MS);
+    }, debounceMs);
   };
   const pendingForwardByChannel = new Map<string, Map<string, UnifiedTwitterSignal>>();
   const forwardTimerByChannel = new Map<string, number>();

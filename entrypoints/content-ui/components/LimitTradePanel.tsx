@@ -44,6 +44,7 @@ type LimitTradePanelProps = {
   siteInfo: SiteInfo;
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
+  onLimitOrdersCreated?: (tokenAddress: ChainAddress) => Promise<void>;
   settings: Settings | null;
   isUnlocked: boolean;
   address: string | null;
@@ -69,6 +70,7 @@ export function LimitTradePanel({
   siteInfo,
   visible,
   onVisibleChange,
+  onLimitOrdersCreated,
   settings,
   isUnlocked,
   address: _address,
@@ -215,7 +217,7 @@ export function LimitTradePanel({
   const [onlyCurrentToken, setOnlyCurrentToken] = useState(false);
   const [orders, setOrders] = useState<LimitOrder[]>([]);
   const [scanStatus, setScanStatus] = useState<LimitOrderScanStatus | null>(null);
-  const [scanPriceByTokenKey, setScanPriceByTokenKey] = useState<Record<string, { priceUsd: number | null; ts: number }>>({});
+  const [scanPriceByTokenKey, setScanPriceByTokenKey] = useState<Record<string, { priceUsd: number | null; ts: number; source?: 'rpc' | 'gmgn' | 'external' | 'site' }>>({});
   const buyPriceRef = useRef(buyPrice);
   const sellPriceRef = useRef(sellPrice);
   const tokenPriceSnapshotRef = useRef<number | null>(null);
@@ -376,6 +378,21 @@ export function LimitTradePanel({
     if (currentPriceUsd > triggerPriceUsd) return 'text-emerald-400';
     return 'text-zinc-400';
   };
+  const getPriceSourceBadge = (source: 'rpc' | 'gmgn' | 'external' | 'site' | null) => {
+    if (source === 'gmgn') {
+      return { text: 'GMGN', className: 'border-sky-500/40 bg-sky-500/10 text-sky-300' };
+    }
+    if (source === 'site') {
+      return { text: 'SITE', className: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' };
+    }
+    if (source === 'rpc') {
+      return { text: 'RPC', className: 'border-zinc-700 bg-zinc-900/70 text-zinc-400' };
+    }
+    if (source === 'external') {
+      return { text: 'EXT', className: 'border-violet-500/40 bg-violet-500/10 text-violet-300' };
+    }
+    return null;
+  };
 
   const toTokenKey = (chainId2: number, tokenAddress2: string) => `${chainId2}:${tokenAddress2.toLowerCase()}`;
   const resolveBaseTokenMeta = (chainId2: number, baseTokenAddress?: ChainAddress | null) => {
@@ -461,7 +478,7 @@ export function LimitTradePanel({
     const res = await call({ type: 'limitOrder:scanStatus', chainId } as const);
     const { ok: _ok, ...status } = res;
     setScanStatus(status);
-    const prices = (status as any).pricesByTokenKey as undefined | Record<string, { priceUsd: number; ts: number }>;
+    const prices = (status as any).pricesByTokenKey as undefined | Record<string, { priceUsd: number; ts: number; source?: 'rpc' | 'gmgn' | 'external' | 'site' }>;
     if (prices && typeof prices === 'object') {
       setScanPriceByTokenKey((prev) => {
         let changed = false;
@@ -469,8 +486,8 @@ export function LimitTradePanel({
         for (const [k, v] of Object.entries(prices)) {
           if (!v || typeof v.priceUsd !== 'number' || typeof v.ts !== 'number') continue;
           const old = prev[k];
-          if (!old || old.ts < v.ts || old.priceUsd !== v.priceUsd) {
-            next[k] = { priceUsd: v.priceUsd, ts: v.ts };
+          if (!old || old.ts < v.ts || old.priceUsd !== v.priceUsd || old.source !== v.source) {
+            next[k] = { priceUsd: v.priceUsd, ts: v.ts, source: v.source };
             changed = true;
           }
         }
@@ -681,6 +698,7 @@ export function LimitTradePanel({
           [`${chainId}:${tokenAddress.toLowerCase()}`]: {
             priceUsd: trackedPriceUsd,
             ts: Date.now(),
+            source: prev[`${chainId}:${tokenAddress.toLowerCase()}`]?.source,
           },
         }));
       }
@@ -714,6 +732,7 @@ export function LimitTradePanel({
           [`${chainId}:${tokenAddress.toLowerCase()}`]: {
             priceUsd: trackedPriceUsd,
             ts: Date.now(),
+            source: prev[`${chainId}:${tokenAddress.toLowerCase()}`]?.source,
           },
         }));
       }
@@ -775,6 +794,29 @@ export function LimitTradePanel({
       if (message?.type === 'bg:stateChanged') {
         requestRefreshOrders().catch(() => { });
         requestRefreshScanStatus().catch(() => { });
+        return;
+      }
+      if (message?.type === 'bg:limitOrderPriceUpdateBatch' && Array.isArray(message?.items)) {
+        setScanPriceByTokenKey((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const item of message.items) {
+            const itemChainId = Number(item?.chainId ?? NaN);
+            const itemTokenAddress = String(item?.tokenAddress || '').trim();
+            const itemPriceUsd = Number(item?.priceUsd ?? 0);
+            const itemTs = Number(item?.ts ?? 0);
+            const itemSource = item?.source;
+            if (itemChainId !== chainId || !itemTokenAddress) continue;
+            if (!Number.isFinite(itemPriceUsd) || itemPriceUsd <= 0 || !Number.isFinite(itemTs) || itemTs <= 0) continue;
+            const key = `${itemChainId}:${itemTokenAddress.toLowerCase()}`;
+            const prevItem = prev[key];
+            if (!prevItem || prevItem.ts < itemTs || prevItem.priceUsd !== itemPriceUsd || prevItem.source !== itemSource) {
+              next[key] = { priceUsd: itemPriceUsd, ts: itemTs, source: itemSource };
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
       }
     };
     browser.runtime.onMessage.addListener(listener);
@@ -816,7 +858,7 @@ export function LimitTradePanel({
     const currentPriceUsd = scannerCached?.priceUsd ?? null;
     const text = formatCurrentValue(currentPriceUsd, loading);
     const colorClass = currentPriceColorClass(currentPriceUsd, o.triggerPriceUsd, loading);
-    return { text, colorClass };
+    return { text, colorClass, source: scannerCached?.source ?? null };
   };
   const clearExecutedOrders = async () => {
     if (!settings) return;
@@ -857,6 +899,7 @@ export function LimitTradePanel({
                 tokenInfo: o.tokenInfo,
               };
               await call({ type: 'limitOrder:create', input } as const);
+              await onLimitOrdersCreated?.(o.tokenAddress);
               await call({ type: 'limitOrder:cancel', id: o.id } as const);
             } catch {
             } finally {
@@ -1073,6 +1116,7 @@ export function LimitTradePanel({
                         },
                       });
                     }
+                    await onLimitOrdersCreated?.(tokenAddress);
                     setBuyAmount('');
                     await refreshOrders();
                   }}
@@ -1184,6 +1228,7 @@ export function LimitTradePanel({
                           },
                         });
                       }
+                      await onLimitOrdersCreated?.(tokenAddress);
                       setSellPercent('');
                       await refreshOrders();
                     }}
@@ -1395,6 +1440,7 @@ export function LimitTradePanel({
                   </div>
                   {filteredOrders.length ? filteredOrders.map((o) => {
                     const currentDisplay = getCurrentDisplayForOrder(o);
+                    const priceSourceBadge = getPriceSourceBadge(currentDisplay.source);
                     return (
                       <div
                         key={o.id}
@@ -1447,9 +1493,16 @@ export function LimitTradePanel({
                           <div className="text-rose-400 text-[13px] truncate" title={formatTriggerValue(o)}>{formatTriggerValue(o)}</div>
                           <div className="text-zinc-200 text-right truncate" title={formatTargetChange(o)}>{formatTargetChange(o)}</div>
                           <div className={`truncate ${currentDisplay.colorClass}`} title={currentDisplay.text}>
-                            {priceDisplayMode === 'price'
-                              ? tt('contentUi.limitTradePanel.currentPrice', [currentDisplay.text])
-                              : tt('contentUi.limitTradePanel.currentMarketCap', [currentDisplay.text])}
+                            <span>
+                              {priceDisplayMode === 'price'
+                                ? tt('contentUi.limitTradePanel.currentPrice', [currentDisplay.text])
+                                : tt('contentUi.limitTradePanel.currentMarketCap', [currentDisplay.text])}
+                            </span>
+                            {priceSourceBadge ? (
+                              <span className={`ml-1 inline-flex items-center rounded border px-1 py-0 align-middle text-[9px] leading-none ${priceSourceBadge.className}`}>
+                                {priceSourceBadge.text}
+                              </span>
+                            ) : null}
                           </div>
                           <div className="text-zinc-200 text-right truncate">{formatPay(o)}</div>
                           <div className="text-zinc-500">{tt('contentUi.limitTradePanel.table.createdAt')}</div>
@@ -1519,6 +1572,7 @@ export function LimitTradePanel({
                   </div>
                   {filteredOrders.length ? filteredOrders.map((o) => {
                     const currentDisplay = getCurrentDisplayForOrder(o);
+                    const priceSourceBadge = getPriceSourceBadge(currentDisplay.source);
                     return (
                       <div
                         key={o.id}
@@ -1605,9 +1659,16 @@ export function LimitTradePanel({
                             {formatTriggerValue(o)}
                           </div>
                           <div className={`truncate ${currentDisplay.colorClass}`} title={currentDisplay.text}>
-                            {priceDisplayMode === 'price'
-                              ? tt('contentUi.limitTradePanel.currentPrice', [currentDisplay.text])
-                              : tt('contentUi.limitTradePanel.currentMarketCap', [currentDisplay.text])}
+                            <span>
+                              {priceDisplayMode === 'price'
+                                ? tt('contentUi.limitTradePanel.currentPrice', [currentDisplay.text])
+                                : tt('contentUi.limitTradePanel.currentMarketCap', [currentDisplay.text])}
+                            </span>
+                            {priceSourceBadge ? (
+                              <span className={`ml-1 inline-flex items-center rounded border px-1 py-0 align-middle text-[9px] leading-none ${priceSourceBadge.className}`}>
+                                {priceSourceBadge.text}
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                         <div className="min-w-0 text-zinc-200">

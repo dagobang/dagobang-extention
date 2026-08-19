@@ -23,7 +23,7 @@ declare module '#imports' {
   export { default as AxiomAPI, AxiomAPI, AxiomPairInfoResponse } from '../hooks/AxiomAPI';
   export { default as DexScreenerAPI, DexScreenerAPI, DexScreenerTokenRef, DexScreenerPair } from '../hooks/DexScreenerAPI';
   export { default as FlapAPI, FlapAPI, FlapCoinApiResponse } from '../hooks/FlapAPI';
-  export { default as GmgnAPI, extractGmgnAuthData, GmgnAPI, MultiTokenInfoResponse, GmgnSearchTokenItem, GmgnTokenHolding, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams, TokenHoldingDetail, TokenHoldingDetailResponse } from '../hooks/GmgnAPI';
+  export { default as GmgnAPI, extractGmgnAuthData, GmgnAPI, MultiTokenInfoResponse, GmgnSearchTokenItem, GmgnTokenHolding, GmgnPageFetchRequest, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams, TokenHoldingDetail, TokenHoldingDetailResponse } from '../hooks/GmgnAPI';
   export { TokenAPI, TokenAPI } from '../hooks/TokenAPI';
   export { loadContractAbi, useContractAbi, ContractAddress } from '../hooks/useContractAbi';
   export { useTradeSuccessSound } from '../hooks/useTradeSuccessSound';

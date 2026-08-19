@@ -5,6 +5,7 @@ type SwitchSettingsProps = SettingsDraftProps;
 export function SwitchSettings({ settingsDraft, setSettingsDraft, tt }: SwitchSettingsProps) {
   const showToolbar = settingsDraft.ui?.showToolbar ?? true;
   const limitTradePanelOnlyOnTokenPage = settingsDraft.ui?.limitTradePanelOnlyOnTokenPage ?? false;
+  const gmgnLimitOrderPriceEnabled = settingsDraft.ui?.gmgnLimitOrderPriceEnabled ?? false;
   const quickBuyEnabled = settingsDraft.ui?.quickBuyEnabled ?? false;
   const quickCookingEnabled = settingsDraft.ui?.quickCookingEnabled ?? false;
   const newPoolMonitorEnabled = settingsDraft.ui?.newPoolMonitorEnabled ?? false;
@@ -17,6 +18,7 @@ export function SwitchSettings({ settingsDraft, setSettingsDraft, tt }: SwitchSe
       ui: {
         showToolbar: s.ui?.showToolbar ?? true,
         limitTradePanelOnlyOnTokenPage: s.ui?.limitTradePanelOnlyOnTokenPage ?? false,
+        gmgnLimitOrderPriceEnabled: s.ui?.gmgnLimitOrderPriceEnabled ?? false,
         quickBuyEnabled: s.ui?.quickBuyEnabled ?? false,
         quickCookingEnabled: s.ui?.quickCookingEnabled ?? false,
         newPoolMonitorEnabled: s.ui?.newPoolMonitorEnabled ?? false,
@@ -46,6 +48,15 @@ export function SwitchSettings({ settingsDraft, setSettingsDraft, tt }: SwitchSe
             type="checkbox"
             checked={limitTradePanelOnlyOnTokenPage}
             onChange={(e) => updateUi({ limitTradePanelOnlyOnTokenPage: e.target.checked })}
+          />
+        </label>
+
+        <label className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
+          <div className="text-[14px] text-zinc-300">{tt('popup.settings.gmgnLimitOrderPrice')}</div>
+          <input
+            type="checkbox"
+            checked={gmgnLimitOrderPriceEnabled}
+            onChange={(e) => updateUi({ gmgnLimitOrderPriceEnabled: e.target.checked })}
           />
         </label>
 
