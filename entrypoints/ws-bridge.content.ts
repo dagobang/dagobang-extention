@@ -104,6 +104,7 @@ export default defineContentScript({
 
       installUrlChangeEmitter();
       installNavigateListener();
+      installGmgnApiBridge();
 
       const host = window.location.hostname;
       if (!shouldMonitorWsOnHost(host)) return;
@@ -399,6 +400,72 @@ export default defineContentScript({
         } catch {
           if (navId) window.postMessage({ type: 'DAGOBANG_NAV_DONE', navId, ok: false, mode: 'error' }, '*');
         }
+      };
+      window.addEventListener('message', handler);
+    }
+
+    function installGmgnApiBridge() {
+      const host = window.location.hostname;
+      if (!host.includes('gmgn.ai')) return;
+      const handler = (event: MessageEvent) => {
+        if (event.source !== window) return;
+        const data = (event as any).data;
+        if (!data || data.type !== 'DAGOBANG_GMGN_FETCH') return;
+        const requestId = typeof data.requestId === 'string' ? data.requestId : '';
+        const url = typeof data.url === 'string' ? data.url : '';
+        const init = data.init && typeof data.init === 'object' ? data.init : null;
+        if (!requestId || !url || !init) return;
+        console.info('[gmgn.mainWorld.fetch.receive]', {
+          requestId,
+          url,
+          method: init.method,
+          body: init.body,
+        });
+        void (async () => {
+          try {
+            const response = await fetch(url, {
+              method: typeof init.method === 'string' ? init.method : 'POST',
+              headers: init.headers && typeof init.headers === 'object' ? init.headers : {},
+              body: typeof init.body === 'string' ? init.body : undefined,
+              credentials: init.credentials === 'include' ? 'include' : 'include',
+              mode: init.mode === 'cors' ? 'cors' : 'cors',
+            });
+            const text = await response.text().catch(() => '');
+            console.info('[gmgn.mainWorld.fetch.response]', {
+              requestId,
+              url,
+              status: response.status,
+              ok: response.ok,
+              text,
+            });
+            let json: any = null;
+            try {
+              json = text ? JSON.parse(text) : null;
+            } catch {
+            }
+            window.postMessage({
+              type: 'DAGOBANG_GMGN_FETCH_RESULT',
+              requestId,
+              ok: response.ok,
+              status: response.status,
+              text,
+              json,
+            }, '*');
+          } catch (error: any) {
+            console.warn('[gmgn.mainWorld.fetch.error]', {
+              requestId,
+              url,
+              error: String(error?.message || error || 'gmgn_page_fetch_failed'),
+            });
+            window.postMessage({
+              type: 'DAGOBANG_GMGN_FETCH_RESULT',
+              requestId,
+              ok: false,
+              status: 0,
+              error: String(error?.message || error || 'gmgn_page_fetch_failed'),
+            }, '*');
+          }
+        })();
       };
       window.addEventListener('message', handler);
     }

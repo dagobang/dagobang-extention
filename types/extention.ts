@@ -349,6 +349,7 @@ export type TradeSuccessSoundPreset = (typeof TRADE_SUCCESS_SOUND_PRESETS)[numbe
 export type SwitchSettings = {
   showToolbar: boolean;
   limitTradePanelOnlyOnTokenPage?: boolean;
+  gmgnLimitOrderPriceEnabled?: boolean;
   quickBuyEnabled?: boolean;
   quickCookingEnabled?: boolean;
   newPoolMonitorEnabled?: boolean;
@@ -614,7 +615,7 @@ export type LimitOrderScanStatus = {
   lastScanError: string | null;
   totalOrders: number;
   openOrders: number;
-  pricesByTokenKey?: Record<string, { priceUsd: number; ts: number }>;
+  pricesByTokenKey?: Record<string, { priceUsd: number; ts: number; source?: 'rpc' | 'gmgn' | 'external' | 'site' }>;
 };
 
 export type TxWaitForReceiptError = {
@@ -1162,6 +1163,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
       txHash: ChainTxId;
       protectionMinOutWei: string;
       quotedOutWei?: string | null;
+      actualTokenOutWei?: string | null;
       broadcastVia?: string;
       broadcastUrl?: string;
       confirmUrl?: string;

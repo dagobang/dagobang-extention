@@ -196,6 +196,7 @@
       "autoLockSeconds": "Auto Lock (s)",
       "showToolbar": "Show toolbar",
       "limitTradePanelOnlyOnTokenPage": "Show limit panel only on token pages",
+      "gmgnLimitOrderPrice": "Prefer GMGN realtime price for limit orders",
       "quickBuy": "Quick Buy",
       "quickCooking": "Quick Cooking",
       "newPoolMonitor": "New Pool Monitor",

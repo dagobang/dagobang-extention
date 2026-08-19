@@ -14,7 +14,7 @@ const LIMIT_SCAN_ALARM = 'limitOrder:scan';
 const LIMIT_SCAN_INTERVAL_DEFAULT_MS = 3000;
 const LIMIT_SCAN_INTERVAL_OPTIONS_MS = [1000, 3000, 5000, 10000, 30000, 60000, 120000] as const;
 const ORDER_EXECUTE_MAX_RETRY = 2;
-const SOL_FRONTEND_PRICE_TTL_MS = 2000;
+const EXTERNAL_PRICE_TTL_MS = 10000;
 
 const isRetryableOrderError = (rawMessage: string) => {
   const msg = rawMessage.toLowerCase();
@@ -52,8 +52,8 @@ export const createLimitOrderScanner = (deps: {
   onObserveOrder?: (input: { order: LimitOrder; tokenInfo?: any | null }) => void;
 }) => {
   let limitScanIntervalMs = LIMIT_SCAN_INTERVAL_DEFAULT_MS;
-  const limitScanPricesByTokenKey = new Map<string, { priceUsd: number; ts: number }>();
-  const observedExternalPricesByTokenKey = new Map<string, { priceUsd: number; ts: number }>();
+  const limitScanPricesByTokenKey = new Map<string, { priceUsd: number; ts: number; source?: 'rpc' | 'gmgn' | 'external' | 'site' }>();
+  const observedExternalPricesByTokenKey = new Map<string, { priceUsd: number; ts: number; source?: 'gmgn' | 'external' }>();
   const trackedTokensByKey = new Map<string, { chainId: number; tokenAddress: string; tokenInfo: any | null }>();
   let limitScanRunning = false;
   let limitScanLastAtMs = 0;
@@ -62,13 +62,19 @@ export const createLimitOrderScanner = (deps: {
 
   const toPriceKey = (chainId: number, tokenAddress: string) => buildScopedTokenKey(chainId, tokenAddress);
 
-  const upsertDisplayPrice = (chainId: number, tokenAddress: string, priceUsd: number, ts = Date.now()) => {
+  const upsertDisplayPrice = (
+    chainId: number,
+    tokenAddress: string,
+    priceUsd: number,
+    ts = Date.now(),
+    source: 'rpc' | 'gmgn' | 'external' | 'site' = 'rpc',
+  ) => {
     const scanPriceUsd = normalizePriceValue(priceUsd, 4, 6);
     if (!Number.isFinite(scanPriceUsd) || scanPriceUsd <= 0) return false;
     const priceKey = toPriceKey(chainId, tokenAddress);
     const prevPrice = limitScanPricesByTokenKey.get(priceKey);
-    limitScanPricesByTokenKey.set(priceKey, { priceUsd: scanPriceUsd, ts });
-    return !prevPrice || prevPrice.priceUsd !== scanPriceUsd || prevPrice.ts !== ts;
+    limitScanPricesByTokenKey.set(priceKey, { priceUsd: scanPriceUsd, ts, source });
+    return !prevPrice || prevPrice.priceUsd !== scanPriceUsd || prevPrice.ts !== ts || prevPrice.source !== source;
   };
 
   const refreshIntervalFromSettings = async () => {
@@ -158,24 +164,41 @@ export const createLimitOrderScanner = (deps: {
           }
         }
         let priceUsd = 0;
+        let resolvedPriceSource: 'rpc' | 'gmgn' | 'external' | 'site' = 'rpc';
         const observedExternalPrice = (() => {
-          if (chainId !== ChainId.SOL) return null;
           const observed = observedExternalPricesByTokenKey.get(priceKey);
           if (!observed) return null;
           const ageMs = Date.now() - observed.ts;
-          if (ageMs > SOL_FRONTEND_PRICE_TTL_MS) return null;
+          if (ageMs > EXTERNAL_PRICE_TTL_MS) return null;
           return observed;
         })();
         try {
-          const flapRoute = String(resolvedTokenInfo?.launchpad_platform || '').toLowerCase().includes('flap')
+          const platform = String(resolvedTokenInfo?.launchpad_platform || resolvedTokenInfo?.launchpad || '').toLowerCase();
+          const launchpadStatus = Number(resolvedTokenInfo?.launchpad_status ?? Number.NaN);
+          const flapRoute = platform.includes('flap')
             ? classifyFlapRoute(chainId, resolvedTokenInfo)
             : null;
-          const allowTokenInfoPriceFallback = String(resolvedTokenInfo?.launchpad_platform || '').toLowerCase().includes('flap');
+          const allowTokenInfoPriceFallback = platform.includes('flap');
+          const tokenInfoPriceUsd = Number(
+            resolvedTokenInfo?.tokenPrice?.price
+            ?? resolvedTokenInfo?.priceUsd
+            ?? resolvedTokenInfo?.price
+            ?? 0,
+          );
+          const preferTokenInfoPrice =
+            Number.isFinite(tokenInfoPriceUsd) &&
+            tokenInfoPriceUsd > 0 &&
+            launchpadStatus !== 1 &&
+            (
+              platform.includes('four') ||
+              platform.includes('altfun') ||
+              platform.includes('flap')
+            );
           if (flapRoute?.isOuter) {
             console.info('[limitOrder.price.request]', {
               chainId,
               tokenAddress,
-              platform: resolvedTokenInfo?.launchpad_platform ?? null,
+              platform: resolvedTokenInfo?.launchpad_platform ?? resolvedTokenInfo?.launchpad ?? null,
               resolvedPlatform: flapRoute.platform,
               isFlapStocks: flapRoute.isFlapStocks,
               launchpadStatus: resolvedTokenInfo?.launchpad_status ?? null,
@@ -190,6 +213,10 @@ export const createLimitOrderScanner = (deps: {
           }
           if (observedExternalPrice) {
             priceUsd = observedExternalPrice.priceUsd;
+            resolvedPriceSource = observedExternalPrice.source === 'gmgn' ? 'gmgn' : 'external';
+          } else if (preferTokenInfoPrice) {
+            priceUsd = tokenInfoPriceUsd;
+            resolvedPriceSource = 'site';
           } else {
             priceUsd = await TokenService.getTokenPriceUsdFromRpc({
               chainId,
@@ -199,6 +226,18 @@ export const createLimitOrderScanner = (deps: {
                 allowTokenInfoPriceFallback: chainId === ChainId.SOL || allowTokenInfoPriceFallback,
             });
           }
+          console.info('[limitOrder.price.choose]', {
+            chainId,
+            tokenAddress,
+            source: resolvedPriceSource,
+            priceUsd,
+            observedExternalPriceUsd: observedExternalPrice?.priceUsd ?? null,
+            observedExternalPriceSource: observedExternalPrice?.source ?? null,
+            tokenInfoPriceUsd,
+            preferTokenInfoPrice,
+            platform,
+            launchpadStatus: Number.isFinite(launchpadStatus) ? launchpadStatus : null,
+          });
           if (flapRoute?.isOuter) {
             console.info('[limitOrder.price.result]', {
               chainId,
@@ -239,7 +278,13 @@ export const createLimitOrderScanner = (deps: {
         if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
         const scanPriceUsd = normalizePriceValue(priceUsd, 4, 6);
         if (!Number.isFinite(scanPriceUsd) || scanPriceUsd <= 0) continue;
-        if (upsertDisplayPrice(chainId, tokenAddress, priceUsd, Date.now())) changed = true;
+        if (upsertDisplayPrice(
+          chainId,
+          tokenAddress,
+          priceUsd,
+          observedExternalPrice?.ts ?? Date.now(),
+          resolvedPriceSource,
+        )) changed = true;
 
         if (!base) {
           continue;
@@ -348,7 +393,7 @@ export const createLimitOrderScanner = (deps: {
     } catch {
     }
 
-    const pricesByTokenKey: Record<string, { priceUsd: number; ts: number }> = {};
+    const pricesByTokenKey: Record<string, { priceUsd: number; ts: number; source?: 'rpc' | 'gmgn' | 'external' | 'site' }> = {};
     for (const [k, v] of limitScanPricesByTokenKey.entries()) {
       if (k.startsWith(`${chainId}:`)) pricesByTokenKey[k] = v;
     }
@@ -395,13 +440,14 @@ export const createLimitOrderScanner = (deps: {
       }
       await scheduleFromStorage().catch(() => { });
     },
-    observeExternalPrice: (input: { chainId: number; tokenAddress: string; priceUsd: number; ts?: number }) => {
+    observeExternalPrice: (input: { chainId: number; tokenAddress: string; priceUsd: number; ts?: number; source?: 'gmgn' | 'external' }) => {
       const priceUsd = Number(input.priceUsd);
       if (!Number.isFinite(priceUsd) || priceUsd <= 0) return false;
       const ts = Number.isFinite(input.ts) ? Math.max(0, Number(input.ts)) : Date.now();
+      const source = input.source === 'gmgn' ? 'gmgn' : 'external';
       const priceKey = toPriceKey(input.chainId, input.tokenAddress);
-      observedExternalPricesByTokenKey.set(priceKey, { priceUsd, ts });
-      return upsertDisplayPrice(input.chainId, input.tokenAddress, priceUsd, ts);
+      observedExternalPricesByTokenKey.set(priceKey, { priceUsd, ts, source });
+      return upsertDisplayPrice(input.chainId, input.tokenAddress, priceUsd, ts, source);
     },
   };
 };

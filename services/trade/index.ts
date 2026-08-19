@@ -1,4 +1,4 @@
-import { encodeAbiParameters, encodeFunctionData, erc20Abi, formatUnits, isAddress, parseAbi, parseAbiParameters } from 'viem';
+import { decodeEventLog, encodeAbiParameters, encodeFunctionData, erc20Abi, formatUnits, isAddress, parseAbi, parseAbiParameters } from 'viem';
 import { RpcService } from '../rpc';
 import { WalletService } from '../wallet';
 import { SettingsService } from '../settings';
@@ -38,6 +38,10 @@ import { normalizeLaunchpadPlatform } from '@/constants/launchpad';
 import { OpenFourInnerLaunchpadManager, OpenFourRegistryAddress } from '@/constants/contracts/address';
 import FlapAPI from '@/hooks/FlapAPI';
 import DexScreenerAPI, { type DexScreenerPair } from '@/hooks/DexScreenerAPI';
+
+const erc20TransferAbi = parseAbi([
+  'event Transfer(address indexed from, address indexed to, uint256 value)',
+]);
 import { GmgnAPI } from '@/hooks/GmgnAPI';
 import { classifyFlapRoute, hasConfirmedFlapLaunchpadIdentity, hasConfirmedFlapOuterRoute, isUsableFlapDexPoolAddress, resolveFlapPlatform, resolveFlapPlatformByQuoteLineage } from '@/utils/flap';
 import { resolveTokenLaunchpadPlatform } from '@/utils/launchpadFamily';
@@ -657,7 +661,7 @@ export class TradeService {
       });
       throw e;
     }
-    if (receipt.status === 'success') return;
+    if (receipt.status === 'success') return receipt;
     let revertReason: string | null = null;
     try {
       const client = await RpcService.getClient(chainId);
@@ -665,6 +669,34 @@ export class TradeService {
     } catch {
     }
     throw new Error(revertReason || `${txSide} receipt reverted`);
+  }
+
+  private static resolveActualBuyTokenOutWeiFromReceipt(input: {
+    receipt: any;
+    tokenAddress: string;
+    walletAddress?: string;
+  }): string | null {
+    const walletAddress = this.resolveOptionalEvmAddress(input.walletAddress, 'wallet address');
+    if (!walletAddress) return null;
+    const tokenAddress = this.resolveEvmAddress(input.tokenAddress, 'token address').toLowerCase();
+    let totalOutWei = 0n;
+    for (const log of Array.isArray(input.receipt?.logs) ? input.receipt.logs : []) {
+      if (String(log?.address || '').toLowerCase() !== tokenAddress) continue;
+      try {
+        const decoded = decodeEventLog({
+          abi: erc20TransferAbi,
+          data: log.data,
+          topics: log.topics,
+        });
+        if (decoded.eventName !== 'Transfer') continue;
+        const to = String((decoded as any)?.args?.to || '').toLowerCase();
+        if (to !== walletAddress.toLowerCase()) continue;
+        const value = BigInt((decoded as any)?.args?.value ?? 0);
+        if (value > 0n) totalOutWei += value;
+      } catch {
+      }
+    }
+    return totalOutWei > 0n ? totalOutWei.toString() : null;
   }
 
   private static async repairSellAllowanceIfNeeded(input: {
@@ -3502,9 +3534,14 @@ export class TradeService {
         const submitElapsedMs = Date.now() - submitStart;
         await opts?.onSubmitted?.({ side: 'buy', txHash: rsp.txHash, submitElapsedMs });
         const receiptStart = Date.now();
-        await this.ensureTxSuccess(rsp.txHash, input.chainId, 'buy', timeoutMs);
+        const receipt = await this.ensureTxSuccess(rsp.txHash, input.chainId, 'buy', timeoutMs);
         const receiptElapsedMs = Date.now() - receiptStart;
         const totalElapsedMs = Date.now() - attemptStart;
+        const actualTokenOutWei = this.resolveActualBuyTokenOutWeiFromReceipt({
+          receipt,
+          tokenAddress: input.tokenAddress,
+          walletAddress: input.fromAddress,
+        });
         console.log('[trade.buy.auto][attempt.success]', {
           flowId,
           attempt: attemptNo,
@@ -3513,8 +3550,15 @@ export class TradeService {
           totalElapsedMs: Date.now() - flowStart,
           submitElapsedMs,
           receiptElapsedMs,
+          actualTokenOutWei,
         });
-        return { ...rsp, submitElapsedMs, receiptElapsedMs, totalElapsedMs };
+        return {
+          ...rsp,
+          actualTokenOutWei,
+          submitElapsedMs,
+          receiptElapsedMs,
+          totalElapsedMs,
+        };
       } catch (e: any) {
         lastErr = e;
         const nonceLike = this.isNonceLikeError(e);

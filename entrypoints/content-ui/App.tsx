@@ -9,7 +9,7 @@ import { formatBroadcastProvider, formatPriceValue } from '@/utils/format';
 import { parseCurrentUrl, parseCurrentUrlFull, type SiteInfo } from '@/utils/sites';
 import { call } from '@/utils/messaging';
 import { TokenAPI } from '@/hooks/TokenAPI';
-import GmgnAPI, { type GmgnTokenHolding } from '@/hooks/GmgnAPI';
+import GmgnAPI, { type GmgnPageFetchRequest, type GmgnTokenHolding } from '@/hooks/GmgnAPI';
 import { getChainIdByName, getNativeSymbol } from '@/constants/chains';
 import { ChainId } from '@/constants/chains/chainId';
 import { getChainRuntimeBase, isSolanaChain } from '@/constants/chains/runtime';
@@ -479,6 +479,9 @@ type PendingAutoSellOrderContext = {
   chainId: number;
   tokenAddress: string;
   walletAddress: ChainAddress;
+  buyNativeAmountWei: string;
+  actualTokenOutWei?: string | null;
+  quotedOutWei?: string | null;
   siteInfo: SiteInfo;
   tokenInfo: TokenInfo;
   tokenSymbol: string | null;
@@ -2465,9 +2468,139 @@ export default function App() {
     return res;
   }
 
+  async function requestGmgnPageFetch(request: GmgnPageFetchRequest) {
+    const requestId = `gmgn-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    console.info('[gmgn.pageFetch.request]', {
+      requestId,
+      url: request.url,
+      method: request.init.method,
+      body: request.init.body,
+    });
+    return await new Promise<any>((resolve, reject) => {
+      let done = false;
+      const timeout = window.setTimeout(() => {
+        if (done) return;
+        done = true;
+        window.removeEventListener('message', onMessage);
+        console.warn('[gmgn.pageFetch.timeout]', { requestId, url: request.url });
+        reject(new Error('gmgn_page_fetch_timeout'));
+      }, 15000);
+      const onMessage = (event: MessageEvent) => {
+        if (event.source !== window) return;
+        const data = (event as any).data;
+        if (!data || data.type !== 'DAGOBANG_GMGN_FETCH_RESULT' || data.requestId !== requestId) return;
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+        window.removeEventListener('message', onMessage);
+        if (!data.ok) {
+          console.warn('[gmgn.pageFetch.failed]', {
+            requestId,
+            url: request.url,
+            status: data.status,
+            error: data.error,
+            text: data.text,
+          });
+          reject(new Error(String(data.error || data.text || `GMGN request failed: ${data.status || 0}`)));
+          return;
+        }
+        const payload = data.json;
+        if (!payload || typeof payload !== 'object') {
+          reject(new Error('GMGN response invalid'));
+          return;
+        }
+        if (typeof payload.code === 'number' && payload.code !== 0) {
+          reject(new Error(String(payload.message || payload.reason || 'GMGN request failed')));
+          return;
+        }
+        console.info('[gmgn.pageFetch.success]', {
+          requestId,
+          url: request.url,
+          status: data.status,
+          payload,
+        });
+        resolve(payload);
+      };
+      window.addEventListener('message', onMessage);
+      window.postMessage({
+        type: 'DAGOBANG_GMGN_FETCH',
+        requestId,
+        url: request.url,
+        init: request.init,
+      }, '*');
+    });
+  }
+
   function getRefreshStateSnapshot(stateOverride?: BgGetStateResponse | null) {
     return stateOverride ?? stateRef.current ?? state;
   }
+
+  const followTokenForLimitOrders = useCallback(async (tokenAddress: string, reason: string) => {
+    const normalizedTokenAddress = String(tokenAddress || '').trim();
+    if (!normalizedTokenAddress) return false;
+    if (settings?.ui?.gmgnLimitOrderPriceEnabled !== true) return false;
+    if (siteInfo?.platform !== 'gmgn') return false;
+    const chain = String(siteInfo?.chain || '').trim().toLowerCase();
+    if (!chain) return false;
+    try {
+      console.info('[gmgn.limitOrder.follow.page_action]', {
+        reason,
+        chain,
+        tokenAddress: normalizedTokenAddress,
+      });
+      const request = await GmgnAPI.buildFollowTokensPageRequest(chain, [{
+        tokenAddress: normalizedTokenAddress,
+        groupId: 'default',
+      }]);
+      await requestGmgnPageFetch(request);
+      return true;
+    } catch (error: any) {
+      console.warn('[gmgn.limitOrder.follow.page_action_failed]', {
+        reason,
+        chain,
+        tokenAddress: normalizedTokenAddress,
+        error: String(error?.message || error || 'gmgn_follow_tokens_failed'),
+      });
+      return false;
+    }
+  }, [settings?.ui?.gmgnLimitOrderPriceEnabled, siteInfo?.chain, siteInfo?.platform]);
+
+  const maybeUnfollowTokenForLimitOrders = useCallback(async (tokenAddress: string, reason: string) => {
+    const normalizedTokenAddress = String(tokenAddress || '').trim();
+    if (!normalizedTokenAddress) return false;
+    if (settings?.ui?.gmgnLimitOrderPriceEnabled !== true) return false;
+    if (siteInfo?.platform !== 'gmgn') return false;
+    const chain = String(siteInfo?.chain || '').trim().toLowerCase();
+    if (!chain) return false;
+    try {
+      const listed = await call({ type: 'limitOrder:list', chainId, tokenAddress: normalizedTokenAddress } as const);
+      const hasActiveOrders = Array.isArray(listed?.orders) && listed.orders.some((order) => order.status === 'open' || order.status === 'triggered');
+      console.info('[gmgn.limitOrder.unfollow.page_action.check]', {
+        reason,
+        chain,
+        chainId,
+        tokenAddress: normalizedTokenAddress,
+        hasActiveOrders,
+        orderCount: Array.isArray(listed?.orders) ? listed.orders.length : 0,
+      });
+      if (hasActiveOrders) return false;
+      const request = await GmgnAPI.buildUnfollowTokensPageRequest(chain, [{
+        tokenAddress: normalizedTokenAddress,
+        groupId: 'all_group',
+      }]);
+      await requestGmgnPageFetch(request);
+      return true;
+    } catch (error: any) {
+      console.warn('[gmgn.limitOrder.unfollow.page_action_failed]', {
+        reason,
+        chain,
+        chainId,
+        tokenAddress: normalizedTokenAddress,
+        error: String(error?.message || error || 'gmgn_unfollow_tokens_failed'),
+      });
+      return false;
+    }
+  }, [chainId, settings?.ui?.gmgnLimitOrderPriceEnabled, siteInfo?.chain, siteInfo?.platform]);
 
   async function refreshBaseBalances(
     res: BgGetStateResponse,
@@ -3043,6 +3176,58 @@ export default function App() {
           }
         })();
       }
+      if (message.type === 'bg:gmgn:followTokens') {
+        return (async () => {
+          console.info('[gmgn.follow.handler.receive]', {
+            sitePlatform: siteInfo?.platform ?? null,
+            chain: message?.chain,
+            tokens: message?.tokens,
+          });
+          if (siteInfo?.platform !== 'gmgn') return { ok: false, error: 'not_gmgn_page' };
+          try {
+            const chain = typeof message?.chain === 'string' ? message.chain : 'bsc';
+            const tokens = Array.isArray(message?.tokens) ? message.tokens : [];
+            if (tokens.length <= 0) return { ok: false, error: 'invalid_tokens' };
+            const request = await GmgnAPI.buildFollowTokensPageRequest(chain, tokens);
+            await requestGmgnPageFetch(request);
+            console.info('[gmgn.follow.handler.success]', { chain, tokens });
+            return { ok: true };
+          } catch (e: any) {
+            console.warn('[gmgn.follow.handler.failed]', {
+              chain: message?.chain,
+              tokens: message?.tokens,
+              error: String(e?.message || e || 'gmgn_follow_tokens_failed'),
+            });
+            return { ok: false, error: String(e?.message || e || 'gmgn_follow_tokens_failed') };
+          }
+        })();
+      }
+      if (message.type === 'bg:gmgn:unfollowTokens') {
+        return (async () => {
+          console.info('[gmgn.unfollow.handler.receive]', {
+            sitePlatform: siteInfo?.platform ?? null,
+            chain: message?.chain,
+            tokens: message?.tokens,
+          });
+          if (siteInfo?.platform !== 'gmgn') return { ok: false, error: 'not_gmgn_page' };
+          try {
+            const chain = typeof message?.chain === 'string' ? message.chain : 'bsc';
+            const tokens = Array.isArray(message?.tokens) ? message.tokens : [];
+            if (tokens.length <= 0) return { ok: false, error: 'invalid_tokens' };
+            const request = await GmgnAPI.buildUnfollowTokensPageRequest(chain, tokens);
+            await requestGmgnPageFetch(request);
+            console.info('[gmgn.unfollow.handler.success]', { chain, tokens });
+            return { ok: true };
+          } catch (e: any) {
+            console.warn('[gmgn.unfollow.handler.failed]', {
+              chain: message?.chain,
+              tokens: message?.tokens,
+              error: String(e?.message || e || 'gmgn_unfollow_tokens_failed'),
+            });
+            return { ok: false, error: String(e?.message || e || 'gmgn_unfollow_tokens_failed') };
+          }
+        })();
+      }
       if (message.type === 'bg:tokenSniper:gmgnWalletAddress') {
         return (async () => {
           if (siteInfo?.platform !== 'gmgn') return { ok: false, error: 'not_gmgn_page' };
@@ -3178,7 +3363,11 @@ export default function App() {
           const pendingAutoSell = pendingKey ? pendingAutoSellOrdersRef.current.get(pendingKey) : null;
           if (pendingAutoSell) {
             pendingAutoSellOrdersRef.current.delete(pendingKey);
-            void createAutoSellOrdersForWallet(pendingAutoSell)
+            void createAutoSellOrdersForWallet({
+              ...pendingAutoSell,
+              actualTokenOutWei: (message as any)?.actualTokenOutWei ?? pendingAutoSell.actualTokenOutWei ?? null,
+              quotedOutWei: (message as any)?.quotedOutWei ?? (message as any)?.protectionMinOutWei ?? pendingAutoSell.quotedOutWei ?? null,
+            })
                 .then(() => {})
               .catch((error) => {
                 console.error('auto sell create orders on trade success failed', error);
@@ -3793,6 +3982,30 @@ export default function App() {
     };
   };
 
+  const resolveAutoSellEntryPriceUsd = useCallback((ctx: PendingAutoSellOrderContext) => {
+    const rawBuyNativeAmountWei = String(ctx.buyNativeAmountWei || '').trim();
+    const rawTokenOutWei = String(ctx.actualTokenOutWei || ctx.quotedOutWei || '').trim();
+    const tokenDecimals = Number(ctx.tokenInfo?.decimals ?? 0);
+    if (!rawBuyNativeAmountWei || !rawTokenOutWei) return null;
+    if (!Number.isFinite(tokenDecimals) || tokenDecimals < 0) return null;
+    try {
+      const spentBaseAmount = Number(formatUnits(BigInt(rawBuyNativeAmountWei), tradeBaseTokenMeta.decimals));
+      const receivedTokenAmount = Number(formatUnits(BigInt(rawTokenOutWei), tokenDecimals));
+      const spentUsd = deriveUsdFromBaseAmount(
+        spentBaseAmount,
+        tradeBaseTokenAddress,
+        tradeBaseTokenMeta,
+        tradeBasePriceUsd,
+      );
+      if (!(spentUsd != null && spentUsd > 0)) return null;
+      if (!(Number.isFinite(receivedTokenAmount) && receivedTokenAmount > 0)) return null;
+      const entryPriceUsd = spentUsd / receivedTokenAmount;
+      return Number.isFinite(entryPriceUsd) && entryPriceUsd > 0 ? entryPriceUsd : null;
+    } catch {
+      return null;
+    }
+  }, [tradeBasePriceUsd, tradeBaseTokenAddress, tradeBaseTokenMeta]);
+
   const createAutoSellOrdersForWallet = useCallback(async (ctx: PendingAutoSellOrderContext) => {
     const config = settingsRef.current?.advancedAutoSell;
     if (!config?.enabled) return 0;
@@ -3800,12 +4013,30 @@ export default function App() {
     const tokenAddress = String(ctx.tokenAddress || '').trim();
     if (!tokenAddress) return 0;
     const latestTokenInfo = ctx.tokenInfo;
+    const entryPriceFromTradeUsd = resolveAutoSellEntryPriceUsd(ctx);
     const fetchedPriceUsd = await TokenAPI.getTokenPriceUsd(ctx.siteInfo.platform, ctx.chainId, tokenAddress, latestTokenInfo);
     const fallbackPriceUsd = Number(latestTokenInfo?.tokenPrice?.price ?? 0);
-    const basePriceUsd = fetchedPriceUsd != null && fetchedPriceUsd > 0
+    const marketPriceUsd = fetchedPriceUsd != null && fetchedPriceUsd > 0
       ? fetchedPriceUsd
       : (Number.isFinite(fallbackPriceUsd) && fallbackPriceUsd > 0 ? fallbackPriceUsd : null);
+    const basePriceUsd = entryPriceFromTradeUsd != null && entryPriceFromTradeUsd > 0
+      ? entryPriceFromTradeUsd
+      : marketPriceUsd;
     if (basePriceUsd == null || !(basePriceUsd > 0)) return 0;
+    const entryPriceUsd = entryPriceFromTradeUsd != null && entryPriceFromTradeUsd > 0
+      ? entryPriceFromTradeUsd
+      : basePriceUsd;
+    console.info('[autoSell.entryPrice.resolve]', {
+      chainId: ctx.chainId,
+      tokenAddress,
+      walletAddress: ctx.walletAddress,
+      entryPriceFromTradeUsd,
+      marketPriceUsd,
+      selectedEntryPriceUsd: entryPriceUsd,
+      actualTokenOutWei: ctx.actualTokenOutWei ?? null,
+      quotedOutWei: ctx.quotedOutWei ?? null,
+      buyNativeAmountWei: ctx.buyNativeAmountWei,
+    });
 
     const inputs = buildStrategySellOrderInputs({
       config,
@@ -3814,7 +4045,7 @@ export default function App() {
       tokenSymbol: ctx.tokenSymbol ?? null,
       tokenInfo: latestTokenInfo,
       basePriceUsd,
-      entryPriceUsd: basePriceUsd,
+      entryPriceUsd,
     });
 
     const mode = (config as any)?.trailingStop?.activationMode ?? 'after_first_take_profit';
@@ -3827,7 +4058,7 @@ export default function App() {
           tokenSymbol: ctx.tokenSymbol ?? null,
           tokenInfo: latestTokenInfo,
           basePriceUsd,
-          entryPriceUsd: basePriceUsd,
+          entryPriceUsd,
         });
         if (rolling) inputs.push(rolling);
       } else {
@@ -3854,8 +4085,9 @@ export default function App() {
         },
       } as const);
     }
+    await followTokenForLimitOrders(tokenAddress, 'buy_auto_created_limit_orders');
     return inputs.length;
-  }, []);
+  }, [followTokenForLimitOrders]);
 
   const renderTradeSuccessToast = (input: {
     side: 'buy' | 'sell';
@@ -4049,7 +4281,7 @@ export default function App() {
         if (chainId === ChainId.SOL) {
           solTradeOutcomeRef.current.delete(tradeOutcomeKey);
         }
-        const tradePromises: Array<Promise<{ walletAddress: ChainAddress; res: any }>> = [];
+        const tradePromises: Array<Promise<{ walletAddress: ChainAddress; res: any; buyNativeAmountWei: string }>> = [];
         const launchPromises = executablePlan.map(async ({ walletAddress, amountWei }) => {
           const launchTrade = async () => {
             let pendingTradeBaseDeltaId: string | null = null;
@@ -4088,7 +4320,7 @@ export default function App() {
                 } as const);
               } catch (e) {
                 if (shouldIgnoreSolUiTransportError('buy', tokenAddressNormalized, e)) {
-                  return { walletAddress, res: { ok: true, txHash: null, backgroundPending: true } };
+                  return { walletAddress, res: { ok: true, txHash: null, backgroundPending: true }, buyNativeAmountWei: amountWei.toString() };
                 }
                 throw e;
               }
@@ -4096,7 +4328,7 @@ export default function App() {
                 const detail = res.revertReason || res.error?.shortMessage || res.error?.message;
                 throw new Error(detail || 'Transaction failed');
               }
-              return { walletAddress, res };
+              return { walletAddress, res, buyNativeAmountWei: amountWei.toString() };
             })().catch((error: any) => {
               if (chainId === ChainId.SOL) {
                 removePendingSolTradeBaseDeltaWei(tradeBaseTokenAddress, walletAddress, pendingTradeBaseDeltaId);
@@ -4123,7 +4355,7 @@ export default function App() {
           tradePromises
         );
         const successes = results
-          .filter((item): item is PromiseFulfilledResult<{ walletAddress: ChainAddress; res: any }> => item.status === 'fulfilled')
+          .filter((item): item is PromiseFulfilledResult<{ walletAddress: ChainAddress; res: any; buyNativeAmountWei: string }> => item.status === 'fulfilled')
           .map((item) => item.value);
         const failures = results
           .filter((item): item is PromiseRejectedResult => item.status === 'rejected')
@@ -4161,13 +4393,16 @@ export default function App() {
           if (!config?.enabled) return;
           if (!siteInfo) return;
           if (!tokenInfo) return;
-          const autoSellContexts = successes.map(({ walletAddress, res }) => ({
+          const autoSellContexts = successes.map(({ walletAddress, res, buyNativeAmountWei }) => ({
             walletAddress,
             res,
             ctx: {
               chainId,
               tokenAddress: tokenAddressNormalized,
               walletAddress,
+              buyNativeAmountWei,
+              actualTokenOutWei: (res as any)?.actualTokenOutWei ?? null,
+              quotedOutWei: (res as any)?.quotedOutWei ?? (res as any)?.protectionMinOutWei ?? null,
               siteInfo,
               tokenInfo,
               tokenSymbol: resolvedTokenSymbol ?? null,
@@ -4492,6 +4727,7 @@ export default function App() {
               tokenAddress: tokenAddressNormalized,
               fromAddress: walletAddress as any,
             } as const)));
+            await maybeUnfollowTokenForLimitOrders(tokenAddressNormalized, 'manual_sell_all');
           }
       })().catch((e: any) => {
         warnUiDebug('[ui.sell.auto][request.failed]', {
@@ -5205,6 +5441,9 @@ export default function App() {
             siteInfo={siteInfo}
             visible={limitTradePanelVisible}
             onVisibleChange={setShowLimitTradePanel}
+            onLimitOrdersCreated={async (tokenAddress) => {
+              await followTokenForLimitOrders(tokenAddress, 'limit_trade_panel_create');
+            }}
             settings={effectiveScopedSettings}
             isUnlocked={isUnlocked}
             address={address}

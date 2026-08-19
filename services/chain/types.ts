@@ -43,6 +43,7 @@ export type TradeBuyResult = {
   txHash: string;
   protectionMinOutWei: string;
   quotedOutWei?: string | null;
+  actualTokenOutWei?: string | null;
   broadcastVia?: string;
   broadcastUrl?: string;
   confirmUrl?: string;

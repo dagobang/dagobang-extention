@@ -144,6 +144,17 @@ export interface GmgnTokenHolding {
   [key: string]: any;
 }
 
+export type GmgnPageFetchRequest = {
+  url: string;
+  init: {
+    method: 'POST';
+    headers: Record<string, string>;
+    body: string;
+    credentials: 'include';
+    mode: 'cors';
+  };
+};
+
 interface TokenHoldingsResponse {
   code: number;
   reason: string;
@@ -682,6 +693,158 @@ export class GmgnAPI {
       });
     });
     return `${baseUrl}${endpoint}?${search.toString()}`;
+  }
+
+  private static async postJson<T = any>(
+    endpoint: string,
+    payload: unknown,
+    baseUrl: string = this.CANDLES_BASE_URL
+  ): Promise<T> {
+    const url = await this.buildApiUrl(endpoint, {}, baseUrl);
+    const headers = await this.getHeaders();
+    const response = await this.makeRequest(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload ?? {}),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(text || `GMGN request failed: ${response.status}`);
+    }
+    const data = await response.json().catch(() => null);
+    if (!data || typeof data !== 'object') {
+      throw new Error('GMGN response invalid');
+    }
+    if (typeof (data as any).code === 'number' && (data as any).code !== 0) {
+      throw new Error(String((data as any).message || (data as any).reason || 'GMGN request failed'));
+    }
+    return data as T;
+  }
+
+  private static toPageFetchHeaders(headers: HeadersInit): Record<string, string> {
+    const entries = headers instanceof Headers
+      ? Array.from(headers.entries())
+      : Array.isArray(headers)
+        ? headers
+        : Object.entries(headers || {});
+    const safe = new Map<string, string>();
+    for (const [rawKey, rawValue] of entries) {
+      const key = String(rawKey || '').trim().toLowerCase();
+      const value = String(rawValue || '').trim();
+      if (!key || !value) continue;
+      if (
+        key === 'cookie' ||
+        key.startsWith('sec-') ||
+        key === 'host' ||
+        key === 'origin' ||
+        key === 'referer' ||
+        key === 'content-length' ||
+        key === 'user-agent'
+      ) {
+        continue;
+      }
+      safe.set(key, value);
+    }
+    return Object.fromEntries(safe.entries());
+  }
+
+  private static async buildPagePostJsonRequest(
+    endpoint: string,
+    payload: unknown,
+    baseUrl: string = this.CANDLES_BASE_URL
+  ): Promise<GmgnPageFetchRequest> {
+    const url = await this.buildApiUrl(endpoint, {}, baseUrl);
+    const headers = this.toPageFetchHeaders(await this.getHeaders());
+    return {
+      url,
+      init: {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload ?? {}),
+        credentials: 'include',
+        mode: 'cors',
+      },
+    };
+  }
+
+  public static async followTokens(
+    chain: string,
+    tokens: Array<{ tokenAddress: string; groupId?: string }>
+  ): Promise<any> {
+    const normalizedChain = this.normalizeChainName(chain);
+    const normalizedTokens = tokens
+      .map((item) => ({
+        token_address: this.normalizeQueryAddress(normalizedChain, item.tokenAddress),
+        group_id: String(item.groupId || 'default').trim() || 'default',
+      }))
+      .filter((item) => !!item.token_address);
+    if (!normalizedChain || normalizedTokens.length <= 0) {
+      throw new Error('Invalid GMGN follow params');
+    }
+    return await this.postJson('/follow_token/token/follow_tokens', {
+      tokens: normalizedTokens,
+      chain: normalizedChain,
+    }, this.CANDLES_BASE_URL);
+  }
+
+  public static async buildFollowTokensPageRequest(
+    chain: string,
+    tokens: Array<{ tokenAddress: string; groupId?: string }>
+  ): Promise<GmgnPageFetchRequest> {
+    const normalizedChain = this.normalizeChainName(chain);
+    const normalizedTokens = tokens
+      .map((item) => ({
+        token_address: this.normalizeQueryAddress(normalizedChain, item.tokenAddress),
+        group_id: String(item.groupId || 'default').trim() || 'default',
+      }))
+      .filter((item) => !!item.token_address);
+    if (!normalizedChain || normalizedTokens.length <= 0) {
+      throw new Error('Invalid GMGN follow params');
+    }
+    return await this.buildPagePostJsonRequest('/follow_token/token/follow_tokens', {
+      tokens: normalizedTokens,
+      chain: normalizedChain,
+    }, this.CANDLES_BASE_URL);
+  }
+
+  public static async unfollowTokens(
+    chain: string,
+    tokens: Array<{ tokenAddress: string; groupId?: string }>
+  ): Promise<any> {
+    const normalizedChain = this.normalizeChainName(chain);
+    const normalizedTokens = tokens
+      .map((item) => ({
+        token_address: this.normalizeQueryAddress(normalizedChain, item.tokenAddress),
+        group_id: String(item.groupId || 'all_group').trim() || 'all_group',
+      }))
+      .filter((item) => !!item.token_address);
+    if (!normalizedChain || normalizedTokens.length <= 0) {
+      throw new Error('Invalid GMGN unfollow params');
+    }
+    return await this.postJson('/follow_token/token/unfollow_tokens', {
+      tokens: normalizedTokens,
+      chain: normalizedChain,
+    }, this.CANDLES_BASE_URL);
+  }
+
+  public static async buildUnfollowTokensPageRequest(
+    chain: string,
+    tokens: Array<{ tokenAddress: string; groupId?: string }>
+  ): Promise<GmgnPageFetchRequest> {
+    const normalizedChain = this.normalizeChainName(chain);
+    const normalizedTokens = tokens
+      .map((item) => ({
+        token_address: this.normalizeQueryAddress(normalizedChain, item.tokenAddress),
+        group_id: String(item.groupId || 'all_group').trim() || 'all_group',
+      }))
+      .filter((item) => !!item.token_address);
+    if (!normalizedChain || normalizedTokens.length <= 0) {
+      throw new Error('Invalid GMGN unfollow params');
+    }
+    return await this.buildPagePostJsonRequest('/follow_token/token/unfollow_tokens', {
+      tokens: normalizedTokens,
+      chain: normalizedChain,
+    }, this.CANDLES_BASE_URL);
   }
 
   private static async resolveGasGwei(side: 'buy' | 'sell', overrideGasGwei?: string): Promise<string> {

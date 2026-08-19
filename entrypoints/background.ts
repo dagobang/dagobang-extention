@@ -1,6 +1,7 @@
 import { Buffer } from 'buffer';
 import { browser } from 'wxt/browser';
 import { SettingsService } from '@/services/settings';
+import { getLimitOrders } from '@/services/storage';
 import { TokenService } from '@/services/token';
 import { RpcService } from '@/services/rpc';
 import {
@@ -20,7 +21,7 @@ import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenAltfunService } from '@/services/token/altfun';
 import FourmemeAPI from '@/services/api/fourmeme';
-import { chainNames } from '@/constants/chains';
+import { chainNames, getChainIdByName } from '@/constants/chains';
 import { ChainId } from '@/constants/chains/chainId';
 import BloxRouterAPI from '@/services/api/bloxRouter';
 import { isAddress, parseEther, parseUnits } from 'viem';
@@ -43,6 +44,7 @@ import { resolveMigratedSolanaTokenInfo, shouldTryRefreshMigratedSolanaTokenInfo
 import { SolanaBroadcastService } from '@/services/chain/solana/broadcast';
 import { ensureSolanaTradePrewarm, scheduleSolanaTradePrewarm } from '@/services/chain/solana/trade/prewarmScheduler';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
+import { normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
 
 if (!(globalThis as any).Buffer) {
   (globalThis as any).Buffer = Buffer;
@@ -69,6 +71,7 @@ export default defineBackground(() => {
   const GMGN_TOKEN_SNAPSHOT_PERSIST_DEBOUNCE_MS = 8000;
   const NEWPOOL_MONITOR_CACHE_LIMIT = 800;
   const NEWPOOL_MONITOR_BROADCAST_MS = 16;
+  const GMGN_LIMIT_ORDER_CHAIN_IDS = new Set<number>([ChainId.ETH, ChainId.BNB, ChainId.SOL]);
   const parseEip7702Delegation = (code: string | null | undefined): { delegated: boolean; delegateAddress?: `0x${string}`; code: `0x${string}` } => {
     const normalized = (typeof code === 'string' && code.startsWith('0x') ? code.toLowerCase() : '0x') as `0x${string}`;
     if (!normalized.startsWith(EIP7702_DELEGATION_PREFIX) || normalized.length < 2 + 6 + 40) {
@@ -497,6 +500,25 @@ export default defineBackground(() => {
     });
   };
 
+  const broadcastLimitOrderPriceUpdates = async (items: Array<{
+    chainId: number;
+    tokenAddress: string;
+    priceUsd: number;
+    ts: number;
+    source: 'gmgn' | 'external' | 'rpc' | 'site';
+  }>) => {
+    if (!Array.isArray(items) || items.length <= 0) return;
+    try {
+      await broadcastToTabs({
+        type: 'bg:limitOrderPriceUpdateBatch',
+        ts: Date.now(),
+        items,
+      });
+    } catch (error) {
+      console.warn('[background.limitOrderPriceUpdate.broadcast_failed]', error);
+    }
+  };
+
   const requestGmgnHoldingsFromContent = async (chain: string, walletAddress: string): Promise<any[]> => {
     try {
       const tabs = await browser.tabs.query({});
@@ -549,6 +571,131 @@ export default defineBackground(() => {
     } catch {
       return null;
     }
+  };
+  const isGmgnLimitOrderPriceEnabled = (settings: Awaited<ReturnType<typeof SettingsService.get>> | null | undefined) =>
+    settings?.ui?.gmgnLimitOrderPriceEnabled === true;
+  const resolveGmgnLimitOrderChain = (chainId: number): string | null => {
+    if (!GMGN_LIMIT_ORDER_CHAIN_IDS.has(chainId)) return null;
+    const chain = String(chainNames[chainId] || '').trim().toLowerCase();
+    return chain || null;
+  };
+  const requestGmgnFollowTokensFromContent = async (
+    action: 'follow' | 'unfollow',
+    chain: string,
+    tokens: Array<{ tokenAddress: string; groupId?: string }>
+  ) => {
+    const normalizedTokens = Array.from(new Map(
+      tokens
+        .map((item) => {
+          const tokenAddress = String(item.tokenAddress || '').trim();
+          if (!tokenAddress) return null;
+          return [normalizeTokenAddressKey(tokenAddress), {
+            tokenAddress,
+            groupId: String(item.groupId || (action === 'follow' ? 'default' : 'all_group')).trim() || (action === 'follow' ? 'default' : 'all_group'),
+          }] as const;
+        })
+        .filter((item): item is readonly [string, { tokenAddress: string; groupId: string }] => !!item),
+    ).values());
+    if (!chain || normalizedTokens.length <= 0) {
+      return { ok: false, error: 'invalid_tokens' };
+    }
+    try {
+      const tabs = await browser.tabs.query({
+        url: ['*://gmgn.ai/*', '*://*.gmgn.ai/*'],
+      });
+      console.info('[limitOrder.gmgn.bridge.request]', {
+        action,
+        chain,
+        tokens: normalizedTokens,
+        tabCount: tabs.length,
+        tabs: tabs.map((tab) => ({ id: tab.id, url: tab.url })),
+      });
+      const settled = await Promise.all(
+        tabs
+          .filter((tab) => !!tab.id)
+          .map(async (tab) => {
+            try {
+              return await browser.tabs.sendMessage(tab.id as number, {
+                type: action === 'follow' ? 'bg:gmgn:pageFollowTokens' : 'bg:gmgn:pageUnfollowTokens',
+                chain,
+                tokens: normalizedTokens,
+              });
+            } catch (error: any) {
+              console.warn('[limitOrder.gmgn.bridge.tab_error]', {
+                action,
+                chain,
+                tabId: tab.id,
+                tabUrl: tab.url,
+                error: String(error?.message || error || 'unknown_tab_error'),
+              });
+              return null;
+            }
+          }),
+      );
+      console.info('[limitOrder.gmgn.bridge.response]', {
+        action,
+        chain,
+        tokens: normalizedTokens,
+        settled,
+      });
+      const success = settled.some((item: any) => item?.ok === true);
+      if (!success) {
+        const error = settled.find((item: any) => typeof item?.error === 'string')?.error;
+        return { ok: false, error: error || '未找到可用的 GMGN 页面或页面未登录' };
+      }
+      return { ok: true };
+    } catch {
+      return { ok: false, error: action === 'follow' ? 'GMGN关注请求发送失败' : 'GMGN取消关注请求发送失败' };
+    }
+  };
+  const ensureGmgnFollowForLimitOrder = async (input: { chainId: number; tokenAddress: string }) => {
+    const chain = resolveGmgnLimitOrderChain(input.chainId);
+    if (!chain || !normalizeTokenAddressKey(input.tokenAddress)) return { ok: false, error: 'unsupported_chain_or_token' };
+    const settings = await SettingsService.get().catch(() => null);
+    const enabled = isGmgnLimitOrderPriceEnabled(settings);
+    console.info('[limitOrder.gmgn.follow.enqueue]', {
+      ...input,
+      gmgnLimitOrderPriceEnabled: enabled,
+    });
+    if (!enabled) return { ok: false, error: 'gmgn_limit_order_price_disabled' };
+    return await requestGmgnFollowTokensFromContent('follow', chain, [{
+      tokenAddress: input.tokenAddress,
+      groupId: 'default',
+    }]);
+  };
+  const maybeUnfollowGmgnForLimitOrder = async (input: {
+    chainId: number;
+    tokenAddress: string;
+    orders?: Awaited<ReturnType<typeof getLimitOrders>>;
+  }) => {
+    const chain = resolveGmgnLimitOrderChain(input.chainId);
+    const tokenKey = normalizeTokenAddressKey(input.tokenAddress);
+    if (!chain || !tokenKey) return { ok: false, error: 'unsupported_chain_or_token' };
+    const orders = input.orders ?? await getLimitOrders().catch(() => [] as Awaited<ReturnType<typeof getLimitOrders>>);
+    const hasActiveOrder = orders.some((order) =>
+      order.chainId === input.chainId &&
+      normalizeTokenAddressKey(order.tokenAddress) === tokenKey &&
+      (order.status === 'open' || order.status === 'triggered'),
+    );
+    if (hasActiveOrder) {
+      console.info('[limitOrder.gmgn.unfollow.skip_active_orders]', {
+        chainId: input.chainId,
+        tokenAddress: input.tokenAddress,
+      });
+      return { ok: false, error: 'active_limit_orders_remaining' };
+    }
+    const settings = await SettingsService.get().catch(() => null);
+    const enabled = isGmgnLimitOrderPriceEnabled(settings);
+    console.info('[limitOrder.gmgn.unfollow.enqueue]', {
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      gmgnLimitOrderPriceEnabled: enabled,
+    });
+    if (!enabled) return { ok: false, error: 'gmgn_limit_order_price_disabled' };
+    return await requestGmgnFollowTokensFromContent('unfollow', chain, [{
+      tokenAddress: input.tokenAddress,
+      groupId: 'all_group',
+    }]);
   };
 
   const tokenBriefCache = new Map<string, { atMs: number; tokenName?: string; tokenSymbol?: string; tokenLogo?: string; marketCapUsd?: number | null }>();
@@ -918,6 +1065,10 @@ export default defineBackground(() => {
     },
     onOrderFailed: ({ order, error }) => {
       void (async () => {
+        await maybeUnfollowGmgnForLimitOrder({
+          chainId: order.chainId,
+          tokenAddress: order.tokenAddress,
+        }).catch(() => { });
         const brief = await resolveTokenBrief(order.chainId, order.tokenAddress);
         await telegramNotifier.notifyLimitOrderResult({
           stage: 'failed',
@@ -937,6 +1088,83 @@ export default defineBackground(() => {
     },
   });
   limitOrderScanner.start();
+
+  const processGmgnLimitOrderPriceSnapshots = async (items: GmgnTokenSnapshot[]) => {
+    if (!limitOrderScanner || items.length <= 0) return;
+    const settings = await SettingsService.get().catch(() => null);
+    if (!isGmgnLimitOrderPriceEnabled(settings)) return;
+
+    const latestByKey = new Map<string, { chainId: number; tokenAddress: string; priceUsd: number; ts: number }>();
+    for (const item of items) {
+      const tokenAddress = String(item?.tokenAddress || '').trim();
+      const tokenKey = normalizeTokenAddressKey(tokenAddress);
+      if (!tokenKey) continue;
+      const chainId = getChainIdByName(String(item?.chain || '').trim());
+      if (!GMGN_LIMIT_ORDER_CHAIN_IDS.has(chainId)) continue;
+      const priceUsd = Number(item?.priceUsd ?? 0);
+      if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
+      const ts = Number.isFinite(Number(item?.receivedAtMs)) ? Number(item.receivedAtMs) : Date.now();
+      const key = `${chainId}:${tokenKey}`;
+      const prev = latestByKey.get(key);
+      if (!prev || ts >= prev.ts) {
+        latestByKey.set(key, { chainId, tokenAddress, priceUsd, ts });
+      }
+    }
+    if (latestByKey.size <= 0) return;
+
+    const changedPriceItems: Array<{
+      chainId: number;
+      tokenAddress: string;
+      priceUsd: number;
+      ts: number;
+      source: 'gmgn';
+    }> = [];
+    for (const snapshot of latestByKey.values()) {
+      const didChange = limitOrderScanner.observeExternalPrice({
+        chainId: snapshot.chainId,
+        tokenAddress: snapshot.tokenAddress,
+        priceUsd: snapshot.priceUsd,
+        ts: snapshot.ts,
+        source: 'gmgn',
+      });
+      if (didChange) {
+        changedPriceItems.push({
+          chainId: snapshot.chainId,
+          tokenAddress: snapshot.tokenAddress,
+          priceUsd: snapshot.priceUsd,
+          ts: snapshot.ts,
+          source: 'gmgn',
+        });
+      }
+    }
+    if (changedPriceItems.length > 0) {
+      void broadcastLimitOrderPriceUpdates(changedPriceItems);
+    }
+
+    const orders = await getLimitOrders().catch(() => [] as Awaited<ReturnType<typeof getLimitOrders>>);
+    const activeKeys = new Set(
+      orders
+        .filter((order) => order.status === 'open' || order.status === 'triggered')
+        .map((order) => `${order.chainId}:${normalizeTokenAddressKey(order.tokenAddress)}`),
+    );
+
+    let changed = false;
+    for (const [key, snapshot] of latestByKey.entries()) {
+      if (!activeKeys.has(key)) continue;
+      const res = await tickLimitOrdersForToken({
+        chainId: snapshot.chainId,
+        tokenAddress: snapshot.tokenAddress,
+        priceUsd: snapshot.priceUsd,
+        executeLimitOrder: limitOrderExecutor.executeLimitOrder,
+      });
+      if (res.triggered.length || res.executed.length || res.failed.length) {
+        changed = true;
+      }
+    }
+    if (changed) {
+      broadcastStateChange();
+    }
+  };
 
   const AutoTrade = createXSniperTrade({
     onStateChanged: broadcastStateChange,
@@ -977,6 +1205,13 @@ export default defineBackground(() => {
         if ((msg as { type: string }).type === 'limitOrder:clearExecuted') {
           const clearMsg = msg as Extract<BgRequest, { type: 'limitOrder:clearExecuted' }>;
           const orders = await clearExecutedLimitOrders(clearMsg.chainId, clearMsg.tokenAddress);
+          if (clearMsg.tokenAddress) {
+            void maybeUnfollowGmgnForLimitOrder({
+              chainId: clearMsg.chainId,
+              tokenAddress: clearMsg.tokenAddress,
+              orders,
+            }).catch(() => { });
+          }
           broadcastStateChange();
           limitOrderScanner?.scheduleFromStorage().catch(() => { });
           return { ok: true, orders };
@@ -1583,12 +1818,21 @@ export default defineBackground(() => {
           }
 
           case 'limitOrder:tick': {
-            limitOrderScanner.observeExternalPrice({
+            const didChange = limitOrderScanner.observeExternalPrice({
               chainId: msg.chainId,
               tokenAddress: msg.tokenAddress,
               priceUsd: msg.priceUsd,
               ts: Date.now(),
             });
+            if (didChange) {
+              void broadcastLimitOrderPriceUpdates([{
+                chainId: msg.chainId,
+                tokenAddress: msg.tokenAddress,
+                priceUsd: msg.priceUsd,
+                ts: Date.now(),
+                source: 'external',
+              }]);
+            }
             const res = await tickLimitOrdersForToken({
               chainId: msg.chainId,
               tokenAddress: msg.tokenAddress,
@@ -1966,7 +2210,11 @@ export default defineBackground(() => {
                   side: 'buy',
                   chainId: msg.input.chainId,
                   tokenAddress: msg.input.tokenAddress,
+                  fromAddress: input.fromAddress,
                   txHash: (rsp as any)?.txHash,
+                  protectionMinOutWei: (rsp as any)?.protectionMinOutWei,
+                  quotedOutWei: (rsp as any)?.quotedOutWei ?? null,
+                  actualTokenOutWei: (rsp as any)?.actualTokenOutWei ?? null,
                   submitElapsedMs: (rsp as any)?.submitElapsedMs,
                   receiptElapsedMs: (rsp as any)?.receiptElapsedMs,
                   totalElapsedMs: (rsp as any)?.totalElapsedMs,
@@ -2690,7 +2938,10 @@ export default defineBackground(() => {
           case 'gmgn:tokenSnapshot:upsertBatch': {
             await ensureGmgnTokenSnapshotStoreLoaded();
             const items = Array.isArray(msg.payload?.items) ? msg.payload.items : [];
-            if (items.length) upsertGmgnTokenSnapshots(items);
+            if (items.length) {
+              upsertGmgnTokenSnapshots(items);
+              await processGmgnLimitOrderPriceSnapshots(items);
+            }
             return { ok: true };
           }
 
