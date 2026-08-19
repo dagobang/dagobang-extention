@@ -860,6 +860,8 @@ export default defineBackground(() => {
         side: order.side,
         chainId: order.chainId,
         tokenAddress: order.tokenAddress,
+        tokenSymbol: order.tokenSymbol ?? (order.tokenInfo as any)?.symbol ?? null,
+        tokenName: (order.tokenInfo as any)?.name ?? null,
         txHash,
         submitElapsedMs,
       });
@@ -872,6 +874,8 @@ export default defineBackground(() => {
         side: order.side,
         chainId: order.chainId,
         tokenAddress: order.tokenAddress,
+        tokenSymbol: order.tokenSymbol ?? (order.tokenInfo as any)?.symbol ?? null,
+        tokenName: (order.tokenInfo as any)?.name ?? null,
         txHash,
         submitElapsedMs,
         receiptElapsedMs,

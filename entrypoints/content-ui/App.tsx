@@ -3003,6 +3003,17 @@ export default function App() {
       return true;
     };
     const listener = (message: any) => {
+      const resolveTradeToastSymbol = (payload: any) => {
+        const messageSymbol = typeof payload?.tokenSymbol === 'string' ? payload.tokenSymbol.trim() : '';
+        if (messageSymbol) return messageSymbol;
+        const messageName = typeof payload?.tokenName === 'string' ? payload.tokenName.trim() : '';
+        if (messageName) return messageName;
+        const rawAddr = typeof payload?.tokenAddress === 'string' ? payload.tokenAddress.trim() : '';
+        const currentAddr = String(tokenAddressNormalized || '').trim().toLowerCase();
+        const currentSymbol = typeof resolvedTokenSymbol === 'string' ? resolvedTokenSymbol.trim() : '';
+        if (rawAddr && currentAddr && rawAddr.toLowerCase() === currentAddr && currentSymbol) return currentSymbol;
+        return rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '';
+      };
       if (message.type === 'bg:gmgn:getTokenHoldings') {
         return (async () => {
           if (siteInfo?.platform !== 'gmgn') return { ok: false, error: 'not_gmgn_page' };
@@ -3144,7 +3155,7 @@ export default function App() {
         if (message?.chainId === ChainId.SOL && rawAddr) {
           solTradeOutcomeRef.current.set(getSolTradeOutcomeKey(side, rawAddr), 'success');
         }
-        const symbol = resolvedTokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
+        const symbol = resolveTradeToastSymbol(message);
         const providerRaw = formatBroadcastProvider(message?.broadcastVia, message?.broadcastUrl, message?.isBundle);
         const provider = providerRaw === '-' ? 'RPC' : providerRaw;
         const submitNode = null;
@@ -3195,7 +3206,7 @@ export default function App() {
           id: flowToastId,
           className: getTradeFlowToastClassName('confirmed'),
           icon: <SatelliteDish size={14} className="text-emerald-300" />,
-          duration: 5000,
+          duration: 3000,
         });
         return;
       }
@@ -3210,7 +3221,7 @@ export default function App() {
         if (message?.chainId === ChainId.SOL && rawAddr) {
           solTradeOutcomeRef.current.set(getSolTradeOutcomeKey(side, rawAddr), 'failed');
         }
-        const symbol = resolvedTokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
+        const symbol = resolveTradeToastSymbol(message);
         const errorMessage = String(message?.errorMessage || '');
         const stage = message?.stage === 'receipt'
           ? (locale === 'en' ? 'On-chain failed' : '上链失败')
@@ -3227,7 +3238,7 @@ export default function App() {
           {
               id: flowToastId,
             icon: '❌',
-            duration: 5000,
+            duration: 3000,
           }
         );
         return;
@@ -3241,7 +3252,7 @@ export default function App() {
         if (message?.chainId === ChainId.SOL && rawAddr) {
           solTradeOutcomeRef.current.set(getSolTradeOutcomeKey(side, rawAddr), 'submitted');
         }
-        const symbol = resolvedTokenSymbol ?? (rawAddr ? `${rawAddr.slice(0, 6)}...${rawAddr.slice(-4)}` : '');
+        const symbol = resolveTradeToastSymbol(message);
         const providerRaw = formatBroadcastProvider(message?.broadcastVia, message?.broadcastUrl, message?.isBundle);
         const provider = providerRaw === '-' ? (locale === 'en' ? 'Submitted' : '已提交') : providerRaw;
         const submitNode = null;
@@ -3259,7 +3270,7 @@ export default function App() {
           id: flowToastId,
           className: getTradeFlowToastClassName('submitted'),
           icon: <SatelliteDish size={14} className="text-emerald-300/85" />,
-          // Keep this visible until replaced by confirmed/failed event.
+          // Keep submitted state visible until confirmed/failed replaces it.
           duration: Infinity,
         });
         return;
@@ -3872,17 +3883,17 @@ export default function App() {
       : (isExecuting ? '执行中' : isSubmitted ? '处理中' : '已确认');
     const stageTextClass = isConfirmed ? 'text-emerald-300' : 'text-emerald-300/80';
     return (
-      <div className="space-y-1.5 text-zinc-100 transition-all duration-300 ease-out">
+      <div className="space-y-1 text-zinc-100 transition-all duration-300 ease-out">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1 text-[15px] font-semibold leading-[1.3] text-zinc-50 break-words">
+          <div className="min-w-0 flex-1 text-[14px] font-semibold leading-[1.2] text-zinc-50 break-words">
             {title}
           </div>
-          <div className={`mt-0.5 inline-flex shrink-0 items-center gap-1 text-[11px] font-medium ${stageTextClass}`}>
+          <div className={`mt-0.5 inline-flex shrink-0 items-center gap-1 text-[10px] font-medium ${stageTextClass}`}>
             <span className={`h-1.5 w-1.5 rounded-full ${isConfirmed ? 'bg-emerald-300' : 'bg-emerald-300 animate-pulse'}`} />
             <span>{stageLabel}</span>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] leading-4 text-zinc-400">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-[1.25] text-zinc-400">
           <span className="text-zinc-300">{input.provider}</span>
           <span className="text-zinc-600">/</span>
           <span>
@@ -3894,12 +3905,12 @@ export default function App() {
           </span>
         </div>
         {input.summaryText ? (
-          <div className="text-[13px] leading-[1.35] text-zinc-200">
+          <div className="text-[12px] leading-[1.25] text-zinc-200">
             {input.summaryText}
           </div>
         ) : null}
         {(input.submitNode || input.confirmNode) ? (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-zinc-500">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] leading-[1.2] text-zinc-500">
             {input.submitNode ? (
               <span>
                 {locale === 'en' ? 'Submit RPC' : '提交节点'} <span className="text-zinc-300">{input.submitNode}</span>

@@ -17,9 +17,9 @@ export function CustomToaster({ position = 'top-center' }: CustomToasterProps) {
   return (
     <Toaster
       position={position}
-      gutter={8}
+      gutter={6}
       toastOptions={{
-        duration: 3000,
+        duration: 3200,
         success: {
           iconTheme: {
             primary: '#10b981', // emerald-500
@@ -36,14 +36,14 @@ export function CustomToaster({ position = 'top-center' }: CustomToasterProps) {
     >
         {(t) => (
             <div
-                className={`flex items-start gap-2.5 w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border bg-[#101215] px-3.5 py-2.5 text-zinc-100 shadow-[0_16px_40px_rgba(0,0,0,0.38)] ring-1 transition-[border-color,box-shadow,ring-color] duration-150 ease-out pointer-events-auto ${resolveToastVariantClass(t.className, t.type)}`}
+                className={`flex items-start gap-2 w-[332px] max-w-[calc(100vw-20px)] rounded-2xl border bg-[#101215] px-3 py-2 text-zinc-100 shadow-[0_16px_40px_rgba(0,0,0,0.38)] ring-1 transition-[border-color,box-shadow,ring-color] duration-150 ease-out pointer-events-auto ${resolveToastVariantClass(t.className, t.type)}`}
             >
                 {t.icon ? (
                     <div className="mt-0.5 flex-shrink-0">
                         {t.icon}
                     </div>
                 ) : null}
-                <div className="flex-1 min-w-0 break-words leading-tight">
+                <div className="flex-1 min-w-0 break-words leading-[1.25]">
                     {resolveValue(t.message, t)}
                 </div>
                 {t.type !== 'loading' && (
@@ -54,7 +54,7 @@ export function CustomToaster({ position = 'top-center' }: CustomToasterProps) {
                             e.stopPropagation();
                             toast.dismiss(t.id);
                         }}
-                        className="flex-shrink-0 ml-1.5 text-zinc-500 hover:text-zinc-200 transition-colors p-1 rounded-md hover:bg-white/10 cursor-pointer pointer-events-auto relative z-50"
+                        className="flex-shrink-0 ml-1 text-zinc-500 hover:text-zinc-200 transition-colors p-0.5 rounded-md hover:bg-white/10 cursor-pointer pointer-events-auto relative z-50"
                     >
                         <X size={12} />
                     </button>
