@@ -4,6 +4,8 @@ import { getLimitOrders, setLimitOrders } from '@/services/storage';
 import { normalizePriceValue } from '@/utils/format';
 import { buildScopedTokenKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
 
+const executingLimitOrderIds = new Set<string>();
+
 export const makeLimitOrderId = () => {
   try {
     return crypto.randomUUID();
@@ -263,6 +265,16 @@ export const clearExecutedLimitOrders = async (chainId: number, tokenAddress?: C
   });
   await setLimitOrders(next);
   return next;
+};
+
+export const tryAcquireLimitOrderExecutionLock = (id: string) => {
+  if (executingLimitOrderIds.has(id)) return false;
+  executingLimitOrderIds.add(id);
+  return true;
+};
+
+export const releaseLimitOrderExecutionLock = (id: string) => {
+  executingLimitOrderIds.delete(id);
 };
 
 export const cancelAllSellLimitOrdersForToken = async (

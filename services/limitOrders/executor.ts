@@ -11,7 +11,16 @@ import {
   buildStrategyTrailingSellOrderInputs,
   getAdvancedAutoSellMode,
 } from './advancedAutoSell';
-import { applyTrailingStopUpdate, cancelAllSellLimitOrdersForToken, createLimitOrder, hitLimitOrder, normalizeLimitOrderType, patchLimitOrder } from './store';
+import {
+  applyTrailingStopUpdate,
+  cancelAllSellLimitOrdersForToken,
+  createLimitOrder,
+  hitLimitOrder,
+  normalizeLimitOrderType,
+  patchLimitOrder,
+  releaseLimitOrderExecutionLock,
+  tryAcquireLimitOrderExecutionLock,
+} from './store';
 import { extractRevertReasonFromError, tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { createTokenInfoResolvers } from '@/services/xSniper/engine/tokenInfoResolver';
 import type { LimitOrder } from '@/types/extention';
@@ -40,7 +49,7 @@ export const tickLimitOrdersForToken = async (input: {
   const candidates = all.filter((o) => {
     if (o.chainId !== chainId) return false;
     if (buildScopedTokenKey(o.chainId, o.tokenAddress) !== keyAddr) return false;
-    if (!(o.status === 'open' || o.status === 'triggered')) return false;
+      if (o.status !== 'open') return false;
     if (typeof o.retryAtMs === 'number' && Number.isFinite(o.retryAtMs) && o.retryAtMs > nowMs) return false;
     return true;
   });
@@ -53,19 +62,16 @@ export const tickLimitOrdersForToken = async (input: {
   const failed: Array<{ id: string; error: string }> = [];
 
   for (const o of candidates) {
-    const prepared = await applyTrailingStopUpdate(o, priceUsd);
-    const orderType = normalizeLimitOrderType(prepared.orderType, prepared.side);
-    const hit = prepared.status === 'triggered'
-      ? true
-      : hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
-    if (!hit) continue;
-
-    triggered.push(o.id);
-    if (prepared.status !== 'triggered') {
-      await patchLimitOrder(o.id, { status: 'triggered' as const });
-    }
-
+      if (!tryAcquireLimitOrderExecutionLock(o.id)) continue;
+      let prepared = o;
     try {
+        prepared = await applyTrailingStopUpdate(o, priceUsd);
+        const orderType = normalizeLimitOrderType(prepared.orderType, prepared.side);
+        const hit = hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
+        if (!hit) continue;
+
+        triggered.push(o.id);
+        await patchLimitOrder(o.id, { status: 'triggered' as const, retryAtMs: undefined });
       const txHash = await executeLimitOrder({ ...prepared, status: 'triggered' }, { priceUsd });
       executed.push(o.id);
       await patchLimitOrder(o.id, {
@@ -95,6 +101,8 @@ export const tickLimitOrdersForToken = async (input: {
           lastError: msg,
         });
       }
+      } finally {
+        releaseLimitOrderExecutionLock(o.id);
     }
   }
 
@@ -353,7 +361,10 @@ export const createLimitOrderExecutor = (deps: {
         const settings = await SettingsService.get();
         const config = (settings as any).advancedAutoSell;
         const entryPriceUsd = Number(order.rollingEntryPriceUsd);
-        const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
+          const steppedBasePriceUsd = Number(order.triggerPriceUsd);
+          const basePriceUsd = Number.isFinite(steppedBasePriceUsd) && steppedBasePriceUsd > 0
+            ? steppedBasePriceUsd
+            : Number(ctx?.priceUsd ?? order.triggerPriceUsd);
         const nextRolling = buildStrategyRollingTakeProfitOrderInputs({
           config,
           chainId: order.chainId,
@@ -409,8 +420,11 @@ export const createLimitOrderExecutor = (deps: {
               return o.triggerPriceUsd > order.triggerPriceUsd;
             });
           if (shouldCreate) {
-            const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
             if (autoSellMode === 'rolling_take_profit') {
+                const steppedBasePriceUsd = Number(order.triggerPriceUsd);
+                const basePriceUsd = Number.isFinite(steppedBasePriceUsd) && steppedBasePriceUsd > 0
+                  ? steppedBasePriceUsd
+                  : Number(ctx?.priceUsd ?? order.triggerPriceUsd);
               const resolvedEntryPriceUsd = resolveFollowupEntryPriceUsd(order);
               if (resolvedEntryPriceUsd == null) return txHash;
               const entryPriceUsd = resolvedEntryPriceUsd;
@@ -437,6 +451,7 @@ export const createLimitOrderExecutor = (deps: {
               if (floor) await createLimitOrder({ ...floor, fromAddress: order.fromAddress, baseTokenAddress: order.baseTokenAddress });
               deps.onOrdersChanged();
             } else {
+                const basePriceUsd = Number(ctx?.priceUsd ?? order.triggerPriceUsd);
               const input = buildStrategyTrailingSellOrderInputs({
                 config,
                 chainId: order.chainId,

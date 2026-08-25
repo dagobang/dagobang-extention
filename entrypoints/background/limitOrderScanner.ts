@@ -3,7 +3,14 @@ import { ChainId } from '@/constants/chains/chainId';
 import { SettingsService } from '@/services/settings';
 import { TokenService } from '@/services/token';
 import { getLimitOrders } from '@/services/storage';
-import { applyTrailingStopUpdate, hitLimitOrder, normalizeLimitOrderType, patchLimitOrder } from '@/services/limitOrders/store';
+import {
+  applyTrailingStopUpdate,
+  hitLimitOrder,
+  normalizeLimitOrderType,
+  patchLimitOrder,
+  releaseLimitOrderExecutionLock,
+  tryAcquireLimitOrderExecutionLock,
+} from '@/services/limitOrders/store';
 import { getWalletAdapter } from '@/services/chain/registry';
 import { buildScopedTokenKey } from '@/services/xSniper/engine/metrics';
 import { normalizePriceValue } from '@/utils/format';
@@ -296,47 +303,54 @@ export const createLimitOrderScanner = (deps: {
           if (Number.isFinite(o.retryAtMs) && (o.retryAtMs as number) > nowMs) {
             continue;
           }
-          const prepared = await applyTrailingStopUpdate(o, priceUsd);
-          if (
-            prepared.orderType === 'trailing_stop_sell' &&
-            (
-              prepared.triggerPriceUsd !== o.triggerPriceUsd ||
-              prepared.trailingPeakPriceUsd !== o.trailingPeakPriceUsd
-            )
-          ) {
-            changed = true;
-          }
-          const orderType = normalizeLimitOrderType(prepared.orderType, prepared.side);
-          const hit = hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
-          if (!hit) continue;
-
-          await patchLimitOrder(o.id, { status: 'triggered' as const, retryAtMs: undefined });
-          changed = true;
-
-          try {
-            const txHash = await deps.executeLimitOrder({ ...prepared, status: 'triggered', tokenInfo: resolvedTokenInfo ?? prepared.tokenInfo }, { priceUsd });
-            await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
-          } catch (e: any) {
-            const msg = typeof e?.message === 'string' ? e.message : String(e);
-            const retryCount = Number.isFinite(prepared.retryCount) ? Math.max(0, Math.floor(prepared.retryCount as number)) : 0;
-            const nextRetryCount = retryCount + 1;
-            const canRetry = nextRetryCount <= ORDER_EXECUTE_MAX_RETRY && isRetryableOrderError(msg);
-            if (canRetry) {
-              await patchLimitOrder(o.id, {
-                status: 'open' as const,
-                lastError: msg,
-                retryCount: nextRetryCount,
-                retryAtMs: Date.now() + getRetryDelayMs(retryCount),
-              });
-            } else {
-              await patchLimitOrder(o.id, {
-                status: 'failed' as const,
-                lastError: msg,
-                retryCount: nextRetryCount,
-                retryAtMs: undefined,
-              });
-              deps.onOrderFailed?.({ order: prepared, error: msg });
+            if (!tryAcquireLimitOrderExecutionLock(o.id)) {
+              continue;
             }
+          try {
+              const prepared = await applyTrailingStopUpdate(o, priceUsd);
+              if (
+                prepared.orderType === 'trailing_stop_sell' &&
+                (
+                  prepared.triggerPriceUsd !== o.triggerPriceUsd ||
+                  prepared.trailingPeakPriceUsd !== o.trailingPeakPriceUsd
+                )
+              ) {
+                changed = true;
+              }
+              const orderType = normalizeLimitOrderType(prepared.orderType, prepared.side);
+              const hit = hitLimitOrder(orderType, priceUsd, prepared.triggerPriceUsd);
+              if (!hit) continue;
+
+              await patchLimitOrder(o.id, { status: 'triggered' as const, retryAtMs: undefined });
+              changed = true;
+
+              try {
+                const txHash = await deps.executeLimitOrder({ ...prepared, status: 'triggered', tokenInfo: resolvedTokenInfo ?? prepared.tokenInfo }, { priceUsd });
+                await patchLimitOrder(o.id, { status: 'executed' as const, txHash });
+              } catch (e: any) {
+                const msg = typeof e?.message === 'string' ? e.message : String(e);
+                const retryCount = Number.isFinite(prepared.retryCount) ? Math.max(0, Math.floor(prepared.retryCount as number)) : 0;
+                const nextRetryCount = retryCount + 1;
+                const canRetry = nextRetryCount <= ORDER_EXECUTE_MAX_RETRY && isRetryableOrderError(msg);
+                if (canRetry) {
+                  await patchLimitOrder(o.id, {
+                    status: 'open' as const,
+                    lastError: msg,
+                    retryCount: nextRetryCount,
+                    retryAtMs: Date.now() + getRetryDelayMs(retryCount),
+                  });
+                } else {
+                  await patchLimitOrder(o.id, {
+                    status: 'failed' as const,
+                    lastError: msg,
+                    retryCount: nextRetryCount,
+                    retryAtMs: undefined,
+                  });
+                  deps.onOrderFailed?.({ order: prepared, error: msg });
+                }
+              }
+            } finally {
+              releaseLimitOrderExecutionLock(o.id);
           }
         }
       }
