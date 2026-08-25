@@ -1073,7 +1073,13 @@
     },
     "section": {
       "buy": "Buy",
-      "sell": "Sell"
+      "sell": "Sell",
+      "transfer": "Transfer"
+    },
+    "transfer": {
+      "recipient": "Recipient wallet",
+      "to": "To",
+      "noRecipient": "No wallet available"
     },
     "ListOrder": "List Order",
     "mode": {

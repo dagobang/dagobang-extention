@@ -935,7 +935,7 @@ export type BgRequest =
     toAddress: ChainAddress;
     amount?: string;
     useMax?: boolean;
-    password: string;
+    password?: string;
   }
   | { type: 'tx:waitForReceipt'; hash: ChainTxId; chainId: number }
   | { type: 'tx:approveMaxForSellIfNeeded'; chainId: number; tokenAddress: ChainAddress; tokenInfo: TokenInfo; fromAddress?: ChainAddress; submitChannel?: SubmitChannel }

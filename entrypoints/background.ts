@@ -24,7 +24,7 @@ import FourmemeAPI from '@/services/api/fourmeme';
 import { chainNames, getChainIdByName } from '@/constants/chains';
 import { ChainId } from '@/constants/chains/chainId';
 import BloxRouterAPI from '@/services/api/bloxRouter';
-import { isAddress, parseEther, parseUnits } from 'viem';
+import { encodeFunctionData, isAddress, parseAbi, parseEther, parseUnits } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { getGasPriceWei, sendTransaction } from '@/services/trade/tradeTx';
 import { classifyBroadcastError, collectErrorText } from '@/utils/txErrorClassify';
@@ -63,6 +63,7 @@ export default defineBackground(() => {
     return getWallet(chainId);
   };
   const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
+  const ERC20_TRANSFER_ABI = parseAbi(['function transfer(address to, uint256 amount) returns (bool)']);
   const { fetchTokenInfoFresh, buildGenericTokenInfo } = createTokenInfoResolvers();
   const EIP7702_DELEGATION_PREFIX = '0xef0100';
   const STATE_CHANGE_BROADCAST_DEBOUNCE_MS = 250;
@@ -2052,18 +2053,59 @@ export default defineBackground(() => {
 
           case 'tx:transferToken': {
             const chainId = msg.chainId;
-            if (chainId !== ChainId.SOL) {
-              throw new Error('Token transfer not implemented for this chain');
+            if (chainId === ChainId.SOL) {
+              if (!SolanaRpcService.isValidAddress(msg.fromAddress)) throw new Error('Invalid from address');
+              if (!SolanaRpcService.isValidAddress(msg.toAddress)) throw new Error('Invalid to address');
+              if (!SolanaRpcService.isValidAddress(msg.tokenAddress)) throw new Error('Invalid token address');
+              const signer = await getWallet(chainId).getSigner?.(msg.fromAddress);
+              if (!signer) throw new Error('Signer unavailable');
+              const signerAddress = signer.publicKey?.toBase58?.();
+              if (!signerAddress || signerAddress !== msg.fromAddress) {
+                throw new Error('Invalid from address');
+              }
+              const meta = await TokenService.getMeta(msg.tokenAddress, chainId);
+              const balanceRaw = BigInt(await TokenService.getBalance(msg.tokenAddress, msg.fromAddress, chainId));
+              const amountRaw = (() => {
+                if (msg.useMax) return balanceRaw;
+                const raw = typeof msg.amount === 'string' ? msg.amount.trim() : '';
+                if (!raw) return 0n;
+                try {
+                  return parseUnits(raw, meta.decimals);
+                } catch {
+                  return 0n;
+                }
+              })();
+              if (amountRaw <= 0n) throw new Error('Invalid amount');
+              if (amountRaw > balanceRaw) throw new Error('Insufficient balance');
+              const txHash = await SolanaRpcService.sendSplTokenTransfer({
+                signer,
+                mintAddress: msg.tokenAddress,
+                toAddress: msg.toAddress,
+                amountRaw,
+                decimals: meta.decimals,
+              });
+              broadcastStateChange();
+              return { ok: true, txHash, broadcastVia: 'rpc' as const };
             }
-            if (!SolanaRpcService.isValidAddress(msg.fromAddress)) throw new Error('Invalid from address');
-            if (!SolanaRpcService.isValidAddress(msg.toAddress)) throw new Error('Invalid to address');
-            if (!SolanaRpcService.isValidAddress(msg.tokenAddress)) throw new Error('Invalid token address');
-            const signer = await getWallet(chainId).getSigner?.(msg.fromAddress);
+
+            if (!isAddress(msg.fromAddress)) throw new Error('Invalid from address');
+            if (!isAddress(msg.toAddress)) throw new Error('Invalid to address');
+            if (!isAddress(msg.tokenAddress)) throw new Error('Invalid token address');
+
+            const account = (() => {
+              const rawPassword = typeof msg.password === 'string' ? msg.password.trim() : '';
+              if (rawPassword) {
+                return getWallet(chainId).exportAccountPrivateKey(rawPassword, msg.fromAddress as `0x${string}`)
+                  .then((pk) => privateKeyToAccount(pk as `0x${string}`));
+              }
+              return getWallet(chainId).getSigner?.(msg.fromAddress);
+            })();
+            const signer = await account;
             if (!signer) throw new Error('Signer unavailable');
-            const signerAddress = signer.publicKey?.toBase58?.();
-            if (!signerAddress || signerAddress !== msg.fromAddress) {
+            if (String(signer.address || '').toLowerCase() !== String(msg.fromAddress).toLowerCase()) {
               throw new Error('Invalid from address');
             }
+
             const meta = await TokenService.getMeta(msg.tokenAddress, chainId);
             const balanceRaw = BigInt(await TokenService.getBalance(msg.tokenAddress, msg.fromAddress, chainId));
             const amountRaw = (() => {
@@ -2078,15 +2120,29 @@ export default defineBackground(() => {
             })();
             if (amountRaw <= 0n) throw new Error('Invalid amount');
             if (amountRaw > balanceRaw) throw new Error('Insufficient balance');
-            const txHash = await SolanaRpcService.sendSplTokenTransfer({
-              signer,
-              mintAddress: msg.tokenAddress,
-              toAddress: msg.toAddress,
-              amountRaw,
-              decimals: meta.decimals,
+
+            const settings = await SettingsService.get();
+            const chainSettings = settings.chains[chainId];
+            const client = await RpcService.getClient(chainId);
+            const gasPreset = chainSettings.sellGasPreset ?? chainSettings.gasPreset;
+            const gasPriceWei = getGasPriceWei(chainSettings, gasPreset, 'sell');
+            const data = encodeFunctionData({
+              abi: ERC20_TRANSFER_ABI,
+              functionName: 'transfer',
+              args: [msg.toAddress as `0x${string}`, amountRaw],
             });
+            const { txHash, broadcastVia, broadcastUrl } = await sendTransaction(
+              client,
+              signer,
+              msg.tokenAddress,
+              data,
+              0n,
+              gasPriceWei,
+              chainId,
+              { txSide: 'sell', gasPreset }
+            );
             broadcastStateChange();
-            return { ok: true, txHash, broadcastVia: 'rpc' as const };
+            return { ok: true, txHash, broadcastVia, broadcastUrl };
           }
 
           case 'tx:buy': {

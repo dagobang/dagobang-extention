@@ -10,6 +10,7 @@ import { parseCurrentUrl, parseCurrentUrlFull, type SiteInfo } from '@/utils/sit
 import { call } from '@/utils/messaging';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import GmgnAPI, { type GmgnPageFetchRequest, type GmgnTokenHolding } from '@/hooks/GmgnAPI';
+import { TokenService } from '@/services/token';
 import { getChainIdByName, getNativeSymbol } from '@/constants/chains';
 import { ChainId } from '@/constants/chains/chainId';
 import { getChainRuntimeBase, isSolanaChain } from '@/constants/chains/runtime';
@@ -3669,6 +3670,9 @@ export default function App() {
         if (raw === 'Invalid token') return t('contentUi.error.invalidToken', locale);
         if (raw === 'Invalid amount') return t('contentUi.error.invalidAmount', locale);
         if (raw === 'No balance') return t('contentUi.error.noBalance', locale);
+        if (raw === 'Recipient wallet required') return locale === 'en' ? 'Recipient wallet required' : '请选择接收钱包';
+        if (raw === 'Recipient matches source wallets') return locale === 'en' ? 'Recipient cannot match all selected wallets' : '接收钱包不能与所有转出钱包相同';
+        if (raw === 'No transferable balance') return locale === 'en' ? 'No transferable balance' : '没有可转出的代币余额';
         if (raw === 'Token info required') return t('contentUi.error.tokenInfoRequired', locale);
         if (raw === 'Insufficient balance') return t('contentUi.error.insufficientBalance', locale);
         if (raw === 'Transaction failed') return t('contentUi.error.transactionFailed', locale);
@@ -4771,6 +4775,82 @@ export default function App() {
     }, { trackBusy: !isSolana, label: 'sell' });
   };
 
+  const handleTransfer = (pct: number, toAddress: ChainAddress) => {
+    withBusy(async () => {
+      if (!settings) throw new Error('Settings not ready');
+      if (!tokenAddressNormalized) throw new Error('Invalid token');
+      const recipient = String(toAddress || '').trim() as ChainAddress;
+      if (!recipient) throw new Error('Recipient wallet required');
+      const wallets = selectedTradeWallets;
+      if (wallets.length <= 0) throw new Error('No wallet selected');
+
+      const recipientKey = normalizeChainScopedAddressKey(chainId, recipient);
+      const sourceWallets = wallets.filter((walletAddress) => normalizeChainScopedAddressKey(chainId, walletAddress) !== recipientKey);
+      if (sourceWallets.length <= 0) throw new Error('Recipient matches source wallets');
+
+      const toastId = `transfer:${chainId}:${tokenAddressNormalized}:${recipientKey}`;
+      const symbol = resolvedTokenSymbol || tokenInfo?.symbol || '';
+      toast.loading(
+        locale === 'en'
+          ? `Transferring ${pct}% ${symbol || 'token'} to ${recipient.slice(0, 6)}...${recipient.slice(-4)}`
+          : `转账中：${pct}% ${symbol || '代币'} -> ${recipient.slice(0, 6)}...${recipient.slice(-4)}`,
+        { id: toastId, duration: Infinity },
+      );
+
+      const meta = await TokenService.getMeta(tokenAddressNormalized, chainId);
+      const results = await Promise.allSettled(sourceWallets.map(async (walletAddress) => {
+        const balanceRaw = BigInt(await TokenService.getBalance(tokenAddressNormalized, walletAddress, chainId));
+        if (balanceRaw <= 0n) throw new Error('No transferable balance');
+        const amountRaw = pct >= 100 ? balanceRaw : ((balanceRaw * BigInt(pct)) / 100n);
+        if (amountRaw <= 0n) throw new Error('No transferable balance');
+        const res = await call({
+          type: 'tx:transferToken',
+          chainId,
+          tokenAddress: tokenAddressNormalized,
+          fromAddress: walletAddress,
+          toAddress: recipient,
+          ...(pct >= 100 ? { useMax: true } : { amount: formatUnits(amountRaw, meta.decimals) }),
+        } as const);
+        return { walletAddress, res };
+      }));
+
+      const successes = results
+        .filter((item): item is PromiseFulfilledResult<{ walletAddress: ChainAddress; res: any }> => item.status === 'fulfilled')
+        .map((item) => item.value);
+      const failures = results
+        .filter((item): item is PromiseRejectedResult => item.status === 'rejected')
+        .map((item) => String(item.reason?.message || item.reason || 'Transaction failed'));
+
+      if (successes.length <= 0) {
+        toast.error(
+          locale === 'en'
+            ? `Transfer failed${failures[0] ? `: ${failures[0]}` : ''}`
+            : `转账失败${failures[0] ? `：${failures[0]}` : ''}`,
+          { id: toastId, icon: '❌', duration: 4200 },
+        );
+        throw new Error(failures[0] || 'Transaction failed');
+      }
+
+      const firstHash = successes[0]?.res?.txHash;
+      if (firstHash) setTxHash(firstHash);
+      triggerPostTradeRefresh('sell');
+      toast.success(
+        locale === 'en'
+          ? `Transferred ${pct}% ${symbol || 'token'} to ${recipient.slice(0, 6)}...${recipient.slice(-4)} · ${successes.length}/${sourceWallets.length} wallets`
+          : `已转账 ${pct}% ${symbol || '代币'} 到 ${recipient.slice(0, 6)}...${recipient.slice(-4)} · 成功 ${successes.length}/${sourceWallets.length} 个钱包`,
+        { id: toastId, icon: '📤', duration: 4200 },
+      );
+      if (failures.length > 0) {
+        toast(
+          locale === 'en'
+            ? `Transfer skipped/failed for ${failures.length} wallet(s)`
+            : `有 ${failures.length} 个钱包转账失败或余额不足`,
+          { icon: 'ℹ️', duration: 3200 },
+        );
+      }
+    }, { trackBusy: !isSolana, label: 'transfer' });
+  };
+
   useEffect(() => {
     handleBuyRef.current = handleBuy;
   }, [handleBuy]);
@@ -5431,6 +5511,7 @@ export default function App() {
               sellActionReady={sellActionReady}
               sellActionDisabledReason={sellActionDisabledReason}
               onSell={handleSell}
+              onTransfer={handleTransfer}
               onApprove={handleApprove}
               siteInfo={siteInfo}
               onUnlock={handleUnlock}

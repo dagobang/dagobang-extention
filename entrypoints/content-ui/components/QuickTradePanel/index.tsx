@@ -89,6 +89,7 @@ type QuickTradePanelProps = {
   sellActionReady?: boolean;
   sellActionDisabledReason?: string;
   onSell: (pct: number) => void;
+  onTransfer: (pct: number, toAddress: ChainAddress) => void;
   onApprove: () => void;
   siteInfo: SiteInfo;
   onUnlock: () => void;
@@ -188,6 +189,7 @@ export function QuickTradePanel({
   sellActionReady = true,
   sellActionDisabledReason,
   onSell,
+  onTransfer,
   onApprove,
   siteInfo,
   onUnlock,
@@ -212,6 +214,20 @@ export function QuickTradePanel({
   const [walletSelectorOpen, setWalletSelectorOpen] = useState(false);
 
   const walletSelectorVisible = isUnlocked && walletAccounts.length > 0;
+  const selectedTransferSourceSet = new Set(selectedTradeWallets.map((item) => item.toLowerCase()));
+  const transferRecipients = walletAccounts
+    .filter((item) => !selectedTransferSourceSet.has(item.address.toLowerCase()))
+    .map((item) => ({
+      address: item.address,
+      name: settings?.accountAliases?.[item.address.toLowerCase()] || item.name || 'Wallet',
+      isActive: !!activeWalletAddress && activeWalletAddress.toLowerCase() === item.address.toLowerCase(),
+    }));
+  const defaultTransferRecipient = (() => {
+    if (activeWalletAddress && !selectedTransferSourceSet.has(activeWalletAddress.toLowerCase())) {
+      return activeWalletAddress;
+    }
+    return transferRecipients[0]?.address ?? null;
+  })();
   const sellSectionProps: SellSectionProps = {
     formattedTokenBalance,
     tokenBalanceAmount,
@@ -248,6 +264,10 @@ export function QuickTradePanel({
     gmgnEnabled: gmgnSellEnabled,
     onToggleGmgn: onToggleGmgnSell,
     showApproveAction: settings?.chainId !== 501,
+    transferEnabled: !!tokenSymbol,
+    onTransfer,
+    transferRecipients,
+    defaultTransferRecipient,
   };
   const handleToggleWalletSelector = () => {
     setWalletSelectorOpen((prev) => {

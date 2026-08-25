@@ -1094,7 +1094,13 @@
     },
     "section": {
       "buy": "买入",
-      "sell": "卖出"
+      "sell": "卖出",
+      "transfer": "转账"
+    },
+    "transfer": {
+      "recipient": "接收钱包",
+      "to": "到",
+      "noRecipient": "暂无可选钱包"
     },
     "ListOrder": "List 下单",
     "mode": {

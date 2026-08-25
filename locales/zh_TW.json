@@ -1073,7 +1073,13 @@
     },
     "section": {
       "buy": "買入",
-      "sell": "賣出"
+      "sell": "賣出",
+      "transfer": "轉帳"
+    },
+    "transfer": {
+      "recipient": "接收錢包",
+      "to": "到",
+      "noRecipient": "暫無可選錢包"
     },
     "ListOrder": "List 下單",
     "mode": {
