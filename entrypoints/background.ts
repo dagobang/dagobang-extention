@@ -1235,6 +1235,10 @@ export default defineBackground(() => {
           case 'bg:ping':
             return { ok: true, time: Date.now() };
 
+            case 'bg:prewarmFlapVanity':
+              TokenFlapLaunchService.prewarmVanitySalt();
+              return { ok: true };
+
           case 'bg:openPopup':
             try {
               const api = (globalThis as any).chrome?.sidePanel;

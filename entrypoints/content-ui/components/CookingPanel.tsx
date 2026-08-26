@@ -55,6 +55,37 @@ function pickFirstNonEmpty(...values: Array<string | null | undefined>) {
   return '';
 }
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      if (!result.startsWith('data:image/')) {
+        reject(new Error('图片预处理失败'));
+        return;
+      }
+      resolve(result);
+    };
+    reader.onerror = () => reject(new Error('图片预处理失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function resolveLogoUrlToDataUrl(rawUrl: string): Promise<string> {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) throw new Error('缺少图片地址');
+  if (/^data:image\//i.test(trimmed)) return trimmed;
+  const response = await fetch(trimmed);
+  if (!response.ok) {
+    throw new Error(`图片预加载失败：${response.status}`);
+  }
+  const blob = await response.blob();
+  if (!blob.type.startsWith('image/')) {
+    throw new Error('图片预加载失败：返回内容不是图片');
+  }
+  return await blobToDataUrl(blob);
+}
+
 function getPlatformButtonClass(active: boolean) {
   return active
     ? 'border-emerald-400 bg-emerald-500/15 text-emerald-200 shadow-[inset_0_0_0_1px_rgba(74,222,128,0.15)]'
@@ -241,6 +272,9 @@ export function CookingPanel({
   }, []);
 
   const [logoUrl, setLogoUrl] = useState('');
+  const [resolvedLogoDataUrl, setResolvedLogoDataUrl] = useState('');
+  const [logoResolving, setLogoResolving] = useState(false);
+  const [logoResolveError, setLogoResolveError] = useState<string | null>(null);
   const [tokenSymbolInput, setTokenSymbolInput] = useState('');
   const [tokenNameInput, setTokenNameInput] = useState('');
   const [twitterInput, setTwitterInput] = useState('');
@@ -269,6 +303,7 @@ export function CookingPanel({
   const [googlePage, setGooglePage] = useState(0);
   const autoFillTokenKeyRef = useRef<string | null>(null);
   const localImageInputRef = useRef<HTMLInputElement | null>(null);
+  const logoResolveSeqRef = useRef(0);
   const autoSellEnabledRef = useRef(autoSellEnabled);
   const autoSellRulesRef = useRef(autoSellRules);
   const flapQuoteTokens = useMemo(
@@ -452,6 +487,13 @@ export function CookingPanel({
   }, [autoSellRules]);
 
   useEffect(() => {
+    if (!visible || !isFlapPlatform) return;
+    void call({ type: 'bg:prewarmFlapVanity' } as const).catch((error) => {
+      console.warn('[cooking.flap.vanity_prewarm_failed]', error);
+    });
+  }, [visible, isFlapPlatform]);
+
+  useEffect(() => {
     persistCookingConfig();
   }, [
     selectedPlatform,
@@ -474,6 +516,9 @@ export function CookingPanel({
 
   const clearImageAndTokenInputs = () => {
     setLogoUrl('');
+    setResolvedLogoDataUrl('');
+    setLogoResolving(false);
+    setLogoResolveError(null);
     setGoogleQuery('');
     setGoogleImages([]);
     setGooglePage(0);
@@ -512,6 +557,9 @@ export function CookingPanel({
         return;
       }
       setLogoUrl(dataUrl);
+      setResolvedLogoDataUrl(dataUrl);
+      setLogoResolving(false);
+      setLogoResolveError(null);
       toast.success('本地图片已加载', { icon: '🖼️' });
     };
     reader.onerror = () => {
@@ -519,6 +567,46 @@ export function CookingPanel({
     };
     reader.readAsDataURL(file);
   };
+
+  useEffect(() => {
+    const raw = logoUrl.trim();
+    const seq = logoResolveSeqRef.current + 1;
+    logoResolveSeqRef.current = seq;
+    if (!raw) {
+      setResolvedLogoDataUrl('');
+      setLogoResolving(false);
+      setLogoResolveError(null);
+      return;
+    }
+    if (/^data:image\//i.test(raw)) {
+      setResolvedLogoDataUrl(raw);
+      setLogoResolving(false);
+      setLogoResolveError(null);
+      return;
+    }
+    setLogoResolving(true);
+    setLogoResolveError(null);
+    const timer = window.setTimeout(() => {
+      void resolveLogoUrlToDataUrl(raw)
+        .then((dataUrl) => {
+          if (logoResolveSeqRef.current !== seq) return;
+          setResolvedLogoDataUrl(dataUrl);
+          setLogoResolveError(null);
+        })
+        .catch((error: any) => {
+          if (logoResolveSeqRef.current !== seq) return;
+          setResolvedLogoDataUrl('');
+          setLogoResolveError(String(error?.message || '图片预处理失败'));
+        })
+        .finally(() => {
+          if (logoResolveSeqRef.current !== seq) return;
+          setLogoResolving(false);
+        });
+    }, 200);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [logoUrl]);
 
   const updateAutoSellRule = (index: number, patch: Partial<AutoSellRule>) => {
     setAutoSellRules((list) => {
@@ -639,7 +727,7 @@ export function CookingPanel({
   const handleSubmitMemeForm = async () => {
     const symbol = tokenSymbolInput.trim();
     const name = tokenNameInput.trim();
-    const img = logoUrl.trim();
+    const img = resolvedLogoDataUrl.trim() || logoUrl.trim();
     if (!symbol || !name) {
       toast.error('请填写代币符号和名称');
       return;
@@ -1010,6 +1098,15 @@ export function CookingPanel({
                 onChange={(e) => setLogoUrl(e.target.value)}
                 placeholder="可手动粘贴图片地址"
               />
+              {(logoResolving || logoResolveError || resolvedLogoDataUrl) && (
+                <div className={`text-[10px] ${logoResolveError ? 'text-amber-300' : 'text-zinc-500'}`}>
+                  {logoResolving
+                    ? '图片预处理中...'
+                    : logoResolveError
+                      ? `图片预处理失败，将在提交时回退原地址：${logoResolveError}`
+                      : '图片已预处理，提交时可直接复用'}
+                </div>
+              )}
               {logoUrl && (
                 <div className="mt-2 flex items-center gap-2">
                   <div className="w-10 h-10 rounded-full border border-zinc-800 bg-zinc-950 overflow-hidden flex items-center justify-center">

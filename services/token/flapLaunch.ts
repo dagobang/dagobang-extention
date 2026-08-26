@@ -6,7 +6,6 @@ import {
   keccak256,
   maxUint256,
   parseUnits,
-  formatUnits,
   toBytes,
   toHex,
   zeroAddress,
@@ -152,6 +151,9 @@ const FLAP_DEFAULT_ANTI_FARMER_SECONDS = 365n * 24n * 60n * 60n;
 const FLAP_STOCKS_ANTI_FARMER_SECONDS = 30n * 24n * 60n * 60n;
 const FLAP_DEFAULT_TAX_BPS = 100;
 const FLAP_DEFAULT_MINIMUM_SHARE_BALANCE = 10_000n * 10n ** 18n;
+const FLAP_REUSABLE_APPROVAL_FLOOR = maxUint256 / 2n;
+const FLAP_VANITY_POOL_TARGET_SIZE = 1;
+const FLAP_VANITY_SEARCH_YIELD_EVERY = 512;
 
 const portalAbi = [
   {
@@ -309,19 +311,110 @@ function predictTokenAddress(salt: Hex, tokenImpl: Address, portal: Address): Ad
   });
 }
 
-function findVanityTokenSalt(tokenImpl: Address, portal: Address) {
+type VanitySaltMatch = {
+  salt: Hex;
+  address: Address;
+  iterations: number;
+};
+
+type VanitySaltPoolState = {
+  ready: VanitySaltMatch[];
+  filling: Promise<void> | null;
+};
+
+const vanitySaltPool = new Map<string, VanitySaltPoolState>();
+
+function getVanitySaltPoolKey(tokenImpl: Address, portal: Address): string {
+  return `${tokenImpl.toLowerCase()}:${portal.toLowerCase()}`;
+}
+
+function getVanitySaltPoolState(tokenImpl: Address, portal: Address): VanitySaltPoolState {
+  const key = getVanitySaltPoolKey(tokenImpl, portal);
+  let state = vanitySaltPool.get(key);
+  if (!state) {
+    state = {
+      ready: [],
+      filling: null,
+    };
+    vanitySaltPool.set(key, state);
+  }
+  return state;
+}
+
+function waitForMacrotask(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+async function findVanityTokenSaltAsync(tokenImpl: Address, portal: Address): Promise<VanitySaltMatch> {
   const seed = generatePrivateKey();
   let salt = keccak256(toHex(seed));
   let iterations = 0;
+  let attemptsSinceYield = 0;
   while (!predictTokenAddress(salt, tokenImpl, portal).endsWith(TAX_TOKEN_SUFFIX)) {
     salt = keccak256(salt);
     iterations++;
+    attemptsSinceYield++;
+    if (attemptsSinceYield >= FLAP_VANITY_SEARCH_YIELD_EVERY) {
+      attemptsSinceYield = 0;
+      await waitForMacrotask();
+    }
   }
   return {
     salt,
     address: predictTokenAddress(salt, tokenImpl, portal),
     iterations,
   };
+}
+
+function scheduleVanitySaltPoolFill(tokenImpl: Address, portal: Address): void {
+  const state = getVanitySaltPoolState(tokenImpl, portal);
+  if (state.filling || state.ready.length >= FLAP_VANITY_POOL_TARGET_SIZE) return;
+  state.filling = (async () => {
+    while (state.ready.length < FLAP_VANITY_POOL_TARGET_SIZE) {
+      const nextMatch = await findVanityTokenSaltAsync(tokenImpl, portal);
+      state.ready.push(nextMatch);
+      console.info('[flap.launch.vanity_prewarm_ready]', {
+        predictedAddress: nextMatch.address,
+        iterations: nextMatch.iterations,
+      });
+    }
+  })()
+    .catch((error) => {
+      console.warn('[flap.launch.vanity_prewarm_failed]', error);
+    })
+    .finally(() => {
+      state.filling = null;
+      if (state.ready.length < FLAP_VANITY_POOL_TARGET_SIZE) {
+        scheduleVanitySaltPoolFill(tokenImpl, portal);
+      }
+    });
+}
+
+function tryTakePreparedVanitySalt(tokenImpl: Address, portal: Address): VanitySaltMatch | null {
+  const state = getVanitySaltPoolState(tokenImpl, portal);
+  const nextMatch = state.ready.shift() ?? null;
+  scheduleVanitySaltPoolFill(tokenImpl, portal);
+  return nextMatch;
+}
+
+async function takePreparedVanitySalt(tokenImpl: Address, portal: Address): Promise<VanitySaltMatch> {
+  const cached = tryTakePreparedVanitySalt(tokenImpl, portal);
+  if (cached) return cached;
+  const state = getVanitySaltPoolState(tokenImpl, portal);
+  scheduleVanitySaltPoolFill(tokenImpl, portal);
+  if (state.filling) {
+    await state.filling;
+  }
+  const nextMatch = state.ready.shift();
+  if (nextMatch) {
+    scheduleVanitySaltPoolFill(tokenImpl, portal);
+    return nextMatch;
+  }
+  const fallbackMatch = await findVanityTokenSaltAsync(tokenImpl, portal);
+  scheduleVanitySaltPoolFill(tokenImpl, portal);
+  return fallbackMatch;
 }
 
 async function fetchImageBlob(url: string): Promise<Blob> {
@@ -491,16 +584,54 @@ async function ensureQuoteAllowance(input: {
   });
 }
 
-async function swapNativeBudgetToQuoteToken(input: {
+async function getQuoteAllowance(input: {
+  client: Awaited<ReturnType<typeof RpcService.getClient>>;
+  owner: Address;
+  spender: Address;
+  tokenAddress: Address;
+}) {
+  return await input.client.readContract({
+    address: input.tokenAddress,
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [input.owner, input.spender],
+  });
+}
+
+async function submitQuoteAllowanceApproval(input: {
+  owner: Address;
+  spender: Address;
+  tokenAddress: Address;
+  onProgress?: (event: FlapLaunchProgressEvent) => void | Promise<void>;
+}) {
+  await input.onProgress?.({
+    stage: 'approve_request',
+    message: '正在请求钱包授权底池代币',
+  });
+  const approveTxHash = await TradeService.approve(
+    ChainId.BNB,
+    input.tokenAddress,
+    input.spender,
+    maxUint256.toString(),
+    input.owner,
+  );
+  await input.onProgress?.({
+    stage: 'approve_submitted',
+    message: '底池代币授权已提交，等待链上确认中',
+    txHash: approveTxHash,
+  });
+  return approveTxHash;
+}
+
+async function submitNativeBudgetToQuoteTokenSwap(input: {
   client: Awaited<ReturnType<typeof RpcService.getClient>>;
   owner: Address;
   tokenAddress: Address;
   nativeBudgetWei: bigint;
   symbol: string;
-  decimals: number;
   onProgress?: (event: FlapLaunchProgressEvent) => void | Promise<void>;
 }) {
-  if (input.nativeBudgetWei <= 0n) return 0n;
+  if (input.nativeBudgetWei <= 0n) return null;
   const beforeBalance = await input.client.readContract({
     address: input.tokenAddress,
     abi: erc20Abi,
@@ -521,14 +652,29 @@ async function swapNativeBudgetToQuoteToken(input: {
   });
   await input.onProgress?.({
     stage: 'swap_submitted',
-    message: `${input.symbol} 兑换已提交，正在等待确认`,
+    message: `${input.symbol} 兑换已提交，等待链上确认中`,
     txHash: swapResult.txHash,
   });
-  await input.client.waitForTransactionReceipt({ hash: swapResult.txHash });
+  return {
+    txHash: swapResult.txHash,
+    beforeBalance,
+  };
+}
+
+async function waitForNativeBudgetToQuoteTokenSwap(input: {
+  client: Awaited<ReturnType<typeof RpcService.getClient>>;
+  owner: Address;
+  tokenAddress: Address;
+  beforeBalance: bigint;
+  txHash: `0x${string}`;
+  symbol: string;
+  onProgress?: (event: FlapLaunchProgressEvent) => void | Promise<void>;
+}) {
+  await input.client.waitForTransactionReceipt({ hash: input.txHash });
   await input.onProgress?.({
     stage: 'swap_confirmed',
     message: `${input.symbol} 兑换已确认`,
-    txHash: swapResult.txHash,
+    txHash: input.txHash,
   });
   const afterBalance = await input.client.readContract({
     address: input.tokenAddress,
@@ -536,15 +682,22 @@ async function swapNativeBudgetToQuoteToken(input: {
     functionName: 'balanceOf',
     args: [input.owner],
   });
-  const receivedAmount = afterBalance - beforeBalance;
+  const receivedAmount = afterBalance - input.beforeBalance;
   if (receivedAmount > 0n) return receivedAmount;
 
   throw new Error(
-    `BNB 兑换 ${input.symbol} 失败：预算 ${formatUnits(input.nativeBudgetWei, 18)} BNB，但未收到 ${input.symbol}`,
+    `BNB 兑换 ${input.symbol} 失败：未收到 ${input.symbol}`,
   );
 }
 
 export class TokenFlapLaunchService {
+  static prewarmVanitySalt(): void {
+    const portalAddress = FlapPortalAddress[ChainId.BNB];
+    const tokenImpl = FlapTokenImplByChain[ChainId.BNB]?.taxV3;
+    if (!portalAddress || !tokenImpl) return;
+    scheduleVanitySaltPoolFill(tokenImpl, portalAddress);
+  }
+
   static async createToken(
     input: CreateFlapTokenInput,
     opts?: { onProgress?: (event: FlapLaunchProgressEvent) => void | Promise<void> },
@@ -584,6 +737,86 @@ export class TokenFlapLaunchService {
     const client = await RpcService.getClient(ChainId.BNB);
     const gasPreset: GasPreset = chainSettings.buyGasPreset ?? chainSettings.gasPreset;
     const gasPriceWei = getGasPriceWei(chainSettings, gasPreset);
+    const launchSpender = input.taxMode === 'stocks' ? vaultPortalAddress! : portalAddress;
+    const cachedVanity = tryTakePreparedVanitySalt(tokenImpl, portalAddress);
+    let markQuoteSubmissionReady = () => { };
+    const quoteSubmissionReadyPromise = quoteToken.isNative
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+        markQuoteSubmissionReady = resolve;
+      });
+    const quoteAmtPromise = quoteToken.isNative
+      ? Promise.resolve(parseQuoteAmount(input.quoteAmount, quoteToken.decimals))
+      : (async () => {
+        const currentAllowance = await getQuoteAllowance({
+          client,
+          owner: account.address,
+          spender: launchSpender,
+          tokenAddress: quoteToken.address,
+        });
+        const approvalTxHash = currentAllowance >= FLAP_REUSABLE_APPROVAL_FLOOR
+          ? null
+          : await submitQuoteAllowanceApproval({
+            owner: account.address,
+            spender: launchSpender,
+            tokenAddress: quoteToken.address,
+            onProgress: opts?.onProgress,
+          });
+        const submittedSwap = await submitNativeBudgetToQuoteTokenSwap({
+          client,
+          owner: account.address,
+          tokenAddress: quoteToken.address,
+          nativeBudgetWei,
+          symbol: quoteToken.label,
+          onProgress: opts?.onProgress,
+        });
+        markQuoteSubmissionReady();
+        const approvalConfirmedPromise = approvalTxHash
+          ? client.waitForTransactionReceipt({ hash: approvalTxHash }).then(async () => {
+            await opts?.onProgress?.({
+              stage: 'approve_confirmed',
+              message: '底池代币授权已确认',
+              txHash: approvalTxHash,
+            });
+          })
+          : Promise.resolve();
+
+        let nextQuoteAmt = 0n;
+        if (submittedSwap) {
+          const swapState = submittedSwap;
+          const [receivedQuoteAmount] = await Promise.all([
+            waitForNativeBudgetToQuoteTokenSwap({
+              client,
+              owner: account.address,
+              tokenAddress: quoteToken.address,
+              beforeBalance: swapState.beforeBalance,
+              txHash: swapState.txHash,
+              symbol: quoteToken.label,
+              onProgress: opts?.onProgress,
+            }),
+            approvalConfirmedPromise,
+          ]);
+          nextQuoteAmt = receivedQuoteAmount;
+        } else {
+          await approvalConfirmedPromise;
+        }
+
+        if (currentAllowance < nextQuoteAmt && !approvalTxHash) {
+          await ensureQuoteAllowance({
+            client,
+            owner: account.address,
+            spender: launchSpender,
+            tokenAddress: quoteToken.address,
+            requiredAmount: nextQuoteAmt,
+            onProgress: opts?.onProgress,
+          });
+        }
+
+        return nextQuoteAmt;
+      })();
+    const vanityPromise = cachedVanity
+      ? Promise.resolve(cachedVanity)
+      : quoteSubmissionReadyPromise.then(() => takePreparedVanitySalt(tokenImpl, portalAddress));
 
     const imageFile = await resolveImageFile(
       [
@@ -592,38 +825,25 @@ export class TokenFlapLaunchService {
       ],
       input.symbol,
     );
-    const cid = await uploadTokenMeta(imageFile, {
+    const cidPromise = uploadTokenMeta(imageFile, {
       website: input.webUrl?.trim() || null,
       twitter: input.twitterUrl?.trim() || null,
       telegram: input.telegramUrl?.trim() || null,
       description: input.desc.trim(),
       creator: account.address,
     });
-
-    const vanity = findVanityTokenSalt(tokenImpl, portalAddress);
+    const [cid, vanity, quoteAmt] = await Promise.all([cidPromise, vanityPromise, quoteAmtPromise]);
     console.info('[flap.launch.salt]', {
       symbol: input.symbol,
       iterations: vanity.iterations,
       predictedAddress: vanity.address,
     });
-
-    const quoteAmt = quoteToken.isNative
-      ? parseQuoteAmount(input.quoteAmount, quoteToken.decimals)
-      : await swapNativeBudgetToQuoteToken({
-        client,
-        owner: account.address,
-        tokenAddress: quoteToken.address,
-        nativeBudgetWei,
-        symbol: quoteToken.label,
-        decimals: quoteToken.decimals,
-        onProgress: opts?.onProgress,
-      });
     const txValue = quoteToken.isNative ? quoteAmt : 0n;
     if (!quoteToken.isNative && quoteAmt > 0n) {
       await ensureQuoteAllowance({
         client,
         owner: account.address,
-        spender: input.taxMode === 'stocks' ? vaultPortalAddress! : portalAddress,
+        spender: launchSpender,
         tokenAddress: quoteToken.address,
         requiredAmount: quoteAmt,
         onProgress: opts?.onProgress,

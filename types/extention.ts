@@ -835,6 +835,7 @@ export type BgRequest =
   | { type: 'bg:ping' }
   | { type: 'bg:openPopup' }
   | { type: 'bg:getState'; chainId?: number }
+  | { type: 'bg:prewarmFlapVanity' }
   | { type: 'bloxroute:probe'; authHeader?: string }
   | { type: 'solanaSwqos:probe'; providerType: SolanaSwqosProviderType; authKey?: string; endpoint?: string; region?: SolanaSwqosRegion; timeoutMs?: number }
   | { type: 'bloxroute:openCertPage' }
@@ -1025,6 +1026,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; time: number }
   : T extends { type: 'bg:getState' }
   ? BgGetStateResponse
+  : T extends { type: 'bg:prewarmFlapVanity' }
+  ? { ok: true }
   : T extends { type: 'bloxroute:probe' }
   ? { ok: true; status: 'reachable' | 'failed'; httpStatus?: number; message?: string; hasAuthHeader: boolean }
   : T extends { type: 'solanaSwqos:probe' }
