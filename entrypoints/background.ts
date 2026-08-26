@@ -18,6 +18,7 @@ import { createNewCoinSniperTrade } from '@/services/newCoinSniper/newCoinSniper
 import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/limitOrders/executor';
 import type { BgRequest, GmgnTokenSnapshot, LimitOrderScanStatus, NewPoolMonitorUiDetail, SubmitChannel, TxSellInput, UnifiedMarketSignalSource } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
+import { TokenFlapLaunchService } from '@/services/token/flapLaunch';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenAltfunService } from '@/services/token/altfun';
 import FourmemeAPI from '@/services/api/fourmeme';
@@ -471,6 +472,18 @@ export default defineBackground(() => {
       }
     } catch (e) {
       console.error('Broadcast failed', e);
+    }
+  };
+
+  const broadcastCookingLaunchEvent = async (payload: any) => {
+    try {
+      await broadcastToTabs({
+        type: 'bg:cookingLaunchEvent',
+        ts: Date.now(),
+        ...payload,
+      });
+    } catch (error) {
+      console.warn('[background.cookingLaunch.broadcast_failed]', error);
     }
   };
 
@@ -1654,6 +1667,59 @@ export default defineBackground(() => {
               },
               autoBuy: autoBuySummary,
             };
+          }
+
+          case 'token:createFlap': {
+            const flowId = String(msg.input.launchFlowId || '').trim() || `flap:${Date.now().toString(36)}`;
+            try {
+              await broadcastCookingLaunchEvent({
+                flowId,
+                platform: msg.input.taxMode === 'stocks' ? 'flap_stocks' : 'flap',
+                status: 'progress',
+                stage: 'prepare',
+                message: 'Flap 发射流程已开始',
+              });
+              const data = await TokenFlapLaunchService.createToken({
+                ...msg.input,
+                launchFlowId: flowId,
+                fromAddress: (msg.input.fromAddress && isAddress(msg.input.fromAddress))
+                  ? (msg.input.fromAddress as `0x${string}`)
+                  : undefined,
+                customDividendTokenAddress: (msg.input.customDividendTokenAddress && isAddress(msg.input.customDividendTokenAddress))
+                  ? (msg.input.customDividendTokenAddress as `0x${string}`)
+                  : undefined,
+              }, {
+                onProgress: async (event) => {
+                  await broadcastCookingLaunchEvent({
+                    flowId,
+                    platform: msg.input.taxMode === 'stocks' ? 'flap_stocks' : 'flap',
+                    status: 'progress',
+                    ...event,
+                  });
+                },
+              });
+              await broadcastCookingLaunchEvent({
+                flowId,
+                platform: msg.input.taxMode === 'stocks' ? 'flap_stocks' : 'flap',
+                status: 'success',
+                stage: 'launch_confirmed',
+                message: data.tokenAddress
+                  ? `Flap 发射成功：${data.tokenAddress.slice(0, 6)}...${data.tokenAddress.slice(-4)}`
+                  : 'Flap 发射成功',
+                txHash: data.txHash,
+                tokenAddress: data.tokenAddress,
+              });
+              return { ok: true, data };
+            } catch (error: any) {
+              await broadcastCookingLaunchEvent({
+                flowId,
+                platform: msg.input.taxMode === 'stocks' ? 'flap_stocks' : 'flap',
+                status: 'error',
+                stage: 'launch_confirmed',
+                message: String(error?.message || 'Flap 发射失败'),
+              });
+              throw error;
+            }
           }
 
           case 'ai:generateLogo': {

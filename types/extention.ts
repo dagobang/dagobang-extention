@@ -901,6 +901,28 @@ export type BgRequest =
       };
     };
   }
+  | {
+    type: 'token:createFlap';
+    input: {
+      launchFlowId?: string;
+      name: string;
+      symbol: string;
+      desc: string;
+      imgUrl: string;
+      imgFallbackUrls?: string[];
+      webUrl?: string;
+      twitterUrl?: string;
+      telegramUrl?: string;
+      fromAddress?: ChainAddress;
+      quoteTokenId: string;
+      quoteAmount?: string;
+      taxMode: 'quote' | 'self' | 'custom' | 'stocks' | 'disabled';
+      customDividendTokenAddress?: ChainAddress;
+      selectedStockSymbols?: string[];
+      buyTaxRateBps?: number;
+      sellTaxRateBps?: number;
+    };
+  }
   | { type: 'ai:generateLogo'; prompt: string; size?: string; apiKey: string }
   | { type: 'google:imageSearch'; query: string; page?: number }
   | { type: 'rpc:prewarm'; input?: { urls?: string[]; force?: boolean; timeoutMs?: number } }
@@ -1080,6 +1102,14 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
       bundleFailed: number;
       sniperSuccess: number;
       sniperFailed: number;
+    };
+  }
+  : T extends { type: 'token:createFlap' }
+  ? {
+    ok: true;
+    data?: {
+      txHash: `0x${string}`;
+      tokenAddress: `0x${string}` | null;
     };
   }
   : T extends { type: 'ai:generateLogo' }

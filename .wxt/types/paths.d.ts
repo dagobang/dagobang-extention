@@ -15,6 +15,7 @@ declare module "wxt/browser" {
     | "/icon/48.png"
     | "/icon/96.png"
     | "/logo.svg"
+    | "/quotes.json"
     | "/sidepanel.html"
     | "/sounds/Alipay.mp3"
     | "/sounds/Animal-Cat.mp3"

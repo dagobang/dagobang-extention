@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import toast from 'react-hot-toast';
+import { browser } from 'wxt/browser';
 import type { Account } from '@/types/extention';
 import type { ChainAddress } from '@/types/chain/address';
 import type { TokenInfo } from '@/types/token';
+import { ChainId } from '@/constants/chains/chainId';
+import { FlapQuoteTokensByChain, getFlapStocksPresetTokens, type FlapPresetQuoteToken } from '@/constants/flap';
 import GmgnAPI from '@/hooks/GmgnAPI';
 import { call } from '@/utils/messaging';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
@@ -25,6 +28,10 @@ type CookingPanelProps = {
 const COOKING_PANEL_WIDTH = 360;
 const COOKING_PANEL_MIN_HEIGHT = 420;
 const COOKING_PANEL_DEFAULT_HEIGHT = 700;
+const FLAP_TAX_RATE_OPTIONS = [100, 300, 500, 1000] as const;
+
+type CookingLaunchPlatform = 'fourmeme' | 'flap' | 'flap_stocks';
+type FlapTaxMode = 'quote' | 'self' | 'custom' | 'stocks' | 'disabled';
 
 function clampCookingPanelHeight(value: number, panelTop: number) {
   const viewportHeight = window.innerHeight || 0;
@@ -48,6 +55,45 @@ function pickFirstNonEmpty(...values: Array<string | null | undefined>) {
   return '';
 }
 
+function getPlatformButtonClass(active: boolean) {
+  return active
+    ? 'border-emerald-400 bg-emerald-500/15 text-emerald-200 shadow-[inset_0_0_0_1px_rgba(74,222,128,0.15)]'
+    : 'border-zinc-800 bg-zinc-950/80 text-zinc-300 hover:border-zinc-700 hover:text-zinc-100';
+}
+
+function getTaxChipClass(active: boolean) {
+  return active
+    ? 'border-emerald-400 bg-emerald-500/10 text-emerald-200'
+    : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200';
+}
+
+function renderFlapTokenAvatar(token: FlapPresetQuoteToken, sizeClass = 'h-4 w-4') {
+  if (token.iconSrc) {
+    return (
+      <img
+        src={token.iconSrc}
+        alt={token.symbol}
+        className={`${sizeClass} rounded-full object-cover`}
+      />
+    );
+  }
+  return (
+    <span className={`${sizeClass} inline-flex items-center justify-center rounded-full bg-zinc-800 text-[9px] font-semibold text-zinc-200`}>
+      {token.symbol.slice(0, 1)}
+    </span>
+  );
+}
+
+function getCookingLaunchFallbackLink(platform: CookingLaunchPlatform, tokenAddress: string) {
+  if (platform === 'fourmeme') {
+    return `https://four.meme/zh-TW/token/${tokenAddress}`;
+  }
+  if (platform === 'flap' || platform === 'flap_stocks') {
+    return `https://gmgn.ai/bsc/token/${tokenAddress}`;
+  }
+  return '';
+}
+
 export function CookingPanel({
   visible,
   onVisibleChange,
@@ -62,7 +108,7 @@ export function CookingPanel({
 }: CookingPanelProps) {
   type LogoSearchImage = { url: string; thumbnail?: string; title?: string; source?: string };
   type LogoSearchTab = 'token' | 'google';
-  const cookingConfigStorageKey = 'dagobang_cooking_config_v1';
+  const cookingConfigStorageKey = 'dagobang_cooking_config_v2';
   const DEFAULT_TOKEN_SUPPLY = 1_000_000_000;
   const MAX_AUTO_SELL_RULES = 5;
   type AutoSellRule = { marketCapUsd: string; sellPercent: string };
@@ -75,6 +121,9 @@ export function CookingPanel({
   const posRef = useRef(pos);
   const [panelHeight, setPanelHeight] = useState(() => clampCookingPanelHeight(COOKING_PANEL_DEFAULT_HEIGHT, 360));
   const panelHeightRef = useRef(panelHeight);
+  const [launching, setLaunching] = useState(false);
+  const launchFlowIdRef = useRef<string | null>(null);
+  const launchToastIdRef = useRef<string | undefined>(undefined);
   const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
   const resizing = useRef<null | { startY: number; baseHeight: number }>(null);
 
@@ -85,6 +134,44 @@ export function CookingPanel({
   useEffect(() => {
     panelHeightRef.current = panelHeight;
   }, [panelHeight]);
+
+  useEffect(() => {
+    const listener = (message: any) => {
+      if (message?.type !== 'bg:cookingLaunchEvent') return;
+      const currentFlowId = launchFlowIdRef.current;
+      if (!currentFlowId || message?.flowId !== currentFlowId) return;
+      const toastId = launchToastIdRef.current;
+      const display = String(message?.message || '发射处理中');
+      if (message?.status === 'success') {
+        toast.success(display, { id: toastId, icon: '✅' });
+        setLaunching(false);
+        launchFlowIdRef.current = null;
+        launchToastIdRef.current = undefined;
+        const addr = typeof message?.tokenAddress === 'string' ? message.tokenAddress.trim() : '';
+        if (addr) {
+          const link = (siteInfo ? parsePlatformTokenLink(siteInfo, addr) : '')
+            || getCookingLaunchFallbackLink(message?.platform === 'flap_stocks' ? 'flap_stocks' : 'flap', addr);
+          if (link) {
+            window.setTimeout(() => {
+              navigateToUrl(link);
+            }, 10);
+          }
+        }
+        clearImageAndTokenInputs();
+        return;
+      }
+      if (message?.status === 'error') {
+        toast.error(display, { id: toastId, icon: '❌' });
+        setLaunching(false);
+        launchFlowIdRef.current = null;
+        launchToastIdRef.current = undefined;
+        return;
+      }
+      toast.loading(display, { id: toastId, icon: '🔄' });
+    };
+    browser.runtime.onMessage.addListener(listener);
+    return () => browser.runtime.onMessage.removeListener(listener);
+  }, [siteInfo]);
 
   useEffect(() => {
     try {
@@ -159,6 +246,14 @@ export function CookingPanel({
   const [twitterInput, setTwitterInput] = useState('');
   const [websiteInput, setWebsiteInput] = useState('');
   const [telegramInput, setTelegramInput] = useState('');
+  const [selectedPlatform, setSelectedPlatform] = useState<CookingLaunchPlatform>('fourmeme');
+  const [flapQuoteTokenId, setFlapQuoteTokenId] = useState<FlapPresetQuoteToken['id']>('bnb');
+  const [flapTaxMode, setFlapTaxMode] = useState<FlapTaxMode>('quote');
+  const [flapBuyTaxBps, setFlapBuyTaxBps] = useState<number>(100);
+  const [flapSellTaxBps, setFlapSellTaxBps] = useState<number>(100);
+  const [flapCustomDividendTokenAddress, setFlapCustomDividendTokenAddress] = useState('');
+  const [flapSelectedStocks, setFlapSelectedStocks] = useState<string[]>([]);
+  const [flapStockSearch, setFlapStockSearch] = useState('');
   const [deployWallet, setDeployWallet] = useState<ChainAddress | null>(null);
   const [defaultBuyBnb, setDefaultBuyBnb] = useState('0.1');
   const [autoSellEnabled, setAutoSellEnabled] = useState(true);
@@ -176,8 +271,35 @@ export function CookingPanel({
   const localImageInputRef = useRef<HTMLInputElement | null>(null);
   const autoSellEnabledRef = useRef(autoSellEnabled);
   const autoSellRulesRef = useRef(autoSellRules);
+  const flapQuoteTokens = useMemo(
+    () => FlapQuoteTokensByChain[ChainId.BNB] ?? [],
+    [],
+  );
+  const flapStocksPresetTokens = useMemo(
+    () => getFlapStocksPresetTokens(ChainId.BNB),
+    [],
+  );
+  const selectedFlapQuoteToken = useMemo(
+    () => flapQuoteTokens.find((item) => item.id === flapQuoteTokenId) ?? flapQuoteTokens[0] ?? null,
+    [flapQuoteTokenId, flapQuoteTokens],
+  );
+  const filteredFlapStockOptions = useMemo(() => {
+    const keyword = flapStockSearch.trim().toLowerCase();
+    if (!keyword) return [...flapStocksPresetTokens];
+    return flapStocksPresetTokens.filter((token) => token.symbol.toLowerCase().includes(keyword));
+  }, [flapStockSearch, flapStocksPresetTokens]);
+  const isFlapPlatform = selectedPlatform === 'flap' || selectedPlatform === 'flap_stocks';
+  const isFlapStocksTemplate = selectedPlatform === 'flap_stocks';
+  const isFlapNativeQuote = selectedFlapQuoteToken?.isNative === true;
 
   const persistCookingConfig = (patch?: {
+    selectedPlatform?: CookingLaunchPlatform;
+    flapQuoteTokenId?: FlapPresetQuoteToken['id'];
+    flapTaxMode?: FlapTaxMode;
+    flapBuyTaxBps?: number;
+    flapSellTaxBps?: number;
+    flapCustomDividendTokenAddress?: string;
+    flapSelectedStocks?: string[];
     deployWallet?: ChainAddress | null;
     defaultBuyBnb?: string;
     autoSellEnabled?: boolean;
@@ -185,6 +307,13 @@ export function CookingPanel({
   }) => {
     try {
       const payload = {
+        selectedPlatform: patch?.selectedPlatform ?? selectedPlatform,
+        flapQuoteTokenId: patch?.flapQuoteTokenId ?? flapQuoteTokenId,
+        flapTaxMode: patch?.flapTaxMode ?? flapTaxMode,
+        flapBuyTaxBps: patch?.flapBuyTaxBps ?? flapBuyTaxBps,
+        flapSellTaxBps: patch?.flapSellTaxBps ?? flapSellTaxBps,
+        flapCustomDividendTokenAddress: patch?.flapCustomDividendTokenAddress ?? flapCustomDividendTokenAddress,
+        flapSelectedStocks: patch?.flapSelectedStocks ?? flapSelectedStocks,
         deployWallet: (patch?.deployWallet ?? deployWallet) || undefined,
         defaultBuyBnb: patch?.defaultBuyBnb ?? defaultBuyBnb,
         autoSellEnabled: patch?.autoSellEnabled ?? autoSellEnabledRef.current,
@@ -255,11 +384,37 @@ export function CookingPanel({
       const stored = window.localStorage.getItem(cookingConfigStorageKey);
       if (!stored) return;
       const parsed = JSON.parse(stored) as {
+        selectedPlatform?: CookingLaunchPlatform;
+        flapQuoteTokenId?: FlapPresetQuoteToken['id'];
+        flapTaxMode?: FlapTaxMode;
+        flapBuyTaxBps?: number;
+        flapSellTaxBps?: number;
+        flapCustomDividendTokenAddress?: string;
+        flapSelectedStocks?: string[];
         deployWallet?: string;
         defaultBuyBnb?: string;
         autoSellEnabled?: boolean;
         autoSellRules?: AutoSellRule[];
       };
+      if (parsed.selectedPlatform === 'fourmeme' || parsed.selectedPlatform === 'flap' || parsed.selectedPlatform === 'flap_stocks') {
+        setSelectedPlatform(parsed.selectedPlatform);
+      }
+      if (parsed.flapQuoteTokenId && flapQuoteTokens.some((item) => item.id === parsed.flapQuoteTokenId)) {
+        setFlapQuoteTokenId(parsed.flapQuoteTokenId);
+      }
+      if (parsed.flapTaxMode === 'quote' || parsed.flapTaxMode === 'self' || parsed.flapTaxMode === 'custom' || parsed.flapTaxMode === 'stocks' || parsed.flapTaxMode === 'disabled') {
+        setFlapTaxMode(parsed.flapTaxMode);
+      }
+      if (Number.isFinite(parsed.flapBuyTaxBps)) setFlapBuyTaxBps(Number(parsed.flapBuyTaxBps));
+      if (Number.isFinite(parsed.flapSellTaxBps)) setFlapSellTaxBps(Number(parsed.flapSellTaxBps));
+      if (typeof parsed.flapCustomDividendTokenAddress === 'string') setFlapCustomDividendTokenAddress(parsed.flapCustomDividendTokenAddress);
+      if (Array.isArray(parsed.flapSelectedStocks)) {
+        setFlapSelectedStocks(
+          parsed.flapSelectedStocks
+            .map((item) => String(item || '').trim().toUpperCase())
+            .filter((item) => flapStocksPresetTokens.some((token) => token.symbol === item)),
+        );
+      }
       if (parsed.deployWallet) setDeployWallet(parsed.deployWallet as ChainAddress);
       if (typeof parsed.defaultBuyBnb === 'string') setDefaultBuyBnb(parsed.defaultBuyBnb);
       if (typeof parsed.autoSellEnabled === 'boolean') setAutoSellEnabled(parsed.autoSellEnabled);
@@ -274,7 +429,19 @@ export function CookingPanel({
       }
     } catch {
     }
-  }, []);
+  }, [flapStocksPresetTokens]);
+
+  useEffect(() => {
+    if (selectedPlatform === 'flap_stocks') {
+      if (flapTaxMode !== 'stocks') {
+        setFlapTaxMode('stocks');
+      }
+      return;
+    }
+    if (flapTaxMode === 'stocks' || flapTaxMode === 'disabled') {
+      setFlapTaxMode('quote');
+    }
+  }, [selectedPlatform, flapTaxMode]);
 
   useEffect(() => {
     autoSellEnabledRef.current = autoSellEnabled;
@@ -286,7 +453,19 @@ export function CookingPanel({
 
   useEffect(() => {
     persistCookingConfig();
-  }, [deployWallet, defaultBuyBnb, autoSellEnabled, autoSellRules]);
+  }, [
+    selectedPlatform,
+    flapQuoteTokenId,
+    flapTaxMode,
+    flapBuyTaxBps,
+    flapSellTaxBps,
+    flapCustomDividendTokenAddress,
+    flapSelectedStocks,
+    deployWallet,
+    defaultBuyBnb,
+    autoSellEnabled,
+    autoSellRules,
+  ]);
 
   const selectedDeployWallet = useMemo(
     () => walletAccounts.find((acc) => acc.address.toLowerCase() === String(deployWallet || '').toLowerCase()) ?? null,
@@ -444,6 +623,19 @@ export function CookingPanel({
     void handleSearchGoogleImages(0);
   };
 
+  const toggleFlapStockSymbol = (symbol: string) => {
+    setFlapSelectedStocks((list) => {
+      if (list.includes(symbol)) {
+        return list.filter((item) => item !== symbol);
+      }
+      if (list.length >= 10) {
+        toast.error('最多选择 10 个币股模板');
+        return list;
+      }
+      return [...list, symbol];
+    });
+  };
+
   const handleSubmitMemeForm = async () => {
     const symbol = tokenSymbolInput.trim();
     const name = tokenNameInput.trim();
@@ -464,8 +656,23 @@ export function CookingPanel({
       toast.error('请选择发币钱包');
       return;
     }
+    if (selectedPlatform === 'flap_stocks' && flapSelectedStocks.length <= 0) {
+      toast.error('币股模板至少选择 1 个币股');
+      return;
+    }
+    if (selectedPlatform === 'flap' && flapTaxMode === 'custom' && !flapCustomDividendTokenAddress.trim()) {
+      toast.error('请填写自定义分红代币地址');
+      return;
+    }
     try {
-      const toastId = toast.loading('正在创建 Meme Token...', { icon: '🔄' });
+      const flowId = `cooking:${selectedPlatform}:${Date.now().toString(36)}:${Math.random().toString(16).slice(2, 8)}`;
+      const toastId = toast.loading(
+        selectedPlatform === 'fourmeme' ? '正在创建 Fourmeme Token...' : '正在准备 Flap 发射...',
+        { icon: '🔄' }
+      );
+      launchFlowIdRef.current = flowId;
+      launchToastIdRef.current = String(toastId);
+      setLaunching(true);
       const latestAutoSellEnabled = autoSellEnabledRef.current;
       const latestAutoSellRules = autoSellRulesRef.current;
       persistCookingConfig({
@@ -478,113 +685,182 @@ export function CookingPanel({
       if (telegramInput.trim()) descParts.push(`Telegram: ${telegramInput.trim()}`);
       if (defaultBuyBnb.trim()) descParts.push(`DefaultBuyBNB: ${defaultBuyBnb.trim()}`);
       if (latestAutoSellEnabled) descParts.push('AutoSellMode: marketCapTargets');
+      if (selectedFlapQuoteToken) descParts.push(`FlapQuote: ${selectedFlapQuoteToken.label}`);
+      if (isFlapPlatform) descParts.push(`FlapTaxMode: ${isFlapStocksTemplate ? 'stocks' : flapTaxMode}`);
+      if (isFlapStocksTemplate && flapSelectedStocks.length > 0) descParts.push(`FlapStocks: ${flapSelectedStocks.join(',')}`);
       const desc = descParts.join(' | ');
-      const preSale = defaultBuyBnb.trim() || '0';
-
-      const res = await call({
-        type: 'token:createFourmeme',
-        input: {
-          name,
-          shortName: symbol,
-          desc,
-          imgUrl: img,
-          launchTime: Date.now(),
-          label: 'Meme',
-          lpTradingFee: 0.0025,
-          webUrl: websiteInput.trim() || undefined,
-          twitterUrl: twitterInput.trim() || undefined,
-          telegramUrl: telegramInput.trim() || undefined,
-          preSale,
-          onlyMPC: false,
-          feePlan: false,
-          fromAddress: deployWallet,
-        },
-      } as const);
-      const data = (res as any)?.data;
-      if (data && data.txHash) {
-        const addr = data.tokenAddress as string | undefined;
-        const short = addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '';
-        toast.success(
-          addr ? `Meme Token 发币交易已发送，地址：${short}` : 'Meme Token 发币交易已发送',
-          { id: toastId, icon: '✅' }
-        );
-        if (addr) {
-          const link = siteInfo
-            ? parsePlatformTokenLink(siteInfo, addr)
-            : `https://four.meme/zh-TW/token/${addr}`;
-          if (link) {
-            setTimeout(() => {
-              navigateToUrl(link);
-            }, 10);
+      if (selectedPlatform === 'fourmeme') {
+        const preSale = defaultBuyBnb.trim() || '0';
+        const res = await call({
+          type: 'token:createFourmeme',
+          input: {
+            name,
+            shortName: symbol,
+            desc,
+            imgUrl: img,
+            launchTime: Date.now(),
+            label: 'Meme',
+            lpTradingFee: 0.0025,
+            webUrl: websiteInput.trim() || undefined,
+            twitterUrl: twitterInput.trim() || undefined,
+            telegramUrl: telegramInput.trim() || undefined,
+            preSale,
+            onlyMPC: false,
+            feePlan: false,
+            fromAddress: deployWallet,
+          },
+        } as const);
+        const data = (res as any)?.data;
+        if (data && data.txHash) {
+          const addr = data.tokenAddress as string | undefined;
+          const short = addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '';
+          toast.success(
+            addr ? `Meme Token 发币交易已发送，地址：${short}` : 'Meme Token 发币交易已发送',
+            { id: toastId, icon: '✅' }
+          );
+          if (addr) {
+            const link = siteInfo
+              ? parsePlatformTokenLink(siteInfo, addr)
+              : `https://four.meme/zh-TW/token/${addr}`;
+            if (link) {
+              setTimeout(() => {
+                navigateToUrl(link);
+              }, 10);
+            }
+          }
+        } else {
+          toast.success('创建 Meme Token 参数已生成', { id: toastId, icon: '✅' });
+        }
+        if (latestAutoSellEnabled && data?.tokenAddress) {
+          const tokenAddress = String(data.tokenAddress) as `0x${string}`;
+          const normalizedRules = latestAutoSellRules
+            .map((rule) => ({
+              marketCapUsd: Number(String(rule.marketCapUsd || '').trim()),
+              sellPercent: Number(String(rule.sellPercent || '').trim()),
+            }))
+            .filter((rule) =>
+              Number.isFinite(rule.marketCapUsd)
+              && rule.marketCapUsd > 0
+              && Number.isFinite(rule.sellPercent)
+              && rule.sellPercent > 0
+              && rule.sellPercent <= 100
+            );
+          if (normalizedRules.length <= 0) {
+            toast.error('自动卖出已开启，但没有有效的市值目标配置');
+          } else {
+            const tokenInfoForOrder: TokenInfo = {
+              chain: 'bsc',
+              address: tokenAddress,
+              name,
+              symbol,
+              decimals: 18,
+              logo: img,
+              launchpad: 'fourmeme',
+              launchpad_progress: 0,
+              launchpad_platform: 'fourmeme',
+              launchpad_status: 0,
+              quote_token: 'BNB',
+              tokenPrice: {
+                price: '0',
+                marketCap: '0',
+                timestamp: Date.now(),
+              },
+            };
+            const sellWallets = [deployWallet];
+            const orderInputs = sellWallets.flatMap((wallet) =>
+              normalizedRules.map((rule) => ({
+                chainId: 56,
+                tokenAddress,
+                fromAddress: wallet,
+                tokenSymbol: symbol,
+                side: 'sell' as const,
+                orderType: 'take_profit_sell' as const,
+                triggerPriceUsd: rule.marketCapUsd / DEFAULT_TOKEN_SUPPLY,
+                targetChangePercent: 0,
+                sellPercentBps: Math.round(rule.sellPercent * 100),
+                tokenInfo: tokenInfoForOrder,
+              }))
+            );
+            const createResults = await Promise.allSettled(
+              orderInputs.map((input) => call({ type: 'limitOrder:create', input } as const))
+            );
+            const okCount = createResults.filter((x) => x.status === 'fulfilled').length;
+            toast.success(`自动卖出挂单已创建 ${okCount}/${orderInputs.length}`, { icon: '🧾' });
           }
         }
+        if (data) {
+          console.log('Fourmeme create token response', data);
+        }
       } else {
-        toast.success('创建 Meme Token 参数已生成', { id: toastId, icon: '✅' });
-      }
-      if (latestAutoSellEnabled && data?.tokenAddress) {
-        const tokenAddress = String(data.tokenAddress) as `0x${string}`;
-        const normalizedRules = latestAutoSellRules
-          .map((rule) => ({
-            marketCapUsd: Number(String(rule.marketCapUsd || '').trim()),
-            sellPercent: Number(String(rule.sellPercent || '').trim()),
-          }))
-          .filter((rule) =>
-            Number.isFinite(rule.marketCapUsd)
-            && rule.marketCapUsd > 0
-            && Number.isFinite(rule.sellPercent)
-            && rule.sellPercent > 0
-            && rule.sellPercent <= 100
-          );
-        if (normalizedRules.length <= 0) {
-          toast.error('自动卖出已开启，但没有有效的市值目标配置');
-        } else {
-          const tokenInfoForOrder: TokenInfo = {
-            chain: 'bsc',
-            address: tokenAddress,
+        const res = await call({
+          type: 'token:createFlap',
+          input: {
             name,
             symbol,
-            decimals: 18,
-            logo: img,
-            launchpad: 'fourmeme',
-            launchpad_progress: 0,
-            launchpad_platform: 'fourmeme',
-            launchpad_status: 0,
-            quote_token: 'BNB',
-            tokenPrice: {
-              price: '0',
-              marketCap: '0',
-              timestamp: Date.now(),
-            },
-          };
-          const sellWallets = [deployWallet];
-          const orderInputs = sellWallets.flatMap((wallet) =>
-            normalizedRules.map((rule) => ({
-              chainId: 56,
-              tokenAddress,
-              fromAddress: wallet,
-              tokenSymbol: symbol,
-              side: 'sell' as const,
-              orderType: 'take_profit_sell' as const,
-              triggerPriceUsd: rule.marketCapUsd / DEFAULT_TOKEN_SUPPLY,
-              targetChangePercent: 0,
-              sellPercentBps: Math.round(rule.sellPercent * 100),
-              tokenInfo: tokenInfoForOrder,
-            }))
+            desc,
+            imgUrl: img,
+            webUrl: websiteInput.trim() || undefined,
+            twitterUrl: twitterInput.trim() || undefined,
+            telegramUrl: telegramInput.trim() || undefined,
+            launchFlowId: flowId,
+            fromAddress: deployWallet,
+            quoteTokenId: flapQuoteTokenId,
+            quoteAmount: defaultBuyBnb.trim() || '0',
+            taxMode: flapTaxMode,
+            customDividendTokenAddress: flapTaxMode === 'custom'
+              ? (flapCustomDividendTokenAddress.trim() as ChainAddress)
+              : undefined,
+            selectedStockSymbols: flapSelectedStocks,
+            buyTaxRateBps: flapBuyTaxBps,
+            sellTaxRateBps: flapSellTaxBps,
+          },
+        } as const);
+        const data = (res as any)?.data;
+        if (data?.txHash) {
+          const addr = data.tokenAddress as string | undefined;
+          const short = addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '';
+          toast.success(
+            addr ? `Flap 发射交易已发送，地址：${short}` : 'Flap 发射交易已发送',
+            { id: toastId, icon: '✅' }
           );
-          const createResults = await Promise.allSettled(
-            orderInputs.map((input) => call({ type: 'limitOrder:create', input } as const))
-          );
-          const okCount = createResults.filter((x) => x.status === 'fulfilled').length;
-          toast.success(`自动卖出挂单已创建 ${okCount}/${orderInputs.length}`, { icon: '🧾' });
+          if (addr) {
+            const link = (siteInfo ? parsePlatformTokenLink(siteInfo, addr) : '')
+              || getCookingLaunchFallbackLink(selectedPlatform, addr);
+            if (link) {
+              setTimeout(() => {
+                navigateToUrl(link);
+              }, 10);
+            }
+          }
+          if (latestAutoSellEnabled) {
+            toast('Flap 发射已完成，自动卖出挂单暂未接入这条链路', { icon: 'ℹ️' });
+          }
+        } else {
+          toast.success('Flap 发射参数已生成', { id: toastId, icon: '✅' });
         }
       }
-      if (data) {
-        console.log('Fourmeme create token response', data);
-      }
       clearImageAndTokenInputs();
+      setLaunching(false);
+      launchFlowIdRef.current = null;
+      launchToastIdRef.current = undefined;
     } catch (e: any) {
-      const msg = e?.message ? String(e.message) : '创建 Meme Token 失败';
-      toast.error(msg, { icon: '❌' });
+      const msg = e?.message
+        ? String(e.message)
+        : selectedPlatform === 'fourmeme'
+          ? '创建 Meme Token 失败'
+          : '创建 Flap Token 失败';
+      if (msg.includes('Request timed out') && selectedPlatform !== 'fourmeme') {
+        toast.loading('发射流程仍在后台继续，请按钱包弹窗完成后等待结果', {
+          id: launchToastIdRef.current,
+          icon: '⏳',
+        });
+        return;
+      }
+      const toastId = launchToastIdRef.current;
+      setLaunching(false);
+      launchFlowIdRef.current = null;
+      launchToastIdRef.current = undefined;
+      toast.error(msg, { id: toastId, icon: '❌' });
     }
   };
 
@@ -802,6 +1078,202 @@ export function CookingPanel({
             </div>
           </div>
 
+          <div className="space-y-2 rounded-lg border border-fuchsia-500/25 bg-fuchsia-500/5 p-2.5">
+            <div className="text-[12px] font-semibold text-fuchsia-200">平台</div>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { value: 'fourmeme', label: 'Four' },
+                { value: 'flap', label: 'Flap' },
+                { value: 'flap_stocks', label: 'Flap Stocks' },
+              ] as const).map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={`rounded-md border px-2 py-2 text-[12px] font-medium transition ${getPlatformButtonClass(selectedPlatform === item.value)}`}
+                  onClick={() => setSelectedPlatform(item.value)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            {selectedPlatform === 'flap_stocks' && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200">
+                币股模板先按官方 VaultPortal 路径做 fail-closed。当前版本支持预设与多选，不开放真正提交。
+              </div>
+            )}
+          </div>
+
+          {isFlapPlatform && (
+            <div className="space-y-3 rounded-lg border border-indigo-500/25 bg-indigo-500/5 p-2.5">
+              <div className="text-[12px] font-semibold text-indigo-200">预设</div>
+
+              <div className="space-y-1">
+                <div className="text-[11px] text-zinc-400">底池币种</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {flapQuoteTokens.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`rounded-md border px-2 py-1.5 text-[11px] transition ${getTaxChipClass(flapQuoteTokenId === item.id)}`}
+                      onClick={() => setFlapQuoteTokenId(item.id)}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {renderFlapTokenAvatar(item)}
+                        <span className="min-w-0 truncate">{item.label}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {!isFlapStocksTemplate ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] text-zinc-400">税收模式</div>
+                    <div className="text-[10px] text-zinc-500">
+                      当前默认按底池币种分红
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      { value: 'quote', label: '按底池币种' },
+                      { value: 'self', label: '本币' },
+                      { value: 'custom', label: '自定义' },
+                    ] as const).map((item) => (
+                      <button
+                        key={item.value}
+                        type="button"
+                        className={`rounded-md border px-2 py-1.5 text-[11px] transition ${getTaxChipClass(flapTaxMode === item.value)}`}
+                        onClick={() => setFlapTaxMode(item.value)}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                  {flapTaxMode === 'custom' && (
+                    <input
+                      className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
+                      value={flapCustomDividendTokenAddress}
+                      onChange={(e) => setFlapCustomDividendTokenAddress(e.target.value)}
+                      placeholder="自定义分红代币地址"
+                    />
+                  )}
+                  <div className="rounded-md border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-[11px] text-zinc-400">
+                    <span className="flex items-center gap-1.5">
+                      {flapTaxMode === 'quote' && selectedFlapQuoteToken
+                        ? renderFlapTokenAvatar(selectedFlapQuoteToken)
+                        : null}
+                      <span>
+                        当前分红代币：{flapTaxMode === 'quote'
+                          ? selectedFlapQuoteToken?.label || '-'
+                          : flapTaxMode === 'self'
+                            ? '本币'
+                            : flapCustomDividendTokenAddress.trim() || '待填写'}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] text-zinc-400">币股分红模板</div>
+                    <div className="text-[10px] text-zinc-500">已选 {flapSelectedStocks.length}/10</div>
+                  </div>
+                  <input
+                    className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
+                    value={flapStockSearch}
+                    onChange={(e) => setFlapStockSearch(e.target.value)}
+                    placeholder="搜索币种符号"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    {filteredFlapStockOptions.map((token) => {
+                      const active = flapSelectedStocks.includes(token.symbol);
+                      return (
+                        <button
+                          key={token.address}
+                          type="button"
+                          className={`rounded-md border px-2 py-2 text-left text-[11px] transition ${getTaxChipClass(active)}`}
+                          onClick={() => toggleFlapStockSymbol(token.symbol)}
+                        >
+                          <span className="flex items-center gap-2">
+                            {renderFlapTokenAvatar(token, 'h-5 w-5')}
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-zinc-100">{token.symbol}</span>
+                              <span className="block text-[10px] text-zinc-500">
+                                {(token.tags?.[0] || token.category).toUpperCase()}
+                              </span>
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {flapSelectedStocks.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {flapSelectedStocks.map((symbol) => {
+                        const token = flapStocksPresetTokens.find((item) => item.symbol === symbol);
+                        return (
+                          <button
+                            key={symbol}
+                            type="button"
+                            className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-200"
+                            onClick={() => toggleFlapStockSymbol(symbol)}
+                          >
+                            <span className="flex items-center gap-1">
+                              {token ? renderFlapTokenAvatar(token, 'h-3.5 w-3.5') : null}
+                              <span>{symbol} ×</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-400">
+                    <span>买入税率</span>
+                    <span>{flapBuyTaxBps > 0 ? `${flapBuyTaxBps / 100}%` : '0%'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {FLAP_TAX_RATE_OPTIONS.map((bps) => (
+                      <button
+                        key={`buy-${bps}`}
+                        type="button"
+                        className={`rounded-md border px-2 py-1.5 text-[11px] transition ${getTaxChipClass(flapBuyTaxBps === bps)}`}
+                        onClick={() => setFlapBuyTaxBps((prev) => (prev === bps ? 0 : bps))}
+                      >
+                        {bps / 100}%
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-[10px] text-zinc-500">再次点击已选税率可取消，未选中即 0%</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-400">
+                    <span>卖出税率</span>
+                    <span>{flapSellTaxBps > 0 ? `${flapSellTaxBps / 100}%` : '0%'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {FLAP_TAX_RATE_OPTIONS.map((bps) => (
+                      <button
+                        key={`sell-${bps}`}
+                        type="button"
+                        className={`rounded-md border px-2 py-1.5 text-[11px] transition ${getTaxChipClass(flapSellTaxBps === bps)}`}
+                        onClick={() => setFlapSellTaxBps((prev) => (prev === bps ? 0 : bps))}
+                      >
+                        {bps / 100}%
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-[10px] text-zinc-500">再次点击已选税率可取消，未选中即 0%</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-2.5">
             <div className="text-[12px] font-semibold text-emerald-200">钱包 + 卖出设置</div>
 
@@ -845,12 +1317,22 @@ export function CookingPanel({
             </div>
 
             <div className="space-y-1">
-              <div className="text-[11px] text-zinc-400">默认买入（发币钱包，BNB）</div>
+              <div className="text-[11px] text-zinc-400">
+                {isFlapPlatform ? (isFlapNativeQuote ? '初始注入金额' : '初始注入预算（BNB）') : '默认买入（发币钱包，BNB）'}
+              </div>
               <input
                 className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[12px] outline-none"
                 value={defaultBuyBnb}
                 onChange={(e) => setDefaultBuyBnb(e.target.value)}
+                placeholder={isFlapPlatform ? '按 BNB 预算填写，例如 0.1' : undefined}
               />
+              {isFlapPlatform && (
+                <div className="text-[10px] text-zinc-500">
+                  {isFlapNativeQuote
+                    ? 'BNB 底池已按官方 Portal 路径接入，这里会写入 quoteAmt 和交易 value。'
+                    : `非 BNB 底池会先用这里的 BNB 预算兑换 ${selectedFlapQuoteToken?.symbol || '底池币种'}，再自动授权并提交发射。`}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-3 text-[11px] text-zinc-300">
@@ -914,11 +1396,18 @@ export function CookingPanel({
         </div>
         <div className="border-t border-zinc-800 p-3">
           <button
-            className="w-full rounded-md bg-emerald-500 text-[13px] font-semibold text-black py-2.5 hover:bg-emerald-400 disabled:opacity-60"
+            className="w-full rounded-md bg-emerald-500 text-[13px] font-semibold text-black py-2.5 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
             onClick={handleSubmitMemeForm}
+            disabled={launching}
           >
-            发布
+            {launching
+              ? '发射处理中...'
+              : selectedPlatform === 'fourmeme'
+                ? '发布到 Four'
+                : selectedPlatform === 'flap'
+                  ? '发布到 Flap'
+                  : '发布到 Flap Stocks'}
           </button>
         </div>
         <div

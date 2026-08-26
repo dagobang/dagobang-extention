@@ -16,9 +16,11 @@ export async function call<T extends BgRequest>(req: T): Promise<BgResponse<T>> 
       req.type === 'tx:sellWithReceiptAuto' ||
       req.type === 'telegram:quickBuy' ||
       req.type === 'telegram:quickSell' ||
-      req.type === 'ai:generateLogo'
+      req.type === 'ai:generateLogo' ||
+      req.type === 'token:createFlap' ||
+      req.type === 'token:createFourmeme'
     )
-      ? (isSolanaReceiptFlow ? 480000 : 60000)
+      ? (isSolanaReceiptFlow ? 480000 : (req.type === 'token:createFlap' || req.type === 'token:createFourmeme' ? 600000 : 60000))
       : req.type === 'twitter:signal'
         ? 20000
       : req.type.startsWith('limitOrder:')

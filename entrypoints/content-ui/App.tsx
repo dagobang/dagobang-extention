@@ -512,6 +512,38 @@ function getPendingAutoSellOrderKey(chainId: number, tokenAddress: string, walle
   return `${chainId}:${normalizeChainScopedAddressKey(chainId, tokenAddress)}:${normalizeChainScopedAddressKey(chainId, walletAddress)}`;
 }
 
+function isEditableElement(node: EventTarget | null | undefined): boolean {
+  if (!(node instanceof Element)) return false;
+  const tag = String(node.tagName || '').toUpperCase();
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (node instanceof HTMLElement && node.isContentEditable) return true;
+  return !!node.closest('input,textarea,select,[contenteditable],[contenteditable="true"],[contenteditable="plaintext-only"]');
+}
+
+function getDeepActiveElement(root: Document | ShadowRoot | null): Element | null {
+  let active: Element | null = root?.activeElement ?? null;
+  while (active instanceof HTMLElement && active.shadowRoot?.activeElement) {
+    active = active.shadowRoot.activeElement;
+  }
+  return active;
+}
+
+function isEditableKeyboardContext(event: Event): boolean {
+  const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+  for (const node of path) {
+    if (isEditableElement(node)) return true;
+  }
+  if (isEditableElement(event.target)) return true;
+  return isEditableElement(getDeepActiveElement(document));
+}
+
+function isEditableInputHotkey(event: KeyboardEvent): boolean {
+  if (event.key === ' ' || event.code === 'Space') return true;
+  if (!(event.ctrlKey || event.metaKey)) return false;
+  const key = String(event.key || '').toLowerCase();
+  return key === 'a' || key === 'c' || key === 'v' || key === 'x' || key === 'z' || key === 'y';
+}
+
 export default function App() {
   const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(() => parseCurrentUrl(window.location.href));
   const [busy, setBusy] = useState(false);
@@ -1089,7 +1121,7 @@ export default function App() {
       if (!keyboardEnabledRef.current) return;
       if (minimizedRef.current) return;
       if (isEditingRef.current) return;
-      if (isEditableTarget(e.target)) return;
+      if (isEditableKeyboardContext(e)) return;
 
       if (e.code === 'Space') {
         if (!spaceHeldRef.current) {
@@ -1146,6 +1178,32 @@ export default function App() {
       window.removeEventListener('keyup', onKeyUp, true);
       window.removeEventListener('blur', onBlur, true);
       document.removeEventListener('visibilitychange', onBlur, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const shieldEditableKeyEvent = (e: KeyboardEvent) => {
+      if (!isEditableKeyboardContext(e)) return;
+      if (!isEditableInputHotkey(e)) return;
+      e.stopPropagation();
+    };
+
+    const shieldEditableClipboardEvent = (e: ClipboardEvent) => {
+      if (!isEditableKeyboardContext(e)) return;
+      e.stopPropagation();
+    };
+
+    window.addEventListener('keydown', shieldEditableKeyEvent, true);
+    window.addEventListener('keyup', shieldEditableKeyEvent, true);
+    window.addEventListener('copy', shieldEditableClipboardEvent, true);
+    window.addEventListener('cut', shieldEditableClipboardEvent, true);
+    window.addEventListener('paste', shieldEditableClipboardEvent, true);
+    return () => {
+      window.removeEventListener('keydown', shieldEditableKeyEvent, true);
+      window.removeEventListener('keyup', shieldEditableKeyEvent, true);
+      window.removeEventListener('copy', shieldEditableClipboardEvent, true);
+      window.removeEventListener('cut', shieldEditableClipboardEvent, true);
+      window.removeEventListener('paste', shieldEditableClipboardEvent, true);
     };
   }, []);
 
