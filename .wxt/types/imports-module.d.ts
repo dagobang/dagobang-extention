@@ -27,6 +27,7 @@ declare module '#imports' {
   export { TokenAPI, TokenAPI } from '../hooks/TokenAPI';
   export { loadContractAbi, useContractAbi, ContractAddress } from '../hooks/useContractAbi';
   export { useTradeSuccessSound } from '../hooks/useTradeSuccessSound';
+  export { COOKING_LAST_LAUNCH_STORAGE_KEY, COOKING_LAST_LAUNCH_EVENT, readCookingLastLaunch, rememberCookingLastLaunch, clearCookingLastLaunch, CookingLastLaunch } from '../utils/cookingLaunchWallets';
   export { encryptJson, decryptJson } from '../utils/crypto';
   export { defaultSettings } from '../utils/defaults';
   export { getDexPoolPrefer, parseGweiToWei } from '../utils/dexUtils';

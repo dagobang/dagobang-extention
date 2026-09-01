@@ -922,7 +922,7 @@ export class TokenFlapLaunchService {
       txValue,
       gasPriceWei,
       ChainId.BNB,
-        { skipEstimateGas: true, gasLimit: 5_000_000n },
+        { skipEstimateGas: true, gasLimit: 8_000_000n },
     );
     await opts?.onProgress?.({
       stage: 'launch_submitted',

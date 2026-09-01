@@ -548,6 +548,23 @@ export type CookingAutoBuyWalletInput = {
   amountBnb: string;
 };
 
+export type CookingAutoSellRuleInput = {
+  marketCapUsd: number | string;
+  sellPercent: number | string;
+};
+
+export type CookingAutoSellInput = {
+  enabled?: boolean;
+  rules?: CookingAutoSellRuleInput[];
+  quoteToken?: string;
+};
+
+export type CookingAutoSellResult = {
+  okCount: number;
+  total: number;
+  errors?: string[];
+};
+
 export type LimitOrderSide = 'buy' | 'sell';
 
 export type LimitOrderType = 'take_profit_sell' | 'stop_loss_sell' | 'trailing_stop_sell' | 'low_buy' | 'high_buy';
@@ -900,6 +917,7 @@ export type BgRequest =
         sniperMaxAttempts?: number;
         sniperRetryMs?: number;
       };
+      autoSell?: CookingAutoSellInput;
     };
   }
   | {
@@ -922,6 +940,7 @@ export type BgRequest =
       selectedStockSymbols?: string[];
       buyTaxRateBps?: number;
       sellTaxRateBps?: number;
+      autoSell?: CookingAutoSellInput;
     };
   }
   | { type: 'ai:generateLogo'; prompt: string; size?: string; apiKey: string }
@@ -1106,6 +1125,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
       sniperSuccess: number;
       sniperFailed: number;
     };
+    autoSell?: CookingAutoSellResult;
   }
   : T extends { type: 'token:createFlap' }
   ? {
@@ -1114,6 +1134,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
       txHash: `0x${string}`;
       tokenAddress: `0x${string}` | null;
     };
+    autoSell?: CookingAutoSellResult;
   }
   : T extends { type: 'ai:generateLogo' }
   ? { ok: true; imageUrl: string }

@@ -3,6 +3,8 @@ export {}
 declare global {
   const AxiomAPI: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/AxiomAPI').default
   const BNBCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').BNBCoinIcon
+  const COOKING_LAST_LAUNCH_EVENT: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/cookingLaunchWallets').COOKING_LAST_LAUNCH_EVENT
+  const COOKING_LAST_LAUNCH_STORAGE_KEY: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/cookingLaunchWallets').COOKING_LAST_LAUNCH_STORAGE_KEY
   const ChainCoinIcon: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/components/Coins').ChainCoinIcon
   const ContentScriptContext: typeof import('wxt/utils/content-script-context').ContentScriptContext
   const DEFAULT_SOLANA_TIP_PRESET_VALUES: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').DEFAULT_SOLANA_TIP_PRESET_VALUES
@@ -23,6 +25,7 @@ declare global {
   const call: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/messaging').call
   const classifyBroadcastError: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').classifyBroadcastError
   const classifyFlapRoute: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').classifyFlapRoute
+  const clearCookingLastLaunch: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/cookingLaunchWallets').clearCookingLastLaunch
   const collectErrorText: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/txErrorClassify').collectErrorText
   const createIframeUi: typeof import('wxt/utils/content-script-ui/iframe').createIframeUi
   const createIntegratedUi: typeof import('wxt/utils/content-script-ui/integrated').createIntegratedUi
@@ -104,6 +107,8 @@ declare global {
   const pickFiniteNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickFiniteNumber
   const pickMaxFiniteNumber: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickMaxFiniteNumber
   const pickMaxPercentValue: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/value').pickMaxPercentValue
+  const readCookingLastLaunch: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/cookingLaunchWallets').readCookingLastLaunch
+  const rememberCookingLastLaunch: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/cookingLaunchWallets').rememberCookingLastLaunch
   const resolveEnabledSolanaSwqosProviderTypes: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/solanaTip').resolveEnabledSolanaSwqosProviderTypes
   const resolveFlapPlatform: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').resolveFlapPlatform
   const resolveFlapPlatformByQuoteLineage: typeof import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/flap').resolveFlapPlatformByQuoteLineage
@@ -174,6 +179,9 @@ declare global {
   // @ts-ignore
   export type { ContractAddress } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/useContractAbi')
+  // @ts-ignore
+  export type { CookingLastLaunch } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/cookingLaunchWallets'
+  import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/cookingLaunchWallets')
   // @ts-ignore
   export type { TrenchesStage } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/utils/gmgnWs')

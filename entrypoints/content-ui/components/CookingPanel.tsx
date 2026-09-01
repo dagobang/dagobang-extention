@@ -1,16 +1,24 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import toast from 'react-hot-toast';
 import { browser } from 'wxt/browser';
+import { formatUnits } from 'viem';
 import type { Account } from '@/types/extention';
 import type { ChainAddress } from '@/types/chain/address';
 import type { TokenInfo } from '@/types/token';
 import { ChainId } from '@/constants/chains/chainId';
 import { FlapQuoteTokensByChain, getFlapStocksPresetTokens, type FlapPresetQuoteToken } from '@/constants/flap';
 import GmgnAPI from '@/hooks/GmgnAPI';
+import { TokenAPI } from '@/hooks/TokenAPI';
 import { call } from '@/utils/messaging';
 import { navigateToUrl, parsePlatformTokenLink, type SiteInfo } from '@/utils/sites';
 import { WalletSelectorTrigger } from '@/entrypoints/content-ui/components/WalletSelector';
 import { normalizeAddressKey } from '@/services/xSniper/engine/metrics';
+import {
+  clearCookingLastLaunch,
+  readCookingLastLaunch,
+  rememberCookingLastLaunch,
+  type CookingLastLaunch,
+} from '@/utils/cookingLaunchWallets';
 
 type CookingPanelProps = {
   visible: boolean;
@@ -23,6 +31,13 @@ type CookingPanelProps = {
   currentTokenSymbol?: string | null;
   currentTokenInfo?: TokenInfo | null;
   tokenInfoLoading?: boolean;
+  onSellLaunchedToken?: (input: {
+    pct: number;
+    tokenAddress: ChainAddress;
+    walletAddress: ChainAddress;
+    tokenSymbol?: string | null;
+    tokenInfo?: TokenInfo | null;
+  }) => void | Promise<void>;
 };
 
 const COOKING_PANEL_WIDTH = 360;
@@ -125,6 +140,48 @@ function getCookingLaunchFallbackLink(platform: CookingLaunchPlatform, tokenAddr
   return '';
 }
 
+function notifyCookingAutoSellResult(autoSell?: { okCount: number; total: number; errors?: string[] } | null) {
+  if (!autoSell) return;
+  if (autoSell.total <= 0) {
+    toast.error(autoSell.errors?.[0] || '自动卖出已开启，但没有有效的市值目标配置');
+    return;
+  }
+  if (autoSell.okCount > 0) {
+    toast.success(`自动卖出挂单已创建 ${autoSell.okCount}/${autoSell.total}`, { icon: '🧾' });
+    return;
+  }
+  toast.error(autoSell.errors?.[0] || '自动卖出挂单创建失败');
+}
+
+function rememberLaunchToken(input: {
+  tokenAddress?: string | null;
+  walletAddress?: string | null;
+  symbol?: string;
+  name?: string;
+}): CookingLastLaunch | null {
+  const token = String(input.tokenAddress || '').trim();
+  const wallet = String(input.walletAddress || '').trim();
+  if (!token || !wallet) return null;
+  return rememberCookingLastLaunch({
+    tokenAddress: token,
+    walletAddress: wallet,
+    symbol: input.symbol,
+    name: input.name,
+  });
+}
+
+function formatLaunchTokenBalance(wei: string, decimals = 18) {
+  try {
+    const raw = formatUnits(BigInt(wei || '0'), decimals);
+    const num = Number(raw);
+    if (!Number.isFinite(num) || num <= 0) return '0';
+    if (num >= 1000) return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    return num.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  } catch {
+    return '0';
+  }
+}
+
 export function CookingPanel({
   visible,
   onVisibleChange,
@@ -136,11 +193,11 @@ export function CookingPanel({
   currentTokenSymbol,
   currentTokenInfo,
   tokenInfoLoading = false,
+  onSellLaunchedToken,
 }: CookingPanelProps) {
   type LogoSearchImage = { url: string; thumbnail?: string; title?: string; source?: string };
   type LogoSearchTab = 'token' | 'google';
   const cookingConfigStorageKey = 'dagobang_cooking_config_v2';
-  const DEFAULT_TOKEN_SUPPLY = 1_000_000_000;
   const MAX_AUTO_SELL_RULES = 5;
   type AutoSellRule = { marketCapUsd: string; sellPercent: string };
   const [pos, setPos] = useState(() => {
@@ -155,6 +212,12 @@ export function CookingPanel({
   const [launching, setLaunching] = useState(false);
   const launchFlowIdRef = useRef<string | null>(null);
   const launchToastIdRef = useRef<string | undefined>(undefined);
+  const autoSellNotifiedFlowIdsRef = useRef(new Set<string>());
+  const deployWalletRef = useRef<ChainAddress | null>(null);
+  const pendingLaunchMetaRef = useRef<{ name: string; symbol: string } | null>(null);
+  const [lastLaunch, setLastLaunch] = useState<CookingLastLaunch | null>(() => readCookingLastLaunch());
+  const [launchBalanceWei, setLaunchBalanceWei] = useState('0');
+  const [launchSelling, setLaunchSelling] = useState(false);
   const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
   const resizing = useRef<null | { startY: number; baseHeight: number }>(null);
 
@@ -179,6 +242,20 @@ export function CookingPanel({
         launchFlowIdRef.current = null;
         launchToastIdRef.current = undefined;
         const addr = typeof message?.tokenAddress === 'string' ? message.tokenAddress.trim() : '';
+        const fromAddress = typeof message?.fromAddress === 'string'
+          ? message.fromAddress.trim()
+          : String(deployWalletRef.current || '').trim();
+        const nextLaunch = rememberLaunchToken({
+          tokenAddress: addr,
+          walletAddress: fromAddress,
+          symbol: pendingLaunchMetaRef.current?.symbol,
+          name: pendingLaunchMetaRef.current?.name,
+        });
+        if (nextLaunch) setLastLaunch(nextLaunch);
+        if (!autoSellNotifiedFlowIdsRef.current.has(currentFlowId)) {
+          autoSellNotifiedFlowIdsRef.current.add(currentFlowId);
+          notifyCookingAutoSellResult(message?.autoSell ?? null);
+        }
         if (addr) {
           const link = (siteInfo ? parsePlatformTokenLink(siteInfo, addr) : '')
             || getCookingLaunchFallbackLink(message?.platform === 'flap_stocks' ? 'flap_stocks' : 'flap', addr);
@@ -487,6 +564,10 @@ export function CookingPanel({
   }, [autoSellRules]);
 
   useEffect(() => {
+    deployWalletRef.current = deployWallet;
+  }, [deployWallet]);
+
+  useEffect(() => {
     if (!visible || !isFlapPlatform) return;
     void call({ type: 'bg:prewarmFlapVanity' } as const).catch((error) => {
       console.warn('[cooking.flap.vanity_prewarm_failed]', error);
@@ -513,6 +594,79 @@ export function CookingPanel({
     () => walletAccounts.find((acc) => acc.address.toLowerCase() === String(deployWallet || '').toLowerCase()) ?? null,
     [walletAccounts, deployWallet]
   );
+  const lastLaunchWallet = useMemo(
+    () => walletAccounts.find((acc) => acc.address.toLowerCase() === String(lastLaunch?.walletAddress || '').toLowerCase()) ?? null,
+    [walletAccounts, lastLaunch?.walletAddress]
+  );
+
+  useEffect(() => {
+    if (!visible || !lastLaunch?.tokenAddress || !lastLaunch?.walletAddress) {
+      setLaunchBalanceWei('0');
+      return;
+    }
+    let cancelled = false;
+    const refreshBalance = async () => {
+      try {
+        const holding = await TokenAPI.getTokenHolding(
+          siteInfo?.platform || 'gmgn',
+          siteInfo?.chain || 'bsc',
+          lastLaunch.walletAddress,
+          lastLaunch.tokenAddress,
+          { cacheTtlMs: 0 },
+        );
+        if (!cancelled) setLaunchBalanceWei(holding || '0');
+      } catch {
+        if (!cancelled) setLaunchBalanceWei('0');
+      }
+    };
+    void refreshBalance();
+    const timer = window.setInterval(() => {
+      void refreshBalance();
+    }, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [visible, lastLaunch?.tokenAddress, lastLaunch?.walletAddress, siteInfo?.platform, siteInfo?.chain]);
+
+  const handleLaunchTokenSell = async (pct: number) => {
+    if (!lastLaunch || launchSelling) return;
+    if (!onSellLaunchedToken) {
+      toast.error('卖出未接入');
+      return;
+    }
+    const tokenAddress = lastLaunch.tokenAddress;
+    const fromAddress = lastLaunch.walletAddress;
+    const symbol = lastLaunch.symbol || '代币';
+    const matchedTokenInfo = currentTokenInfo
+      && currentTokenInfo.address.toLowerCase() === tokenAddress.toLowerCase()
+      ? currentTokenInfo
+      : null;
+    setLaunchSelling(true);
+    try {
+      await onSellLaunchedToken({
+        pct,
+        tokenAddress,
+        walletAddress: fromAddress,
+        tokenSymbol: symbol,
+        tokenInfo: matchedTokenInfo,
+      });
+    } finally {
+      try {
+        const nextHolding = await TokenAPI.getTokenHolding(
+          siteInfo?.platform || 'gmgn',
+          siteInfo?.chain || 'bsc',
+          fromAddress,
+          tokenAddress,
+          { cacheTtlMs: 0 },
+        );
+        setLaunchBalanceWei(nextHolding || '0');
+      } catch {
+        // keep last displayed balance if refresh fails
+      }
+      setLaunchSelling(false);
+    }
+  };
 
   const clearImageAndTokenInputs = () => {
     setLogoUrl('');
@@ -761,6 +915,7 @@ export function CookingPanel({
       launchFlowIdRef.current = flowId;
       launchToastIdRef.current = String(toastId);
       setLaunching(true);
+      pendingLaunchMetaRef.current = { name, symbol };
       const latestAutoSellEnabled = autoSellEnabledRef.current;
       const latestAutoSellRules = autoSellRulesRef.current;
       persistCookingConfig({
@@ -777,6 +932,11 @@ export function CookingPanel({
       if (isFlapPlatform) descParts.push(`FlapTaxMode: ${isFlapStocksTemplate ? 'stocks' : flapTaxMode}`);
       if (isFlapStocksTemplate && flapSelectedStocks.length > 0) descParts.push(`FlapStocks: ${flapSelectedStocks.join(',')}`);
       const desc = descParts.join(' | ');
+      const autoSellPayload = {
+        enabled: latestAutoSellEnabled,
+        rules: latestAutoSellRules,
+        quoteToken: selectedFlapQuoteToken?.label || 'BNB',
+      };
       if (selectedPlatform === 'fourmeme') {
         const preSale = defaultBuyBnb.trim() || '0';
         const res = await call({
@@ -796,6 +956,7 @@ export function CookingPanel({
             onlyMPC: false,
             feePlan: false,
             fromAddress: deployWallet,
+            autoSell: autoSellPayload,
           },
         } as const);
         const data = (res as any)?.data;
@@ -806,6 +967,13 @@ export function CookingPanel({
             addr ? `Meme Token 发币交易已发送，地址：${short}` : 'Meme Token 发币交易已发送',
             { id: toastId, icon: '✅' }
           );
+          const nextLaunch = rememberLaunchToken({
+            tokenAddress: addr,
+            walletAddress: deployWallet,
+            symbol,
+            name,
+          });
+          if (nextLaunch) setLastLaunch(nextLaunch);
           if (addr) {
             const link = siteInfo
               ? parsePlatformTokenLink(siteInfo, addr)
@@ -819,62 +987,9 @@ export function CookingPanel({
         } else {
           toast.success('创建 Meme Token 参数已生成', { id: toastId, icon: '✅' });
         }
-        if (latestAutoSellEnabled && data?.tokenAddress) {
-          const tokenAddress = String(data.tokenAddress) as `0x${string}`;
-          const normalizedRules = latestAutoSellRules
-            .map((rule) => ({
-              marketCapUsd: Number(String(rule.marketCapUsd || '').trim()),
-              sellPercent: Number(String(rule.sellPercent || '').trim()),
-            }))
-            .filter((rule) =>
-              Number.isFinite(rule.marketCapUsd)
-              && rule.marketCapUsd > 0
-              && Number.isFinite(rule.sellPercent)
-              && rule.sellPercent > 0
-              && rule.sellPercent <= 100
-            );
-          if (normalizedRules.length <= 0) {
-            toast.error('自动卖出已开启，但没有有效的市值目标配置');
-          } else {
-            const tokenInfoForOrder: TokenInfo = {
-              chain: 'bsc',
-              address: tokenAddress,
-              name,
-              symbol,
-              decimals: 18,
-              logo: img,
-              launchpad: 'fourmeme',
-              launchpad_progress: 0,
-              launchpad_platform: 'fourmeme',
-              launchpad_status: 0,
-              quote_token: 'BNB',
-              tokenPrice: {
-                price: '0',
-                marketCap: '0',
-                timestamp: Date.now(),
-              },
-            };
-            const sellWallets = [deployWallet];
-            const orderInputs = sellWallets.flatMap((wallet) =>
-              normalizedRules.map((rule) => ({
-                chainId: 56,
-                tokenAddress,
-                fromAddress: wallet,
-                tokenSymbol: symbol,
-                side: 'sell' as const,
-                orderType: 'take_profit_sell' as const,
-                triggerPriceUsd: rule.marketCapUsd / DEFAULT_TOKEN_SUPPLY,
-                targetChangePercent: 0,
-                sellPercentBps: Math.round(rule.sellPercent * 100),
-                tokenInfo: tokenInfoForOrder,
-              }))
-            );
-            const createResults = await Promise.allSettled(
-              orderInputs.map((input) => call({ type: 'limitOrder:create', input } as const))
-            );
-            const okCount = createResults.filter((x) => x.status === 'fulfilled').length;
-            toast.success(`自动卖出挂单已创建 ${okCount}/${orderInputs.length}`, { icon: '🧾' });
-          }
+        autoSellNotifiedFlowIdsRef.current.add(flowId);
+        if (latestAutoSellEnabled) {
+          notifyCookingAutoSellResult((res as any)?.autoSell ?? null);
         }
         if (data) {
           console.log('Fourmeme create token response', data);
@@ -901,6 +1016,7 @@ export function CookingPanel({
             selectedStockSymbols: flapSelectedStocks,
             buyTaxRateBps: flapBuyTaxBps,
             sellTaxRateBps: flapSellTaxBps,
+            autoSell: autoSellPayload,
           },
         } as const);
         const data = (res as any)?.data;
@@ -911,6 +1027,19 @@ export function CookingPanel({
             addr ? `Flap 发射交易已发送，地址：${short}` : 'Flap 发射交易已发送',
             { id: toastId, icon: '✅' }
           );
+          const nextLaunch = rememberLaunchToken({
+            tokenAddress: addr,
+            walletAddress: deployWallet,
+            symbol,
+            name,
+          });
+          if (nextLaunch) setLastLaunch(nextLaunch);
+          if (!autoSellNotifiedFlowIdsRef.current.has(flowId)) {
+            autoSellNotifiedFlowIdsRef.current.add(flowId);
+            if (latestAutoSellEnabled) {
+              notifyCookingAutoSellResult((res as any)?.autoSell ?? null);
+            }
+          }
           if (addr) {
             const link = (siteInfo ? parsePlatformTokenLink(siteInfo, addr) : '')
               || getCookingLaunchFallbackLink(selectedPlatform, addr);
@@ -919,9 +1048,6 @@ export function CookingPanel({
                 navigateToUrl(link);
               }, 10);
             }
-          }
-          if (latestAutoSellEnabled) {
-            toast('Flap 发射已完成，自动卖出挂单暂未接入这条链路', { icon: 'ℹ️' });
           }
         } else {
           toast.success('Flap 发射参数已生成', { id: toastId, icon: '✅' });
@@ -987,7 +1113,6 @@ export function CookingPanel({
           </button>
         </div>
         <div className="flex-1 p-3 space-y-3 overflow-y-auto dagobang-scrollbar">
-
           {tokenInfoLoading && (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200">
               正在读取 tokenInfo...
@@ -1506,6 +1631,64 @@ export function CookingPanel({
                   ? '发布到 Flap'
                   : '发布到 Flap Stocks'}
           </button>
+
+          {lastLaunch ? (
+            <div className="space-y-2 rounded-lg border border-rose-500/30 bg-rose-500/5 p-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[12px] font-semibold text-rose-200">发币钱包快捷卖出</div>
+                  <div className="truncate text-[11px] text-zinc-300">
+                    {lastLaunch.symbol || lastLaunch.name || '新代币'}
+                    <span className="ml-1 text-zinc-500">
+                      {lastLaunch.tokenAddress.slice(0, 6)}...{lastLaunch.tokenAddress.slice(-4)}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-zinc-500">
+                    {lastLaunchWallet?.name || '发币钱包'}
+                    {' '}
+                    ({lastLaunch.walletAddress.slice(0, 6)}...{lastLaunch.walletAddress.slice(-4)})
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="shrink-0 text-[10px] text-zinc-500 hover:text-zinc-300"
+                  onClick={() => {
+                    clearCookingLastLaunch();
+                    setLastLaunch(null);
+                    setLaunchBalanceWei('0');
+                  }}
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="flex items-center justify-between text-[12px] text-zinc-200">
+                <span>余额</span>
+                <span>
+                  {formatLaunchTokenBalance(launchBalanceWei)}
+                  {' '}
+                  <span className="text-amber-400">{lastLaunch.symbol || 'TOKEN'}</span>
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[10, 20, 50, 100].map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    disabled={launchSelling || launching || launchBalanceWei === '0'}
+                    className="rounded border border-rose-500/30 bg-rose-500/10 py-1 text-center text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => {
+                      void handleLaunchTokenSell(pct);
+                    }}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+              <div className="text-[10px] text-zinc-500">
+                这里永远用发币钱包卖出，不会改快捷交易面板当前选中的钱包。
+              </div>
+            </div>
+          ) : null}
         </div>
         <div
           className="flex shrink-0 cursor-ns-resize justify-center border-t border-zinc-800/60 px-4 py-1.5"

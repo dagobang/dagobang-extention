@@ -4544,24 +4544,66 @@ export default function App() {
     }, { trackBusy: !isSolana, label: 'buy' });
   };
 
-  const handleSell = (pct: number) => {
-    setSellPercent(pct);
-    withBusy(async () => {
+  const handleSell = (pct: number, override?: {
+    wallets: ChainAddress[];
+    tokenAddress: ChainAddress;
+    chainId?: number;
+    tokenInfo?: TokenInfo | null;
+    tokenSymbol?: string | null;
+  }) => {
+    if (!override) setSellPercent(pct);
+    const pageTokenAddress = tokenAddressNormalized;
+    const pageTokenInfo = tokenInfo;
+    const pageSymbol = resolvedTokenSymbol;
+    const pageChainId = chainId;
+    const pageSubmitChannel = submitChannel;
+    const sellingOverride = !!override;
+    const sellIsSolana = (override?.chainId ?? pageChainId) === ChainId.SOL;
+    return withBusy(async () => {
       if (!settings) throw new Error('Settings not ready');
+      const chainId = override?.chainId ?? pageChainId;
+      const tokenAddressNormalized = override?.tokenAddress || pageTokenAddress;
+      let tokenInfo = override ? (override.tokenInfo ?? null) : pageTokenInfo;
       if (!tokenAddressNormalized) throw new Error('Invalid token');
-      if (submitChannel === 'blox' && selectedApproveStatus === 'approving') {
+      if (sellingOverride && !tokenInfo) {
+        const infoChain = chainId === ChainId.BNB ? 'bsc' : (siteInfo?.chain || String(chainId));
+        tokenInfo = await TokenAPI.getTokenInfo(
+          siteInfo?.platform || 'gmgn',
+          infoChain,
+          tokenAddressNormalized,
+        ).catch(() => null);
+      }
+      if (!sellingOverride && pageSubmitChannel === 'blox' && selectedApproveStatus === 'approving') {
         toast.error(locale === 'en' ? 'Wait for approval to finish before selling on Blox.' : 'Blox 通道授权中，请等待授权完成后再卖出');
         return;
       }
-      const wallets = selectedTradeWallets;
+      const wallets = override?.wallets?.length ? override.wallets : selectedTradeWallets;
       if (wallets.length <= 0) throw new Error('No wallet selected');
 
-      const isTurbo = settings.chains[chainId]?.executionMode === 'turbo';
+      const sellChainSettings = settings.chains[chainId];
+      const isTurbo = sellChainSettings?.executionMode === 'turbo';
+      const submitChannel = (sellChainSettings?.submitChannel ?? pageSubmitChannel) as SubmitChannel;
+      const sellGasPreset = sellChainSettings?.sellGasPreset ?? sellChainSettings?.gasPreset ?? 'standard';
+      const tradeBaseTokenAddress = resolveTradeBaseTokenAddress(settings, chainId);
       const platform = tokenInfo?.launchpad_platform?.toLowerCase() || '';
       const isInnerFourMeme = !!tokenInfo?.launchpad && (platform.includes('four')) && tokenInfo.launchpad_status !== 1;
 
+      if (sellingOverride && chainId !== ChainId.SOL) {
+        const approveResults = await Promise.all(wallets.map((walletAddress) => call({
+          type: 'tx:approveMaxForSellIfNeeded',
+          chainId,
+          tokenAddress: tokenAddressNormalized,
+          tokenInfo,
+          fromAddress: walletAddress,
+        } as const)));
+        if (approveResults.some((res) => res?.txHash)) {
+          toast.success(locale === 'en' ? 'Approval submitted. Sell again after it confirms.' : '授权已提交，确认后再点卖出', { icon: '✅' });
+          return;
+        }
+      }
+
       ensureTradeSuccessAudioReady();
-      const sym = resolvedTokenSymbol ?? '';
+      const sym = override?.tokenSymbol ?? pageSymbol ?? '';
       const flowToastId = getTradeToastId('sell', tokenAddressNormalized);
       toast(renderTradeSuccessToast({
         side: 'sell',
@@ -4576,7 +4618,6 @@ export default function App() {
         duration: Infinity,
       });
       let sellLoadingClosed = false;
-      const sellGasPreset = effectiveChainSettings?.sellGasPreset ?? effectiveChainSettings?.gasPreset ?? 'standard';
 
       const percentBps = Math.max(1, Math.min(10000, Math.floor(pct * 100)));
       const sellReqStartedAt = Date.now();
@@ -4811,7 +4852,7 @@ export default function App() {
 
       let gmgnTrade: Promise<unknown> | null = null;
       const gmgnAmountWei = ((BigInt(tokenBalanceWei || '0') * BigInt(pct)) / 100n).toString();
-      if (gmgnSellEnabled && siteInfo?.platform === 'gmgn' && BigInt(gmgnAmountWei) > 0n) {
+      if (!sellingOverride && gmgnSellEnabled && siteInfo?.platform === 'gmgn' && BigInt(gmgnAmountWei) > 0n) {
         gmgnTrade = (async () => {
           try {
             await new Promise((resolve) => setTimeout(resolve, 200));
@@ -4830,7 +4871,7 @@ export default function App() {
       } else {
         await mainTrade;
       }
-    }, { trackBusy: !isSolana, label: 'sell' });
+    }, { trackBusy: !sellIsSolana, label: 'sell' });
   };
 
   const handleTransfer = (pct: number, toAddress: ChainAddress) => {
@@ -5638,6 +5679,22 @@ export default function App() {
             currentTokenSymbol={effectiveCookingTokenInfo?.symbol ?? (cookingSiteInfoOverride ? null : resolvedTokenSymbol ?? tokenInfo?.symbol ?? null)}
             currentTokenInfo={effectiveCookingTokenInfo}
             tokenInfoLoading={cookingTokenInfoLoading}
+            onSellLaunchedToken={({ pct, tokenAddress, walletAddress, tokenSymbol, tokenInfo: panelTokenInfo }) => {
+              const matchedPageInfo = tokenInfo && String(tokenInfo.address || '').toLowerCase() === String(tokenAddress).toLowerCase()
+                ? tokenInfo
+                : null;
+              const matchedCookingInfo = effectiveCookingTokenInfo
+                && String(effectiveCookingTokenInfo.address || '').toLowerCase() === String(tokenAddress).toLowerCase()
+                ? effectiveCookingTokenInfo
+                : null;
+              return handleSell(pct, {
+                wallets: [walletAddress],
+                tokenAddress,
+                chainId: ChainId.BNB,
+                tokenInfo: panelTokenInfo ?? matchedCookingInfo ?? matchedPageInfo,
+                tokenSymbol,
+              });
+            }}
           />
 
           <XTradePanel

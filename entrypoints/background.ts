@@ -10,6 +10,7 @@ import {
   createLimitOrder,
   listLimitOrders
 } from '@/services/limitOrders/store';
+import { createCookingLaunchAutoSellOrders } from '@/services/limitOrders/cookingAutoSell';
 import { debugLogTxError, extractDisplayErrorMessageFromError, extractRevertReasonFromError, serializeTxError, tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { createLimitOrderScanner } from './background/limitOrderScanner';
 import { createXSniperTrade } from '@/services/xSniper/xSniperTrade';
@@ -1103,6 +1104,35 @@ export default defineBackground(() => {
   });
   limitOrderScanner.start();
 
+  const createCookingAutoSellIfEnabled = async (input: {
+    enabled?: boolean;
+    tokenAddress?: string | null;
+    fromAddress?: string;
+    name: string;
+    symbol: string;
+    imgUrl?: string;
+    launchpad: string;
+    quoteToken?: string;
+    rules?: Array<{ marketCapUsd?: number | string; sellPercent?: number | string }>;
+  }) => {
+    if (!input.enabled) return null;
+    const result = await createCookingLaunchAutoSellOrders({
+      tokenAddress: String(input.tokenAddress || ''),
+      fromAddress: String(input.fromAddress || ''),
+      name: input.name,
+      symbol: input.symbol,
+      imgUrl: input.imgUrl,
+      launchpad: input.launchpad,
+      quoteToken: input.quoteToken,
+      rules: input.rules,
+    });
+    if (result.total > 0 && result.okCount > 0) {
+      broadcastStateChange();
+      limitOrderScanner?.scheduleFromStorage().catch(() => { });
+    }
+    return result;
+  };
+
   const processGmgnLimitOrderPriceSnapshots = async (items: GmgnTokenSnapshot[]) => {
     if (!limitOrderScanner || items.length <= 0) return;
     const settings = await SettingsService.get().catch(() => null);
@@ -1662,6 +1692,18 @@ export default defineBackground(() => {
               }
             }
 
+            const autoSell = await createCookingAutoSellIfEnabled({
+              enabled: msg.input.autoSell?.enabled,
+              tokenAddress: onChainResult.tokenAddress,
+              fromAddress: address,
+              name: msg.input.name,
+              symbol: msg.input.shortName,
+              imgUrl: msg.input.imgUrl,
+              launchpad: 'fourmeme',
+              quoteToken: msg.input.autoSell?.quoteToken || 'BNB',
+              rules: msg.input.autoSell?.rules,
+            });
+
             return {
               ok: true,
               data: {
@@ -1670,6 +1712,7 @@ export default defineBackground(() => {
                 tokenAddress: onChainResult.tokenAddress,
               },
               autoBuy: autoBuySummary,
+              autoSell: autoSell ?? undefined,
             };
           }
 
@@ -1683,12 +1726,13 @@ export default defineBackground(() => {
                 stage: 'prepare',
                 message: 'Flap 发射流程已开始',
               });
+              const fromAddress = (msg.input.fromAddress && isAddress(msg.input.fromAddress))
+                ? (msg.input.fromAddress as `0x${string}`)
+                : undefined;
               const data = await TokenFlapLaunchService.createToken({
                 ...msg.input,
                 launchFlowId: flowId,
-                fromAddress: (msg.input.fromAddress && isAddress(msg.input.fromAddress))
-                  ? (msg.input.fromAddress as `0x${string}`)
-                  : undefined,
+                fromAddress,
                 customDividendTokenAddress: (msg.input.customDividendTokenAddress && isAddress(msg.input.customDividendTokenAddress))
                   ? (msg.input.customDividendTokenAddress as `0x${string}`)
                   : undefined,
@@ -1702,6 +1746,17 @@ export default defineBackground(() => {
                   });
                 },
               });
+              const autoSell = await createCookingAutoSellIfEnabled({
+                enabled: msg.input.autoSell?.enabled,
+                tokenAddress: data.tokenAddress,
+                fromAddress,
+                name: msg.input.name,
+                symbol: msg.input.symbol,
+                imgUrl: msg.input.imgUrl,
+                launchpad: 'flap',
+                quoteToken: msg.input.autoSell?.quoteToken || 'BNB',
+                rules: msg.input.autoSell?.rules,
+              });
               await broadcastCookingLaunchEvent({
                 flowId,
                 platform: msg.input.taxMode === 'stocks' ? 'flap_stocks' : 'flap',
@@ -1712,8 +1767,10 @@ export default defineBackground(() => {
                   : 'Flap 发射成功',
                 txHash: data.txHash,
                 tokenAddress: data.tokenAddress,
+                fromAddress,
+                autoSell: autoSell ?? undefined,
               });
-              return { ok: true, data };
+              return { ok: true, data, autoSell: autoSell ?? undefined };
             } catch (error: any) {
               await broadcastCookingLaunchEvent({
                 flowId,
