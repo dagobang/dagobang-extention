@@ -25,6 +25,7 @@ export interface MultiTokenInfoResponse {
     launchpad_platform?: string;
     migration_market_cap_quote?: string;
     biggest_pool_address?: string;
+    migrated_pool?: string;
     pool?: {
       pool_address?: string;
       quote_address?: string;
@@ -1408,7 +1409,8 @@ export class GmgnAPI {
     const isMigrated = launchType === 'migrated' || Number(tokenData.launchpad_status || 0) === 1;
     const dexType = isMigrated ? this.getDexType(exchange) : undefined;
     const biggestPoolAddress = tokenData.biggest_pool_address || undefined;
-    const tpoolPoolAddress = tokenData.tpool?.pool_address || tokenData.pool?.pool_address || undefined;
+    const migratedPoolAddress = String(tokenData.migrated_pool || '').trim() || undefined;
+    const tpoolPoolAddress = tokenData.tpool?.pool_address || tokenData.pool?.pool_address || migratedPoolAddress || undefined;
     const totalSupply = this.normalizeTotalSupply(
       tokenData.totalSupply
       ?? tokenData.total_supply
@@ -1538,7 +1540,7 @@ export class GmgnAPI {
       launchpad_status: Number(tokenData.launchpad_status || 0),
       quote_token: quoteToken,
       quote_token_address: quoteTokenAddress,
-      pool_pair: isMigrated ? (biggestPoolAddress || tpoolPoolAddress) : undefined,
+      pool_pair: isMigrated ? (migratedPoolAddress || tpoolPoolAddress || biggestPoolAddress) : undefined,
       biggest_pool_address: biggestPoolAddress,
       tpool_exchange: exchange,
       tpool_launch_type: launchType || undefined,

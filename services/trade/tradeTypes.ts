@@ -78,6 +78,7 @@ export function getRouterSwapDesc(params: {
   fee: number;
   tickSpacing?: number;
   data?: Hex;
+  poolManager?: Address;
 }): SwapDescLike {
   return {
     swapType: params.swapType,
@@ -88,7 +89,7 @@ export function getRouterSwapDesc(params: {
     tickSpacing: params.tickSpacing ?? 0,
     hooks: ZERO_ADDRESS,
     hookData: '0x',
-    poolManager: ZERO_ADDRESS,
+    poolManager: params.poolManager ?? ZERO_ADDRESS,
     parameters: ZERO32,
     data: params.data ?? '0x',
   };

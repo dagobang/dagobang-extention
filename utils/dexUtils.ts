@@ -1,10 +1,8 @@
 export function getDexPoolPrefer(dex_type: string | undefined): string | undefined {
-    if (dex_type?.toLowerCase() === 'PANCAKE_SWAP_V3'.toLowerCase()) {
-        return 'v3';
-    }
-    if (dex_type?.toLowerCase() === 'PANCAKE_SWAP'.toLowerCase()) {
-        return 'v2';
-    }
+    const lowered = dex_type?.toLowerCase();
+    if (!lowered) return undefined;
+    if (lowered === 'pancake_swap_v3' || lowered === 'uniswap_v3') return 'v3';
+    if (lowered === 'pancake_swap' || lowered === 'uniswap') return 'v2';
     return undefined;
 }
 
