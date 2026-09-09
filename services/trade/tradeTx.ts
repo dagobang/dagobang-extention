@@ -26,6 +26,11 @@ export function getGasPriceWei(chainSettings: ChainSettings, preset: GasPreset, 
   return wei;
 }
 
+function isReplacementPriceBumpError(e: any): boolean {
+  const msg = collectErrorText(e, true);
+  return /current price is too low|must be more than 1\.1 times|replacement transaction underpriced|insufficient gasprice increasement/i.test(msg);
+}
+
 function scoreRevertReason(reason: string) {
   const r = reason.toLowerCase();
   let v = 0;
@@ -447,6 +452,7 @@ export async function sendTransaction(
 
   const runtime = getChainRuntime(chainId);
   const shouldUseDynamicFee = opts?.feeMode === 'dynamic' && chainId === 1;
+  let broadcastGasPriceWei = gasPriceWei;
   const multiplierBpsByPreset: Record<GasPreset, bigint> = {
     slow: 10000n,
     standard: 11000n,
@@ -517,7 +523,7 @@ export async function sendTransaction(
         data,
         value,
         gas: gasLimit,
-        gasPrice: gasPriceWei,
+        gasPrice: broadcastGasPriceWei,
         chain: runtime.viemChain,
         chainId,
         nonce: useNonce,
@@ -535,7 +541,7 @@ export async function sendTransaction(
         chainId,
         nonce: useNonce,
         gas: gasLimit,
-        gasPrice: dynamicFees?.maxFeePerGas ?? gasPriceWei,
+        gasPrice: dynamicFees?.maxFeePerGas ?? broadcastGasPriceWei,
       },
     });
     trace?.(`${labelPrefix}broadcastTx`, Date.now() - broadcastStart);
@@ -568,6 +574,21 @@ export async function sendTransaction(
     return await signAndBroadcast(nonce, '');
   } catch (e: any) {
     let err = e;
+    if (!shouldUseDynamicFee && isReplacementPriceBumpError(err)) {
+      // Same-nonce replacement in a private pool: must beat the queued tx by >10%,
+      // not 1.1x of public network gas (0.12 vs chain 0.05 is already enough for a fresh tx).
+      broadcastGasPriceWei = (broadcastGasPriceWei * 12n) / 10n + 1n;
+      try {
+        return await signAndBroadcast(nonce, 'gasbump:');
+      } catch (ex: any) {
+        err = ex;
+        if (isReplacementPriceBumpError(err)) {
+          throw new Error(
+            '提交通道里已有同 nonce 的 pending 交易，替换 gas 必须比那笔高 10% 以上（不是对比链上 gas）。请改用 fast/turbo 档覆盖，或等 pending 过期后再发。',
+          );
+        }
+      }
+    }
     if (isInFlightLimitError(err)) {
       const backoffMs = [300, 800];
       for (let i = 0; i < backoffMs.length; i++) {

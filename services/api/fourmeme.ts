@@ -2,6 +2,7 @@ import { getChainIdByName } from "@/constants/chains/chainName";
 import { getQuoteTokenAddress } from "@/constants/tokens/allTokens";
 import { TokenInfo } from "@/types/token";
 import { getChainId } from "viem/actions";
+import { browser } from "wxt/browser";
 
 export interface FourmemeTokenPrice {
   price: string;
@@ -74,8 +75,114 @@ export interface FourmemeTokenInfoResponse {
   data: FourmemeTokenData | null;
 }
 
+export function isFourmemeRateLimitError(message: unknown): boolean {
+  return /too many requests|banned for/i.test(String(message || ''));
+}
+
+export function parseFourmemeRateLimitRemainSec(message: string): number | null {
+  const text = String(message || '');
+  if (!isFourmemeRateLimitError(text)) return null;
+  const remain = Number((text.match(/remain\s+(\d+)\s*s/i) || [])[1]);
+  if (Number.isFinite(remain) && remain > 0) return remain;
+  const minutes = Number((text.match(/banned for\s+(\d+)\s*minutes?/i) || [])[1]);
+  if (Number.isFinite(minutes) && minutes > 0) return minutes * 60;
+  return null;
+}
+
 export class FourmemeAPI {
   private static readonly BASE_URL = "https://four.meme/meme-api/v1";
+  private static readonly BAN_STORAGE_KEY = "dagobang_fourmeme_banned_until_v2";
+  private static bannedUntil = 0;
+  private static banSetAt = 0;
+  private static banHydrated = false;
+  private static banHydratePromise: Promise<void> | null = null;
+  private static readonly loginCache = new Map<string, { token: string; ts: number }>();
+  private static readonly LOGIN_CACHE_MS = 10 * 60 * 1000;
+
+  private static clearExpiredBan() {
+    if (this.bannedUntil > 0 && this.bannedUntil <= Date.now()) {
+      this.bannedUntil = 0;
+      this.banSetAt = 0;
+    }
+  }
+
+  private static async hydrateBan() {
+    if (this.banHydrated) return;
+    if (this.banHydratePromise) {
+      await this.banHydratePromise;
+      return;
+    }
+    const pending = (async () => {
+      try {
+        const res = await browser.storage.local.get(this.BAN_STORAGE_KEY as any);
+        const row = (res as any)?.[this.BAN_STORAGE_KEY];
+        const until = Number(row?.until ?? row ?? 0);
+        const setAt = Number(row?.setAt ?? 0);
+        if (Number.isFinite(until) && until > Date.now()) {
+          this.banSetAt = Number.isFinite(setAt) && setAt > 0 ? setAt : Date.now();
+          this.bannedUntil = until;
+        }
+        this.clearExpiredBan();
+      } catch {
+      } finally {
+        this.banHydrated = true;
+      }
+    })();
+    this.banHydratePromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (this.banHydratePromise === pending) this.banHydratePromise = null;
+    }
+  }
+
+  private static persistBan() {
+    void browser.storage.local.set({
+      [this.BAN_STORAGE_KEY]: {
+        until: this.bannedUntil,
+        setAt: this.banSetAt,
+      },
+    } as any).catch(() => undefined);
+  }
+
+  private static rememberRateLimit(message: string) {
+    const remain = parseFourmemeRateLimitRemainSec(message);
+    if (remain == null) return false;
+    const now = Date.now();
+    const nextUntil = now + remain * 1000;
+    if (nextUntil <= this.bannedUntil) return true;
+    this.banSetAt = now;
+    this.bannedUntil = nextUntil;
+    this.persistBan();
+    return true;
+  }
+
+  private static wrapNetworkError(error: unknown, label: string): never {
+    const msg = String((error as any)?.message || error || '');
+    if (/failed to fetch|networkerror|load failed|err_connection|err_failed|err_timed_out/i.test(msg)) {
+      throw new Error(`${label}连接失败。请确认能打开 four.meme，或等待限流冷却后再试`);
+    }
+    throw error instanceof Error ? error : new Error(msg || label);
+  }
+
+  private static async throwIfBanned() {
+    await this.hydrateBan();
+    this.clearExpiredBan();
+    const remain = Math.ceil((this.bannedUntil - Date.now()) / 1000);
+    if (remain > 0) {
+      throw new Error(`Four.Meme 接口限流中，剩余 ${remain}s。冷却结束前不会再发请求`);
+    }
+  }
+
+  public static async assertNotRateLimited() {
+    await this.throwIfBanned();
+  }
+
+  private static noteErrorPayload(result: any, fallback: string) {
+    const msg = String(result?.msg || result?.message || fallback || '');
+    this.rememberRateLimit(msg);
+    throw new Error(msg || fallback);
+  }
 
   private static dataUrlToBlob(dataUrl: string): Blob {
     const raw = String(dataUrl || '').trim();
@@ -108,48 +215,37 @@ export class FourmemeAPI {
   }
 
   private static async makeRequest(url: string, options: RequestInit): Promise<Response> {
-    const headers = { ...options.headers } as Record<string, string>;
-
-    if (options.method === "POST" && options.body && typeof options.body === "string") {
-      headers["content-length"] = new Blob([options.body as string]).size.toString();
-    }
+    await this.throwIfBanned();
+    const headers = { ...(options.headers || {}) } as Record<string, string>;
+    delete headers["content-length"];
+    delete headers["accept-encoding"];
+    delete headers["origin"];
+    delete headers["referer"];
+    delete headers["user-agent"];
 
     const requestOptions: RequestInit = {
       ...options,
       headers,
       credentials: "include",
-      mode: "cors",
     };
 
     try {
-      const response = await fetch(url, requestOptions);
-      return response;
+      return await fetch(url, requestOptions);
     } catch (error) {
-      console.error("FourmemeAPI request failed:", error);
-      throw error;
+      console.error("FourmemeAPI request failed:", url, error);
+      this.wrapNetworkError(error, "Four.Meme 接口");
     }
   }
 
   private static getHeaders(): HeadersInit {
     return {
       accept: "application/json, text/plain, */*",
-      "accept-encoding": "gzip, deflate, br, zstd",
-      "accept-language": "zh-CN,zh;q=0.9,ru;q=0.8",
       "content-type": "application/json",
-      origin: "https://four.meme",
-      referer: "https://four.meme/",
-      "sec-ch-ua": '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
-      "sec-ch-ua-mobile": "?0",
-      "sec-ch-ua-platform": "Windows",
-      "sec-fetch-dest": "empty",
-      "sec-fetch-mode": "cors",
-      "sec-fetch-site": "same-origin",
-      "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
     };
   }
 
   public static async generateNonce(accountAddress: string, networkCode: string): Promise<string> {
+    await this.throwIfBanned();
     const endpoint = "/private/user/nonce/generate";
     const url = `${this.BASE_URL}${endpoint}`;
     const body = {
@@ -165,10 +261,10 @@ export class FourmemeAPI {
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(result?.msg || `Fourmeme generate nonce failed: ${response.status}`);
+      this.noteErrorPayload(result, `Fourmeme generate nonce failed: ${response.status}`);
     }
     if (!result || (result.code !== "0" && result.code !== 0)) {
-      throw new Error(result?.msg || "Fourmeme generate nonce failed");
+      this.noteErrorPayload(result, "Fourmeme generate nonce failed");
     }
     return String(result.data ?? "");
   }
@@ -181,6 +277,7 @@ export class FourmemeAPI {
     region?: string;
     langType?: string;
   }): Promise<string> {
+    await this.throwIfBanned();
     const endpoint = "/private/user/login/dex";
     const url = `${this.BASE_URL}${endpoint}`;
     const body = {
@@ -204,12 +301,38 @@ export class FourmemeAPI {
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(result?.msg || `Fourmeme login failed: ${response.status}`);
+      this.noteErrorPayload(result, `Fourmeme login failed: ${response.status}`);
     }
     if (!result || (result.code !== "0" && result.code !== 0)) {
-      throw new Error(result?.msg || "Fourmeme login failed");
+      this.noteErrorPayload(result, "Fourmeme login failed");
     }
-    return String(result.data ?? "");
+    const token = String(result.data ?? "");
+    const key = String(input.address || "").trim().toLowerCase();
+    if (key && token) {
+      this.loginCache.set(key, { token, ts: Date.now() });
+    }
+    return token;
+  }
+
+  public static async getAccessToken(input: {
+    address: string;
+    networkCode: string;
+    walletName?: string;
+    signMessage: (message: string) => Promise<string>;
+  }): Promise<string> {
+    const key = String(input.address || "").trim().toLowerCase();
+    const cached = key ? this.loginCache.get(key) : undefined;
+    if (cached && Date.now() - cached.ts < this.LOGIN_CACHE_MS && cached.token) {
+      return cached.token;
+    }
+    const nonce = await this.generateNonce(input.address, input.networkCode);
+    const signature = await input.signMessage(`You are sign in Meme ${nonce}`);
+    return this.loginDex({
+      address: input.address,
+      signature,
+      networkCode: input.networkCode,
+      walletName: input.walletName,
+    });
   }
 
   public static async uploadImageFromUrl(imgUrl: string | string[], accessToken: string): Promise<string> {
@@ -238,8 +361,12 @@ export class FourmemeAPI {
     }
     if (!blob) {
       const msg = (lastError as any)?.message ? String((lastError as any).message) : 'Failed to download image from all candidates';
+      if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+        throw new Error('代币图片下载失败，请换一张可访问的图片后重试');
+      }
       throw new Error(msg);
     }
+    await this.throwIfBanned();
     const formData = new FormData();
     const ext = this.extFromMime(blob.type);
     formData.append("file", blob, `logo.${ext}`);
@@ -257,10 +384,10 @@ export class FourmemeAPI {
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(result?.msg || `Fourmeme upload image failed: ${response.status}`);
+      this.noteErrorPayload(result, `Fourmeme upload image failed: ${response.status}`);
     }
     if (!result || (result.code !== "0" && result.code !== 0)) {
-      throw new Error(result?.msg || "Fourmeme upload image failed");
+      this.noteErrorPayload(result, "Fourmeme upload image failed");
     }
     return String(result.data ?? "");
   }
@@ -285,6 +412,10 @@ export class FourmemeAPI {
       }
 
       const result = (await response.json()) as FourmemeTokenInfoResponse;
+      const rateLimitMsg = String((result as any)?.msg || (result as any)?.message || '');
+      if (this.rememberRateLimit(rateLimitMsg)) {
+        return null;
+      }
 
       if (result.code === 0 && result.data) {
         const data = result.data;
@@ -439,13 +570,164 @@ export class FourmemeAPI {
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(result?.msg || `Fourmeme create token failed: ${response.status}`);
+      this.noteErrorPayload(result, `Fourmeme create token failed: ${response.status}`);
     }
     if (!result || (result.code !== "0" && result.code !== 0)) {
-      throw new Error(result?.msg || "Fourmeme create token failed");
+      this.noteErrorPayload(result, "Fourmeme create token failed");
     }
     return result.data;
   }
+
+  public static async searchTokenTemplates(sort = "LAST"): Promise<FourmemeTokenTemplate[]> {
+    await this.throwIfBanned();
+    const endpoint = "/public/token_template/search";
+    const url = `${this.BASE_URL}${endpoint}`;
+    const response = await this.makeRequest(url, {
+      method: "POST",
+      headers: this.getHeaders(),
+      body: JSON.stringify({ sort }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      this.noteErrorPayload(result, `OpenFour template search failed: ${response.status}`);
+    }
+    if (!result || (result.code !== "0" && result.code !== 0)) {
+      this.noteErrorPayload(result, "OpenFour template search failed");
+    }
+    return Array.isArray(result.data) ? result.data : [];
+  }
+
+  public static async getTokenTemplateConfig(templateId: number | string): Promise<FourmemeTokenTemplateConfig[]> {
+    await this.throwIfBanned();
+    const endpoint = `/public/token_template/config?templateId=${encodeURIComponent(String(templateId))}`;
+    const url = `${this.BASE_URL}${endpoint}`;
+    const response = await this.makeRequest(url, {
+      method: "GET",
+      headers: this.getHeaders(),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      this.noteErrorPayload(result, `OpenFour template config failed: ${response.status}`);
+    }
+    if (!result || (result.code !== "0" && result.code !== 0)) {
+      this.noteErrorPayload(result, "OpenFour template config failed");
+    }
+    return Array.isArray(result.data) ? result.data : [];
+  }
+
+  public static async createOpenFourToken(
+    input: {
+      templateId: number | string;
+      name: string;
+      shortName: string;
+      symbol: string;
+      desc: string;
+      imgUrl: string;
+      webUrl?: string;
+      telegramUrl?: string;
+      twitterUrl?: string;
+      presaleQuote: number | string;
+      feePlan: boolean;
+      antiSniperEnabled?: boolean;
+      raisedAmount?: number | string;
+      saleAmount?: number | string;
+      totalSupply?: number | string;
+      quoteAsset?: string;
+      initParams: OpenFourCreateInitParams;
+    },
+    accessToken: string,
+  ): Promise<OpenFourCreateApiResult> {
+    await this.throwIfBanned();
+    const endpoint = "/private/token_template/token/create";
+    const url = `${this.BASE_URL}${endpoint}`;
+    const body = {
+      presetId: input.templateId,
+      templateId: input.templateId,
+      name: input.name,
+      shortName: input.shortName,
+      symbol: input.symbol,
+      desc: input.desc,
+      imgUrl: input.imgUrl,
+      tokenUri: input.imgUrl,
+      webUrl: input.webUrl,
+      telegramUrl: input.telegramUrl,
+      twitterUrl: input.twitterUrl,
+      presaleQuote: input.presaleQuote,
+      preSale: input.presaleQuote,
+      feePlan: input.feePlan,
+      antiSniperEnabled: input.antiSniperEnabled,
+      raisedAmount: input.raisedAmount,
+      raiseAmount: input.raisedAmount,
+      saleAmount: input.saleAmount,
+      totalSupply: input.totalSupply,
+      maxSupply: input.totalSupply,
+      quoteAsset: input.quoteAsset,
+      symbolAddress: input.quoteAsset,
+      initParams: input.initParams,
+    };
+    const headers = {
+      ...this.getHeaders(),
+      "meme-web-access": accessToken,
+    };
+    const response = await this.makeRequest(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      this.noteErrorPayload(result, `OpenFour create token failed: ${response.status}`);
+    }
+    if (!result || (result.code !== "0" && result.code !== 0)) {
+      this.noteErrorPayload(result, "OpenFour create token failed");
+    }
+    const row = Array.isArray(result.data) ? result.data[0] : result.data;
+    if (!row) {
+      throw new Error("OpenFour create token returned empty data");
+    }
+    return row as OpenFourCreateApiResult;
+  }
+}
+
+export interface FourmemeTokenTemplate {
+  id: number | string;
+  name?: string;
+  tag?: string;
+  descr?: string;
+  status?: string;
+  imgUrl?: string;
+  amount?: string;
+  deploys?: number;
+}
+
+export interface FourmemeTokenTemplateConfig {
+  id?: number;
+  symbol?: string;
+  symbolAddress?: string;
+  fullName?: string;
+  totalSupply?: string;
+  saleAmount?: string;
+  raisedAmount?: string;
+  createFee?: string;
+  decimals?: number;
+}
+
+export interface OpenFourCreateInitParams {
+  tokenParams: string;
+  vaultParams: string;
+  curveParams: string;
+  tradeParams: string;
+  migrateParams: string;
+  customDataParams: string;
+}
+
+export interface OpenFourCreateApiResult {
+  tokenId?: string | number;
+  tokenAddress?: string;
+  createArg?: string;
+  signature?: string;
+  sign?: string;
+  createFee?: string | number;
 }
 
 export default FourmemeAPI;

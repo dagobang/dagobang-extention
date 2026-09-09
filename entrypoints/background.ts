@@ -20,6 +20,7 @@ import { createLimitOrderExecutor, tickLimitOrdersForToken } from '@/services/li
 import type { BgRequest, GmgnTokenSnapshot, LimitOrderScanStatus, NewPoolMonitorUiDetail, SubmitChannel, TxSellInput, UnifiedMarketSignalSource } from '@/types/extention';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
 import { TokenFlapLaunchService } from '@/services/token/flapLaunch';
+import { TokenOpenFourLaunchService } from '@/services/token/openfourLaunch';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenAltfunService } from '@/services/token/altfun';
 import FourmemeAPI from '@/services/api/fourmeme';
@@ -1733,6 +1734,12 @@ export default defineBackground(() => {
                 ...msg.input,
                 launchFlowId: flowId,
                 fromAddress,
+                customQuoteToken: (msg.input.customQuoteToken && isAddress(msg.input.customQuoteToken.address))
+                  ? {
+                    ...msg.input.customQuoteToken,
+                    address: msg.input.customQuoteToken.address as `0x${string}`,
+                  }
+                  : undefined,
                 customDividendTokenAddress: (msg.input.customDividendTokenAddress && isAddress(msg.input.customDividendTokenAddress))
                   ? (msg.input.customDividendTokenAddress as `0x${string}`)
                   : undefined,
@@ -1778,6 +1785,76 @@ export default defineBackground(() => {
                 status: 'error',
                 stage: 'launch_confirmed',
                 message: String(error?.message || 'Flap 发射失败'),
+              });
+              throw error;
+            }
+          }
+
+          case 'token:getOpenFourTemplate': {
+            const template = TokenOpenFourLaunchService.getTemplate(msg.mode || '4stock');
+            return { ok: true, template };
+          }
+
+          case 'token:createOpenFour': {
+            const flowId = String(msg.input.launchFlowId || '').trim() || `openfour:${Date.now().toString(36)}`;
+            try {
+              await broadcastCookingLaunchEvent({
+                flowId,
+                platform: 'openfour',
+                status: 'progress',
+                stage: 'prepare',
+                message: 'OpenFour 发射流程已开始',
+              });
+              const fromAddress = (msg.input.fromAddress && isAddress(msg.input.fromAddress))
+                ? (msg.input.fromAddress as `0x${string}`)
+                : undefined;
+              const data = await TokenOpenFourLaunchService.createToken({
+                ...msg.input,
+                launchFlowId: flowId,
+                fromAddress,
+              }, {
+                onProgress: async (event) => {
+                  await broadcastCookingLaunchEvent({
+                    flowId,
+                    platform: 'openfour',
+                    status: 'progress',
+                    ...event,
+                  });
+                },
+              });
+              const launchWallet = data.fromAddress || fromAddress;
+              const autoSell = await createCookingAutoSellIfEnabled({
+                enabled: msg.input.autoSell?.enabled,
+                tokenAddress: data.tokenAddress,
+                fromAddress: launchWallet,
+                name: msg.input.name,
+                symbol: msg.input.symbol,
+                imgUrl: msg.input.imgUrl,
+                launchpad: 'openfour',
+                quoteToken: msg.input.autoSell?.quoteToken || 'BNC4',
+                rules: msg.input.autoSell?.rules,
+              });
+              await broadcastCookingLaunchEvent({
+                flowId,
+                platform: 'openfour',
+                status: 'success',
+                stage: 'launch_confirmed',
+                message: data.tokenAddress
+                  ? `OpenFour 发射成功：${data.tokenAddress.slice(0, 6)}...${data.tokenAddress.slice(-4)}`
+                  : 'OpenFour 发射成功',
+                txHash: data.txHash,
+                tokenAddress: data.tokenAddress,
+                fromAddress: launchWallet,
+                autoSell: autoSell ?? undefined,
+              });
+              return { ok: true, data, autoSell: autoSell ?? undefined };
+            } catch (error: any) {
+              await broadcastCookingLaunchEvent({
+                flowId,
+                platform: 'openfour',
+                status: 'error',
+                stage: 'launch_confirmed',
+                message: String(error?.message || 'OpenFour 发射失败'),
               });
               throw error;
             }

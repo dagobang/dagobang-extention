@@ -197,7 +197,7 @@ export class TokenFourmemeService {
             txValueWei ?? 0n,
             gasPriceWei,
             chainId,
-            { skipEstimateGas: true, gasLimit: 2000000n }
+            { skipEstimateGas: true, gasLimit: 8_000_000n }
         );
 
         let tokenAddress: `0x${string}` | null = null;

@@ -55,6 +55,8 @@ export function getFlapStocksVaultVersion(chainId: number, factoryAddress?: stri
 
 export type FlapQuoteTokenCategory = 'crypto' | 'rwa';
 
+export const FLAP_CUSTOM_QUOTE_ID = 'custom';
+
 export type FlapPresetQuoteToken = {
   id: string;
   symbol: string;
@@ -66,6 +68,27 @@ export type FlapPresetQuoteToken = {
   tags?: readonly string[];
   isNative?: boolean;
 };
+
+export type FlapCustomQuoteToken = {
+  address: Address;
+  symbol: string;
+  name: string;
+  decimals: number;
+  iconSrc?: string;
+};
+
+export function toFlapPresetFromCustom(token: FlapCustomQuoteToken): FlapPresetQuoteToken {
+  const symbol = token.symbol || token.name || 'TOKEN';
+  return {
+    id: FLAP_CUSTOM_QUOTE_ID,
+    symbol,
+    label: symbol,
+    address: token.address,
+    decimals: token.decimals,
+    category: 'crypto',
+    iconSrc: token.iconSrc,
+  };
+}
 
 export const FlapQuoteTokensByChain: Partial<Record<ChainId, readonly FlapPresetQuoteToken[]>> = {
   [ChainId.BNB]: [

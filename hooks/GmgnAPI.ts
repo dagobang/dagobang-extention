@@ -56,6 +56,20 @@ export interface GmgnSearchTokenItem {
   [key: string]: any;
 }
 
+export interface FlapQuoteSupportResult {
+  supported: boolean;
+  symbol: string;
+  name: string;
+  decimals: number;
+}
+
+interface FlapQuoteSupportResponse {
+  code: number;
+  reason?: string;
+  message?: string;
+  data?: FlapQuoteSupportResult;
+}
+
 interface GmgnSearchResponse {
   code: number;
   reason?: string;
@@ -428,6 +442,7 @@ export class GmgnAPI {
   private static readonly HOLDINGS_BASE_URL = 'https://gmgn.ai/td/api/v1';
   private static readonly PROFIT_BASE_URL = 'https://gmgn.ai/pf/api/v1';
   private static readonly SEARCH_BASE_URL = 'https://gmgn.ai/vas/api/v1';
+  private static readonly XAPI_BASE_URL = 'https://gmgn.ai/xapi/v1';
   private static readonly TOKEN_TRADE_INFO_CACHE_MS = 5 * 60_000;
   private static readonly tokenTradeInfoCache = new Map<string, { ts: number; value: TokenInfo | null }>();
   private static readonly tokenTradeInfoInFlight = new Map<string, Promise<TokenInfo | null>>();
@@ -1868,6 +1883,52 @@ export class GmgnAPI {
       return null;
     } catch (error) {
       console.error('Failed to fetch token holding detail:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check whether an ERC20 can be used as a Flap quote/base pool token.
+   * GET /xapi/v1/{chain}/flap/quote_support
+   */
+  public static async checkFlapQuoteSupport(
+    chain: string,
+    tokenAddress: string,
+  ): Promise<FlapQuoteSupportResult> {
+    const unsupported: FlapQuoteSupportResult = {
+      supported: false,
+      symbol: '',
+      name: '',
+      decimals: 0,
+    };
+    const normalizedChain = this.normalizeChainName(chain) || 'bsc';
+    const normalizedAddress = this.normalizeQueryAddress(normalizedChain, tokenAddress);
+    if (!normalizedAddress) return unsupported;
+
+    const endpoint = `/${normalizedChain}/flap/quote_support`;
+    const url = await this.buildApiUrl(endpoint, {
+      worker: '0',
+      token: normalizedAddress,
+    }, this.XAPI_BASE_URL);
+    const headers = await this.getHeaders();
+    try {
+      const response = await this.makeRequest(url, {
+        method: 'GET',
+        headers,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const result = await response.json() as FlapQuoteSupportResponse;
+      if (result.code !== 0 || !result.data) return unsupported;
+      return {
+        supported: Boolean(result.data.supported),
+        symbol: String(result.data.symbol || ''),
+        name: String(result.data.name || ''),
+        decimals: Number(result.data.decimals) || 0,
+      };
+    } catch (error) {
+      console.error('Failed to check Flap quote support:', error);
       throw error;
     }
   }

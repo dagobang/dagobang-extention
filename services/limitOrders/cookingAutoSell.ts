@@ -52,8 +52,14 @@ export async function createCookingLaunchAutoSellOrders(input: {
   const tokenAddress = String(input.tokenAddress || '').trim();
   const fromAddress = String(input.fromAddress || '').trim();
   const rules = normalizeCookingAutoSellRules(input.rules);
-  if (!tokenAddress || !fromAddress) {
-    return { okCount: 0, total: rules.length, errors: ['缺少代币地址或发币钱包'] };
+  if (!tokenAddress && !fromAddress) {
+    return { okCount: 0, total: rules.length, errors: ['自动卖出未创建：缺少代币地址和发币钱包'] };
+  }
+  if (!tokenAddress) {
+    return { okCount: 0, total: rules.length, errors: ['发射已提交，但未解析到代币地址，自动卖出未创建'] };
+  }
+  if (!fromAddress) {
+    return { okCount: 0, total: rules.length, errors: ['自动卖出未创建：缺少发币钱包'] };
   }
   if (rules.length <= 0) {
     return { okCount: 0, total: 0, errors: ['没有有效的市值目标配置'] };

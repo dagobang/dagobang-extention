@@ -934,12 +934,48 @@ export type BgRequest =
       telegramUrl?: string;
       fromAddress?: ChainAddress;
       quoteTokenId: string;
+      customQuoteToken?: {
+        address: ChainAddress;
+        symbol: string;
+        name: string;
+        decimals: number;
+        iconSrc?: string;
+      };
       quoteAmount?: string;
       taxMode: 'quote' | 'self' | 'custom' | 'stocks' | 'disabled';
       customDividendTokenAddress?: ChainAddress;
       selectedStockSymbols?: string[];
       buyTaxRateBps?: number;
       sellTaxRateBps?: number;
+      autoSell?: CookingAutoSellInput;
+    };
+  }
+  | { type: 'token:getOpenFourTemplate'; mode?: '4stock' }
+  | {
+    type: 'token:createOpenFour';
+    input: {
+      launchFlowId?: string;
+      mode?: '4stock';
+      name: string;
+      symbol: string;
+      desc: string;
+      imgUrl: string;
+      imgFallbackUrls?: string[];
+      webUrl?: string;
+      twitterUrl?: string;
+      telegramUrl?: string;
+      fromAddress?: ChainAddress;
+      quoteAmount?: string;
+      antiSniperEnabled?: boolean;
+      taxEnabled?: boolean;
+      buyTaxBps?: number;
+      sellTaxBps?: number;
+      taxAlloc?: {
+        founder?: number;
+        burn?: number;
+        holder?: number;
+        liquidity?: number;
+      };
       autoSell?: CookingAutoSellInput;
     };
   }
@@ -1133,6 +1169,34 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
     data?: {
       txHash: `0x${string}`;
       tokenAddress: `0x${string}` | null;
+    };
+    autoSell?: CookingAutoSellResult;
+  }
+  : T extends { type: 'token:getOpenFourTemplate' }
+  ? {
+    ok: true;
+    template: {
+      mode: '4stock';
+      templateId: string;
+      name: string;
+      tag: string;
+      descr: string;
+      quoteSymbol: string;
+      quoteAddress: string;
+      quoteDecimals: number;
+      raisedAmount: string;
+      saleAmount: string;
+      totalSupply: string;
+      createFee: string;
+    };
+  }
+  : T extends { type: 'token:createOpenFour' }
+  ? {
+    ok: true;
+    data?: {
+      txHash: `0x${string}`;
+      tokenAddress: `0x${string}` | null;
+      templateId?: string;
     };
     autoSell?: CookingAutoSellResult;
   }

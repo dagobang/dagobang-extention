@@ -171,7 +171,7 @@ declare global {
   export type { FlapAPI, FlapCoinApiResponse } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/FlapAPI')
   // @ts-ignore
-  export type { GmgnAPI, MultiTokenInfoResponse, GmgnSearchTokenItem, GmgnTokenHolding, GmgnPageFetchRequest, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams, TokenHoldingDetail, TokenHoldingDetailResponse } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI'
+  export type { GmgnAPI, MultiTokenInfoResponse, GmgnSearchTokenItem, FlapQuoteSupportResult, GmgnTokenHolding, GmgnPageFetchRequest, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams, TokenHoldingDetail, TokenHoldingDetailResponse } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI'
   import('/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/GmgnAPI')
   // @ts-ignore
   export type { TokenAPI } from '/home/catgroup/projects/remote/meme/dagobang/dagobang-extention/hooks/TokenAPI'

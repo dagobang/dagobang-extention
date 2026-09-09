@@ -3,6 +3,7 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   getContractAddress,
+  isAddress,
   keccak256,
   maxUint256,
   parseUnits,
@@ -16,6 +17,7 @@ import { generatePrivateKey } from 'viem/accounts';
 
 import { ChainId } from '@/constants/chains';
 import {
+  FLAP_CUSTOM_QUOTE_ID,
   FLAP_MAGIC_DIVIDEND_STOCKS,
   FLAP_MAGIC_DIVIDEND_SELF,
   FlapPortalAddress,
@@ -25,6 +27,9 @@ import {
   FlapUploadApiUrl,
   FlapVaultPortalAddress,
   getFlapStocksPresetTokens,
+  toFlapPresetFromCustom,
+  type FlapCustomQuoteToken,
+  type FlapPresetQuoteToken,
 } from '@/constants/flap';
 import { ChainSettings, GasPreset } from '@/types';
 import { RpcService } from '@/services/rpc';
@@ -47,6 +52,7 @@ export type CreateFlapTokenInput = {
   telegramUrl?: string;
   fromAddress?: `0x${string}`;
   quoteTokenId: string;
+  customQuoteToken?: FlapCustomQuoteToken;
   quoteAmount?: string;
   taxMode: FlapLaunchTaxMode;
   customDividendTokenAddress?: `0x${string}`;
@@ -690,6 +696,27 @@ async function waitForNativeBudgetToQuoteTokenSwap(input: {
   );
 }
 
+function resolveFlapQuoteToken(input: CreateFlapTokenInput): FlapPresetQuoteToken {
+  if (input.quoteTokenId === FLAP_CUSTOM_QUOTE_ID) {
+    const custom = input.customQuoteToken;
+    if (!custom?.address || !isAddress(custom.address)) {
+      throw new Error('自定义底池代币地址无效');
+    }
+    if (!Number.isFinite(custom.decimals) || custom.decimals <= 0) {
+      throw new Error('自定义底池代币校验失败');
+    }
+    return toFlapPresetFromCustom({
+      ...custom,
+      address: custom.address,
+    });
+  }
+  const quoteToken = FlapQuoteTokensByChain[ChainId.BNB]?.find((item) => item.id === input.quoteTokenId);
+  if (!quoteToken) {
+    throw new Error('不支持的 Flap 底池币种');
+  }
+  return quoteToken;
+}
+
 export class TokenFlapLaunchService {
   static prewarmVanitySalt(): void {
     const portalAddress = FlapPortalAddress[ChainId.BNB];
@@ -720,10 +747,7 @@ export class TokenFlapLaunchService {
       throw new Error('Flap Stocks Portal 配置缺失');
     }
 
-    const quoteToken = FlapQuoteTokensByChain[ChainId.BNB]?.find((item) => item.id === input.quoteTokenId);
-    if (!quoteToken) {
-      throw new Error('不支持的 Flap 底池币种');
-    }
+    const quoteToken = resolveFlapQuoteToken(input);
     const nativeBudgetWei = quoteToken.isNative ? 0n : parseNativeBudget(input.quoteAmount);
 
     const settings = await SettingsService.get();
