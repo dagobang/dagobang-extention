@@ -2489,16 +2489,20 @@ export class TradeService {
   }): Promise<{ quoteTokenAddress?: Address; poolPair?: Address; dexType?: string } | null> {
     if (input.chainId !== ChainId.BNB) return null;
 
-    const candidates = [
+    const candidates: Address[] = [];
+    const seenCandidates = new Set<string>();
+    for (const value of [
       input.preferredQuoteToken ?? null,
       this.getDefaultFlapStocksBridgeToken(input.chainId),
       ...this.getQuoteBridgeCandidates(input.chainId, input.tokenAddress, ZERO_ADDRESS),
-    ].filter((value, index, list): value is Address => {
-      if (!value || !isAddressLike(value)) return false;
-      const lowered = value.toLowerCase();
-      if (lowered === input.tokenAddress.toLowerCase()) return false;
-      return list.findIndex((item) => String(item || '').toLowerCase() === lowered) === index;
-    });
+    ]) {
+      const queryToken = this.toDexScreenerPairToken(input.chainId, value);
+      if (!queryToken) continue;
+      const lowered = queryToken.toLowerCase();
+      if (lowered === input.tokenAddress.toLowerCase() || seenCandidates.has(lowered)) continue;
+      seenCandidates.add(lowered);
+      candidates.push(queryToken);
+    }
 
     const pairs = (await Promise.all(candidates.map(async (quoteTokenAddress) => {
       const pair = await DexScreenerAPI.getBestPairBetweenTokens(input.chain, input.tokenAddress, quoteTokenAddress).catch(() => null);
@@ -2532,7 +2536,8 @@ export class TradeService {
     const chain = String(chainNames[input.chainId as ChainId] || '').trim().toLowerCase();
 
     if (chain) {
-      const dexPair = await DexScreenerAPI.getBestPairBetweenTokens(chain, input.tokenAddress, input.quoteTokenAddress).catch(() => null);
+      const queryQuoteToken = this.toDexScreenerPairToken(input.chainId, input.quoteTokenAddress) ?? input.quoteTokenAddress;
+      const dexPair = await DexScreenerAPI.getBestPairBetweenTokens(chain, input.tokenAddress, queryQuoteToken).catch(() => null);
       const pairAddress = dexPair?.pairAddress && isAddressLike(dexPair.pairAddress)
         ? (dexPair.pairAddress as Address)
         : null;
@@ -2550,8 +2555,8 @@ export class TradeService {
         fallbackPool: fallbackPool ?? null,
         fallbackPrefer: fallbackPrefer ?? null,
       });
-      if (pairAddress && supported) {
-        const pairPrefer = this.normalizeDexPrefer(this.mapDexScreenerPairDexType(dexPair!));
+      if (pairAddress && supported && dexPair) {
+        const pairPrefer = this.normalizeDexPrefer(this.mapDexScreenerPairDexType(dexPair));
         const pairMeta = await this.getKnownPoolRouteMeta(input.chainId, pairAddress, pairPrefer);
         this.logFlapStocksRoute(input.debug, input.logEvent ?? 'target.pool.selected', {
           chainId: input.chainId,
@@ -4484,6 +4489,7 @@ export class TradeService {
     this.sellInFlightByToken.add(sellLockKey);
     const run = async () => {
       const settings = await SettingsService.get();
+      const sellDebug = settings.ui?.consoleLogsEnabled === true;
       const routerAddress = DeployAddress[input.chainId as ChainId]?.DagobangRouter?.address;
       if (!routerAddress) throw new Error('Router address not set');
 
@@ -4766,7 +4772,6 @@ export class TradeService {
       }
 
       if (!isInner && !isHyperAltfun) {
-        const sellDebug = settings.ui?.consoleLogsEnabled === true;
         const preferExactQuoteForStocks = isTurbo && needsStocksQuoteRoute;
         const turboRouteMode = isTurbo && !preferExactQuoteForStocks;
         // hop1
