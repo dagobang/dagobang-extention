@@ -1076,6 +1076,11 @@
       "sell": "Sell",
       "transfer": "Transfer"
     },
+    "route": {
+      "badge": "Router",
+      "liquidity": "Liquidity",
+      "lowLiquidity": "Low"
+    },
     "transfer": {
       "recipient": "Recipient wallet",
       "to": "To",

@@ -1,0 +1,86 @@
+{
+  "descs": [
+    {
+      "swapType": "7",
+      "tokenIn": "0x4835c312E6a416B7F1B27A51352AdD6d717c7777",
+      "tokenOut": "0xCE7de646e7208a4Ef112cb6ed5038FA6cC6b12e3",
+      "poolAddress": "0xe2cE6ab80874Fa9Fa2aAE65D277Dd6B8e65C9De0",
+      "fee": "0",
+      "tickSpacing": "0",
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "poolManager": "0x0000000000000000000000000000000000000000",
+      "parameters": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "data": "0x"
+    },
+    {
+      "swapType": "0",
+      "tokenIn": "0xCE7de646e7208a4Ef112cb6ed5038FA6cC6b12e3",
+      "tokenOut": "0x61EC85aB89377db65762E234C946b5c25A56E99e",
+      "poolAddress": "0x92A94b65B7979F6240dbaE2490DdCad3C437998E",
+      "fee": "0",
+      "tickSpacing": "0",
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "poolManager": "0x0000000000000000000000000000000000000000",
+      "parameters": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "data": "0x"
+    },
+    {
+      "swapType": "1",
+      "tokenIn": "0x61EC85aB89377db65762E234C946b5c25A56E99e",
+      "tokenOut": "0x18d0e455B3491E09210292d3953157A4Bf104444",
+      "poolAddress": "0x84985239e5fC976342A9115D94D1c883606C4521",
+      "fee": "3000",
+      "tickSpacing": "0",
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "poolManager": "0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7",
+      "parameters": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "data": "0x"
+    },
+    {
+      "swapType": "1",
+      "tokenIn": "0x18d0e455B3491E09210292d3953157A4Bf104444",
+      "tokenOut": "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c",
+      "poolAddress": "0x44C786B5107009D50beA54878C47173Ffc987790",
+      "fee": "3000",
+      "tickSpacing": "0",
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "poolManager": "0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7",
+      "parameters": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "data": "0x"
+    },
+    {
+      "swapType": "1",
+      "tokenIn": "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c",
+      "tokenOut": "0x55d398326f99059fF775485246999027B3197955",
+      "poolAddress": "0x46Cf1cF8c69595804ba91dFdd8d6b960c9B0a7C4",
+      "fee": "500",
+      "tickSpacing": "0",
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "poolManager": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+      "parameters": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "data": "0x"
+    },
+    {
+      "swapType": "0",
+      "tokenIn": "0x55d398326f99059fF775485246999027B3197955",
+      "tokenOut": "0x0000000000000000000000000000000000000000",
+      "poolAddress": "0x16b9a82891338f9bA80E2D6970FddA79D1eb0daE",
+      "fee": "0",
+      "tickSpacing": "0",
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "poolManager": "0x0000000000000000000000000000000000000000",
+      "parameters": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "data": "0x"
+    }
+  ],
+  "feeToken": "0x0000000000000000000000000000000000000000",
+  "amountIn": "99456980874985084453497241",
+  "minReturn": "0",
+  "deadline": "1789105950"
+}

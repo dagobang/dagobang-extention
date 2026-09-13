@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Zap, Fuel, Sliders, Settings2 } from 'lucide-react';
 import { ChainId } from '@/constants/chains/chainId';
 import { getNativeSymbol } from '@/constants/chains/runtime';
-import type { AdvancedAutoSellConfig, QuickBuyPresetOverride, Settings } from '@/types/extention';
+import type { AdvancedAutoSellConfig, QuickBuyPresetOverride, QuickTradeRouteHop, Settings } from '@/types/extention';
 import { SymbolCoinIcon } from '@/components/Coins';
 import { formatPriceValue } from '@/utils/format';
 import { t, type Locale } from '@/utils/i18n';
@@ -14,6 +14,7 @@ import {
 import { AutoSell } from './AutoSell';
 import { getDynamicGasPreview } from './useDynamicGasPreview';
 import { ChannelSwitcher, type ChannelSwitcherItem } from './ChannelSwitcher';
+import { RoutePreviewHint } from './RoutePreviewHint';
 
 type BuySectionProps = {
   formattedNativeBalance: string;
@@ -24,6 +25,7 @@ type BuySectionProps = {
   tokenPriceUsd: number | null;
   tokenSymbol: string | null;
   previewRouteLabel: string | null;
+  previewRouteHops?: QuickTradeRouteHop[] | null;
   isAltfunLayout?: boolean;
   busy: boolean;
   isUnlocked: boolean;
@@ -70,6 +72,7 @@ export function BuySection({
   tokenPriceUsd,
   tokenSymbol,
   previewRouteLabel,
+  previewRouteHops,
   isAltfunLayout = false,
   busy,
   isUnlocked,
@@ -425,7 +428,6 @@ export function BuySection({
 
       <div
         className={`mb-1.5 border-emerald-500/10 bg-emerald-500/[0.04] text-zinc-400 ${isAltfunLayout ? 'px-2.5 py-1 text-[12px]' : 'px-2 py-1 text-[11px]'}`}
-        title={previewRouteLabel || undefined}
       >
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 truncate">
@@ -436,6 +438,7 @@ export function BuySection({
               ≈ {formatUsd(activePreviewUsd)}
             </span>
           </div>
+          <RoutePreviewHint label={previewRouteLabel} hops={previewRouteHops} tone="buy" locale={locale} />
           <div className="min-w-0 truncate text-right text-emerald-300/85">
             ≈ {formatAmount(activePreviewTokens)} {tokenSymbol || t('contentUi.common.token', locale)}
           </div>

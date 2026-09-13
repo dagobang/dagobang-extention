@@ -846,6 +846,31 @@ export type TradeTurboPrewarmInput = {
   fromAddress?: ChainAddress;
   submitChannel?: SubmitChannel;
   platform?: string;
+  baseTokenAddress?: ChainAddress;
+};
+
+export type QuickTradeRouteHop = {
+  tokenIn: string;
+  tokenOut: string;
+  tokenInSymbol: string;
+  tokenOutSymbol: string;
+  dexLabel: string;
+  poolAddress?: string | null;
+  fee?: number | null;
+  liquidityUsd?: number | null;
+};
+
+export type QuickTradeRoutePreview = {
+  buyLabel: string;
+  sellLabel: string;
+  hops: QuickTradeRouteHop[];
+};
+
+export type TradePreviewRouteInput = {
+  chainId: number;
+  tokenAddress: ChainAddress;
+  tokenInfo?: TokenInfo;
+  baseTokenAddress?: ChainAddress;
 };
 
 export type BgRequest =
@@ -988,6 +1013,7 @@ export type BgRequest =
   | { type: 'rpc:capacityProbe'; chainId: number; mode?: 'request' | 'force' }
   | { type: 'rpc:resetProfiles'; chainId: number; urls?: string[] }
   | { type: 'trade:prewarmTurbo'; input: TradeTurboPrewarmInput }
+  | { type: 'trade:previewRoute'; input: TradePreviewRouteInput }
   | { type: 'trade:refreshNonce'; input: { chainId: number; fromAddress?: ChainAddress } }
   | { type: 'tx:buy'; input: TxBuyInput }
   | { type: 'tx:buyWithReceiptAuto'; input: TxBuyInput }
@@ -1253,6 +1279,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true }
   : T extends { type: 'trade:prewarmTurbo' }
   ? { ok: true }
+  : T extends { type: 'trade:previewRoute' }
+  ? { ok: true; route: QuickTradeRoutePreview | null }
   : T extends { type: 'trade:refreshNonce' }
   ? { ok: true }
   : T extends { type: 'tx:approve' }

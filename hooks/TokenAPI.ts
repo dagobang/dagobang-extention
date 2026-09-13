@@ -791,6 +791,27 @@ export class TokenAPI {
         return httpInfo;
     }
 
+    static async previewQuickTradeRoute(input: {
+        chainId: number;
+        tokenAddress: string;
+        tokenInfo?: TokenInfo | null;
+        baseTokenAddress?: string;
+    }) {
+        if (!input.tokenAddress || !input.tokenInfo || input.chainId === ChainId.SOL || input.chainId === ChainId.HYPER) {
+            return null;
+        }
+        const res = await call({
+            type: 'trade:previewRoute',
+            input: {
+                chainId: input.chainId,
+                tokenAddress: input.tokenAddress,
+                tokenInfo: input.tokenInfo ?? undefined,
+                baseTokenAddress: input.baseTokenAddress,
+            },
+        });
+        return res.route ?? null;
+    }
+
     static async getPoolPair(chain: string, address: string): Promise<{ token0: string; token1: string } | null> {
         const chainId = getChainIdByName(chain);
         const res = await call({

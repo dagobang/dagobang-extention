@@ -340,6 +340,10 @@ export class SolanaTradeExecutor implements TradeExecutor {
     await prewarmSolanaTurboTradeContext(_input);
   }
 
+  async previewQuickTradeRoute(_input: import('@/types/extention').TradePreviewRouteInput) {
+    return null;
+  }
+
   async refreshNonce(_input: {
     chainId: number;
     fromAddress?: string;

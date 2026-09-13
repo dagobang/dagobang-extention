@@ -1097,6 +1097,11 @@
       "sell": "卖出",
       "transfer": "转账"
     },
+    "route": {
+      "badge": "路由",
+      "liquidity": "流动性",
+      "lowLiquidity": "偏低"
+    },
     "transfer": {
       "recipient": "接收钱包",
       "to": "到",

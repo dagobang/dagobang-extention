@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import toast from 'react-hot-toast';
 import { SatelliteDish } from 'lucide-react';
 import { formatUnits, parseUnits, zeroAddress } from 'viem';
-import type { Account, BgGetStateResponse, QuickBuyPresetOverride, Settings, SubmitChannel, TradeSuccessSoundPreset, TradeTurboPrewarmInput } from '@/types/extention';
+import type { Account, BgGetStateResponse, QuickBuyPresetOverride, QuickTradeRoutePreview, Settings, SubmitChannel, TradeSuccessSoundPreset, TradeTurboPrewarmInput } from '@/types/extention';
 import type { TokenInfo, TokenStat } from '@/types/token';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { formatBroadcastProvider, formatPriceValue } from '@/utils/format';
@@ -36,6 +36,8 @@ import { RpcPanel } from './components/RpcPanel';
 import { DailyAnalysisPanel } from './components/DailyAnalysisPanel';
 import { ReviewPanel } from './components/ReviewPanel';
 import { QuickTradePanel } from './components/QuickTradePanel';
+import { mergeQuickTradeRouteHops, reverseQuickTradeRouteHops } from './components/QuickTradePanel/RoutePreviewHint';
+import { buildFastQuickTradeRoutePreview } from '@/utils/quickTradeRoutePreview';
 import { FloatingToolbar } from './components/FloatingToolbar';
 import { CookingPanel } from './components/CookingPanel';
 import { useDynamicGasPreview } from './components/QuickTradePanel/useDynamicGasPreview';
@@ -577,6 +579,7 @@ export default function App() {
   const [buyPreviewQuotedTokenAmounts, setBuyPreviewQuotedTokenAmounts] = useState<Array<number | null>>([null, null, null, null]);
   const [sellPreviewQuotedUsd, setSellPreviewQuotedUsd] = useState<Array<number | null>>([null, null, null, null]);
   const [sellPreviewQuotedBaseAmounts, setSellPreviewQuotedBaseAmounts] = useState<Array<number | null>>([null, null, null, null]);
+  const [enrichedEvmRoutePreview, setEnrichedEvmRoutePreview] = useState<QuickTradeRoutePreview | null>(null);
   const [marketCapDisplay, setMarketCapDisplay] = useState<string | null>(null);
   const [liquidityDisplay, setLiquidityDisplay] = useState<string | null>(null);
   const [gmgnHoldingStats, setGmgnHoldingStats] = useState<GmgnHoldingStats | null>(null);
@@ -1536,6 +1539,7 @@ export default function App() {
       fromAddress: input.fromAddress,
       submitChannel,
       platform: normalizedSitePlatform || undefined,
+      baseTokenAddress: tradeBaseTokenAddress,
     };
     const inflight = call({
       type: 'trade:prewarmTurbo',
@@ -1559,7 +1563,7 @@ export default function App() {
       });
     prewarmTurboInFlightRef.current.set(input.key, inflight);
     return inflight;
-  }, [chainId, normalizedSitePlatform, submitChannel, tokenAddressNormalized, tokenInfo]);
+  }, [chainId, normalizedSitePlatform, submitChannel, tokenAddressNormalized, tokenInfo, tradeBaseTokenAddress]);
 
   useEffect(() => {
     if (!tokenAddressNormalized) {
@@ -2387,6 +2391,48 @@ export default function App() {
     }
     return { buy: null, sell: null };
   }, [siteInfo?.platform, chainId, resolvedTokenSymbol, tradeBaseTokenMeta.symbol, tokenInfo, tokenAddressNormalized]);
+
+  const evmRoutePreview = useMemo(() => {
+    if (!tokenInfo || !tokenAddressNormalized || chainId === ChainId.SOL || chainId === ChainId.HYPER) {
+      return null;
+    }
+    return buildFastQuickTradeRoutePreview({
+      chainId,
+      tokenInfo: tokenInfo as TokenInfo,
+      tokenAddress: tokenAddressNormalized,
+      baseTokenAddress: tradeBaseTokenAddress,
+    });
+  }, [chainId, tokenAddressNormalized, tokenInfo, tradeBaseTokenAddress]);
+
+  useEffect(() => {
+    setEnrichedEvmRoutePreview(null);
+    if (!tokenAddressNormalized || !tokenInfo || chainId === ChainId.SOL || chainId === ChainId.HYPER) {
+      return;
+    }
+    let canceled = false;
+    void TokenAPI.previewQuickTradeRoute({
+      chainId,
+      tokenAddress: tokenAddressNormalized,
+      tokenInfo: tokenInfo as TokenInfo,
+      baseTokenAddress: tradeBaseTokenAddress,
+    })
+      .then((route) => {
+        if (!canceled) setEnrichedEvmRoutePreview(route);
+      })
+      .catch(() => {
+        if (!canceled) setEnrichedEvmRoutePreview(null);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [chainId, tokenAddressNormalized, tokenInfo, tradeBaseTokenAddress]);
+
+  const buyPreviewRoute = evmRoutePreview?.buyLabel ?? quickTradePreviewRoutes.buy;
+  const sellPreviewRoute = evmRoutePreview?.sellLabel ?? quickTradePreviewRoutes.sell;
+  const buyPreviewRouteHops = evmRoutePreview?.hops?.length
+    ? mergeQuickTradeRouteHops(evmRoutePreview.hops, enrichedEvmRoutePreview?.hops)
+    : null;
+  const sellPreviewRouteHops = reverseQuickTradeRouteHops(buyPreviewRouteHops);
 
   useEffect(() => {
     if (!tokenAddressNormalized || !settings || !siteInfo || chainId !== 999 || siteInfo.platform !== 'altfun') {
@@ -5603,8 +5649,11 @@ export default function App() {
               sellPreviewQuotedUsd={sellPreviewQuotedUsd}
               sellPreviewQuotedBaseAmounts={sellPreviewQuotedBaseAmounts}
               tokenSymbol={resolvedTokenSymbol}
-              buyPreviewRoute={quickTradePreviewRoutes.buy}
-              sellPreviewRoute={quickTradePreviewRoutes.sell}
+              buyPreviewRoute={buyPreviewRoute}
+              sellPreviewRoute={sellPreviewRoute}
+              buyPreviewRouteHops={buyPreviewRouteHops}
+              sellPreviewRouteHops={sellPreviewRouteHops}
+              channelRouteTagLabel={quickTradePreviewRoutes.buy}
               approveStatus={selectedApproveStatus}
               approveStatusTitle={approveStatusTitle}
               sellActionReady={sellActionReady}

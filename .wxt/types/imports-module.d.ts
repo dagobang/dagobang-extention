@@ -37,6 +37,8 @@ declare module '#imports' {
   export { t, normalizeLocale, Locale } from '../utils/i18n';
   export { isFlapSuffixAddress, isFourMemeSuffixAddress, inferLaunchpadFamilyByAddress, resolveTokenLaunchpadPlatform, LaunchpadFamily } from '../utils/launchpadFamily';
   export { call } from '../utils/messaging';
+  export { resolveEvmTradeQuoteToken, planEvmTradeRoute, buildFastQuickTradeRoutePreview, EvmTradeRouteHopKind, EvmTradeRoutePlanHop, EvmTradeRoutePlan } from '../utils/quickTradeRoutePreview';
+  export { isLikelyTokenAddressLabel, getKnownQuoteTokenSymbol, preferRouteTokenSymbol, resolveRouteTokenLabel } from '../utils/quoteTokenLabels';
   export { parsePlatformTokenLink, navigateToUrl, parseCurrentUrl, parseCurrentUrlFull, SiteInfo } from '../utils/sites';
   export { DEFAULT_SOLANA_TIP_PRESET_VALUES, getSolanaTipProviderLabel, getSolanaTipMinimumNative, getSolanaTipAccounts, getRandomSolanaTipRecipient, getSolanaTipPresetValue, resolveEnabledSolanaSwqosProviderTypes, resolveSingleEnabledSolanaTipProvider, resolveSolanaTipConfig } from '../utils/solanaTip';
   export { collectErrorText, classifyBroadcastError, getNonceErrorKindFromText, extractNextNonceHintFromText, isAllowanceLikeText, isInFlightLimitLikeText, BroadcastErrorClass } from '../utils/txErrorClassify';

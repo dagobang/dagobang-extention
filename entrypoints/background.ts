@@ -2059,6 +2059,15 @@ export default defineBackground(() => {
             return { ok: true };
           }
 
+          case 'trade:previewRoute': {
+            try {
+              const route = await getTrade(msg.input.chainId).previewQuickTradeRoute(msg.input);
+              return { ok: true, route };
+            } catch {
+              return { ok: true, route: null };
+            }
+          }
+
           case 'trade:refreshNonce': {
             try {
               await getTrade(msg.input.chainId).refreshNonce(msg.input);
