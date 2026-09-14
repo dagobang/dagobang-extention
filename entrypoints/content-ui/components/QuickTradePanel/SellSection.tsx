@@ -164,7 +164,7 @@ export function SellSection({
   const isSolana = settings?.chainId === ChainId.SOL;
   const priorityFeeUiLabel = 'PF';
   const submitChannel = chainSettings?.submitChannel ?? 'protectRpcs';
-  const showPriorityFee = settings?.chainId !== ChainId.HYPER && (isSolana || (submitChannel !== 'protectRpcs' && submitChannel !== 'mixed'));
+  const showPriorityFee = settings?.chainId !== ChainId.HYPER && settings?.chainId !== ChainId.RH && (isSolana || (submitChannel !== 'protectRpcs' && submitChannel !== 'mixed'));
   const enabledTipProviders = Array.isArray(chainSettings?.solanaSwqos?.providers)
     ? chainSettings!.solanaSwqos!.providers.filter((item) => item?.enabled)
     : [];

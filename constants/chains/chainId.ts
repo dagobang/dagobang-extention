@@ -3,4 +3,5 @@ export enum ChainId {
   BNB = 56,
   HYPER = 999,
   SOL = 501,
+  RH = 4663,
 }

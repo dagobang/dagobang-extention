@@ -10,17 +10,21 @@ import { ethEthBridgePoolConfigByTokenAddress, type EthNativeBridgePoolConfig } 
 import { hyperTokens } from './chains/hyper'
 import { hyperBridgeTokenAddresses } from './chains/hyper'
 import { hyperNativeBridgePoolConfigByTokenAddress, type HyperNativeBridgePoolConfig } from './chains/hyper'
+import { rhTokens } from './chains/rh'
+import { rhBridgeTokenAddresses } from './chains/rh'
 
 export const allTokens: Partial<Record<ChainId, Record<string, ERC20Token>>> = {
     [ChainId.ETH]: ethTokens,
     [ChainId.BNB]: bscTokens,
     [ChainId.HYPER]: hyperTokens,
+    [ChainId.RH]: rhTokens,
 }
 
 export const bridgeTokenAddressesByChain: Partial<Record<ChainId, readonly `0x${string}`[]>> = {
     [ChainId.ETH]: ethBridgeTokenAddresses as unknown as readonly `0x${string}`[],
     [ChainId.BNB]: bscBridgeTokenAddresses as unknown as readonly `0x${string}`[],
     [ChainId.HYPER]: hyperBridgeTokenAddresses as unknown as readonly `0x${string}`[],
+    [ChainId.RH]: rhBridgeTokenAddresses as unknown as readonly `0x${string}`[],
     [ChainId.SOL]: [],
 }
 
@@ -33,9 +37,9 @@ export function getBridgeTokenAddresses(chainId: ChainId): readonly `0x${string}
  */
 export function getQuoteTokenSymbol(chainId: ChainId, address: string): string {
     const addr = address.toLowerCase();
-    const bridgeTokens = getBridgeTokenAddresses(chainId);
-    const token = bridgeTokens.find((x) => x.toLowerCase() === addr.toLowerCase());
-    return token ? allTokens[chainId]?.[token]?.symbol ?? 'UNKNOWN' : 'UNKNOWN';
+    const known = Object.values(allTokens[chainId] ?? {});
+    const match = known.find((token) => token.address.toLowerCase() === addr);
+    return match?.symbol ?? 'UNKNOWN';
 }
 
 export function getQuoteTokenAddress(chainId: ChainId, symbol: string): string {
@@ -54,6 +58,7 @@ export function getBridgeTokenDexPreference(chainId: ChainId, address: string): 
         if (addr === hyperTokens.usdc.address.toLowerCase()) return 'v3';
         return null;
     }
+    if (chainId === ChainId.RH) return 'v3';
     if (chainId !== ChainId.BNB) return null;
     const addr = address.toLowerCase();
     if (addr === bscTokens.usdt.address.toLowerCase()) return 'v2';

@@ -23,8 +23,9 @@ import { TokenFlapLaunchService } from '@/services/token/flapLaunch';
 import { TokenOpenFourLaunchService } from '@/services/token/openfourLaunch';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenAltfunService } from '@/services/token/altfun';
+import { TokenPonsService } from '@/services/token/pons';
 import FourmemeAPI from '@/services/api/fourmeme';
-import { chainNames, getChainIdByName } from '@/constants/chains';
+import { chainNames, getChainIdByName, toGmgnChainName } from '@/constants/chains';
 import { ChainId } from '@/constants/chains/chainId';
 import BloxRouterAPI from '@/services/api/bloxRouter';
 import { encodeFunctionData, isAddress, parseAbi, parseEther, parseUnits } from 'viem';
@@ -592,7 +593,7 @@ export default defineBackground(() => {
     settings?.ui?.gmgnLimitOrderPriceEnabled === true;
   const resolveGmgnLimitOrderChain = (chainId: number): string | null => {
     if (!GMGN_LIMIT_ORDER_CHAIN_IDS.has(chainId)) return null;
-    const chain = String(chainNames[chainId] || '').trim().toLowerCase();
+    const chain = toGmgnChainName(chainId);
     return chain || null;
   };
   const requestGmgnFollowTokensFromContent = async (
@@ -1556,6 +1557,9 @@ export default defineBackground(() => {
 
           case 'token:getTokenInfo:altfun':
             return { ok: true, tokenInfo: await TokenAltfunService.getTokenInfo(msg.chainId, msg.tokenAddress) };
+
+          case 'token:getTokenInfo:pons':
+            return { ok: true, tokenInfo: await TokenPonsService.getTokenInfo(msg.chainId, msg.tokenAddress) };
 
           case 'token:getTokenInfo:fourmemeHttp': {
             const tokenInfo = await FourmemeAPI.getTokenInfo(msg.chain, msg.address);

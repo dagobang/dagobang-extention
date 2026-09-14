@@ -155,6 +155,45 @@ const HYPER_MAINNET: ChainSettings = {
   bloxrouteSellEnabled: false,
 };
 
+const RH_GAS_GWEI: GasGweiConfig = {
+  slow: '0.001',
+  standard: '0.01',
+  fast: '0.05',
+  turbo: '0.2',
+};
+
+const RH_MAINNET: ChainSettings = {
+  rpcUrls: [
+    'https://rpc.mainnet.chain.robinhood.com',
+  ],
+  protectedRpcUrls: [],
+  protectedRpcUrlsBuy: [],
+  protectedRpcUrlsSell: [],
+  submitChannel: 'protectRpcs',
+  tradeBaseToken: 'BNB',
+  antiMev: false,
+  gasPreset: 'standard',
+  buyGasPreset: 'standard',
+  sellGasPreset: 'standard',
+  executionMode: 'default',
+  gasPriceMode: 'dynamic',
+  slippageBps: 4000,
+  deadlineSeconds: 60,
+  buyPresets: ['0.01', '0.05', '0.1', '0.2'],
+  sellPresets: ['10', '20', '50', '100'],
+  buyGasGwei: RH_GAS_GWEI,
+  sellGasGwei: RH_GAS_GWEI,
+  approveGasGwei: '0.01',
+  buyPriorityFeePreset: 'standard',
+  sellPriorityFeePreset: 'standard',
+  buyPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  sellPriorityFeePresets: DEFAULT_PRIORITY_FEE_PRESETS,
+  quickBuyAdvancedEnabled: false,
+  quickBuyPresetOverrides: DEFAULT_QUICK_BUY_PRESET_OVERRIDES,
+  bloxrouteBuyEnabled: false,
+  bloxrouteSellEnabled: false,
+};
+
 const SOL_MAINNET: ChainSettings = {
   rpcUrls: [
     'https://public.rpc.solanavibestation.com',
@@ -510,6 +549,7 @@ export function defaultSettings(): Settings {
       [ChainId.ETH]: ETH_MAINNET,
       [ChainId.BNB]: BSC_MAINNET,
       [ChainId.HYPER]: HYPER_MAINNET,
+      [ChainId.RH]: RH_MAINNET,
       [ChainId.SOL]: SOL_MAINNET,
     },
     autoLockSeconds: 30 * 60, // 30 minutes

@@ -136,7 +136,7 @@ export function HomeView({
     : tradeBaseTokenAddress.toLowerCase() === wrappedNativeAddress.toLowerCase()
     ? `W${nativeSymbol}`
     : tradeBaseTokenAddress.toLowerCase() === (USDC[chainId as keyof typeof USDC]?.address ?? '').toLowerCase()
-      ? 'USDC'
+      ? (USDC[chainId as keyof typeof USDC]?.symbol ?? 'USDC')
       : tradeBaseTokenAddress.toLowerCase() === (USDT[chainId as keyof typeof USDT]?.address ?? '').toLowerCase()
         ? 'USDT'
         : nativeSymbol;
@@ -269,7 +269,7 @@ export function HomeView({
     launchpad_status: 2,
     quote_token: nativeSymbol,
     quote_token_address: zeroAddress,
-    dex_type: chainId === ChainId.HYPER ? 'v3' : '',
+    dex_type: chainId === ChainId.HYPER || chainId === ChainId.RH ? 'v3' : '',
   });
   useEffect(() => {
     let cancelled = false;
@@ -320,7 +320,7 @@ export function HomeView({
           tokenIn,
           tokenOut,
           amountIn,
-          chainId === ChainId.HYPER ? { prefer: 'v3', v3Fee: 3000 } : undefined
+          chainId === ChainId.HYPER ? { prefer: 'v3', v3Fee: 3000 } : chainId === ChainId.RH ? { prefer: 'v3', v3Fee: 10000 } : undefined
         );
         if (cancelled) return;
         if (!quote || quote.amountOut <= 0n) {
@@ -1301,7 +1301,7 @@ export function HomeView({
                           baseTokenAddress: zeroAddress,
                           fromAddress: convertAddress as `0x${string}`,
                           executionModeOverride: 'default',
-                          poolFee: chainId === ChainId.HYPER ? 3000 : undefined,
+                          poolFee: chainId === ChainId.HYPER ? 3000 : chainId === ChainId.RH ? 10000 : undefined,
                           tokenInfo: getTradeBaseSwapTokenInfo(),
                         },
                       }) as any;
@@ -1321,7 +1321,7 @@ export function HomeView({
                           baseTokenAddress: zeroAddress,
                           fromAddress: convertAddress as `0x${string}`,
                           executionModeOverride: 'default',
-                          poolFee: chainId === ChainId.HYPER ? 3000 : undefined,
+                          poolFee: chainId === ChainId.HYPER ? 3000 : chainId === ChainId.RH ? 10000 : undefined,
                           tokenInfo: getTradeBaseSwapTokenInfo(),
                         },
                       }) as any;

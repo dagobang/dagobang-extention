@@ -34,6 +34,8 @@ interface DexScreenerPairsResponse {
   pairs?: DexScreenerPair[] | null;
 }
 
+import { toDexScreenerChainName } from "@/constants/chains";
+
 export class DexScreenerAPI {
   private static readonly BASE_URL = "https://api.dexscreener.com";
   private static readonly CACHE_TTL_MS = 30_000;
@@ -65,8 +67,7 @@ export class DexScreenerAPI {
   }
 
   private static normalizeChain(chain: string): string {
-    const normalized = String(chain || "bsc").trim().toLowerCase();
-    return normalized === "bnb" ? "bsc" : normalized;
+    return toDexScreenerChainName(chain || "bsc");
   }
 
   private static async getJson<T>(url: string): Promise<T> {

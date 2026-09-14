@@ -906,6 +906,7 @@ export type BgRequest =
   | { type: 'token:getTokenInfo:fourmeme'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:flap'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:altfun'; chainId: number; tokenAddress: `0x${string}` }
+  | { type: 'token:getTokenInfo:pons'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:fourmemeHttp'; platform: string; chain: string; address: ChainAddress }
   | { type: 'token:getTokenInfo:flapHttp'; platform: string; chain: string; address: ChainAddress }
   | {
@@ -1172,6 +1173,8 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'token:getTokenInfo:flap' }
   ? ({ ok: true } & FlapTokenStateV7)
   : T extends { type: 'token:getTokenInfo:altfun' }
+  ? { ok: true; tokenInfo: TokenInfo | null }
+  : T extends { type: 'token:getTokenInfo:pons' }
   ? { ok: true; tokenInfo: TokenInfo | null }
   : T extends { type: 'token:getTokenInfo:fourmemeHttp' }
   ? { ok: true; tokenInfo: TokenInfo | null }

@@ -13,6 +13,7 @@ export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
     if (normalized === 'sol') return 'SOL';
     if (normalized === 'hyper') return 'HYPE';
     if (normalized === 'bnb' || normalized === 'bsc') return 'BNB';
+    if (normalized === 'rh' || normalized === 'robinhood' || normalized === 'eth') return 'ETH';
     return normalized.toUpperCase() || 'NATIVE';
   };
 
@@ -45,7 +46,7 @@ export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
     });
   };
 
-  const makeQuickBuyButton = (tokenAddress: string, amount: string, nativeSymbol: string) => {
+  const makeQuickBuyButton = (tokenAddress: string, amount: string, nativeSymbol: string, chain: string) => {
     const wrapper = document.createElement('div');
     wrapper.className =
       'pointer-events-auto relative !w-full !h-full !box-border rounded-[6px] border group-btns max-w-[200px] transition-all duration-[150ms] ease-in-out BuyButton-continer';
@@ -62,6 +63,7 @@ export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
       window.dispatchEvent(
         new CustomEvent('dagobang-quickbuy', {
           detail: {
+            chain,
             tokenAddress,
             amountBnb: amount,
           },
@@ -160,8 +162,8 @@ export function setupGmgnQuickBuyButtons(): QuickBuyCleanup {
           const quick1 = (window as any).__DAGOBANG_SETTINGS__?.quickBuy1Bnb;
           const quick2 = (window as any).__DAGOBANG_SETTINGS__?.quickBuy2Bnb;
           const nativeSymbol = getNativeSymbol(tokenMeta.chain);
-          if (Number(quick1) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick1, nativeSymbol));
-          if (Number(quick2) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick2, nativeSymbol));
+          if (Number(quick1) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick1, nativeSymbol, tokenMeta.chain));
+          if (Number(quick2) > 0) inner.appendChild(makeQuickBuyButton(tokenMeta.tokenAddress, quick2, nativeSymbol, tokenMeta.chain));
 
           container.appendChild(inner);
           card.appendChild(container);

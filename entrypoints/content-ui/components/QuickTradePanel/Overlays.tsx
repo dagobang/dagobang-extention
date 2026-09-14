@@ -1,5 +1,5 @@
 
-import { SUPPORTED_CHAINS } from '@/constants/chains';
+import { isSupportedChainName } from '@/constants/chains';
 import type { SiteInfo } from '@/utils/sites';
 import { t, type Locale } from '@/utils/i18n';
 
@@ -13,7 +13,7 @@ type OverlaysProps = {
 export function Overlays({ siteInfo, isUnlocked, onUnlock, locale }: OverlaysProps) {
   return (
     <>
-      {!SUPPORTED_CHAINS.includes(siteInfo.chain) && (
+      {!isSupportedChainName(siteInfo.chain) && (
         <div className="absolute inset-0 z-50 flex items-center justify-center rounded-xl bg-black/80 backdrop-blur-[1px]">
           <div className="text-zinc-400 text-xs font-mono">
             {t('contentUi.overlay.unsupportedChain', locale, [siteInfo.chain])}

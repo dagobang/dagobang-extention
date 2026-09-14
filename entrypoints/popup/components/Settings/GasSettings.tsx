@@ -14,7 +14,7 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
   const fallbackChainDraft = defaults.chains[defaults.chainId];
   const chainDraft = settingsDraft.chains[chainId] ?? defaults.chains[chainId] ?? fallbackChainDraft;
   const nativeSymbol = getNativeSymbol(chainId);
-  const supportsPriorityFee = chainId !== ChainId.HYPER;
+  const supportsPriorityFee = chainId !== ChainId.HYPER && chainId !== ChainId.RH;
   const prioritySectionTitle = 'Priority';
   const priorityLabel = '优先费';
   const buyPriorityLabel = `买入${priorityLabel}预设值(${nativeSymbol})`;
@@ -76,12 +76,13 @@ export function GasSettings({ settingsDraft, setSettingsDraft, tt }: GasSettings
               }
             >
               <option value="fixed">固定 Gas（使用本页预设）</option>
-              <option value="dynamic">动态 Gas（实时估算，ETH 推荐）</option>
+              <option value="dynamic">{chainId === ChainId.ETH || chainId === ChainId.RH ? '动态 Gas（实时估算，推荐）' : '动态 Gas（实时估算，ETH 推荐）'}</option>
             </select>
           </label>
           {(chainDraft.gasPriceMode ?? 'fixed') === 'dynamic' ? (
             <div className="rounded-md border border-cyan-800/40 bg-cyan-950/20 px-3 py-2 text-[11px] text-cyan-200">
               动态模式下，快捷面板的慢/标准/快/抢跑表示费率倍率（如 1.0x/1.1x/1.2x/1.4x），不是固定 gwei。
+              {chainId === ChainId.RH ? ' Robinhood Chain 是 sequencer 先到先得，加 gas 不能插队，也没有贿赂或防夹通道。' : ''}
             </div>
           ) : null}
 

@@ -4,7 +4,7 @@ import type { BroadcastSubmitStrategy } from '../rpc';
 import type { ChainSettings, GasPreset, SubmitChannel } from '../../types/extention';
 import { classifyBroadcastError, collectErrorText, extractNextNonceHintFromText, getNonceErrorKindFromText, isInFlightLimitLikeText } from '../../utils/txErrorClassify';
 import { parseGweiToWei } from '../../utils/dexUtils';
-import { getChainRuntime } from '@/constants/chains';
+import { ChainId, getChainRuntime } from '@/constants/chains';
 
 export function getGasPriceWei(chainSettings: ChainSettings, preset: GasPreset, side: 'buy' | 'sell'): bigint {
   const baseConfig = side === 'buy' ? chainSettings.buyGasGwei : chainSettings.sellGasGwei;
@@ -451,7 +451,8 @@ export async function sendTransaction(
   const nonce = await noncePromise;
 
   const runtime = getChainRuntime(chainId);
-  const shouldUseDynamicFee = opts?.feeMode === 'dynamic' && chainId === 1;
+  const shouldUseDynamicFee = opts?.feeMode === 'dynamic' && (chainId === ChainId.ETH || chainId === ChainId.RH);
+  const allowZeroPriorityFee = chainId === ChainId.RH;
   let broadcastGasPriceWei = gasPriceWei;
   const multiplierBpsByPreset: Record<GasPreset, bigint> = {
     slow: 10000n,
@@ -469,20 +470,21 @@ export async function sendTransaction(
     const feeStart = Date.now();
     try {
       const estimated = await client.estimateFeesPerGas();
-      const maxPriorityFeePerGas = typeof estimated?.maxPriorityFeePerGas === 'bigint' && estimated.maxPriorityFeePerGas > 0n
-        ? estimated.maxPriorityFeePerGas
-        : parseGweiToWei('1');
+      const estimatedPriority = typeof estimated?.maxPriorityFeePerGas === 'bigint' ? estimated.maxPriorityFeePerGas : null;
+      const maxPriorityFeePerGas = estimatedPriority != null && (estimatedPriority > 0n || allowZeroPriorityFee)
+        ? estimatedPriority
+        : parseGweiToWei(allowZeroPriorityFee ? '0.01' : '1');
       const maxFeePerGas = typeof estimated?.maxFeePerGas === 'bigint' && estimated.maxFeePerGas > 0n
         ? estimated.maxFeePerGas
-        : (maxPriorityFeePerGas * 2n);
+        : (maxPriorityFeePerGas > 0n ? maxPriorityFeePerGas * 2n : (gasPriceWei > 0n ? gasPriceWei : parseGweiToWei(allowZeroPriorityFee ? '0.05' : '2')));
       trace?.('estimateFeesPerGas', Date.now() - feeStart);
       return {
         maxFeePerGas: applyMultiplier(maxFeePerGas),
         maxPriorityFeePerGas: applyMultiplier(maxPriorityFeePerGas),
       };
     } catch {
-      const fallbackPriority = parseGweiToWei('1');
-      const fallbackMax = gasPriceWei > 0n ? gasPriceWei : parseGweiToWei('2');
+      const fallbackPriority = parseGweiToWei(allowZeroPriorityFee ? '0.01' : '1');
+      const fallbackMax = gasPriceWei > 0n ? gasPriceWei : parseGweiToWei(allowZeroPriorityFee ? '0.05' : '2');
       trace?.('estimateFeesPerGasFallback', Date.now() - feeStart);
       return {
         maxFeePerGas: applyMultiplier(fallbackMax),

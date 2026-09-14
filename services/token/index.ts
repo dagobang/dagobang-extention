@@ -5,6 +5,7 @@ import { ChainId } from '@/constants/chains';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { ethTokens } from '@/constants/tokens/chains/eth';
 import { hyperTokens } from '@/constants/tokens/chains/hyper';
+import { rhTokens } from '@/constants/tokens/chains/rh';
 
 import { RpcService } from '../rpc';
 import { TradeService } from '../trade';
@@ -13,6 +14,7 @@ import { TokenFourmemeService } from './fourmeme';
 import { TokenFlapService } from './flap';
 import { getSolanaTokenPriceUsdFromQuote } from './solanaPrice';
 import { isHyperAltfunPlatform, quoteHyperSellToUsdc } from '../trade/tradeHyper';
+import { quotePonsSell } from '../trade/tradePons';
 import { SolanaRpcService } from '@/services/chain/solana/rpc';
 import type { ChainAddress } from '@/types/chain/address';
 import { buildScopedTokenKey, normalizeAddressKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
@@ -601,25 +603,31 @@ export class TokenService {
 
     const isEth = chainId === ChainId.ETH;
     const isHyper = chainId === ChainId.HYPER;
+    const isRh = chainId === ChainId.RH;
     const wNativeAddress = (isEth
       ? ethTokens.weth.address
       : isHyper
         ? hyperTokens.whype.address
-        : bscTokens.wbnb.address) as `0x${string}`;
-    const wNativeDecimals = isEth ? ethTokens.weth.decimals : isHyper ? hyperTokens.whype.decimals : bscTokens.wbnb.decimals;
-    const usdtToken = isEth ? ethTokens.usdt : isHyper ? null : bscTokens.usdt;
-    const usdcToken = isHyper ? hyperTokens.usdc : isEth ? ethTokens.usdc : bscTokens.usdc;
+        : isRh
+          ? rhTokens.weth.address
+          : bscTokens.wbnb.address) as `0x${string}`;
+    const wNativeDecimals = isEth ? ethTokens.weth.decimals : isHyper ? hyperTokens.whype.decimals : isRh ? rhTokens.weth.decimals : bscTokens.wbnb.decimals;
+    const usdtToken = isEth ? ethTokens.usdt : (isHyper || isRh) ? null : bscTokens.usdt;
+    const usdcToken = isHyper ? hyperTokens.usdc : isEth ? ethTokens.usdc : isRh ? rhTokens.usdg : bscTokens.usdc;
     const stableByAddress = new Map<string, { address: `0x${string}`; decimals: number }>();
     if (usdtToken) {
       stableByAddress.set(usdtToken.address.toLowerCase(), { address: usdtToken.address as `0x${string}`, decimals: usdtToken.decimals });
     }
-    stableByAddress.set(usdcToken.address.toLowerCase(), { address: usdcToken.address as `0x${string}`, decimals: usdcToken.decimals });
-    if (!isEth && !isHyper) {
+    if (usdcToken) {
+      stableByAddress.set(usdcToken.address.toLowerCase(), { address: usdcToken.address as `0x${string}`, decimals: usdcToken.decimals });
+    }
+    if (!isEth && !isHyper && !isRh) {
       stableByAddress.set(bscTokens.busd.address.toLowerCase(), { address: bscTokens.busd.address as `0x${string}`, decimals: bscTokens.busd.decimals });
       stableByAddress.set(bscTokens.usd1.address.toLowerCase(), { address: bscTokens.usd1.address as `0x${string}`, decimals: bscTokens.usd1.decimals });
     }
 
     const getNativePriceUsd = async () => {
+      if (!usdcToken) return 0;
       const now2 = Date.now();
       const nativeCached = this.nativeUsdCache.get(chainId);
       if (nativeCached && nativeCached.value > 0 && now2 - nativeCached.ts < 30_000) return nativeCached.value;
@@ -630,7 +638,9 @@ export class TokenService {
         10n ** 18n,
         isHyper
           ? { v3Fee: 3000, prefer: 'v3' }
-          : { v3Fee: 500 }
+          : isRh
+            ? { v3Fee: 500, prefer: 'v3' }
+            : { v3Fee: 500 }
       )).amountOut;
       const v = amountOut > 0n ? toNumberFromUnits(amountOut, usdcToken.decimals) : 0;
       if (v > 0) {
@@ -872,10 +882,23 @@ export class TokenService {
       try {
         const quotedUsdc = await quoteHyperSellToUsdc(tokenAddress as `0x${string}`, oneToken);
         if (quotedUsdc > 0n) {
-          priceUsd = toNumberFromUnits(quotedUsdc, usdcToken.decimals);
+          priceUsd = toNumberFromUnits(quotedUsdc, hyperTokens.usdc.decimals);
         }
       } catch (e) {
         console.error('getTokenPriceUsdFromRpc: failed to get token price from hyper alt.fun', e);
+      }
+    }
+
+    if (chainId === ChainId.RH) {
+      try {
+        const quoted = await quotePonsSell(tokenAddress as `0x${string}`, oneToken);
+        if (quoted > 0n) {
+          const nativeUsd = await getNativePriceUsd();
+          const priceInQuote = toNumberFromUnits(quoted, 18);
+          priceUsd = nativeUsd > 0 ? priceInQuote * nativeUsd : 0;
+        }
+      } catch (e) {
+        console.error('getTokenPriceUsdFromRpc: failed to get token price from pons', e);
       }
     }
 

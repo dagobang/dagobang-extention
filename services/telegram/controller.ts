@@ -3,6 +3,7 @@ import { formatUnits, parseUnits } from 'viem';
 import { SettingsService } from '@/services/settings';
 import { TokenService } from '@/services/token';
 import { TokenAltfunService } from '@/services/token/altfun';
+import { TokenPonsService } from '@/services/token/pons';
 import {
   buildStrategyRollingTakeProfitOrderInputs,
   buildStrategySellOrderInputs,
@@ -35,7 +36,7 @@ import { resolveSolanaTipConfig } from '@/utils/solanaTip';
 
 const TG_LIMIT_ORDER_DISPLAY_MODE_KEY = 'dagobang_limit_order_price_display_mode_v1';
 const TG_DEFAULT_TOKEN_SUPPLY = 1_000_000_000;
-const TG_SUPPORTED_CHAIN_NAMES = ['bsc', 'hyper', 'sol'] as const;
+const TG_SUPPORTED_CHAIN_NAMES = ['bsc', 'hyper', 'rh', 'sol'] as const;
 
 type TelegramNotifierLike = {
   notifyQuickTrade?: (text: string) => Promise<any>;
@@ -1139,7 +1140,7 @@ export function createTelegramController(deps: {
     const chainName = String(chainNames[chainId] || chainId).toUpperCase();
     const nativeSymbol = getNativeSymbol(chainId);
     await sendTelegramReply(
-      ['Dagobang Telegram 菜单', '', `当前链: ${chainName} (${nativeSymbol})`, '', '1) 直接发送 tokenAddress 查看当前链快照与持仓', '2) 使用按钮快速查看状态、持仓和挂单', '3) Token 快照里可一键买卖/创建限价单', '', '命令:', '/menu', '/chain', '/chain <bsc|hyper|sol>', '/settings', '/status', '/holdings', '/holdings <bsc|hyper|sol>', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/orders <bsc|hyper|sol>', '/token <tokenAddress>', '/token <bsc|hyper|sol> <tokenAddress>', '/limit <tokenAddress>', '/limit <bsc|hyper|sol> <tokenAddress>', '/buy <tokenAddress> <nativeAmount>', '/buy <bsc|hyper|sol> <tokenAddress> <nativeAmount>', '/sell <tokenAddress> <percent>', '/sell <bsc|hyper|sol> <tokenAddress> <percent>'].join('\n'),
+      ['Dagobang Telegram 菜单', '', `当前链: ${chainName} (${nativeSymbol})`, '', '1) 直接发送 tokenAddress 查看当前链快照与持仓', '2) 使用按钮快速查看状态、持仓和挂单', '3) Token 快照里可一键买卖/创建限价单', '', '命令:', '/menu', '/chain', '/chain <bsc|hyper|rh|sol>', '/settings', '/status', '/holdings', '/holdings <bsc|hyper|rh|sol>', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/orders <bsc|hyper|rh|sol>', '/token <tokenAddress>', '/token <bsc|hyper|rh|sol> <tokenAddress>', '/limit <tokenAddress>', '/limit <bsc|hyper|rh|sol> <tokenAddress>', '/buy <tokenAddress> <nativeAmount>', '/buy <bsc|hyper|rh|sol> <tokenAddress> <nativeAmount>', '/sell <tokenAddress> <percent>', '/sell <bsc|hyper|rh|sol> <tokenAddress> <percent>'].join('\n'),
       { inlineKeyboard: buildMainMenuKeyboard(chainId), chainId, includeGlobalNav: false }
     );
   };
@@ -1176,7 +1177,7 @@ export function createTelegramController(deps: {
     const settings = await SettingsService.get();
     const chainId = getTelegramChainId(settings);
     await sendTelegramReply(
-      ['🌐 链设置', `当前链: ${formatChainLabel(chainId)}`, '', '可切换: BSC / HYPER / SOL', '命令: /chain <bsc|hyper|sol>'].join('\n'),
+      ['🌐 链设置', `当前链: ${formatChainLabel(chainId)}`, '', '可切换: BSC / HYPER / RH / SOL', '命令: /chain <bsc|hyper|rh|sol>'].join('\n'),
       { inlineKeyboard: buildChainSwitchKeyboard(chainId), chainId, includeGlobalNav: false }
     );
   };
@@ -1213,6 +1214,13 @@ export function createTelegramController(deps: {
       try {
         const altfunInfo = await TokenAltfunService.getTokenInfo(chainId, tokenAddress);
         if (altfunInfo) return altfunInfo;
+      } catch {
+      }
+    }
+    if ((String(chainCode).toLowerCase() === 'rh' || chainId === ChainId.RH) && isEvmAddress(tokenAddress)) {
+      try {
+        const ponsInfo = await TokenPonsService.getTokenInfo(chainId, tokenAddress);
+        if (ponsInfo) return ponsInfo;
       } catch {
       }
     }
@@ -2752,7 +2760,7 @@ export function createTelegramController(deps: {
           return void await runTelegramQuickBuy(effectiveChainId, command.tokenAddress, amountNative);
         }
         if (isSellAction) return void await runTelegramQuickSell(effectiveChainId, command.tokenAddress, command.sellPercent);
-        await sendTelegramReply(['未知命令: ' + rawText, '支持:', '/settings', '/chain', '/chain <bsc|hyper|sol>', '/status', '/holdings', '/holdings <bsc|hyper|sol>', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/orders <bsc|hyper|sol>', '/cancel <orderId>', '/limit <tokenAddress>', '/limit <bsc|hyper|sol> <tokenAddress>', '/buy <tokenAddress> <nativeAmount>', '/buy <bsc|hyper|sol> <tokenAddress> <nativeAmount>', '/sell <tokenAddress> <percent>', '/sell <bsc|hyper|sol> <tokenAddress> <percent>', '/token <tokenAddress>', '/token <bsc|hyper|sol> <tokenAddress>', '/menu', '/start', '或直接发送 tokenAddress'].join('\n'), { inlineKeyboard: buildMainMenuKeyboard(tgChainId) });
+        await sendTelegramReply(['未知命令: ' + rawText, '支持:', '/settings', '/chain', '/chain <bsc|hyper|rh|sol>', '/status', '/holdings', '/holdings <bsc|hyper|rh|sol>', '/wallets', '/whoami', '/switch <address|name>', '/orders', '/orders <bsc|hyper|rh|sol>', '/cancel <orderId>', '/limit <tokenAddress>', '/limit <bsc|hyper|rh|sol> <tokenAddress>', '/buy <tokenAddress> <nativeAmount>', '/buy <bsc|hyper|rh|sol> <tokenAddress> <nativeAmount>', '/sell <tokenAddress> <percent>', '/sell <bsc|hyper|rh|sol> <tokenAddress> <percent>', '/token <tokenAddress>', '/token <bsc|hyper|rh|sol> <tokenAddress>', '/menu', '/start', '或直接发送 tokenAddress'].join('\n'), { inlineKeyboard: buildMainMenuKeyboard(tgChainId) });
       } catch (e: any) {
         await sendTelegramReply(`命令执行失败: ${String(e?.message || e || 'unknown_error')}`);
       }

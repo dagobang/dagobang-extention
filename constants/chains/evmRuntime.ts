@@ -12,6 +12,30 @@ export type EvmChainRuntime = BaseChainRuntime & {
   bloxroutePrivateTxMethod?: string;
 };
 
+const robinhoodEvm = defineChain({
+  id: ChainId.RH,
+  name: 'Robinhood Chain',
+  nativeCurrency: {
+    decimals: 18,
+    name: 'Ether',
+    symbol: 'ETH',
+  },
+  rpcUrls: {
+    default: {
+      http: ['https://rpc.mainnet.chain.robinhood.com'],
+    },
+    public: {
+      http: ['https://rpc.mainnet.chain.robinhood.com'],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: 'Robinhood Chain Explorer',
+      url: 'https://robinhoodchain.blockscout.com',
+    },
+  },
+});
+
 const hyperEvm = defineChain({
   id: ChainId.HYPER,
   name: 'HyperEVM',
@@ -60,6 +84,13 @@ export const EVM_CHAIN_RUNTIME: Record<number, EvmChainRuntime> = {
     viemChain: hyperEvm,
     wrappedNativeAddress: '0x5555555555555555555555555555555555555555',
     quoterV2: '0x03A918028f22D9E1473B7959C927AD7425A45C7C',
+  },
+  [ChainId.RH]: {
+    ...getChainRuntimeBase(ChainId.RH),
+    kind: 'evm',
+    viemChain: robinhoodEvm,
+    wrappedNativeAddress: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
+    quoterV2: '0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7',
   },
 };
 

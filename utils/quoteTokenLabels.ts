@@ -25,6 +25,7 @@ const quotesByChain = new Map<number, Map<string, string>>();
 function quotesChainKey(chainId: number): string | null {
   if (chainId === ChainId.BNB) return 'bsc';
   if (chainId === ChainId.ETH) return 'eth';
+  if (chainId === ChainId.RH) return 'robinhood';
   return null;
 }
 

@@ -3,7 +3,7 @@ import DexScreenerAPI, { DexScreenerPair } from "./DexScreenerAPI";
 import { FlapTokenStateV7, FourmemeTokenInfo, TokenInfo } from "@/types/token";
 import { call } from "@/utils/messaging";
 import { parseEther } from "viem";
-import { chainNames, getChainIdByName } from "@/constants/chains";
+import { getChainIdByName, toGmgnChainName } from "@/constants/chains";
 import { ChainId } from "@/constants/chains/chainId";
 import { MEME_SUFFIXS } from "@/constants/meme";
 import { getSupportedLaunchpads, normalizeLaunchpadPlatform } from "@/constants/launchpad";
@@ -109,6 +109,45 @@ export class TokenAPI {
         }
 
         return merged;
+    }
+
+    private static mergePonsEnrichedTokenInfo(base: TokenInfo | null | undefined, pons: TokenInfo | null | undefined): TokenInfo | null {
+        if (!base && !pons) return null;
+        if (!pons) return base ?? null;
+        if (!base) return pons;
+        return {
+            ...base,
+            ...pons,
+            chain: base.chain || pons.chain,
+            address: base.address || pons.address,
+            name: base.name || pons.name,
+            symbol: base.symbol || pons.symbol,
+            decimals: base.decimals || pons.decimals,
+            logo: base.logo || pons.logo,
+            website: base.website || pons.website,
+            twitterUrl: base.twitterUrl || pons.twitterUrl,
+            telegramUrl: base.telegramUrl || pons.telegramUrl,
+            gmgnUrl: base.gmgnUrl || pons.gmgnUrl,
+            launchpad: pons.launchpad || base.launchpad,
+            launchpad_platform: pons.launchpad_platform || base.launchpad_platform,
+            launchpad_status: pons.launchpad_status ?? base.launchpad_status,
+            launchpad_progress: pons.launchpad_progress ?? base.launchpad_progress,
+            quote_token: pons.quote_token || base.quote_token,
+            quote_token_address: pons.quote_token_address || base.quote_token_address,
+            pool_pair: pons.pool_pair || base.pool_pair,
+            biggest_pool_address: base.biggest_pool_address || pons.biggest_pool_address,
+            dex_type: pons.dex_type || base.dex_type,
+            tokenPrice: base.tokenPrice ?? pons.tokenPrice,
+        };
+    }
+
+    private static async getTokenInfoByPons(chain: string, address: string): Promise<TokenInfo | null> {
+        const res = await call({
+            type: 'token:getTokenInfo:pons',
+            chainId: getChainIdByName(chain) || ChainId.RH,
+            tokenAddress: address as `0x${string}`,
+        } as any) as { tokenInfo: TokenInfo | null };
+        return res.tokenInfo ?? null;
     }
 
     private static prewarmFlapEnrichedTokenInfo(
@@ -299,6 +338,9 @@ export class TokenAPI {
     private static mapDexScreenerPairDexType(pair: DexScreenerPair | null | undefined): string | undefined {
         if (!pair) return undefined;
         const labels = Array.isArray(pair.labels) ? pair.labels.map((item) => String(item).toLowerCase()) : [];
+        if (labels.some((item) => item.includes('v4'))) {
+            return 'UNISWAP_V4';
+        }
         if (labels.some((item) => item.includes('v3') || item.includes('cl'))) {
             return 'PANCAKE_SWAP_V3';
         }
@@ -421,6 +463,11 @@ export class TokenAPI {
                     tokenAddress: tokenAddress as `0x${string}`,
                 } as any) as { tokenInfo: TokenInfo | null };
                 nextValue = res.tokenInfo;
+            } else if (platform === 'pons' || platform === 'pons_v1' || platform === 'pons_v2') {
+                nextValue = await this.getTokenInfoByPons(chain, tokenAddress).catch(() => null);
+                if (nextValue == null) {
+                    nextValue = await this.buildDexTokenInfoFromDexScreener(chain, tokenAddress);
+                }
             } else {
                 let address = tokenAddress;
                 const suffixLaunchpadFamily = inferLaunchpadFamilyByAddress(address);
@@ -476,7 +523,8 @@ export class TokenAPI {
                             } else if (
                                 MEME_SUFFIXS.includes(address.substring(address.length - 4)) ||
                                 isFourMemeLike ||
-                                isSupportedLaunchpad
+                                isSupportedLaunchpad ||
+                                chainId === ChainId.RH
                             ) {
                                 nextValue = tokenInfo;
                                 if (parallelFlapInfoPromise) {
@@ -497,6 +545,11 @@ export class TokenAPI {
                     } catch {
                         // Fallback to Fourmeme/Flap resolvers when third-party platform API is unavailable.
                     }
+                }
+
+                if (getChainIdByName(chain) === ChainId.RH) {
+                    const ponsInfo = await this.getTokenInfoByPons(chain, address).catch(() => null);
+                    nextValue = this.mergePonsEnrichedTokenInfo(nextValue, ponsInfo);
                 }
 
                 if (nextValue == null) {
@@ -837,7 +890,7 @@ export class TokenAPI {
         try {
             // Try to get price from GMGN
             const res = platform === 'gmgn'
-                ? await GmgnAPI.getTokenPrice(chainNames[chainId], tokenAddress)
+                ? await GmgnAPI.getTokenPrice(toGmgnChainName(chainId), tokenAddress)
                 : null;
             if (res?.price) {
                 const gmgnPrice = Number(res.price);

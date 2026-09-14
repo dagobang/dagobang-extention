@@ -14,4 +14,8 @@ export enum ContractNames {
   TokenManagerHelper3 = "TokenManagerHelper3",
   HyperZap = "HyperZap",
   HyperBonding = "HyperBonding",
+  PonsV1Factory = "PonsV1Factory",
+  PonsV1LegacyFactory = "PonsV1LegacyFactory",
+  PonsV2Factory = "PonsV2Factory",
+  PonsMemeHook = "PonsMemeHook",
 }

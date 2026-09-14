@@ -34,6 +34,12 @@ export const BASE_CHAIN_RUNTIME: Record<number, BaseChainRuntime> = {
     nativeSymbol: 'SOL',
     explorerTxBaseUrl: 'https://solscan.io/tx/',
   },
+  [ChainId.RH]: {
+    chainId: ChainId.RH,
+    kind: 'evm',
+    nativeSymbol: 'ETH',
+    explorerTxBaseUrl: 'https://robinhoodchain.blockscout.com/tx/',
+  },
 };
 
 export function getChainRuntimeBase(chainId: number): BaseChainRuntime {

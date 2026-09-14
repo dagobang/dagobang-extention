@@ -11,7 +11,7 @@ import { allTokens, getBridgeTokenAddresses, getBridgeTokenDexPreference } from 
 import { USDC, USDT } from '../../constants/tokens/chains/common';
 import { bscTokens } from '../../constants/tokens/chains/bsc';
 import { dagobangAbi, poolV3Abi } from '@/constants/contracts/abi';
-import { Address, DexExactInQuote, HyperSwapType, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadline, getRouterSwapDesc, getSlippageBps, getV3FeeForDesc, toHyperDexSwapType } from './tradeTypes';
+import { Address, DexExactInQuote, HyperSwapType, RhSwapType, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadline, getRouterSwapDesc, getSlippageBps, getV3FeeForDesc, toHyperDexSwapType, toRhDexSwapType } from './tradeTypes';
 import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInDex, resolveBridgeHopExactIn, resolveDexExactIn } from './tradeDex';
 import { getGasPriceWei, prewarmNonce, sendTransaction } from './tradeTx';
 import { getSellSpenders, hasInsufficientSellAllowance, type SellAllowanceCheckResult } from './sellAllowance';
@@ -27,6 +27,15 @@ import {
   quoteHyperBuyFromUsdc,
   quoteHyperSellToUsdc,
 } from './tradeHyper';
+import {
+  buildPonsBuyDesc,
+  buildPonsSellDesc,
+  getConfiguredPonsV4PoolManager,
+  getPonsTradeState,
+  isPonsPlatform,
+  quotePonsBuy,
+  quotePonsSell,
+} from './tradePons';
 import { formatBroadcastProvider } from '@/utils/format';
 import { getDexPoolPrefer, parseGweiToWei } from '@/utils/dexUtils';
 import { classifyBroadcastError, collectErrorText, getNonceErrorKindFromText, isAllowanceLikeText, isInFlightLimitLikeText } from '@/utils/txErrorClassify';
@@ -51,8 +60,13 @@ import { preferRouteTokenSymbol, resolveRouteTokenLabel } from '@/utils/quoteTok
 import { call } from '@/utils/messaging';
 
 function getDefaultBridgeV3Fee(chainId: number): number {
-  return chainId === ChainId.HYPER ? 3000 : 500;
+  if (chainId === ChainId.HYPER) return 3000;
+  return 500;
 }
+
+const rhV4InitializeAbi = parseAbi([
+  'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)',
+]);
 
 const INNER_LAUNCHPAD_PLATFORMS = new Set([
   'fourmeme',
@@ -70,6 +84,9 @@ const INNER_LAUNCHPAD_PLATFORMS = new Set([
   'goplus_skills',
   'goplus_creator',
   'cubepeg',
+  'pons',
+  'pons_v1',
+  'pons_v2',
 ]);
 
 const FOUR_MEME_PLATFORMS = new Set([
@@ -156,6 +173,7 @@ const OFFICIAL_LAUNCHPAD_QUOTE_CACHE_MS = 30_000;
 type LaunchpadRouteClassification = {
   platform: string;
   isHyperAltfun: boolean;
+  isPons: boolean;
   isFlap: boolean;
   isFlapStocks: boolean;
   isInner: boolean;
@@ -194,6 +212,11 @@ function usesOpenFourRuntime(platform: string): boolean {
 
 function isAddressLike(value: string | undefined | null): value is Address {
   return /^0x[a-fA-F0-9]{40}$/.test(String(value || '').trim());
+}
+
+function isPoolRefLike(value: string | undefined | null): boolean {
+  const raw = String(value || '').trim();
+  return /^0x[a-fA-F0-9]{40}$/.test(raw) || /^0x[a-fA-F0-9]{64}$/.test(raw);
 }
 
 function toOpenFourEstimate(raw: any): OpenFourTradeEstimate {
@@ -283,6 +306,7 @@ export class TradeService {
   private static readonly preparedEvmTradeRouteCacheMs = 30_000;
   private static readonly preparedEvmTradeRouteCache = new Map<string, { ts: number; value: PreparedEvmTradeRoute | null }>();
   private static readonly preparedEvmTradeRouteInFlight = new Map<string, Promise<PreparedEvmTradeRoute | null>>();
+  private static readonly rhV4PoolKeyCache = new Map<string, Promise<{ fee: number; tickSpacing: number; hooks: Address } | null>>();
 
   private static makeApproveKey(chainId: number, owner: string, token: string, spender: string) {
     return `${chainId}:${owner.toLowerCase()}:${token.toLowerCase()}:${spender.toLowerCase()}`;
@@ -808,11 +832,14 @@ export class TradeService {
   }): Promise<Address | null> {
     const platform = resolveTradeLaunchpadPlatform(input.tokenInfo);
     const isHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(platform);
-    const openFourRuntime = (isHyperAltfun || !usesOpenFourRuntime(platform))
+    const isPons = isPonsPlatform(platform);
+    const openFourRuntime = (isHyperAltfun || isPons || !usesOpenFourRuntime(platform))
       ? null
       : await this.getOpenFourRuntimeState(input.client, input.chainId, input.tokenAddress);
     const isInner = isHyperAltfun
       ? false
+      : isPons
+        ? input.tokenInfo.launchpad_status !== 1
       : usesOpenFourRuntime(platform)
         ? !!openFourRuntime && openFourRuntime.phase === 1 && !openFourRuntime.paused
         : this.isInnerDisk(input.tokenInfo, input.chainId, openFourRuntime);
@@ -857,6 +884,7 @@ export class TradeService {
   ): LaunchpadRouteClassification {
     const rawPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
     const isHyperAltfun = chainId === ChainId.HYPER && isHyperAltfunPlatform(rawPlatform);
+    const isPons = isPonsPlatform(rawPlatform);
     const isFlap = rawPlatform.startsWith('flap');
     const flapRoute = isFlap ? classifyFlapRoute(chainId, tokenInfo) : null;
     const isFlapStocks = !!flapRoute?.isFlapStocks;
@@ -865,6 +893,8 @@ export class TradeService {
     const hasConfirmedOuterRoute = !!flapRoute?.hasConfirmedOuterRoute;
     const isInner = isHyperAltfun
       ? false
+      : isPons
+        ? tokenInfo.launchpad_status !== 1
       : usesOpenFourRuntime(platform)
         ? openFourRuntime
           ? openFourRuntime.phase === 1 && !openFourRuntime.paused
@@ -876,6 +906,7 @@ export class TradeService {
     return {
       platform,
       isHyperAltfun,
+      isPons,
       isFlap,
       isFlapStocks,
       isInner,
@@ -998,6 +1029,21 @@ export class TradeService {
     const contracts = DeployAddress[chainId as ChainId] || {};
     const routeAddress = ((tokenInfo.pool_pair && tokenInfo.pool_pair.trim()) || ZERO_ADDRESS) as Address;
     const openFourRouteAddress = getOpenFourRouteAddress(openFourRuntime);
+
+    if (isPonsPlatform(platform) && tokenInfo.launchpad_status !== 1) {
+      if (platform === 'pons_v1') {
+        return {
+          buyType: RhSwapType.PONS_V1_EXACT_IN,
+          sellType: RhSwapType.PONS_V1_EXACT_IN,
+          manager: routeAddress,
+        };
+      }
+      return {
+        buyType: RhSwapType.PONS_V2_BUY,
+        sellType: RhSwapType.PONS_V2_SELL,
+        manager: routeAddress,
+      };
+    }
 
     if (isFourMemePlatform(platform)) {
       return {
@@ -1583,6 +1629,7 @@ export class TradeService {
           materialized.descs,
           materialized.liquidityUsd,
           materialized.symbols,
+          materialized.displayPools,
         ),
       };
     } catch {
@@ -1607,6 +1654,25 @@ export class TradeService {
     return symbols;
   }
 
+  private static parseDexScreenerSwapFee(pair?: DexScreenerPair | null): number | null {
+    const raw = [
+      ...(Array.isArray(pair?.labels) ? pair.labels : []),
+      String(pair?.url || ''),
+    ].join(' ');
+    const match = raw.match(/(\d+(?:\.\d+)?)\s*%/);
+    if (!match) return null;
+    const pct = Number(match[1]);
+    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return null;
+    return Math.round(pct * 10_000);
+  }
+
+  private static v4TickSpacingForFee(fee: number): number {
+    if (fee <= 100) return 1;
+    if (fee <= 500) return 10;
+    if (fee <= 3000) return 60;
+    return 200;
+  }
+
   private static async peekDexScreenerPairMeta(
     chainId: number,
     tokenA: Address,
@@ -1615,31 +1681,386 @@ export class TradeService {
     liquidityUsd: number | null;
     symbols: Record<string, string>;
     poolAddress: Address | null;
-    preferHint: 'v2' | 'v3' | null;
+    displayPool: string | null;
+    preferHint: 'v2' | 'v3' | 'v4' | null;
     fee?: number;
+    tickSpacing?: number;
   }> {
     const chain = String(chainNames[chainId as ChainId] || '').trim().toLowerCase();
-    if (!chain) return { liquidityUsd: null, symbols: {}, poolAddress: null, preferHint: null };
+    if (!chain) return { liquidityUsd: null, symbols: {}, poolAddress: null, displayPool: null, preferHint: null };
     const left = this.toDexScreenerPairToken(chainId, tokenA) ?? tokenA;
     const right = this.toDexScreenerPairToken(chainId, tokenB) ?? tokenB;
     const pair = await DexScreenerAPI.getBestPairBetweenTokens(chain, left, right).catch(() => null);
     const liquidityUsd = Number(pair?.liquidity?.usd ?? 0);
-    const poolAddress = pair?.pairAddress && isAddressLike(pair.pairAddress)
-      ? pair.pairAddress as Address
-      : null;
+    const pairAddress = String(pair?.pairAddress || '').trim();
+    const poolAddress = isAddressLike(pairAddress) ? pairAddress as Address : null;
+    const dexType = this.mapDexScreenerPairDexType(pair);
+    const preferHint = String(dexType || '').toLowerCase().includes('v4')
+      ? 'v4' as const
+      : this.normalizeDexPrefer(dexType);
+    const fee = this.parseDexScreenerSwapFee(pair);
+    const tickSpacing = fee ? this.v4TickSpacingForFee(fee) : undefined;
     return {
       liquidityUsd: Number.isFinite(liquidityUsd) && liquidityUsd > 0 ? liquidityUsd : null,
       symbols: this.collectDexScreenerPairSymbols(chainId, pair),
       poolAddress,
-      preferHint: this.normalizeDexPrefer(this.mapDexScreenerPairDexType(pair)),
+      displayPool: isPoolRefLike(pairAddress) ? pairAddress : null,
+      preferHint,
+      ...(fee ? { fee, tickSpacing } : {}),
     };
+  }
+
+  private static toPreviewDexSwapType(
+    chainId: number,
+    hop: { dexLabel?: string | null },
+    preferHint?: 'v2' | 'v3' | 'v4' | null,
+  ): number {
+    const wantV4 = preferHint === 'v4';
+    const wantV3 = preferHint === 'v3'
+      || (!preferHint && (hop.dexLabel === 'V3' || (chainId === ChainId.RH && hop.dexLabel !== 'V2')));
+    if (chainId === ChainId.RH) {
+      if (wantV4) return RhSwapType.V4_EXACT_IN;
+      if (wantV3) return RhSwapType.V3_EXACT_IN;
+      return RhSwapType.V2_EXACT_IN;
+    }
+    if (wantV4) return SwapType.V4_EXACT_IN;
+    if (wantV3) return SwapType.V3_EXACT_IN;
+    return SwapType.V2_EXACT_IN;
+  }
+
+  private static previewPoolAddress(desc: SwapDescLike, displayPool?: string | null): string | null {
+    const candidates = [displayPool, desc.poolAddress, desc.poolManager, desc.hooks];
+    for (const item of candidates) {
+      if (item && item !== ZERO_ADDRESS && isPoolRefLike(item)) return item;
+    }
+    return null;
+  }
+
+  private static rhV4PoolManager(): Address {
+    try {
+      return getConfiguredPonsV4PoolManager();
+    } catch {
+      return ZERO_ADDRESS;
+    }
+  }
+
+  private static rhUsdgAddress(): Address | null {
+    const address = USDC[ChainId.RH]?.address;
+    return isAddressLike(address) ? address as Address : null;
+  }
+
+  private static isRhNativeRouterToken(chainId: number, token: Address): boolean {
+    if (chainId !== ChainId.RH) return false;
+    const lower = token.toLowerCase();
+    if (lower === ZERO_ADDRESS.toLowerCase()) return true;
+    return lower === getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
+  }
+
+  private static rhNeedsUsdgBridge(chainId: number, tokenIn: Address, tokenOut: Address): boolean {
+    if (chainId !== ChainId.RH) return false;
+    const usdg = this.rhUsdgAddress();
+    if (!usdg) return false;
+    const usdgLower = usdg.toLowerCase();
+    if (tokenIn.toLowerCase() === usdgLower || tokenOut.toLowerCase() === usdgLower) return false;
+    const inNative = this.isRhNativeRouterToken(chainId, tokenIn);
+    const outNative = this.isRhNativeRouterToken(chainId, tokenOut);
+    return (inNative && !outNative) || (outNative && !inNative);
+  }
+
+  private static isV4ExactInDesc(desc: SwapDescLike | null | undefined): boolean {
+    return !!desc && desc.swapType === SwapType.V4_EXACT_IN;
+  }
+
+  private static takePreparedV4LastHop(
+    preparedSplit: { lastHop: SwapDescLike } | null,
+    reverse = false,
+    _chainId?: number,
+  ): SwapDescLike | null {
+    if (!preparedSplit || !this.isV4ExactInDesc(preparedSplit.lastHop)) return null;
+    return reverse ? this.reverseSwapDescLike(preparedSplit.lastHop) : { ...preparedSplit.lastHop };
+  }
+
+  private static isRhV4PoolId(value?: string | null): value is `0x${string}` {
+    return /^0x[a-fA-F0-9]{64}$/.test(String(value || '').trim());
+  }
+
+  private static parseRhV4InitializeLog(log: {
+    args?: { fee?: unknown; tickSpacing?: unknown; hooks?: unknown; id?: unknown };
+  }): { fee: number; tickSpacing: number; hooks: Address; id: string } | null {
+    const fee = Number(log.args?.fee ?? 0);
+    const tickSpacing = Number(log.args?.tickSpacing ?? 0);
+    if (!Number.isFinite(fee) || !Number.isFinite(tickSpacing) || tickSpacing <= 0) return null;
+    const hooks = isAddressLike(log.args?.hooks) ? log.args.hooks as Address : ZERO_ADDRESS;
+    return {
+      fee,
+      tickSpacing,
+      hooks,
+      id: String(log.args?.id || '').trim().toLowerCase(),
+    };
+  }
+
+  private static buildRhV4MarketDesc(input: {
+    tokenIn: Address;
+    tokenOut: Address;
+    fee?: number | null;
+    tickSpacing?: number | null;
+    hooks?: Address | null;
+  }): SwapDescLike {
+    const fee = input.fee && input.fee > 0 ? input.fee : 3000;
+    const tickSpacing = input.tickSpacing && input.tickSpacing > 0
+      ? input.tickSpacing
+      : this.v4TickSpacingForFee(fee);
+    return getRouterSwapDesc({
+      swapType: RhSwapType.V4_EXACT_IN,
+      tokenIn: input.tokenIn,
+      tokenOut: input.tokenOut,
+      poolAddress: ZERO_ADDRESS,
+      fee,
+      tickSpacing,
+      hooks: input.hooks ?? ZERO_ADDRESS,
+      poolManager: this.rhV4PoolManager(),
+    });
+  }
+
+  private static sortRhV4Currencies(tokenA: Address, tokenB: Address): [Address, Address] {
+    return tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
+  }
+
+  private static rhV4CurrencyCandidates(token: Address): Address[] {
+    const normalized = this.normalizeFlapPoolCounterpartyToken(ChainId.RH, token) ?? token;
+    const wrapped = getChainRuntime(ChainId.RH).wrappedNativeAddress as Address;
+    const out = new Set<string>([token.toLowerCase(), normalized.toLowerCase()]);
+    if (this.isRhNativeRouterToken(ChainId.RH, normalized) || this.isRhNativeRouterToken(ChainId.RH, token)) {
+      out.add(ZERO_ADDRESS);
+      out.add(wrapped.toLowerCase());
+    }
+    return [...out].map((item) => item as Address);
+  }
+
+  private static async resolveRhV4PoolKey(input: {
+    tokenIn: Address;
+    tokenOut: Address;
+    poolId?: string | null;
+    feeHint?: number | null;
+  }): Promise<{ fee: number; tickSpacing: number; hooks: Address } | null> {
+    const poolId = String(input.poolId || '').trim().toLowerCase();
+    const cacheKey = [
+      input.tokenIn.toLowerCase(),
+      input.tokenOut.toLowerCase(),
+      poolId,
+      input.feeHint ?? '',
+    ].join(':');
+    const cached = this.rhV4PoolKeyCache.get(cacheKey);
+    if (cached) return await cached;
+    const task = (async () => {
+      const poolManager = this.rhV4PoolManager();
+      if (!poolManager || poolManager === ZERO_ADDRESS) return null;
+      const client = await RpcService.getClient(ChainId.RH);
+      if (this.isRhV4PoolId(poolId)) {
+        try {
+          const idLogs = await client.getLogs({
+            address: poolManager,
+            event: rhV4InitializeAbi[0],
+            args: { id: poolId as `0x${string}` },
+            fromBlock: 0n,
+            toBlock: 'latest',
+          });
+          const parsed = idLogs.length ? this.parseRhV4InitializeLog(idLogs[0]) : null;
+          if (parsed) {
+            return { fee: parsed.fee, tickSpacing: parsed.tickSpacing, hooks: parsed.hooks };
+          }
+        } catch {
+          // Fall through to currency-pair Initialize search.
+        }
+      }
+      const pons = await getPonsTradeState(input.tokenOut).catch(() => null);
+      if (pons?.tradeable && pons.isOuter && pons.poolFee > 0 && pons.tickSpacing > 0) {
+        if (this.isEquivalentFlapRouteToken(ChainId.RH, pons.quoteRouterToken, input.tokenIn)) {
+          return {
+            fee: pons.poolFee,
+            tickSpacing: pons.tickSpacing,
+            hooks: pons.memeHook,
+          };
+        }
+      }
+      const lefts = this.rhV4CurrencyCandidates(input.tokenIn);
+      const rights = this.rhV4CurrencyCandidates(input.tokenOut);
+      const seen = new Set<string>();
+      const pairs: Array<[Address, Address]> = [];
+      for (const left of lefts) {
+        for (const right of rights) {
+          if (left.toLowerCase() === right.toLowerCase()) continue;
+          const [currency0, currency1] = this.sortRhV4Currencies(left, right);
+          const key = `${currency0.toLowerCase()}:${currency1.toLowerCase()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          pairs.push([currency0, currency1]);
+        }
+      }
+      const logs = (await Promise.all(pairs.map(async ([currency0, currency1]) => {
+        try {
+          return await client.getLogs({
+            address: poolManager,
+            event: rhV4InitializeAbi[0],
+            args: { currency0, currency1 },
+            fromBlock: 0n,
+            toBlock: 'latest',
+          });
+        } catch {
+          return [];
+        }
+      }))).flat();
+      if (!logs.length) return null;
+      const scored = logs.map((log) => {
+        const parsed = this.parseRhV4InitializeLog(log);
+        if (!parsed) return null;
+        let score = 0;
+        if (poolId && parsed.id === poolId) score += 100;
+        if (input.feeHint && parsed.fee === input.feeHint) score += 20;
+        if (log.blockNumber) score += Number(log.blockNumber % 1000n) / 10000;
+        return { ...parsed, score };
+      }).filter((item): item is NonNullable<typeof item> => !!item)
+        .sort((a, b) => b.score - a.score);
+      const best = scored[0];
+      if (!best) return null;
+      return { fee: best.fee, tickSpacing: best.tickSpacing, hooks: best.hooks };
+    })();
+    this.rhV4PoolKeyCache.set(cacheKey, task);
+    return await task;
+  }
+
+  private static async resolveRhV4MarketHopDesc(input: {
+    chainId: number;
+    tokenIn: Address;
+    tokenOut: Address;
+    sell?: boolean;
+  }): Promise<SwapDescLike | null> {
+    if (input.sell) {
+      const ponsSell = await getPonsTradeState(input.tokenIn).catch(() => null);
+      if (ponsSell?.tradeable && ponsSell.isOuter) {
+        return buildPonsSellDesc({ state: ponsSell, tokenIn: input.tokenIn, minOut: 0n });
+      }
+    } else {
+      const ponsBuy = await getPonsTradeState(input.tokenOut).catch(() => null);
+      if (ponsBuy?.tradeable && ponsBuy.isOuter) {
+        return buildPonsBuyDesc({ state: ponsBuy, tokenOut: input.tokenOut, minOut: 0n });
+      }
+    }
+    const pairMeta = await this.peekDexScreenerPairMeta(input.chainId, input.tokenIn, input.tokenOut);
+    if (pairMeta.preferHint !== 'v4') return null;
+    const v4Key = await this.resolveRhV4PoolKey({
+      tokenIn: input.tokenIn,
+      tokenOut: input.tokenOut,
+      poolId: pairMeta.displayPool,
+      feeHint: pairMeta.fee,
+    });
+    if (!v4Key) return null;
+    return this.buildRhV4MarketDesc({
+      tokenIn: input.tokenIn,
+      tokenOut: input.tokenOut,
+      fee: v4Key.fee,
+      tickSpacing: v4Key.tickSpacing,
+      hooks: v4Key.hooks,
+    });
+  }
+
+  private static async resolveRhRouterHopDesc(input: {
+    chainId: number;
+    tokenIn: Address;
+    tokenOut: Address;
+    amountIn: bigint;
+    isTurbo: boolean;
+  }): Promise<{ desc: SwapDescLike; amountOut: bigint }> {
+    const prefer = getBridgeTokenDexPreference(input.chainId as ChainId, input.tokenOut)
+      ?? getBridgeTokenDexPreference(input.chainId as ChainId, input.tokenIn);
+    const quoted = await resolveBridgeHopExactIn(
+      input.chainId,
+      input.tokenIn,
+      input.tokenOut,
+      input.amountIn,
+      prefer,
+      input.isTurbo,
+      !input.isTurbo,
+    );
+    let v2v3Ok = !!quoted.poolAddress && quoted.poolAddress !== ZERO_ADDRESS
+      && (input.isTurbo || quoted.amountOut > 0n);
+    if (v2v3Ok && !input.isTurbo) {
+      try {
+        assertDexQuoteOk(quoted);
+      } catch {
+        v2v3Ok = false;
+      }
+    }
+    if (v2v3Ok) {
+      return {
+        desc: getRouterSwapDesc({
+          swapType: toRhDexSwapType(quoted.swapType),
+          tokenIn: input.tokenIn,
+          tokenOut: input.tokenOut,
+          poolAddress: quoted.poolAddress,
+          fee: getV3FeeForDesc(quoted, getDefaultBridgeV3Fee(input.chainId)),
+        }),
+        amountOut: input.isTurbo ? 1n : quoted.amountOut,
+      };
+    }
+    const v4Desc = await this.resolveRhV4MarketHopDesc({
+      chainId: input.chainId,
+      tokenIn: input.tokenIn,
+      tokenOut: input.tokenOut,
+    });
+    if (v4Desc) {
+      return {
+        desc: v4Desc,
+        amountOut: input.isTurbo ? 1n : 0n,
+      };
+    }
+    throw new Error('找不到 Robinhood 桥接交易池');
+  }
+
+  private static async appendRhRouterBridgeHops(input: {
+    chainId: number;
+    tokenIn: Address;
+    tokenOut: Address;
+    amountIn: bigint;
+    isTurbo: boolean;
+    descs: SwapDescLike[];
+    timeStep: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
+  }): Promise<bigint> {
+    const usdg = this.rhUsdgAddress();
+    const hops: Array<{ from: Address; to: Address; label: string }> =
+      usdg && this.rhNeedsUsdgBridge(input.chainId, input.tokenIn, input.tokenOut)
+        ? [
+          { from: input.tokenIn, to: usdg, label: 'quote:rh:usdg' },
+          { from: usdg, to: input.tokenOut, label: 'quote:rh:rwa' },
+        ]
+        : [{ from: input.tokenIn, to: input.tokenOut, label: 'quote:rh:bridge' }];
+    let amount = input.amountIn;
+    for (const hop of hops) {
+      const resolved = await input.timeStep(hop.label, () =>
+        this.resolveRhRouterHopDesc({
+          chainId: input.chainId,
+          tokenIn: hop.from,
+          tokenOut: hop.to,
+          amountIn: amount,
+          isTurbo: input.isTurbo,
+        })
+      );
+      input.descs.push(resolved.desc);
+      amount = resolved.amountOut > 0n ? resolved.amountOut : 1n;
+    }
+    return amount;
   }
 
   private static async materializeEvmTradeRoutePlan(
     chainId: number,
     tokenInfo: TokenInfo,
     plan: EvmTradeRoutePlan,
-  ): Promise<{ descs: SwapDescLike[]; liquidityUsd: Array<number | null>; symbols: Array<Record<string, string>> }> {
+  ): Promise<{
+    descs: SwapDescLike[];
+    liquidityUsd: Array<number | null>;
+    symbols: Array<Record<string, string>>;
+    displayPools: Array<string | null>;
+  }> {
     const launchpadConfig = plan.inner ? this.getLaunchpadConfig(tokenInfo, chainId) : null;
     const hops = await Promise.all(plan.hops.map(async (hop) => {
       const tokenIn = hop.tokenIn as Address;
@@ -1656,13 +2077,31 @@ export class TradeService {
             }),
             liquidityUsd: null,
             symbols: {} as Record<string, string>,
+            displayPool: launchpadConfig.manager !== ZERO_ADDRESS ? launchpadConfig.manager : null,
           };
+        }
+        if (chainId === ChainId.RH) {
+          const finalOut = plan.hops[plan.hops.length - 1]?.tokenOut;
+          if (finalOut && tokenOut.toLowerCase() === String(finalOut).toLowerCase()) {
+            const ponsState = await getPonsTradeState(tokenOut).catch(() => null);
+            if (ponsState?.tradeable && ponsState.isOuter) {
+              const pairMeta = await this.peekDexScreenerPairMeta(chainId, tokenIn, tokenOut);
+              const desc = buildPonsBuyDesc({ state: ponsState, tokenOut, minOut: 0n });
+              return {
+                desc,
+                liquidityUsd: pairMeta.liquidityUsd,
+                symbols: pairMeta.symbols,
+                displayPool: pairMeta.displayPool
+                  || (ponsState.version === 1 ? ponsState.v3Pool : ponsState.v4PoolManager),
+              };
+            }
+          }
         }
         const pairMeta = await this.peekDexScreenerPairMeta(chainId, tokenIn, tokenOut);
         if (hop.poolAddress && isAddressLike(hop.poolAddress) && hop.kind === 'bridge') {
           return {
             desc: getRouterSwapDesc({
-              swapType: hop.dexLabel === 'V3' ? SwapType.V3_EXACT_IN : SwapType.V2_EXACT_IN,
+              swapType: this.toPreviewDexSwapType(chainId, hop, hop.dexLabel === 'V3' ? 'v3' : 'v2'),
               tokenIn,
               tokenOut,
               poolAddress: hop.poolAddress as Address,
@@ -1670,11 +2109,14 @@ export class TradeService {
             }),
             liquidityUsd: pairMeta.liquidityUsd,
             symbols: pairMeta.symbols,
+            displayPool: pairMeta.displayPool || hop.poolAddress,
           };
         }
-        const knownPool = hop.poolAddress && isAddressLike(hop.poolAddress)
-          ? hop.poolAddress as Address
-          : pairMeta.poolAddress;
+        const knownPool = hop.dexLabel === 'V4'
+          ? pairMeta.poolAddress
+          : hop.poolAddress && isAddressLike(hop.poolAddress)
+            ? hop.poolAddress as Address
+            : pairMeta.poolAddress;
         const preferred = knownPool
           ? null
           : await this.getPreferredFlapOuterTargetPool({
@@ -1684,17 +2126,65 @@ export class TradeService {
             tokenInfo,
             pairOnly: true,
           }).catch(() => null);
-        const poolAddress = knownPool ?? preferred?.poolAddress ?? ZERO_ADDRESS;
         const preferHint = preferred?.preferHint
           ?? pairMeta.preferHint
           ?? (hop.dexLabel === 'V3' ? 'v3' as const : hop.dexLabel === 'V2' ? 'v2' as const : null);
+        const rhWantV4 = chainId === ChainId.RH && (
+          preferHint === 'v4'
+          || ((hop.dexLabel === 'V4' || hop.dexLabel === 'pons') && preferHint !== 'v2' && preferHint !== 'v3')
+        );
+        if (rhWantV4) {
+          const v4Key = await this.resolveRhV4PoolKey({
+            tokenIn,
+            tokenOut,
+            poolId: pairMeta.displayPool,
+            feeHint: hop.fee ?? pairMeta.fee,
+          });
+          if (v4Key) {
+            const fee = (v4Key.fee && v4Key.fee > 0)
+              ? v4Key.fee
+              : (hop.fee && hop.fee > 0)
+                ? hop.fee
+                : (pairMeta.fee && pairMeta.fee > 0 ? pairMeta.fee : 3000);
+            const tickSpacing = (v4Key.tickSpacing && v4Key.tickSpacing > 0)
+              ? v4Key.tickSpacing
+              : (pairMeta.tickSpacing && pairMeta.tickSpacing > 0)
+                ? pairMeta.tickSpacing
+                : this.v4TickSpacingForFee(fee);
+            const desc = this.buildRhV4MarketDesc({
+              tokenIn,
+              tokenOut,
+              fee,
+              tickSpacing,
+              hooks: v4Key.hooks,
+            });
+            return {
+              desc,
+              liquidityUsd: pairMeta.liquidityUsd,
+              symbols: pairMeta.symbols,
+              displayPool: pairMeta.displayPool || desc.poolManager,
+            };
+          }
+        }
+        const execPrefer = chainId === ChainId.RH && (preferHint === 'v4' || hop.dexLabel === 'V4')
+          ? 'v3' as const
+          : preferHint;
+        const poolAddress = knownPool ?? preferred?.poolAddress ?? ZERO_ADDRESS;
+        const wantV3 = execPrefer === 'v3' || hop.dexLabel === 'V3' || (chainId === ChainId.RH && execPrefer !== 'v2');
+        let v3Fee = wantV3
+          ? (preferred?.fee ?? hop.fee ?? getDefaultBridgeV3Fee(chainId))
+          : (hop.fee ?? 0);
+        if (chainId === ChainId.RH && wantV3 && poolAddress !== ZERO_ADDRESS) {
+          const poolMeta = await this.getKnownPoolRouteMeta(chainId, poolAddress, 'v3').catch(() => null);
+          if (poolMeta?.fee && poolMeta.fee > 0) v3Fee = poolMeta.fee;
+        }
         return {
           desc: getRouterSwapDesc({
-            swapType: preferHint === 'v3' || hop.dexLabel === 'V3' ? SwapType.V3_EXACT_IN : SwapType.V2_EXACT_IN,
+            swapType: this.toPreviewDexSwapType(chainId, hop, execPrefer),
             tokenIn,
             tokenOut,
             poolAddress,
-            fee: preferHint === 'v3' ? (preferred?.fee ?? hop.fee ?? getDefaultBridgeV3Fee(chainId)) : (hop.fee ?? 0),
+            fee: v3Fee,
           }),
           liquidityUsd: typeof preferred?.liquidityUsd === 'number' && preferred.liquidityUsd > 0
             ? preferred.liquidityUsd
@@ -1703,11 +2193,12 @@ export class TradeService {
             ...pairMeta.symbols,
             ...(preferred?.symbols ?? {}),
           },
+          displayPool: pairMeta.displayPool || (poolAddress !== ZERO_ADDRESS ? poolAddress : null),
         };
       } catch {
         return {
           desc: getRouterSwapDesc({
-            swapType: hop.dexLabel === 'V3' ? SwapType.V3_EXACT_IN : SwapType.V2_EXACT_IN,
+            swapType: this.toPreviewDexSwapType(chainId, hop, hop.dexLabel === 'V3' ? 'v3' : hop.dexLabel === 'V4' ? 'v4' : null),
             tokenIn,
             tokenOut,
             poolAddress: (hop.poolAddress && isAddressLike(hop.poolAddress) ? hop.poolAddress : ZERO_ADDRESS) as Address,
@@ -1715,6 +2206,7 @@ export class TradeService {
           }),
           liquidityUsd: null,
           symbols: {} as Record<string, string>,
+          displayPool: hop.poolAddress || null,
         };
       }
     }));
@@ -1722,6 +2214,7 @@ export class TradeService {
       descs: hops.map((item) => item.desc),
       liquidityUsd: hops.map((item) => item.liquidityUsd),
       symbols: hops.map((item) => item.symbols),
+      displayPools: hops.map((item) => item.displayPool ?? null),
     };
   }
 
@@ -1739,7 +2232,13 @@ export class TradeService {
     });
   }
 
-  private static labelQuickTradeDex(swapType: number): string {
+  private static labelQuickTradeDex(swapType: number, chainId?: number): string {
+    if (chainId === ChainId.RH) {
+      if (swapType === RhSwapType.PONS_V2_BUY || swapType === RhSwapType.PONS_V2_SELL) return 'pons';
+      if (swapType === RhSwapType.PONS_V1_EXACT_IN || swapType === RhSwapType.V3_EXACT_IN) return 'V3';
+      if (swapType === RhSwapType.V4_EXACT_IN) return 'V4';
+      if (swapType === RhSwapType.V2_EXACT_IN) return 'V2';
+    }
     if (swapType === SwapType.V3_EXACT_IN) return 'V3';
     if (swapType === SwapType.V4_EXACT_IN || swapType === SwapType.PANCAKE_INFINITY_EXACT_IN) return 'V4';
     if (swapType === SwapType.FOUR_MEME_BUY_AMAP || swapType === SwapType.FOUR_MEME_SELL) return 'four.meme';
@@ -1755,6 +2254,7 @@ export class TradeService {
     descs: SwapDescLike[],
     liquidityUsd?: Array<number | null>,
     hopSymbols?: Array<Record<string, string>>,
+    displayPools?: Array<string | null>,
   ): QuickTradeRoutePreview {
     const hops: QuickTradeRouteHop[] = descs.map((desc, index) => ({
       tokenIn: desc.tokenIn,
@@ -1771,8 +2271,8 @@ export class TradeService {
         tokenInfo,
         hopSymbols?.[index]?.[desc.tokenOut.toLowerCase()],
       ),
-      dexLabel: this.labelQuickTradeDex(desc.swapType),
-      poolAddress: desc.poolAddress && desc.poolAddress !== ZERO_ADDRESS ? desc.poolAddress : null,
+      dexLabel: this.labelQuickTradeDex(desc.swapType, chainId),
+      poolAddress: this.previewPoolAddress(desc, displayPools?.[index]),
       fee: typeof desc.fee === 'number' && desc.fee > 0 ? desc.fee : null,
       liquidityUsd: typeof liquidityUsd?.[index] === 'number' && (liquidityUsd?.[index] ?? 0) > 0
         ? liquidityUsd[index]
@@ -2512,7 +3012,9 @@ export class TradeService {
       throw new Error(`找不到 ${input.tokenIn}/${input.tokenOut} 的 Pancake/Uniswap V3 交易池`);
     }
     const desc = getRouterSwapDesc({
-      swapType: meta.prefer === 'v3' ? SwapType.V3_EXACT_IN : SwapType.V2_EXACT_IN,
+      swapType: input.chainId === ChainId.RH
+        ? (meta.prefer === 'v3' ? RhSwapType.V3_EXACT_IN : RhSwapType.V2_EXACT_IN)
+        : (meta.prefer === 'v3' ? SwapType.V3_EXACT_IN : SwapType.V2_EXACT_IN),
       tokenIn: input.tokenIn,
       tokenOut: input.tokenOut,
       poolAddress: input.poolAddress,
@@ -2536,6 +3038,7 @@ export class TradeService {
   }
 
   private static async attachV3FactoriesToDescs(chainId: number, descs: SwapDescLike[]): Promise<SwapDescLike[]> {
+    if (chainId === ChainId.RH) return descs;
     return await Promise.all(descs.map(async (desc) => {
       if (desc.swapType !== SwapType.V3_EXACT_IN) return desc;
       if (!desc.poolAddress || desc.poolAddress === ZERO_ADDRESS) return desc;
@@ -2585,8 +3088,10 @@ export class TradeService {
       Array.isArray(pair.labels) ? pair.labels.join(' ') : '',
       String(pair.url || ''),
     ].join(' ').toLowerCase();
-    const isV3 = raw.includes('v3') || raw.includes('clmm') || /(^|[^a-z])cl([^a-z]|$)/.test(raw);
-    if (dex.includes('uniswap')) return isV3 ? 'UNISWAP_V3' : 'UNISWAP';
+    const isV4 = raw.includes('v4');
+    const isV3 = !isV4 && (raw.includes('v3') || raw.includes('clmm') || /(^|[^a-z])cl([^a-z]|$)/.test(raw));
+    if (dex.includes('uniswap')) return isV4 ? 'UNISWAP_V4' : isV3 ? 'UNISWAP_V3' : 'UNISWAP';
+    if (isV4) return 'UNISWAP_V4';
     if (isV3) return 'PANCAKE_SWAP_V3';
     return 'PANCAKE_SWAP';
   }
@@ -2603,6 +3108,7 @@ export class TradeService {
     if (chainId === ChainId.BNB) return dex.includes('pancake') || dex.includes('uniswap');
     if (chainId === ChainId.ETH) return dex.includes('uniswap');
     if (chainId === ChainId.HYPER) return dex.includes('uniswap') || dex.includes('hyperswap') || dex.includes('prjx');
+    if (chainId === ChainId.RH) return dex.includes('uniswap') || dex.includes('pons');
     return true;
   }
 
@@ -3266,6 +3772,8 @@ export class TradeService {
   private static reverseSwapType(swapType: number): number {
     if (swapType === SwapType.FOUR_MEME_BUY_AMAP) return SwapType.FOUR_MEME_SELL;
     if (swapType === SwapType.FOUR_MEME_SELL) return SwapType.FOUR_MEME_BUY_AMAP;
+    if (swapType === RhSwapType.PONS_V2_BUY) return RhSwapType.PONS_V2_SELL;
+    if (swapType === RhSwapType.PONS_V2_SELL) return RhSwapType.PONS_V2_BUY;
     return swapType;
   }
 
@@ -3934,8 +4442,8 @@ export class TradeService {
     if (baseTokenAddress.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return getNativeSymbol(chainId);
     const wrapped = getChainRuntime(chainId).wrappedNativeAddress.toLowerCase();
     if (baseTokenAddress.toLowerCase() === wrapped) return `W${getNativeSymbol(chainId)}`;
-    const usdc = USDC[chainId as keyof typeof USDC]?.address?.toLowerCase();
-    if (usdc && baseTokenAddress.toLowerCase() === usdc) return 'USDC';
+    const usdcToken = USDC[chainId as keyof typeof USDC];
+    if (usdcToken && baseTokenAddress.toLowerCase() === usdcToken.address.toLowerCase()) return usdcToken.symbol;
     const usdt = USDT[chainId as keyof typeof USDT]?.address?.toLowerCase();
     if (usdt && baseTokenAddress.toLowerCase() === usdt) return 'USDT';
     if (chainId === ChainId.BNB && baseTokenAddress.toLowerCase() === bscTokens.busd.address.toLowerCase()) return 'BUSD';
@@ -4043,21 +4551,24 @@ export class TradeService {
     const tokenOut = this.resolveEvmAddress(input.tokenAddress, 'token address') as Address;
       const initialPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
       const initialIsHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(initialPlatform);
-      const openFourRuntime = (initialIsHyperAltfun || !usesOpenFourRuntime(initialPlatform))
+      const initialIsPons = isPonsPlatform(initialPlatform);
+      const openFourRuntime = (initialIsHyperAltfun || initialIsPons || !usesOpenFourRuntime(initialPlatform))
       ? null
       : await this.getOpenFourRuntimeState(client, input.chainId, tokenOut);
       const launchpadRoute = this.classifyLaunchpadRoute(input.chainId, tokenInfo, openFourRuntime);
       const launchpadPlatform = launchpadRoute.platform;
       const isHyperAltfun = launchpadRoute.isHyperAltfun;
+      const isPons = launchpadRoute.isPons;
       const isInner = launchpadRoute.isInner;
     const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId, openFourRuntime) : null;
+    const isPonsInner = isPons && isInner;
 
-    const bridgeToken = isHyperAltfun
+    const bridgeToken = (isHyperAltfun || isPonsInner)
       ? null
       : this.getLaunchpadQuoteRouterToken(input.chainId, tokenInfo, launchpadPlatform, openFourRuntime, {
         preferRuntimeQuote: usesOpenFourRuntime(launchpadPlatform),
       });
-    const rawQuoteToken = isHyperAltfun
+    const rawQuoteToken = (isHyperAltfun || isPonsInner)
       ? null
       : await this.resolveTradeRouteQuoteToken({
         chainId: input.chainId,
@@ -4069,7 +4580,7 @@ export class TradeService {
         debug: consoleLogsEnabled,
       });
     const nativeToQuoteSwapEnabled = tokenInfo.nativeToQuoteSwapEnabled === true;
-    if (!isHyperAltfun && !planEvmTradeRoute({
+    if (!isHyperAltfun && !isPonsInner && !planEvmTradeRoute({
       chainId: input.chainId,
       tokenInfo,
       tokenAddress: tokenOut,
@@ -4077,7 +4588,7 @@ export class TradeService {
     })) {
       throw new Error('官方报价路径尚未就绪，请稍后再试');
     }
-    const preparedRoute = isHyperAltfun
+    const preparedRoute = (isHyperAltfun || isPonsInner)
       ? null
       : await timeStep('route:prepare', () => this.prepareEvmTradeRoute({
         chainId: input.chainId,
@@ -4091,7 +4602,39 @@ export class TradeService {
     let currentAmount = amountIn;
     let minOut = 0n;
 
-    if (isHyperAltfun) {
+    if (isPonsInner) {
+      const ponsState = await timeStep('pons:state', () => getPonsTradeState(tokenOut, { force: runtimeOpts?.forceRefreshHyperState === true }));
+      if (!ponsState?.tradeable) throw new Error('该代币不是可交易的 pons 代币');
+
+      const routeQuoteToken = ponsState.quoteRouterToken;
+      if (currentRouterToken.toLowerCase() !== routeQuoteToken.toLowerCase()) {
+        currentAmount = await this.appendRhRouterBridgeHops({
+          chainId: input.chainId,
+          tokenIn: currentRouterToken,
+          tokenOut: routeQuoteToken,
+          amountIn: currentAmount,
+          isTurbo,
+          descs,
+          timeStep,
+        });
+        currentRouterToken = routeQuoteToken;
+      }
+
+      const estimatedOut = isTurbo
+        ? 0n
+        : await timeStep('quote:pons:buy', () => quotePonsBuy(tokenOut, currentAmount));
+      const allowUnquotedOuter = ponsState.version === 2 && ponsState.isOuter;
+      if (!isTurbo && estimatedOut <= 0n && !allowUnquotedOuter) throw new Error('pons 买入报价失败');
+      if (estimatedOut > 0n) {
+        const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+        minOut = applySlippage(estimatedOut, slippageBps);
+      }
+      descs.push(buildPonsBuyDesc({
+        state: ponsState,
+        tokenOut,
+        minOut,
+      }));
+    } else if (isHyperAltfun) {
       const hyperState = await timeStep('hyper:state', () => getHyperTradeState(tokenOut, { force: runtimeOpts?.forceRefreshHyperState === true }));
       if (!hyperState.isInner && !hyperState.isOuter) throw new Error('该代币不是有效的 alt.fun Hyper 代币');
 
@@ -4197,7 +4740,7 @@ export class TradeService {
           }
         }
         descs.push(getRouterSwapDesc({
-          swapType: q1.swapType,
+          swapType: input.chainId === ChainId.RH ? toRhDexSwapType(q1.swapType) : q1.swapType,
           tokenIn: currentRouterToken,
           tokenOut: bridgeToken,
           poolAddress: q1.poolAddress,
@@ -4379,49 +4922,57 @@ export class TradeService {
             : null;
           const poolVersion = outerPoolMeta?.prefer ?? outerTargetPool.preferHint ?? getDexPoolPrefer(tokenInfo.dex_type);
           const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
-          const q2 = await timeStep('quote:token:hop2', () =>
-            resolveDexExactIn(
-              input.chainId,
-              currentRouterToken,
-              tokenOut,
-              currentAmount,
-              {
-                v3Fee: outerTargetPool.fee ?? outerPoolMeta?.fee ?? input.poolFee,
-                poolPair: outerPoolPair ?? undefined,
-                prefer: poolVersion ?? (bridgePrefer ?? (turboRouteMode && !input.poolFee ? 'v2' : undefined)),
-              },
-              turboRouteMode
-            )
-          );
-
-          if (turboRouteMode) {
-            if (!q2.poolAddress || q2.poolAddress === ZERO_ADDRESS) {
-              throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-            }
-          } else {
-            try {
-              assertDexQuoteOk(q2);
-            } catch {
-              throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-            }
-          }
-          const usedFee = getV3FeeForDesc(q2, input.poolFee ?? baseFee);
-          if (turboRouteMode) {
+          const preparedV4LastHop = this.takePreparedV4LastHop(preparedSplit, false, input.chainId);
+          if (preparedV4LastHop) {
             minOut = 0n;
+            descs.push(preparedV4LastHop);
           } else {
-            if (q2.amountOut <= 0n) {
-              throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+            const q2 = await timeStep('quote:token:hop2', () =>
+              resolveDexExactIn(
+                input.chainId,
+                currentRouterToken,
+                tokenOut,
+                currentAmount,
+                {
+                  v3Fee: outerTargetPool.fee ?? outerPoolMeta?.fee ?? input.poolFee,
+                  poolPair: outerPoolPair ?? undefined,
+                  prefer: poolVersion ?? (bridgePrefer ?? (turboRouteMode && !input.poolFee
+                    ? (input.chainId === ChainId.RH ? 'v3' : 'v2')
+                    : undefined)),
+                },
+                turboRouteMode
+              )
+            );
+
+            if (turboRouteMode) {
+              if (!q2.poolAddress || q2.poolAddress === ZERO_ADDRESS) {
+                throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+              }
+            } else {
+              try {
+                assertDexQuoteOk(q2);
+              } catch {
+                throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+              }
             }
-            const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
-            minOut = applySlippage(q2.amountOut, slippageBps);
+            const usedFee = getV3FeeForDesc(q2, input.poolFee ?? baseFee);
+            if (turboRouteMode) {
+              minOut = 0n;
+            } else {
+              if (q2.amountOut <= 0n) {
+                throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
+              }
+              const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+              minOut = applySlippage(q2.amountOut, slippageBps);
+            }
+            descs.push(getRouterSwapDesc({
+              swapType: input.chainId === ChainId.RH ? toRhDexSwapType(q2.swapType) : q2.swapType,
+              tokenIn: currentRouterToken,
+              tokenOut,
+              poolAddress: q2.poolAddress,
+              fee: usedFee,
+            }));
           }
-          descs.push(getRouterSwapDesc({
-            swapType: q2.swapType,
-            tokenIn: currentRouterToken,
-            tokenOut,
-            poolAddress: q2.poolAddress,
-            fee: usedFee,
-          }));
       }
     }
 
@@ -4942,19 +5493,22 @@ export class TradeService {
       const sellToken = this.resolveEvmAddress(input.tokenAddress, 'token address') as Address;
         const initialPlatform = resolveTradeLaunchpadPlatform(tokenInfo);
         const initialIsHyperAltfun = input.chainId === ChainId.HYPER && isHyperAltfunPlatform(initialPlatform);
-        const openFourRuntime = (initialIsHyperAltfun || !usesOpenFourRuntime(initialPlatform))
+        const initialIsPons = isPonsPlatform(initialPlatform);
+        const openFourRuntime = (initialIsHyperAltfun || initialIsPons || !usesOpenFourRuntime(initialPlatform))
         ? null
         : await this.getOpenFourRuntimeState(client, input.chainId, sellToken);
         const launchpadRoute = this.classifyLaunchpadRoute(input.chainId, tokenInfo, openFourRuntime);
         const platformLower = launchpadRoute.platform;
         const isHyperAltfun = launchpadRoute.isHyperAltfun;
+        const isPons = launchpadRoute.isPons;
         const isInner = launchpadRoute.isInner;
       const isInnerFourMeme = isInner && isFourMemePlatform(platformLower);
       const launchpadConfig = isInner ? this.getLaunchpadConfig(tokenInfo, input.chainId, openFourRuntime) : null;
-      const bridgeToken = isHyperAltfun ? null : this.getLaunchpadQuoteRouterToken(input.chainId as ChainId, tokenInfo, platformLower, openFourRuntime, {
+      const isPonsInner = isPons && isInner;
+      const bridgeToken = (isHyperAltfun || isPonsInner) ? null : this.getLaunchpadQuoteRouterToken(input.chainId as ChainId, tokenInfo, platformLower, openFourRuntime, {
         preferRuntimeQuote: usesOpenFourRuntime(platformLower),
       });
-      const rawQuoteToken = isHyperAltfun ? null : await this.resolveTradeRouteQuoteToken({
+      const rawQuoteToken = (isHyperAltfun || isPonsInner) ? null : await this.resolveTradeRouteQuoteToken({
         chainId: input.chainId as ChainId,
         tokenAddress: sellToken,
         tokenInfo,
@@ -4967,7 +5521,7 @@ export class TradeService {
       const needsBridgeHop2 = !!bridgeToken && bridgeToken.toLowerCase() !== ZERO_ADDRESS.toLowerCase();
       const bridgePrefer = needsBridgeHop2 ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
       const needsStocksQuoteRoute = this.needsNonTerminalQuoteRoute(input.chainId, baseTokenAddress, rawQuoteToken);
-      if (!isHyperAltfun && !planEvmTradeRoute({
+      if (!isHyperAltfun && !isPonsInner && !planEvmTradeRoute({
         chainId: input.chainId,
         tokenInfo,
         tokenAddress: sellToken,
@@ -4975,7 +5529,7 @@ export class TradeService {
       })) {
         throw new Error('官方报价路径尚未就绪，请稍后再试');
       }
-      const preparedRoute = isHyperAltfun
+      const preparedRoute = (isHyperAltfun || isPonsInner)
         ? null
         : await timeStep('route:prepare', () => this.prepareEvmTradeRoute({
           chainId: input.chainId,
@@ -4988,7 +5542,7 @@ export class TradeService {
       let estimatedOut = 0n;
       let minFundsForSell = 0n;
       let sellTokenManager: Address | null = null;
-      let sellManagerForRoute: Address = isHyperAltfun ? ZERO_ADDRESS : (launchpadConfig?.manager ?? ZERO_ADDRESS);
+      let sellManagerForRoute: Address = (isHyperAltfun || isPonsInner) ? ZERO_ADDRESS : (launchpadConfig?.manager ?? ZERO_ADDRESS);
       let amountInForQuote = amountIn;
       if (isTurbo) {
         if (percentBps <= 0 || percentBps > 10000) throw new Error('Invalid percent');
@@ -4996,7 +5550,43 @@ export class TradeService {
         amountInForQuote = baseBal > 0n ? (baseBal * BigInt(percentBps)) / 10000n : 1n;
       }
 
-      if (isHyperAltfun) {
+      if (isPonsInner) {
+        const ponsState = await timeStep('pons:state', () => getPonsTradeState(sellToken, { force: runtimeOpts?.forceRefreshHyperState === true }));
+        if (!ponsState?.tradeable) throw new Error('该代币不是可交易的 pons 代币');
+
+        const innerTokenOut = ponsState.quoteRouterToken;
+        let minQuoteOut = 0n;
+        if (!isTurbo) {
+          const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+          const estimatedQuote = await timeStep('quote:pons:sell', () => quotePonsSell(sellToken, amountIn));
+          const allowUnquotedOuter = ponsState.version === 2 && ponsState.isOuter;
+          if (estimatedQuote <= 0n && !allowUnquotedOuter) throw new Error('pons 卖出报价失败');
+          minQuoteOut = estimatedQuote > 0n ? applySlippage(estimatedQuote, slippageBps) : 0n;
+          if (baseTokenAddress.toLowerCase() === innerTokenOut.toLowerCase()) {
+            estimatedOut = estimatedQuote;
+          }
+        }
+
+        descs.push(buildPonsSellDesc({
+          state: ponsState,
+          tokenIn: sellToken,
+          minOut: minQuoteOut,
+        }));
+
+        if (baseTokenAddress.toLowerCase() !== innerTokenOut.toLowerCase()) {
+          const hop2AmountIn = isTurbo ? 1n : (minQuoteOut > 0n ? minQuoteOut : 1n);
+          const bridgedOut = await this.appendRhRouterBridgeHops({
+            chainId: input.chainId,
+            tokenIn: innerTokenOut,
+            tokenOut: baseTokenAddress,
+            amountIn: hop2AmountIn,
+            isTurbo,
+            descs,
+            timeStep,
+          });
+          if (!isTurbo) estimatedOut = bridgedOut;
+        }
+      } else if (isHyperAltfun) {
         const hyperState = await timeStep('hyper:state', () => getHyperTradeState(sellToken, { force: runtimeOpts?.forceRefreshHyperState === true }));
         if (!hyperState.isInner && !hyperState.isOuter) throw new Error('该代币不是有效的 alt.fun Hyper 代币');
 
@@ -5171,7 +5761,7 @@ export class TradeService {
             throw new Error(`找不到 Quote/${baseTokenSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
           }
           descs.push(getRouterSwapDesc({
-            swapType: hop2.swapType,
+            swapType: input.chainId === ChainId.RH ? toRhDexSwapType(hop2.swapType) : hop2.swapType,
             tokenIn: innerTokenOut,
             tokenOut: baseTokenAddress,
             poolAddress: hop2.poolAddress,
@@ -5193,6 +5783,7 @@ export class TradeService {
             ? bridgeToken
             : baseTokenAddress;
         const hop1NeedAmountOut = !turboRouteMode && (needsBridgeHop2 || needsStocksQuoteRoute);
+        const preparedV4FirstHop = this.takePreparedV4LastHop(preparedSplit, true, input.chainId);
         const outerTargetPool = preparedSplit?.lastHop.poolAddress && preparedSplit.lastHop.poolAddress !== ZERO_ADDRESS
           ? {
             poolAddress: preparedSplit.lastHop.poolAddress,
@@ -5233,7 +5824,9 @@ export class TradeService {
         const poolVersion = outerPoolMeta?.prefer ?? outerTargetPool.preferHint ?? this.normalizeDexPrefer(tokenInfo.dex_type);
         let hop1AmountOut = 0n;
 
-        if (needsStocksQuoteRoute && rawQuoteToken) {
+        if (preparedV4FirstHop) {
+          descs.push(preparedV4FirstHop);
+        } else if (needsStocksQuoteRoute && rawQuoteToken) {
           if (!outerPoolPair) {
             throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
           }
@@ -5255,7 +5848,9 @@ export class TradeService {
               {
                 v3Fee: outerTargetPool.fee ?? outerPoolMeta?.fee ?? input.poolFee,
                 poolPair: outerPoolPair ?? undefined,
-                prefer: poolVersion ?? (bridgePrefer ?? (turboRouteMode && !input.poolFee ? 'v2' : undefined)),
+                prefer: poolVersion ?? (bridgePrefer ?? (turboRouteMode && !input.poolFee
+                  ? (input.chainId === ChainId.RH ? 'v3' : 'v2')
+                  : undefined)),
               },
               turboRouteMode,
               hop1NeedAmountOut
@@ -5277,7 +5872,7 @@ export class TradeService {
           }
           hop1AmountOut = hop1.amountOut;
           descs.push(getRouterSwapDesc({
-            swapType: hop1.swapType,
+            swapType: input.chainId === ChainId.RH ? toRhDexSwapType(hop1.swapType) : hop1.swapType,
             tokenIn: sellToken,
             tokenOut: hop1RouterOut,
             poolAddress: hop1.poolAddress,
@@ -5318,10 +5913,11 @@ export class TradeService {
         } else if (!needsBridgeHop2) {
           estimatedOut = turboRouteMode ? 0n : hop1AmountOut;
         } else {
-          if (!turboRouteMode && hop1AmountOut <= 0n) {
+          const hop2Unquoted = turboRouteMode || !!preparedV4FirstHop;
+          if (!hop2Unquoted && hop1AmountOut <= 0n) {
             throw new Error(`找不到 Quote/${baseTokenSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
           }
-          const hop2AmountIn = turboRouteMode ? 1n : hop1AmountOut;
+          const hop2AmountIn = hop2Unquoted ? 1n : hop1AmountOut;
           const hop2 = await timeStep('quote:bridge:hop2', () =>
             resolveBridgeHopExactIn(
               input.chainId,
@@ -5329,11 +5925,11 @@ export class TradeService {
               baseTokenAddress,
               hop2AmountIn,
               bridgePrefer,
-              turboRouteMode,
-              !turboRouteMode
+              hop2Unquoted,
+              !hop2Unquoted
             )
           );
-          if (turboRouteMode) {
+          if (hop2Unquoted) {
             if (!hop2.poolAddress || hop2.poolAddress === ZERO_ADDRESS) {
               throw new Error(`找不到 Quote/${baseTokenSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
             }
@@ -5344,17 +5940,17 @@ export class TradeService {
               throw new Error(`找不到 Quote/${baseTokenSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
             }
           }
-          if (!turboRouteMode && hop2.amountOut <= 0n) {
+          if (!hop2Unquoted && hop2.amountOut <= 0n) {
             throw new Error(`找不到 Quote/${baseTokenSymbol} 的 V2/V3 交易池，可能还没有在 DEX 上创建流动性`);
           }
           descs.push(getRouterSwapDesc({
-            swapType: hop2.swapType,
+            swapType: input.chainId === ChainId.RH ? toRhDexSwapType(hop2.swapType) : hop2.swapType,
             tokenIn: bridgeToken,
             tokenOut: baseTokenAddress,
             poolAddress: hop2.poolAddress,
             fee: getV3FeeForDesc(hop2, getDefaultBridgeV3Fee(input.chainId)),
           }));
-          estimatedOut = turboRouteMode ? 0n : hop2.amountOut;
+          estimatedOut = hop2Unquoted ? 0n : hop2.amountOut;
         }
       }
 

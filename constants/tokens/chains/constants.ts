@@ -43,6 +43,14 @@ export const WETH9 = {
     'Wrapped HYPE',
     'https://hyperliquid.xyz'
   ),
+  [ChainId.RH]: new ERC20Token(
+    ChainId.RH,
+    '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
+    18,
+    'WETH',
+    'Wrapped Ether',
+    'https://ethereum.org'
+  ),
 } as const satisfies Partial<Record<ChainId, ERC20Token>>
 
 export const WBNB = {
@@ -61,6 +69,7 @@ export const WNATIVE = {
   [ChainId.ETH]: WETH9[ChainId.ETH]!,
   [ChainId.BNB]: WBNB[ChainId.BNB]!,
   [ChainId.HYPER]: WETH9[ChainId.HYPER]!,
+  [ChainId.RH]: WETH9[ChainId.RH]!,
 } as const satisfies Partial<Record<ChainId, ERC20Token>>
 
 const ETH = {
@@ -81,10 +90,17 @@ const HYPE = {
   decimals: 18,
 } as const
 
+const RH_ETH = {
+  name: 'Ether',
+  symbol: 'ETH',
+  decimals: 18,
+} as const
+
 export const NATIVE = {
   [ChainId.ETH]: ETH,
   [ChainId.BNB]: BNB,
   [ChainId.HYPER]: HYPE,
+  [ChainId.RH]: RH_ETH,
 } as const satisfies Partial<Record<ChainId, { name: string; symbol: string; decimals: number }>>
 
 export { ERC20Token }

@@ -112,6 +112,9 @@ function getDefaultV3Fees(chainId: number, preferBridgeOrder = false): number[] 
   if (chainId === ChainId.HYPER) {
     return preferBridgeOrder ? [3000, 500, 2500, 100, 10000] : [3000, 2500, 500, 100, 10000];
   }
+  if (chainId === ChainId.RH) {
+    return [500, 3000, 10000, 100];
+  }
   return preferBridgeOrder ? [500, 2500, 100, 10000] : [2500, 500, 100, 10000];
 }
 
@@ -375,7 +378,11 @@ async function resolveDexExactInTurbo(
   void amountIn;
   void needAmountOut;
 
-  const prefer = opts?.prefer === 'v2' ? 'v2' : opts?.prefer === 'v3' ? 'v3' : null;
+  const prefer = opts?.prefer === 'v2'
+    ? 'v2'
+    : opts?.prefer === 'v3' || chainId === ChainId.RH
+      ? 'v3'
+      : null;
 
   const hintPool = (() => {
     const v = opts?.poolPair

@@ -144,7 +144,7 @@ export function NetworkSettings({ settingsDraft, setSettingsDraft, tt }: Network
   const [solanaSwqosEndpointModeMap, setSolanaSwqosEndpointModeMap] = useState<Record<string, string>>({});
   const [showEnabledSolanaSwqosOnly, setShowEnabledSolanaSwqosOnly] = useState(false);
   const bloxAuthDraft = useMemo(() => String(settingsDraft.bloxrouteAuthHeader ?? '').replace(/[\r\n]+/g, '').trim(), [settingsDraft.bloxrouteAuthHeader]);
-  const showBloxrouteSettings = !isSolana && chainId !== ChainId.HYPER;
+  const showBloxrouteSettings = !isSolana && chainId !== ChainId.HYPER && chainId !== ChainId.RH;
   const solanaSwqosDraft = chainDraft.solanaSwqos ?? defaults.chains[ChainId.SOL]?.solanaSwqos ?? {
     enabled: false,
     strategy: 'concurrent',

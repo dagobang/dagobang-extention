@@ -1,3 +1,4 @@
+import { normalizeChainName } from '@/constants/chains';
 import { normalizePercentValue } from './value';
 
 export const isObject = (value: any): value is Record<string, any> => !!value && typeof value === 'object';
@@ -10,11 +11,9 @@ const isEvmAddress = (value: string): boolean => asAddress(value) != null;
 const isBase58Address = (value: string): boolean => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
 
 export const normalizeGmgnChainName = (value: unknown): string | undefined => {
-  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw) return undefined;
-  if (raw === 'bnb') return 'bsc';
-  if (raw === 'solana') return 'sol';
-  return raw;
+  return normalizeChainName(raw) || undefined;
 };
 
 export const toArrayPayload = (payload: any): any[] => {

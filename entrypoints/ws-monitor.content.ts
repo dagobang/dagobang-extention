@@ -9,7 +9,7 @@ const STATE_CHANGE_REFRESH_DEBOUNCE_MS = 300;
 export default defineContentScript({
   matches: ['*://gmgn.ai/*', '*://*.gmgn.ai/*', '*://axiom.trade/*', '*://*.axiom.trade/*', '*://web3.binance.com/*',
     "*://web3.okx.com/*", "*://xxyy.io/*", "*://*.xxyy.io/*", "*://dexscreener.com/*", "*://*.dexscreener.com/*",
-    "*://four.meme/*", "*://*.four.meme/*", "*://alt.fun/*", "*://*.alt.fun/*", "*://flap.sh/*", "*://*.flap.sh/*", "*://debot.ai/*", "*://*.debot.ai/*",
+    "*://four.meme/*", "*://*.four.meme/*", "*://alt.fun/*", "*://*.alt.fun/*", "*://ponsfamily.com/*", "*://*.ponsfamily.com/*", "*://pons.fun/*", "*://*.pons.fun/*", "*://flap.sh/*", "*://*.flap.sh/*", "*://debot.ai/*", "*://*.debot.ai/*",
   ],
   allFrames: true,
   runAt: 'document_start',

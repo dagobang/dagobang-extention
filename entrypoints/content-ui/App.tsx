@@ -11,7 +11,7 @@ import { call } from '@/utils/messaging';
 import { TokenAPI } from '@/hooks/TokenAPI';
 import GmgnAPI, { type GmgnPageFetchRequest, type GmgnTokenHolding } from '@/hooks/GmgnAPI';
 import { TokenService } from '@/services/token';
-import { getChainIdByName, getNativeSymbol } from '@/constants/chains';
+import { getChainIdByName, getNativeSymbol, normalizeChainName, toGmgnChainName } from '@/constants/chains';
 import { ChainId } from '@/constants/chains/chainId';
 import { getChainRuntimeBase, isSolanaChain } from '@/constants/chains/runtime';
 import { getEvmChainRuntime } from '@/constants/chains/evmRuntime';
@@ -407,7 +407,7 @@ function deriveUsdFromBaseAmount(
 ): number | null {
   if (!Number.isFinite(amount) || amount <= 0) return null;
   const symbol = tradeBaseTokenMeta.symbol.toUpperCase();
-  if (symbol === 'USDC' || symbol === 'USDT' || symbol === 'USD1') return amount;
+  if (symbol === 'USDC' || symbol === 'USDT' || symbol === 'USD1' || symbol === 'USDG') return amount;
   if (tradeBaseTokenAddress.toLowerCase() === zeroAddress.toLowerCase()) {
     return baseTokenPriceUsd && baseTokenPriceUsd > 0 ? amount * baseTokenPriceUsd : null;
   }
@@ -421,7 +421,7 @@ function deriveBaseAmountFromUsd(
 ): number | null {
   if (!Number.isFinite(usdAmount) || usdAmount <= 0) return null;
   const symbol = tradeBaseTokenMeta.symbol.toUpperCase();
-  if (symbol === 'USDC' || symbol === 'USDT' || symbol === 'USD1') return usdAmount;
+  if (symbol === 'USDC' || symbol === 'USDT' || symbol === 'USD1' || symbol === 'USDG') return usdAmount;
   return baseTokenPriceUsd && baseTokenPriceUsd > 0 ? usdAmount / baseTokenPriceUsd : null;
 }
 
@@ -873,7 +873,7 @@ export default function App() {
     if (!tokenContextSiteInfo?.tokenAddress) return null;
     return normalizeSiteTokenAddress(chainId, tokenContextSiteInfo.tokenAddress);
   }, [chainId, tokenContextSiteInfo]);
-  const gmgnHoldingChain = isSolana ? 'sol' : String(siteInfo?.chain || '').trim().toLowerCase();
+  const gmgnHoldingChain = isSolana ? 'sol' : (siteInfo?.chain ? toGmgnChainName(siteInfo.chain) : '');
   const shouldEnableHoldingStats = !!tokenAddressNormalized && gmgnHoldingWallets.length > 0;
   useEffect(() => {
     approveStatusRefreshSeqRef.current += 1;
@@ -1219,8 +1219,11 @@ export default function App() {
       const amount = detail.amountBnb as string | undefined;
       if (!addr || !amount) return;
       if (!settings) return;
+      const chain = normalizeChainName(typeof detail.chain === 'string' ? detail.chain : '')
+        || normalizeChainName(parseCurrentUrl(window.location.href)?.chain || '')
+        || 'bsc';
       const site: SiteInfo = {
-        chain: 'bsc',
+        chain,
         tokenAddress: addr,
         platform: 'gmgn',
       };
@@ -1247,9 +1250,9 @@ export default function App() {
       if (!detail) return;
       const addr = typeof detail.tokenAddress === 'string' ? detail.tokenAddress.trim() : '';
       if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) return;
-      const chain = typeof detail.chain === 'string' && detail.chain.trim()
-        ? detail.chain.trim().toLowerCase()
-        : 'bsc';
+      const chain = normalizeChainName(
+        typeof detail.chain === 'string' && detail.chain.trim() ? detail.chain : 'bsc'
+      ) || 'bsc';
       const platform = detail.platform === 'gmgn' ? 'gmgn' : 'gmgn';
       const nextSiteInfo: SiteInfo = {
         chain,
@@ -2338,7 +2341,7 @@ export default function App() {
         } as TokenInfo
       : null;
     const stableSymbol = tradeBaseTokenMeta.symbol.toUpperCase();
-    if (stableSymbol === 'USDC' || stableSymbol === 'USDT' || stableSymbol === 'USD1') {
+    if (stableSymbol === 'USDC' || stableSymbol === 'USDT' || stableSymbol === 'USD1' || stableSymbol === 'USDG') {
       setTradeBasePriceUsd(1);
       return;
     }
@@ -2645,7 +2648,7 @@ export default function App() {
     if (!normalizedTokenAddress) return false;
     if (settings?.ui?.gmgnLimitOrderPriceEnabled !== true) return false;
     if (siteInfo?.platform !== 'gmgn') return false;
-    const chain = String(siteInfo?.chain || '').trim().toLowerCase();
+    const chain = siteInfo?.chain ? toGmgnChainName(siteInfo.chain) : '';
     if (!chain) return false;
     try {
       console.info('[gmgn.limitOrder.follow.page_action]', {
@@ -2675,7 +2678,7 @@ export default function App() {
     if (!normalizedTokenAddress) return false;
     if (settings?.ui?.gmgnLimitOrderPriceEnabled !== true) return false;
     if (siteInfo?.platform !== 'gmgn') return false;
-    const chain = String(siteInfo?.chain || '').trim().toLowerCase();
+    const chain = siteInfo?.chain ? toGmgnChainName(siteInfo.chain) : '';
     if (!chain) return false;
     try {
       const listed = await call({ type: 'limitOrder:list', chainId, tokenAddress: normalizedTokenAddress } as const);

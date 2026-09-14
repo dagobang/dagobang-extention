@@ -49,6 +49,22 @@ export function reverseQuickTradeRouteHops(hops: QuickTradeRouteHop[] | null | u
     .reverse();
 }
 
+const DEX_LABEL_RANK: Record<string, number> = {
+  V4: 4,
+  pons: 3,
+  V3: 3,
+  V2: 1,
+  DEX: 0,
+};
+
+function preferDexLabel(base?: string | null, extra?: string | null): string {
+  const left = String(base || '').trim();
+  const right = String(extra || '').trim();
+  if (!right) return left;
+  if (!left) return right;
+  return (DEX_LABEL_RANK[right] ?? 0) >= (DEX_LABEL_RANK[left] ?? 0) ? right : left;
+}
+
 export function mergeQuickTradeRouteHops(
   base: QuickTradeRouteHop[] | null | undefined,
   extra: QuickTradeRouteHop[] | null | undefined,
@@ -64,7 +80,9 @@ export function mergeQuickTradeRouteHops(
       ...hop,
       tokenInSymbol: preferRouteTokenSymbol(match.tokenInSymbol, hop.tokenInSymbol) ?? hop.tokenInSymbol,
       tokenOutSymbol: preferRouteTokenSymbol(match.tokenOutSymbol, hop.tokenOutSymbol) ?? hop.tokenOutSymbol,
-      dexLabel: match.dexLabel || hop.dexLabel,
+      dexLabel: (match.poolAddress || (typeof match.liquidityUsd === 'number' && match.liquidityUsd > 0))
+        ? (match.dexLabel || hop.dexLabel)
+        : preferDexLabel(hop.dexLabel, match.dexLabel),
       poolAddress: match.poolAddress || hop.poolAddress,
       fee: match.fee ?? hop.fee,
       liquidityUsd: match.liquidityUsd ?? hop.liquidityUsd,

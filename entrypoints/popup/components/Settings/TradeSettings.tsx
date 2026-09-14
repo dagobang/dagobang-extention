@@ -18,6 +18,11 @@ export function TradeSettings({ settingsDraft, setSettingsDraft, tt }: TradeSett
       { value: 'BNB', label: nativeSymbol },
       { value: 'USDC', label: 'USDC' },
     ]
+    : chainId === ChainId.RH
+    ? [
+      { value: 'BNB', label: nativeSymbol },
+      { value: 'USDC', label: 'USDG' },
+    ]
     : [
       { value: 'BNB', label: nativeSymbol },
       // { value: 'USDT', label: 'USDT' },

@@ -29,6 +29,15 @@ export const USDC_HYPER = new ERC20Token(
   'https://www.circle.com/usdc',
 )
 
+export const USDG_RH = new ERC20Token(
+  ChainId.RH,
+  '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168',
+  6,
+  'USDG',
+  'Global Dollar',
+  'https://www.paxos.com/global-dollar',
+)
+
 export const USDT_BSC = new ERC20Token(
   ChainId.BNB,
   '0x55d398326f99059fF775485246999027B3197955',
@@ -46,6 +55,7 @@ export const CAKE = {
 export const USDC = {
   [ChainId.BNB]: USDC_BSC,
   [ChainId.HYPER]: USDC_HYPER,
+  [ChainId.RH]: USDG_RH,
 } as const satisfies Partial<Record<ChainId, ERC20Token>>
 
 export const USDT = {

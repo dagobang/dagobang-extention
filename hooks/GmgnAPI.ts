@@ -3,6 +3,7 @@
  * Handles API calls to GMGN with proper authentication and headers
  */
 import { PancakeFactoryV2, PancakeFactoryV3 } from "@/constants/contracts/address";
+import { toGmgnChainName } from "@/constants/chains";
 import { TokenStat, TokenInfo } from "@/types/token";
 import { parseUnits } from "viem";
 import { getSettings } from "@/services/storage";
@@ -448,7 +449,7 @@ export class GmgnAPI {
   private static readonly tokenTradeInfoInFlight = new Map<string, Promise<TokenInfo | null>>();
 
   private static normalizeChainName(chain: string): string {
-    return String(chain || '').trim().toLowerCase();
+    return toGmgnChainName(chain);
   }
 
   public static async getTokenTradeInfo(chain: string, address: string): Promise<TokenInfo | null> {
@@ -1077,7 +1078,7 @@ export class GmgnAPI {
    */
   public static async getTokenCandles(params: TokenCandlesParams): Promise<TokenCandlesResponse> {
     const { chain, tokenAddress, resolution = '1m', limit = 1 } = params;
-    const endpoint = `/token_candles/${chain}/${tokenAddress}`;
+    const endpoint = `/token_candles/${this.normalizeChainName(chain)}/${tokenAddress}`;
     const queryParams = { resolution, limit: limit.toString() };
 
     const url = await this.buildApiUrl(endpoint, queryParams, this.CANDLES_BASE_URL);
@@ -1162,15 +1163,16 @@ export class GmgnAPI {
    * @param address Token address
    */
   public static async getTokenInfo(chain: string, address: string): Promise<TokenInfo | null> {
+    const normalizedChain = this.normalizeChainName(chain);
     try {
       const [tokenInfo, linkInfo] = await Promise.all([
         this.fetchTokenInfoByEndpoint(
           '/multi_token_info',
           this.TOKEN_INFO_BASE_URL,
-          chain,
+          normalizedChain,
           address
         ),
-        this.fetchTokenLinkInfo(chain, address).catch((error) => {
+        this.fetchTokenLinkInfo(normalizedChain, address).catch((error) => {
           console.warn('Failed to fetch GMGN token link info:', error);
           return null;
         }),
@@ -1185,7 +1187,7 @@ export class GmgnAPI {
         const latestInfo = await this.fetchTokenInfoByEndpoint(
           '/mutil_window_token_info',
           this.CANDLES_BASE_URL,
-          chain,
+          normalizedChain,
           address
         ).catch((error) => {
           console.warn('Failed to fetch GMGN latest token info:', error);
@@ -1262,7 +1264,7 @@ export class GmgnAPI {
     | 'bitbucketUrl'
     | 'farcasterUrl'
   > | null> {
-    const endpoint = `/mutil_window_token_link_rug_vote/${String(chain || '').toLowerCase()}/${address}`;
+    const endpoint = `/mutil_window_token_link_rug_vote/${this.normalizeChainName(chain)}/${address}`;
     const url = await this.buildApiUrl(endpoint, { worker: '0' }, this.CANDLES_BASE_URL);
     const headers = await this.getHeaders();
     const response = await this.makeRequest(url, {
@@ -1312,10 +1314,11 @@ export class GmgnAPI {
     address: string
   ): Promise<TokenInfo | null> {
     const extraParams = endpoint === '/mutil_window_token_info' ? { worker: '0' } : {};
+    const normalizedChain = this.normalizeChainName(chain);
     const url = await this.buildApiUrl(endpoint, extraParams, baseUrl);
     const headers = await this.getHeaders();
     const payload = {
-      chain,
+      chain: normalizedChain,
       addresses: [address]
     };
 
@@ -1331,7 +1334,7 @@ export class GmgnAPI {
 
     const result = await response.json() as MultiTokenInfoResponse;
     if (result.code === 0 && result.data && result.data.length > 0) {
-      return this.normalizeTokenInfo(result.data[0], chain);
+      return this.normalizeTokenInfo(result.data[0], normalizedChain);
     }
     return null;
   }
@@ -1720,7 +1723,7 @@ export class GmgnAPI {
     const endpoint = '/wallets/balances';
     const queryParams = {
       worker: '0',
-      chain,
+      chain: this.normalizeChainName(chain),
       token_address: tokenAddress,
       wallet_addresses: walletAddress
     };
@@ -1826,7 +1829,7 @@ export class GmgnAPI {
 
   public static async getDailyProfits(params: DailyProfitParams): Promise<DailyProfitResponse> {
     const { chain, wallet_addresses, start_at, end_at } = params;
-    const endpoint = `/wallets/${chain}/daily_profits`;
+    const endpoint = `/wallets/${this.normalizeChainName(chain)}/daily_profits`;
     const url = await this.buildApiUrl(endpoint, {}, this.PROFIT_BASE_URL);
     const headers = await this.getHeaders();
 

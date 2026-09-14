@@ -2,7 +2,7 @@ import { ChainId } from '@/constants/chains/chainId';
 import { EVM_CHAIN_RUNTIME } from '@/constants/chains/evmRuntime';
 import { isOpenFour4StockName, OPENFOUR_4STOCK_QUOTE_FALLBACK } from '@/constants/openfour';
 import { getBridgeTokenAddresses } from '@/constants/tokens/allTokens';
-import { USDT } from '@/constants/tokens/chains/common';
+import { USDC, USDT } from '@/constants/tokens/chains/common';
 import { bscTokens, bscBnbBridgePoolConfigByTokenAddress } from '@/constants/tokens/chains/bsc';
 import { DeployAddress, OpenFourInnerLaunchpadManager } from '@/constants/contracts/address';
 import { ContractNames } from '@/constants/contracts/names';
@@ -74,6 +74,11 @@ function usdtAddress(chainId: number): `0x${string}` | null {
   return token ? token as `0x${string}` : null;
 }
 
+function usdgAddress(chainId: number): `0x${string}` | null {
+  const token = USDC[chainId as ChainId]?.address;
+  return token ? token as `0x${string}` : null;
+}
+
 function labelToken(chainId: number, address: `0x${string}`, tokenInfo: TokenInfo): string {
   return resolveRouteTokenLabel({
     chainId,
@@ -100,27 +105,61 @@ export function resolveEvmTradeQuoteToken(chainId: number, tokenInfo: TokenInfo)
   const raw = normalizeToken(chainId, tokenInfo.quote_token_address);
   if (raw && !isTerminalQuote(chainId, raw)) return raw;
   if (raw) return raw;
+  // Robinhood tokens often omit quote_token_address on GMGN; default to native like the live pool.
+  if (chainId === ChainId.RH) return ZERO_ADDRESS;
   return null;
+}
+
+function isPonsPlatformName(platform: string): boolean {
+  return platform === 'pons' || platform.startsWith('pons_');
 }
 
 function isInnerLaunchpad(chainId: number, tokenInfo: TokenInfo, platform: string): boolean {
   if (platform.startsWith('flap')) return classifyFlapRoute(chainId, tokenInfo).isInner;
+  if (isPonsPlatformName(platform)) return tokenInfo.launchpad_status !== 1;
   if (FOUR_MEME_PLATFORMS.has(platform) || OPEN_FOUR_PLATFORMS.has(platform)) {
     return tokenInfo.launchpad_status !== 1;
   }
   return tokenInfo.launchpad_status !== 1 && !!tokenInfo.launchpad;
 }
 
-function lastHopDex(platform: string, inner: boolean): string {
-  if (!inner) return 'V2';
+function dexTypeLooksV4(tokenInfo: TokenInfo): boolean {
+  return String(tokenInfo.dex_type || '').toLowerCase().includes('v4');
+}
+
+function dexTypeLooksV3(tokenInfo: TokenInfo): boolean {
+  const dex = String(tokenInfo.dex_type || '').toLowerCase();
+  return dex.includes('v3') || dex.includes('clmm');
+}
+
+function lastHopDex(chainId: number, platform: string, inner: boolean, tokenInfo: TokenInfo): string {
+  if (!inner) {
+    // Pons v2 outer (and unlabeled pons outer) graduates to Uniswap v4, not v2.
+    if (platform === 'pons_v2' || (isPonsPlatformName(platform) && platform !== 'pons_v1') || dexTypeLooksV4(tokenInfo)) {
+      return 'V4';
+    }
+    if (platform === 'pons_v1' || dexTypeLooksV3(tokenInfo)) return 'V3';
+    return chainId === ChainId.RH ? 'V3' : 'V2';
+  }
+  if (isPonsPlatformName(platform)) return 'pons';
   if (FOUR_MEME_PLATFORMS.has(platform)) return 'four.meme';
   if (OPEN_FOUR_PLATFORMS.has(platform)) return 'OpenFour';
   if (platform.startsWith('flap')) return 'Flap';
   return 'DEX';
 }
 
+function lastHopFee(platform: string, inner: boolean): number | null {
+  if (inner) return null;
+  if (platform === 'pons_v1') return 10000;
+  return null;
+}
+
 function lastHopPool(chainId: number, tokenInfo: TokenInfo, platform: string, inner: boolean): string | null {
   if (inner) {
+    if (isPonsPlatformName(platform)) {
+      const pool = String(tokenInfo.pool_pair || '').trim();
+      return isAddress(pool) ? pool : null;
+    }
     const contracts = DeployAddress[chainId as ChainId] || {};
     if (FOUR_MEME_PLATFORMS.has(platform)) {
       return contracts[ContractNames.FourMemeTokenManagerV2]?.address ?? null;
@@ -132,7 +171,11 @@ function lastHopPool(chainId: number, tokenInfo: TokenInfo, platform: string, in
     return null;
   }
   const pool = String(tokenInfo.pool_pair || tokenInfo.biggest_pool_address || '').trim();
-  return isAddress(pool) ? pool : null;
+  if (isAddress(pool)) return pool;
+  if (chainId === ChainId.RH && lastHopDex(chainId, platform, inner, tokenInfo) === 'V4') {
+    return DeployAddress[ChainId.RH]?.[ContractNames.PoolManager]?.address ?? null;
+  }
+  return null;
 }
 
 function makeHop(
@@ -157,22 +200,38 @@ function makeHop(
   };
 }
 
-function nativeUsdtHop(chainId: number, tokenInfo: TokenInfo, tokenOut: `0x${string}`): EvmTradeRoutePlanHop | null {
+function nativeStableHop(chainId: number, tokenInfo: TokenInfo, tokenOut: `0x${string}`): EvmTradeRoutePlanHop | null {
   const usdt = usdtAddress(chainId);
-  if (!usdt) return null;
-  const pool = chainId === ChainId.BNB
-    ? bscBnbBridgePoolConfigByTokenAddress[usdt.toLowerCase()]
-    : null;
-  return makeHop(
-    chainId,
-    tokenInfo,
-    ZERO_ADDRESS,
-    tokenOut,
-    'bridge',
-    pool?.kind === 'v3' ? 'V3' : 'V2',
-    pool?.poolAddress ?? null,
-    pool && 'fee' in pool ? pool.fee : null,
-  );
+  const usdc = USDC[chainId as ChainId]?.address as `0x${string}` | undefined;
+  const target = tokenOut.toLowerCase();
+  if (usdt && target === usdt.toLowerCase()) {
+    const pool = chainId === ChainId.BNB
+      ? bscBnbBridgePoolConfigByTokenAddress[usdt.toLowerCase()]
+      : null;
+    return makeHop(
+      chainId,
+      tokenInfo,
+      ZERO_ADDRESS,
+      tokenOut,
+      'bridge',
+      pool?.kind === 'v3' ? 'V3' : 'V2',
+      pool?.poolAddress ?? null,
+      pool && 'fee' in pool ? pool.fee : null,
+    );
+  }
+  if (usdc && target === usdc.toLowerCase()) {
+    return makeHop(
+      chainId,
+      tokenInfo,
+      ZERO_ADDRESS,
+      tokenOut,
+      'bridge',
+      'V3',
+      null,
+      chainId === ChainId.RH ? 500 : 3000,
+    );
+  }
+  return null;
 }
 
 export function planEvmTradeRoute(input: {
@@ -198,16 +257,27 @@ export function planEvmTradeRoute(input: {
 
   if (quote && quote.toLowerCase() !== current.toLowerCase() && !isTerminalQuote(input.chainId, quote)) {
     if (isBnc4(input.chainId, quote) && usdt && current === ZERO_ADDRESS) {
-      const first = nativeUsdtHop(input.chainId, input.tokenInfo, usdt);
+      const first = nativeStableHop(input.chainId, input.tokenInfo, usdt);
       if (first) hops.push(first);
       hops.push(makeHop(input.chainId, input.tokenInfo, usdt, quote, 'market', 'V2'));
       current = quote;
+    } else if (input.chainId === ChainId.RH && current === ZERO_ADDRESS) {
+      const usdg = usdgAddress(input.chainId);
+      if (usdg && usdg.toLowerCase() !== quote.toLowerCase()) {
+        const first = nativeStableHop(input.chainId, input.tokenInfo, usdg);
+        if (first) hops.push(first);
+        hops.push(makeHop(input.chainId, input.tokenInfo, usdg, quote, 'market', 'V3'));
+        current = quote;
+      } else {
+        hops.push(makeHop(input.chainId, input.tokenInfo, current, quote, 'market', 'V3'));
+        current = quote;
+      }
     } else {
       hops.push(makeHop(input.chainId, input.tokenInfo, current, quote, 'market', 'V2'));
       current = quote;
     }
   } else if (quote && isTerminalQuote(input.chainId, quote) && quote !== ZERO_ADDRESS && current === ZERO_ADDRESS) {
-    const bridge = nativeUsdtHop(input.chainId, input.tokenInfo, quote);
+    const bridge = nativeStableHop(input.chainId, input.tokenInfo, quote);
     if (bridge) {
       hops.push(bridge);
       current = quote;
@@ -221,8 +291,9 @@ export function planEvmTradeRoute(input: {
       current,
       tokenAddress,
       inner ? 'launchpad' : 'market',
-      lastHopDex(platform, inner),
+      lastHopDex(input.chainId, platform, inner, input.tokenInfo),
       lastHopPool(input.chainId, input.tokenInfo, platform, inner),
+      lastHopFee(platform, inner),
     ));
   }
   if (!hops.length) return null;

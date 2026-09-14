@@ -3,6 +3,7 @@ import { ChainId } from '@/constants/chains/chainId';
 import { FourmemeAPI } from '@/services/api/fourmeme';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenFourmemeService } from '@/services/token/fourmeme';
+import { TokenPonsService } from '@/services/token/pons';
 import { TokenService } from '@/services/token';
 import type { TokenInfo } from '@/types/token';
 import { formatUnits, isAddress } from 'viem';
@@ -156,6 +157,16 @@ export const createTokenInfoResolvers = () => {
         };
       } catch (error) {
         return { tokenInfo: null, failureReason: isRateLimitError(error) ? 'flap_rate_limited' : 'flap_fetch_failed' };
+      }
+    }
+
+    if (chainId === ChainId.RH) {
+      try {
+        const ponsInfo = await TokenPonsService.getTokenInfo(chainId, typedAddress);
+        if (!ponsInfo) return { tokenInfo: null, failureReason: 'pons_empty' };
+        return { tokenInfo: ponsInfo };
+      } catch (error) {
+        return { tokenInfo: null, failureReason: isRateLimitError(error) ? 'rpc_rate_limited' : 'pons_fetch_failed' };
       }
     }
 

@@ -85,6 +85,32 @@ export const DeployAddress: AddressMapping = {
       address: "0xb68811BcC0e4FcD825aA49F9453b065ddF752FcB",
     },
   },
+  [ChainId.RH]: {
+    [ContractNames.DagobangRouter]: {
+      address: "0xaCE94176A9Ecb584Ed952c0EFdC1e843090CAC3C",
+    },
+    [ContractNames.WETH]: {
+      address: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    },
+    [ContractNames.UniswapFactoryV3]: {
+      address: "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+    },
+    [ContractNames.PoolManager]: {
+      address: "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+    },
+    [ContractNames.PonsV1Factory]: {
+      address: "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB",
+    },
+    [ContractNames.PonsV1LegacyFactory]: {
+      address: "0x0c37a24F5D23A486FA692d1500881d698B1F77a4",
+    },
+    [ContractNames.PonsV2Factory]: {
+      address: "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e",
+    },
+    [ContractNames.PonsMemeHook]: {
+      address: "0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044",
+    },
+  },
 };
 
 export const getDeploysByName = (chainId: string, name?: ContractNames): any => {

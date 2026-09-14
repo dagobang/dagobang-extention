@@ -1,5 +1,5 @@
 import { SiteInfo } from "#imports";
-import { getChainIdByName } from "@/constants/chains";
+import { getChainIdByName, normalizeChainName, toDexScreenerChainName, toGmgnChainName } from "@/constants/chains";
 import { MEME_SUFFIXS } from "@/constants/meme";
 import { getBridgeTokenAddresses } from "@/constants/tokens";
 import { TokenAPI } from '@/hooks/TokenAPI';
@@ -8,7 +8,7 @@ import { call } from '@/utils/messaging';
 export interface SiteInfo {
   chain: string;
   tokenAddress: string;
-  platform: 'gmgn' | 'axiom' | 'flap' | 'fourmeme' | 'altfun' | 'binance' | 'okx' | 'xxyy' | 'debot' | 'dexscreener';
+  platform: 'gmgn' | 'axiom' | 'flap' | 'fourmeme' | 'altfun' | 'pons' | 'binance' | 'okx' | 'xxyy' | 'debot' | 'dexscreener';
   walletAddress?: string;
   showBar?: boolean;
 }
@@ -17,7 +17,7 @@ export interface SiteInfo {
 export function parsePlatformTokenLink(siteInfo: SiteInfo, tokenAddress: string) {
   switch (siteInfo.platform) {
     case 'gmgn':
-      return `https://gmgn.ai/${siteInfo.chain}/token/${tokenAddress}`;
+      return `https://gmgn.ai/${toGmgnChainName(siteInfo.chain)}/token/${tokenAddress}`;
     case 'axiom':
       return `https://axiom.trade/meme/${tokenAddress}?chain=${siteInfo.chain == 'bsc' ? 'bnb' : siteInfo.chain}`;
     case 'binance':
@@ -30,10 +30,12 @@ export function parsePlatformTokenLink(siteInfo: SiteInfo, tokenAddress: string)
       return `https://four.meme/zh-TW/token/${tokenAddress}`;
     case 'altfun':
       return `https://alt.fun/token/${tokenAddress}`;
+    case 'pons':
+      return `https://www.ponsfamily.com/launchpad/${tokenAddress}`;
     case 'xxyy':
       return `https://www.xxyy.io/${siteInfo.chain}/${tokenAddress}`;
     case 'dexscreener':
-      return `https://dexscreener.com/${siteInfo.chain}/${tokenAddress}`;
+      return `https://dexscreener.com/${toDexScreenerChainName(siteInfo.chain)}/${tokenAddress}`;
     case 'debot':
       return `https://debot.ai/token/${siteInfo.chain}/${tokenAddress}`;
     default:
@@ -81,6 +83,10 @@ export function navigateToUrl(href: string) {
   }
 }
 
+function toSiteChain(raw: string | null | undefined, fallback = ''): string {
+  return normalizeChainName(raw ?? '') || fallback;
+}
+
 export function parseCurrentUrl(href: string): SiteInfo | null {
   try {
     const u = new URL(href);
@@ -92,7 +98,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       // token page
       if (parts.length >= 3 && parts[1] === 'token') {
         return {
-          chain: parts[0].toLowerCase(),
+          chain: toSiteChain(parts[0]),
           tokenAddress: parts[2],
           platform: 'gmgn',
         };
@@ -100,7 +106,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       // wallet address page
       if (parts.length >= 3 && parts[1] === 'address') {
         return {
-          chain: parts[0].toLowerCase(),
+          chain: toSiteChain(parts[0]),
           tokenAddress: '',
           walletAddress: parts[2],
           platform: 'gmgn',
@@ -110,7 +116,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       // home/list page
       if (parts.length === 0 && u.searchParams.has('chain')) {
         return {
-          chain: u.searchParams.get('chain')?.toLowerCase() || 'bsc',
+          chain: toSiteChain(u.searchParams.get('chain'), 'bsc'),
           tokenAddress: '',
           platform: 'gmgn',
           showBar: true
@@ -126,7 +132,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
         const chain = u.searchParams.get('chain');
         if (chain) {
           return {
-            chain: chain === 'bnb' ? 'bsc' : chain.toLowerCase(),
+            chain: toSiteChain(chain),
             tokenAddress: parts[1],
             platform: 'axiom',
           };
@@ -135,7 +141,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       // https://axiom.trade/pulse?chain=bnb
       if (parts.length === 1 && parts[0] === 'pulse') {
         return {
-          chain: u.searchParams.get('chain')?.toLowerCase() || 'bsc',
+          chain: toSiteChain(u.searchParams.get('chain'), 'bsc'),
           tokenAddress: '',
           platform: 'axiom',
           showBar: true
@@ -171,12 +177,38 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       };
     }
 
+    // https://www.ponsfamily.com/launchpad/0x...
+    if (u.hostname.includes('ponsfamily.com') || u.hostname.includes('pons.fun') || u.hostname.includes('pons.family')) {
+      const tokenIdx = parts.findIndex((part) => part === 'launchpad' || part === 'token');
+      if (tokenIdx >= 0 && parts.length > tokenIdx + 1 && /^0x[a-fA-F0-9]{40}$/.test(parts[tokenIdx + 1])) {
+        return {
+          chain: 'rh',
+          tokenAddress: parts[tokenIdx + 1],
+          platform: 'pons',
+        };
+      }
+      const addressPart = parts.find((part) => /^0x[a-fA-F0-9]{40}$/.test(part));
+      if (addressPart) {
+        return {
+          chain: 'rh',
+          tokenAddress: addressPart,
+          platform: 'pons',
+        };
+      }
+      return {
+        chain: 'rh',
+        tokenAddress: '',
+        platform: 'pons',
+        showBar: true,
+      };
+    }
+
     // https://flap.sh/bnb/0x...
     if (u.hostname.includes('flap.sh')) {
       if (parts.length >= 2) {
         const chain = parts[0].toLowerCase();
         return {
-          chain: chain === 'bnb' ? 'bsc' : chain,
+          chain: toSiteChain(chain),
           tokenAddress: parts[1],
           platform: 'flap',
         };
@@ -190,7 +222,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       if (idx >= 0 && parts.length >= idx + 3) {
         const chain = parts[idx + 1];
         return {
-          chain: chain === 'bnb' ? 'bsc' : chain.toLowerCase(),
+          chain: toSiteChain(chain, 'bsc'),
           tokenAddress: parts[idx + 2],
           platform: 'binance',
         };
@@ -198,7 +230,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       // https://web3.binance.com/zh-CN/trenches?chain=bsc
       if (parts.length === 2 && parts[1] === 'trenches') {
         return {
-          chain: u.searchParams.get('chain')?.toLowerCase() || 'bsc',
+          chain: toSiteChain(u.searchParams.get('chain'), 'bsc'),
           tokenAddress: '',
           platform: 'binance',
           showBar: true
@@ -213,7 +245,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       if (idx >= 0 && parts.length >= idx + 3) {
         const chain = parts[idx + 1];
         return {
-          chain: chain === 'bnb' ? 'bsc' : chain.toLowerCase(),
+          chain: toSiteChain(chain, 'bsc'),
           tokenAddress: parts[idx + 2],
           platform: 'okx',
         };
@@ -224,7 +256,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
     if (u.hostname.includes('xxyy.io')) {
       if (parts.length >= 2) {
         return {
-          chain: parts[0].toLowerCase(),
+          chain: toSiteChain(parts[0]),
           tokenAddress: parts[1],
           platform: 'xxyy',
         };
@@ -232,7 +264,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       // https://www.xxyy.io/meme?chainId=bsc
       if (parts.length === 1 && parts[0] === 'meme') {
         return {
-          chain: u.searchParams.get('chainId')?.toLowerCase() || 'bsc',
+          chain: toSiteChain(u.searchParams.get('chainId'), 'bsc'),
           tokenAddress: '',
           platform: 'xxyy',
           showBar: true
@@ -245,7 +277,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       if (parts.length >= 3 && parts[0] === 'token') {
         const token = parts[2].indexOf("_") > 0 ? parts[2].split("_")[1] : parts[2]
         return {
-          chain: parts[1].toLowerCase(),
+          chain: toSiteChain(parts[1]),
           tokenAddress: token,
           platform: 'debot',
         };
@@ -253,7 +285,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       // https://debot.ai/meme?chain=bsc
       if (parts.length === 1 && parts[0] === 'meme') {
         return {
-          chain: u.searchParams.get('chain')?.toLowerCase() || 'bsc',
+          chain: toSiteChain(u.searchParams.get('chain'), 'bsc'),
           tokenAddress: '',
           platform: 'debot',
           showBar: true
@@ -265,7 +297,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
     if (u.hostname.includes('dexscreener.com')) {
       if (parts.length >= 2) {
         return {
-          chain: parts[0].toLowerCase(),
+          chain: toSiteChain(parts[0]),
           tokenAddress: parts[1],
           platform: 'dexscreener',
         };
@@ -273,7 +305,7 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
       // https://dexscreener.com/bsc
       if (parts.length === 1 && parts[0] === 'bsc') {
         return {
-          chain: u.searchParams.get('chain')?.toLowerCase() || 'bsc',
+          chain: toSiteChain(u.searchParams.get('chain'), 'bsc'),
           tokenAddress: '',
           platform: 'dexscreener',
           showBar: true

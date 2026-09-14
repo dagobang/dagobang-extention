@@ -110,12 +110,13 @@ function isAllowedProtectedRpcUrl(raw: string, chainId?: number): boolean {
   if (host.includes('infura.io')) return true;
   if (host.includes('drpc')) return true;
   if (host.includes('hyper')) return true;
+  if (host.includes('robinhood')) return true;
   return false;
 }
 
 export function validateSettings(input: Settings): Settings | null {
   const defaults = defaultSettings();
-  const supportedChainIds = [ChainId.ETH, ChainId.BNB, ChainId.HYPER, ChainId.SOL] as const;
+  const supportedChainIds = [ChainId.ETH, ChainId.BNB, ChainId.HYPER, ChainId.SOL, ChainId.RH] as const;
   const inputChainId = Number((input as any).chainId);
   const chainId = supportedChainIds.includes(inputChainId as any)
     ? inputChainId

@@ -134,6 +134,9 @@ export const ChainCoinIcon = ({
     case "501":
       icon = <SOLCoinIcon size={size} />;
       break;
+    case "4663":
+      icon = <ETHCoinIcon size={size} />;
+      break;
     case "56":
     case "204":
     case "5611":
