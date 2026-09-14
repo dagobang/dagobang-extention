@@ -1611,16 +1611,27 @@ export class TradeService {
     chainId: number,
     tokenA: Address,
     tokenB: Address,
-  ): Promise<{ liquidityUsd: number | null; symbols: Record<string, string> }> {
+  ): Promise<{
+    liquidityUsd: number | null;
+    symbols: Record<string, string>;
+    poolAddress: Address | null;
+    preferHint: 'v2' | 'v3' | null;
+    fee?: number;
+  }> {
     const chain = String(chainNames[chainId as ChainId] || '').trim().toLowerCase();
-    if (!chain) return { liquidityUsd: null, symbols: {} };
+    if (!chain) return { liquidityUsd: null, symbols: {}, poolAddress: null, preferHint: null };
     const left = this.toDexScreenerPairToken(chainId, tokenA) ?? tokenA;
     const right = this.toDexScreenerPairToken(chainId, tokenB) ?? tokenB;
     const pair = await DexScreenerAPI.getBestPairBetweenTokens(chain, left, right).catch(() => null);
     const liquidityUsd = Number(pair?.liquidity?.usd ?? 0);
+    const poolAddress = pair?.pairAddress && isAddressLike(pair.pairAddress)
+      ? pair.pairAddress as Address
+      : null;
     return {
       liquidityUsd: Number.isFinite(liquidityUsd) && liquidityUsd > 0 ? liquidityUsd : null,
       symbols: this.collectDexScreenerPairSymbols(chainId, pair),
+      poolAddress,
+      preferHint: this.normalizeDexPrefer(this.mapDexScreenerPairDexType(pair)),
     };
   }
 
@@ -1633,67 +1644,79 @@ export class TradeService {
     const hops = await Promise.all(plan.hops.map(async (hop) => {
       const tokenIn = hop.tokenIn as Address;
       const tokenOut = hop.tokenOut as Address;
-      if (hop.kind === 'launchpad' && launchpadConfig) {
+      try {
+        if (hop.kind === 'launchpad' && launchpadConfig) {
+          return {
+            desc: getRouterSwapDesc({
+              swapType: launchpadConfig.buyType,
+              tokenIn,
+              tokenOut,
+              poolAddress: launchpadConfig.manager,
+              fee: 0,
+            }),
+            liquidityUsd: null,
+            symbols: {} as Record<string, string>,
+          };
+        }
+        const pairMeta = await this.peekDexScreenerPairMeta(chainId, tokenIn, tokenOut);
+        if (hop.poolAddress && isAddressLike(hop.poolAddress) && hop.kind === 'bridge') {
+          return {
+            desc: getRouterSwapDesc({
+              swapType: hop.dexLabel === 'V3' ? SwapType.V3_EXACT_IN : SwapType.V2_EXACT_IN,
+              tokenIn,
+              tokenOut,
+              poolAddress: hop.poolAddress as Address,
+              fee: hop.fee ?? 0,
+            }),
+            liquidityUsd: pairMeta.liquidityUsd,
+            symbols: pairMeta.symbols,
+          };
+        }
+        const knownPool = hop.poolAddress && isAddressLike(hop.poolAddress)
+          ? hop.poolAddress as Address
+          : pairMeta.poolAddress;
+        const preferred = knownPool
+          ? null
+          : await this.getPreferredFlapOuterTargetPool({
+            chainId,
+            tokenAddress: tokenOut,
+            quoteTokenAddress: tokenIn,
+            tokenInfo,
+            pairOnly: true,
+          }).catch(() => null);
+        const poolAddress = knownPool ?? preferred?.poolAddress ?? ZERO_ADDRESS;
+        const preferHint = preferred?.preferHint
+          ?? pairMeta.preferHint
+          ?? (hop.dexLabel === 'V3' ? 'v3' as const : hop.dexLabel === 'V2' ? 'v2' as const : null);
         return {
           desc: getRouterSwapDesc({
-            swapType: launchpadConfig.buyType,
+            swapType: preferHint === 'v3' || hop.dexLabel === 'V3' ? SwapType.V3_EXACT_IN : SwapType.V2_EXACT_IN,
             tokenIn,
             tokenOut,
-            poolAddress: launchpadConfig.manager,
-            fee: 0,
+            poolAddress,
+            fee: preferHint === 'v3' ? (preferred?.fee ?? hop.fee ?? getDefaultBridgeV3Fee(chainId)) : (hop.fee ?? 0),
           }),
-          liquidityUsd: null,
-          symbols: {} as Record<string, string>,
+          liquidityUsd: typeof preferred?.liquidityUsd === 'number' && preferred.liquidityUsd > 0
+            ? preferred.liquidityUsd
+            : pairMeta.liquidityUsd,
+          symbols: {
+            ...pairMeta.symbols,
+            ...(preferred?.symbols ?? {}),
+          },
         };
-      }
-      const pairMeta = await this.peekDexScreenerPairMeta(chainId, tokenIn, tokenOut);
-      if (hop.poolAddress && isAddressLike(hop.poolAddress) && hop.kind === 'bridge') {
+      } catch {
         return {
           desc: getRouterSwapDesc({
             swapType: hop.dexLabel === 'V3' ? SwapType.V3_EXACT_IN : SwapType.V2_EXACT_IN,
             tokenIn,
             tokenOut,
-            poolAddress: hop.poolAddress as Address,
+            poolAddress: (hop.poolAddress && isAddressLike(hop.poolAddress) ? hop.poolAddress : ZERO_ADDRESS) as Address,
             fee: hop.fee ?? 0,
           }),
-          liquidityUsd: pairMeta.liquidityUsd,
-          symbols: pairMeta.symbols,
+          liquidityUsd: null,
+          symbols: {} as Record<string, string>,
         };
       }
-      const knownPool = hop.poolAddress && isAddressLike(hop.poolAddress)
-        ? hop.poolAddress as Address
-        : null;
-      const pool = knownPool
-        ? {
-          poolAddress: knownPool,
-          preferHint: hop.dexLabel === 'V3' ? 'v3' as const : hop.dexLabel === 'V2' ? 'v2' as const : null,
-          fee: hop.fee ?? undefined,
-          liquidityUsd: pairMeta.liquidityUsd ?? undefined,
-          symbols: pairMeta.symbols,
-        }
-        : await this.getPreferredFlapOuterTargetPool({
-          chainId,
-          tokenAddress: tokenOut,
-          quoteTokenAddress: tokenIn,
-          tokenInfo,
-          pairOnly: true,
-        });
-      return {
-        desc: getRouterSwapDesc({
-          swapType: pool.preferHint === 'v3' || hop.dexLabel === 'V3' ? SwapType.V3_EXACT_IN : SwapType.V2_EXACT_IN,
-          tokenIn,
-          tokenOut,
-          poolAddress: (pool.poolAddress ?? knownPool ?? ZERO_ADDRESS) as Address,
-          fee: pool.preferHint === 'v3' ? (pool.fee ?? hop.fee ?? getDefaultBridgeV3Fee(chainId)) : (hop.fee ?? 0),
-        }),
-        liquidityUsd: typeof pool.liquidityUsd === 'number' && pool.liquidityUsd > 0
-          ? pool.liquidityUsd
-          : pairMeta.liquidityUsd,
-        symbols: {
-          ...pairMeta.symbols,
-          ...(pool.symbols ?? {}),
-        },
-      };
     }));
     return {
       descs: hops.map((item) => item.desc),
@@ -2936,7 +2959,7 @@ export class TradeService {
         && this.isEquivalentFlapRouteToken(input.chainId, pairCounterparty, input.quoteTokenAddress);
       if (pairAddress && supported && dexPair && pairMatchesQuote) {
         const pairPrefer = this.normalizeDexPrefer(this.mapDexScreenerPairDexType(dexPair));
-        const pairMeta = await this.getKnownPoolRouteMeta(input.chainId, pairAddress, pairPrefer);
+        const pairMeta = await this.getKnownPoolRouteMeta(input.chainId, pairAddress, pairPrefer).catch(() => null);
         this.logFlapStocksRoute(input.debug, input.logEvent ?? 'target.pool.selected', {
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
