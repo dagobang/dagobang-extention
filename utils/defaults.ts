@@ -165,8 +165,15 @@ const RH_GAS_GWEI: GasGweiConfig = {
 const RH_MAINNET: ChainSettings = {
   rpcUrls: [
     'https://rpc.mainnet.chain.robinhood.com',
+    'https://robinhood.rpc.blxrbdn.com',
+    'https://rpc-robinhood.blockmachine.io',
+    'https://rpc.ordofi.network',
   ],
-  protectedRpcUrls: [],
+  protectedRpcUrls: [
+    'https://robinhood.api.pocket.network',
+    'https://robinhood-rpc.publicnode.com',
+    'https://robinhood.drpc.org',
+  ],
   protectedRpcUrlsBuy: [],
   protectedRpcUrlsSell: [],
   submitChannel: 'protectRpcs',
