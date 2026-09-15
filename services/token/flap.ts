@@ -3,6 +3,7 @@ import type { FlapTokenStateV7 } from '@/types/token';
 import { erc20Abi } from '@/constants/contracts/abi/swapAbi';
 import { FlapTaxTokenHelperAddress, getFlapStocksVaultVersion } from '@/constants/flap';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
+import { hashUniswapV4PoolId } from '@/utils/uniswapV4PoolKey';
 
 import { RpcService } from '../rpc';
 import { DeployAddress } from '../../constants/contracts/address';
@@ -24,10 +25,6 @@ const flapStocksVaultAbi = parseAbi([
   'function rwaAsset() view returns (address)',
   'function basketToken() view returns (address)',
   'function supportedAssets() view returns (address[])',
-]);
-
-const v4PoolManagerAbi = parseAbi([
-  'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)',
 ]);
 
 export class TokenFlapService {
@@ -112,104 +109,41 @@ export class TokenFlapService {
     return ZERO_ADDRESS;
   }
 
-  private static pickBestV4InitializeLog(input: {
-    logs: Array<{
-      args?: {
-        id?: `0x${string}`;
-        fee?: number;
-        tickSpacing?: number;
-        hooks?: `0x${string}`;
-      };
-      blockNumber?: bigint;
-      logIndex?: number;
-    }>;
-    lpFeeProfile: number;
-  }) {
-    const profile = Number(input.lpFeeProfile ?? 0);
-    const score = (fee: number, hooks: string) => {
-      let value = hooks.toLowerCase() === ZERO_ADDRESS.toLowerCase() ? 10 : 0;
-      if (profile === 1) {
-        value += fee <= 1000 ? 5 : 0;
-      } else if (profile === 2) {
-        value += fee >= 5000 ? 5 : 0;
-      } else {
-        value += fee >= 2000 && fee <= 4000 ? 5 : 0;
-      }
-      return value;
-    };
-
-    return [...input.logs].sort((a, b) => {
-      const feeA = Number(a.args?.fee ?? 0);
-      const feeB = Number(b.args?.fee ?? 0);
-      const hooksA = String(a.args?.hooks ?? ZERO_ADDRESS);
-      const hooksB = String(b.args?.hooks ?? ZERO_ADDRESS);
-      const scoreA = score(feeA, hooksA);
-      const scoreB = score(feeB, hooksB);
-      if (scoreA !== scoreB) return scoreB - scoreA;
-      if ((a.blockNumber ?? 0n) !== (b.blockNumber ?? 0n)) {
-        return Number((b.blockNumber ?? 0n) - (a.blockNumber ?? 0n));
-      }
-      return Number((b.logIndex ?? 0) - (a.logIndex ?? 0));
-    })[0];
+  private static flapV4KeyFromProfile(lpFeeProfile: number): { fee: number; tickSpacing: number } {
+    const profile = Number(lpFeeProfile ?? 0);
+    if (profile === 1) return { fee: 500, tickSpacing: 10 };
+    if (profile === 2) return { fee: 10000, tickSpacing: 200 };
+    return { fee: 3000, tickSpacing: 60 };
   }
 
-  private static async getV4PoolMetadata(input: {
-    client: Awaited<ReturnType<typeof RpcService.getClient>>;
+  private static getV4PoolMetadata(input: {
     chainId: number;
     tokenAddress: string;
     quoteTokenAddress?: string | null;
     lpFeeProfile: number;
-  }): Promise<Pick<FlapTokenStateV7, 'clPoolId' | 'v4Fee' | 'v4TickSpacing' | 'v4Hooks'> | null> {
+  }): Pick<FlapTokenStateV7, 'clPoolId' | 'v4Fee' | 'v4TickSpacing' | 'v4Hooks'> | null {
     if (input.chainId !== ChainId.BNB) return null;
-    const poolManager = this.getV4PoolManagerAddress(input.chainId);
-    if (!poolManager || poolManager === ZERO_ADDRESS) return null;
-
     const quoteToken = this.normalizeQuoteTokenForPoolLookup(input.chainId, input.tokenAddress, input.quoteTokenAddress);
     if (!quoteToken) return null;
-
     const tokenA = input.tokenAddress.toLowerCase();
     const tokenB = quoteToken.toLowerCase();
     const [currency0, currency1] = tokenA < tokenB
-      ? [input.tokenAddress, quoteToken]
-      : [quoteToken, input.tokenAddress];
-
-    try {
-      const logs = await input.client.getLogs({
-        address: poolManager as `0x${string}`,
-        event: v4PoolManagerAbi[0],
-        args: {
-          currency0: currency0 as `0x${string}`,
-          currency1: currency1 as `0x${string}`,
-        },
-        fromBlock: 0n,
-        toBlock: 'latest',
-      });
-      if (!logs.length) return null;
-
-      const best = this.pickBestV4InitializeLog({
-        logs: logs as Array<{
-          args?: {
-            id?: `0x${string}`;
-            fee?: number;
-            tickSpacing?: number;
-            hooks?: `0x${string}`;
-          };
-          blockNumber?: bigint;
-          logIndex?: number;
-        }>,
-        lpFeeProfile: input.lpFeeProfile,
-      });
-      if (!best?.args) return null;
-
-      return {
-        clPoolId: best.args.id,
-        v4Fee: Number(best.args.fee ?? 0),
-        v4TickSpacing: Number(best.args.tickSpacing ?? 0),
-        v4Hooks: String(best.args.hooks ?? ZERO_ADDRESS),
-      };
-    } catch {
-      return null;
-    }
+      ? [input.tokenAddress as `0x${string}`, quoteToken as `0x${string}`]
+      : [quoteToken as `0x${string}`, input.tokenAddress as `0x${string}`];
+    const { fee, tickSpacing } = this.flapV4KeyFromProfile(input.lpFeeProfile);
+    const hooks = ZERO_ADDRESS as `0x${string}`;
+    return {
+      clPoolId: hashUniswapV4PoolId({
+        currency0,
+        currency1,
+        fee,
+        tickSpacing,
+        hooks,
+      }),
+      v4Fee: fee,
+      v4TickSpacing: tickSpacing,
+      v4Hooks: hooks,
+    };
   }
 
   private static async getTaxTokenMetadata(client: Awaited<ReturnType<typeof RpcService.getClient>>, chainId: number, tokenAddress: string) {
@@ -282,24 +216,49 @@ export class TokenFlapService {
   private static async getTokenInfoUncached(chainId: number, tokenAddress: string): Promise<FlapTokenStateV7> {
     const client = await RpcService.getClient(chainId);
     const managerAddress = this.getFlapTokenManagerAddress(chainId);
-    const functionName = chainId === ChainId.BNB ? 'getTokenV8Safe' : 'getTokenV7';
 
     if (managerAddress === ZERO_ADDRESS) {
       throw new Error('FlapshTokenManager address not found for chain ' + chainId);
     }
 
-      const [state, meta, taxInfo] = await Promise.all([
-      client.readContract({
+    // Portal version skew: getTokenV8Safe can revert with 0xde6137d1 for some tokens.
+    // Fall back to getTokenV7 so pricing/routing never hard-fail on the V8 selector alone.
+    const readManagerState = async (): Promise<{ state: any; functionName: 'getTokenV8Safe' | 'getTokenV7' }> => {
+      if (chainId === ChainId.BNB) {
+        try {
+          const state = await client.readContract({
+            address: managerAddress as `0x${string}`,
+            abi: flapTokenManagerAbi,
+            functionName: 'getTokenV8Safe',
+            args: [tokenAddress as `0x${string}`],
+          });
+          return { state, functionName: 'getTokenV8Safe' };
+        } catch {
+          const state = await client.readContract({
+            address: managerAddress as `0x${string}`,
+            abi: flapTokenManagerAbi,
+            functionName: 'getTokenV7',
+            args: [tokenAddress as `0x${string}`],
+          });
+          return { state, functionName: 'getTokenV7' };
+        }
+      }
+      const state = await client.readContract({
         address: managerAddress as `0x${string}`,
         abi: flapTokenManagerAbi,
-          functionName,
+        functionName: 'getTokenV7',
         args: [tokenAddress as `0x${string}`],
-      }) as Promise<any>,
+      });
+      return { state, functionName: 'getTokenV7' };
+    };
+
+    const [{ state, functionName }, meta, taxInfo] = await Promise.all([
+      readManagerState(),
       Promise.all([
         client.readContract({ address: tokenAddress as `0x${string}`, abi: erc20Abi, functionName: 'symbol' }),
         client.readContract({ address: tokenAddress as `0x${string}`, abi: erc20Abi, functionName: 'decimals' }),
       ]).then(([symbol, decimals]) => ({ symbol, decimals })),
-        this.getTaxTokenMetadata(client, chainId, tokenAddress),
+      this.getTaxTokenMetadata(client, chainId, tokenAddress),
     ]);
 
     const status = state?.status ?? state?.[0];
@@ -314,33 +273,32 @@ export class TokenFlapService {
     const quoteTokenAddress = state?.quoteTokenAddress ?? state?.[9];
     const nativeToQuoteSwapEnabled = state?.nativeToQuoteSwapEnabled ?? state?.[10];
     const extensionID = state?.extensionID ?? state?.[11];
-      const buyTaxRate = state?.buyTaxRate ?? (functionName === 'getTokenV8Safe' ? state?.[12] : undefined);
-      const sellTaxRate = state?.sellTaxRate ?? (functionName === 'getTokenV8Safe' ? state?.[13] : undefined);
-      const taxRate = state?.taxRate
-        ?? (buyTaxRate ?? sellTaxRate)
-        ?? (functionName === 'getTokenV8Safe' ? state?.[12] : state?.[12]);
-      const pool = state?.pool ?? (functionName === 'getTokenV8Safe' ? state?.[14] : state?.[13]);
-      const progress = state?.progress ?? (functionName === 'getTokenV8Safe' ? state?.[15] : state?.[14]);
-      const lpFeeProfile = state?.lpFeeProfile ?? (functionName === 'getTokenV8Safe' ? state?.[16] : state?.[15]);
-      const dexId = state?.dexId ?? (functionName === 'getTokenV8Safe' ? state?.[17] : state?.[16]);
-      const resolvedQuoteTokenAddress = this.resolvePreferredQuoteTokenAddress({
-        chainId,
-        tokenAddress,
-        managerQuoteTokenAddress: typeof quoteTokenAddress === 'string' ? quoteTokenAddress : String(quoteTokenAddress ?? ''),
-        helperQuoteTokenAddress: taxInfo?.quoteToken ?? ZERO_ADDRESS,
-      });
-      const poolModel = this.resolvePoolModel(chainId, String(pool ?? ZERO_ADDRESS));
-      const v4PoolMetadata = poolModel === 'v4_cl'
-        ? await this.getV4PoolMetadata({
-            client,
-            chainId,
-            tokenAddress,
-            quoteTokenAddress: resolvedQuoteTokenAddress,
-            lpFeeProfile: Number(lpFeeProfile ?? 0),
-          })
-        : null;
+    const buyTaxRate = state?.buyTaxRate ?? (functionName === 'getTokenV8Safe' ? state?.[12] : undefined);
+    const sellTaxRate = state?.sellTaxRate ?? (functionName === 'getTokenV8Safe' ? state?.[13] : undefined);
+    const taxRate = state?.taxRate
+      ?? (buyTaxRate ?? sellTaxRate)
+      ?? (functionName === 'getTokenV8Safe' ? state?.[12] : state?.[12]);
+    const pool = state?.pool ?? (functionName === 'getTokenV8Safe' ? state?.[14] : state?.[13]);
+    const progress = state?.progress ?? (functionName === 'getTokenV8Safe' ? state?.[15] : state?.[14]);
+    const lpFeeProfile = state?.lpFeeProfile ?? (functionName === 'getTokenV8Safe' ? state?.[16] : state?.[15]);
+    const dexId = state?.dexId ?? (functionName === 'getTokenV8Safe' ? state?.[17] : state?.[16]);
+    const resolvedQuoteTokenAddress = this.resolvePreferredQuoteTokenAddress({
+      chainId,
+      tokenAddress,
+      managerQuoteTokenAddress: typeof quoteTokenAddress === 'string' ? quoteTokenAddress : String(quoteTokenAddress ?? ''),
+      helperQuoteTokenAddress: taxInfo?.quoteToken ?? ZERO_ADDRESS,
+    });
+    const poolModel = this.resolvePoolModel(chainId, String(pool ?? ZERO_ADDRESS));
+    const v4PoolMetadata = poolModel === 'v4_cl'
+      ? this.getV4PoolMetadata({
+          chainId,
+          tokenAddress,
+          quoteTokenAddress: resolvedQuoteTokenAddress,
+          lpFeeProfile: Number(lpFeeProfile ?? 0),
+        })
+      : null;
 
-      return {
+    return {
       symbol: String(meta?.symbol ?? ''),
       decimals: Number(meta?.decimals ?? 0),
       status: Number(status ?? 0),
@@ -352,31 +310,31 @@ export class TokenFlapService {
       h: typeof h === 'bigint' ? h.toString() : String(h ?? '0'),
       k: typeof k === 'bigint' ? k.toString() : String(k ?? '0'),
       dexSupplyThresh: typeof dexSupplyThresh === 'bigint' ? dexSupplyThresh.toString() : String(dexSupplyThresh ?? '0'),
-        quoteTokenAddress: resolvedQuoteTokenAddress,
+      quoteTokenAddress: resolvedQuoteTokenAddress,
       nativeToQuoteSwapEnabled: Boolean(nativeToQuoteSwapEnabled),
       extensionID: String(extensionID ?? '0x'),
       taxRate: typeof taxRate === 'bigint' ? taxRate.toString() : String(taxRate ?? '0'),
-        buyTaxRate: typeof buyTaxRate === 'bigint' ? buyTaxRate.toString() : (buyTaxRate !== undefined ? String(buyTaxRate) : undefined),
-        sellTaxRate: typeof sellTaxRate === 'bigint' ? sellTaxRate.toString() : (sellTaxRate !== undefined ? String(sellTaxRate) : undefined),
+      buyTaxRate: typeof buyTaxRate === 'bigint' ? buyTaxRate.toString() : (buyTaxRate !== undefined ? String(buyTaxRate) : undefined),
+      sellTaxRate: typeof sellTaxRate === 'bigint' ? sellTaxRate.toString() : (sellTaxRate !== undefined ? String(sellTaxRate) : undefined),
       pool: String(pool ?? ZERO_ADDRESS),
       progress: typeof progress === 'bigint' ? progress.toString() : String(progress ?? '0'),
       lpFeeProfile: Number(lpFeeProfile ?? 0),
       dexId: Number(dexId ?? 0),
-        poolModel,
-        poolCompatAddress: String(pool ?? ZERO_ADDRESS),
-        clPoolId: v4PoolMetadata?.clPoolId,
-        v4Fee: v4PoolMetadata?.v4Fee,
-        v4TickSpacing: v4PoolMetadata?.v4TickSpacing,
-        v4Hooks: v4PoolMetadata?.v4Hooks,
-        dividendToken: taxInfo?.dividendToken,
-        vaultAddress: taxInfo?.vaultAddress,
-        vaultFactory: taxInfo?.vaultFactory,
-        vaultIsOfficial: taxInfo?.vaultIsOfficial,
-          vaultIsVault: taxInfo?.vaultIsVault,
-        vaultIsAIConsumer: taxInfo?.vaultIsAIConsumer,
-        stocksVaultVersion: taxInfo?.stocksVaultVersion,
-        basketToken: taxInfo?.basketToken,
-        supportedAssets: taxInfo?.supportedAssets,
+      poolModel,
+      poolCompatAddress: String(pool ?? ZERO_ADDRESS),
+      clPoolId: v4PoolMetadata?.clPoolId,
+      v4Fee: v4PoolMetadata?.v4Fee,
+      v4TickSpacing: v4PoolMetadata?.v4TickSpacing,
+      v4Hooks: v4PoolMetadata?.v4Hooks,
+      dividendToken: taxInfo?.dividendToken,
+      vaultAddress: taxInfo?.vaultAddress,
+      vaultFactory: taxInfo?.vaultFactory,
+      vaultIsOfficial: taxInfo?.vaultIsOfficial,
+      vaultIsVault: taxInfo?.vaultIsVault,
+      vaultIsAIConsumer: taxInfo?.vaultIsAIConsumer,
+      stocksVaultVersion: taxInfo?.stocksVaultVersion,
+      basketToken: taxInfo?.basketToken,
+      supportedAssets: taxInfo?.supportedAssets,
     };
   }
 

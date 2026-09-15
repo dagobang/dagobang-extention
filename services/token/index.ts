@@ -1,7 +1,19 @@
 import { erc20Abi, pairV2Abi, poolV3Abi } from '@/constants/contracts/abi/swapAbi';
-import { formatUnits, getAddress } from 'viem';
+import {
+  concat,
+  encodeAbiParameters,
+  formatUnits,
+  getAddress,
+  keccak256,
+  pad,
+  parseAbi,
+  parseAbiParameters,
+  toHex,
+} from 'viem';
 import type { TokenInfo } from '@/types/token';
 import { ChainId } from '@/constants/chains';
+import { DeployAddress } from '@/constants/contracts/address';
+import { ContractNames } from '@/constants/contracts/names';
 import { bscTokens } from '@/constants/tokens/chains/bsc';
 import { ethTokens } from '@/constants/tokens/chains/eth';
 import { hyperTokens } from '@/constants/tokens/chains/hyper';
@@ -10,6 +22,9 @@ import { rhTokens } from '@/constants/tokens/chains/rh';
 import { RpcService } from '../rpc';
 import { TradeService } from '../trade';
 import { SwapType } from '../trade/tradeTypes';
+import { getO1LaunchState, isRhV4PoolId } from '../trade/tradeO1';
+import { getLongLaunchState } from '../trade/tradeLong';
+import { getPonsTradeState } from '../trade/tradePons';
 import { TokenFourmemeService } from './fourmeme';
 import { TokenFlapService } from './flap';
 import { getSolanaTokenPriceUsdFromQuote } from './solanaPrice';
@@ -21,6 +36,13 @@ import { buildScopedTokenKey, normalizeAddressKey, normalizeWalletAddressKey } f
 import { classifyFlapRoute, normalizeFlapLaunchpadStatus, resolveFlapPlatform } from '@/utils/flap';
 import DexScreenerAPI from '@/hooks/DexScreenerAPI';
 import { chainNames } from '@/constants/chains/chainName';
+
+const poolManagerExtsloadAbi = parseAbi([
+  'function extsload(bytes32 slot) view returns (bytes32 value)',
+]);
+
+/** Uniswap v4 PoolManager.pools mapping slot (StateLibrary.POOLS_SLOT). */
+const UNISWAP_V4_POOLS_SLOT = 6n;
 
 type FlapRawQuoteTopology = {
   rawQuoteToken: `0x${string}`;
@@ -537,6 +559,136 @@ export class TokenService {
     return result;
   }
 
+  private static computeUniswapV4PoolId(input: {
+    currency0: `0x${string}`;
+    currency1: `0x${string}`;
+    fee: number;
+    tickSpacing: number;
+    hooks: `0x${string}`;
+  }): `0x${string}` {
+    const a = getAddress(input.currency0);
+    const b = getAddress(input.currency1);
+    const [currency0, currency1] = a.toLowerCase() < b.toLowerCase() ? [a, b] : [b, a];
+    return keccak256(
+      encodeAbiParameters(
+        parseAbiParameters('address, address, uint24, int24, address'),
+        [currency0, currency1, input.fee, input.tickSpacing, getAddress(input.hooks)],
+      ),
+    );
+  }
+
+  private static async readUniswapV4SqrtPriceX96(input: {
+    chainId: number;
+    poolManager: `0x${string}`;
+    poolId: `0x${string}`;
+  }): Promise<bigint> {
+    if (!isRhV4PoolId(input.poolId)) return 0n;
+    const stateSlot = keccak256(
+      concat([
+        input.poolId as `0x${string}`,
+        pad(toHex(UNISWAP_V4_POOLS_SLOT), { size: 32 }),
+      ]),
+    );
+    const data = await RpcService.withBalancedReadClient({
+      chainId: input.chainId,
+      caller: 'token.v4.extsload.slot0',
+      run: async (client) => await client.readContract({
+        address: input.poolManager,
+        abi: poolManagerExtsloadAbi,
+        functionName: 'extsload',
+        args: [stateSlot],
+      }) as `0x${string}`,
+    });
+    const word = BigInt(data);
+    // StateLibrary packing: sqrtPriceX96 in lowest 160 bits
+    return word & ((1n << 160n) - 1n);
+  }
+
+  /**
+   * Spot-quote 1 unit of token via Uniswap v4 slot0 on RH.
+   * Needed because quotePonsSell only covers inner/v1, while o1 + pons-outer are V4.
+   */
+  private static async quoteRhV4SpotToQuoteToken(input: {
+    tokenAddress: `0x${string}`;
+    tokenInfo?: TokenInfo | null;
+    amountIn: bigint;
+  }): Promise<{ amountOut: bigint; quoteToken: `0x${string}` } | null> {
+    const poolManager = DeployAddress[ChainId.RH]?.[ContractNames.PoolManager]?.address as `0x${string}` | undefined;
+    if (!poolManager) return null;
+
+    const hintedPoolId = [
+      input.tokenInfo?.biggest_pool_address,
+      input.tokenInfo?.tpool_pool_address,
+      input.tokenInfo?.pool_pair,
+    ].find((v) => isRhV4PoolId(v)) as `0x${string}` | undefined;
+
+    let currency0: `0x${string}` | null = null;
+    let currency1: `0x${string}` | null = null;
+    let poolId: `0x${string}` | null = hintedPoolId ?? null;
+    let quoteToken: `0x${string}` | null = null;
+
+    const o1 = await getO1LaunchState(input.tokenAddress, { poolId: hintedPoolId }).catch(() => null);
+    if (o1) {
+      currency0 = o1.currency0;
+      currency1 = o1.currency1;
+      poolId = o1.poolId;
+      quoteToken = o1.quoteToken;
+    } else {
+      const longState = await getLongLaunchState(input.tokenAddress, {
+        poolId: hintedPoolId,
+        extraCurrencies: [input.tokenInfo?.quote_token_address],
+      }).catch(() => null);
+      if (longState) {
+        currency0 = longState.currency0;
+        currency1 = longState.currency1;
+        poolId = longState.poolId;
+        quoteToken = longState.quoteToken;
+      } else {
+        const pons = await getPonsTradeState(input.tokenAddress).catch(() => null);
+        if (pons?.tradeable && pons.isOuter && pons.poolFee > 0 && pons.tickSpacing > 0) {
+          const wNative = rhTokens.weth.address as `0x${string}`;
+          quoteToken = (pons.quoteRouterToken && pons.quoteRouterToken !== this.ZERO_ADDRESS
+            ? pons.quoteRouterToken
+            : wNative) as `0x${string}`;
+          const token = getAddress(input.tokenAddress);
+          const quote = getAddress(quoteToken);
+          [currency0, currency1] = token.toLowerCase() < quote.toLowerCase()
+            ? [token, quote]
+            : [quote, token];
+          poolId = this.computeUniswapV4PoolId({
+            currency0,
+            currency1,
+            fee: pons.poolFee,
+            tickSpacing: pons.tickSpacing,
+            hooks: pons.memeHook as `0x${string}`,
+          });
+        }
+      }
+    }
+
+    if (!poolId || !currency0 || !currency1 || !quoteToken) return null;
+
+    const sqrtPriceX96 = await this.readUniswapV4SqrtPriceX96({
+      chainId: ChainId.RH,
+      poolManager,
+      poolId,
+    });
+    if (sqrtPriceX96 <= 0n) return null;
+
+    const priceX192 = sqrtPriceX96 * sqrtPriceX96;
+    if (priceX192 <= 0n) return null;
+
+    const tokenIn = getAddress(input.tokenAddress).toLowerCase();
+    let amountOut = 0n;
+    if (currency0.toLowerCase() === tokenIn) {
+      amountOut = input.amountIn * priceX192 / this.Q192;
+    } else if (currency1.toLowerCase() === tokenIn) {
+      amountOut = input.amountIn * this.Q192 / priceX192;
+    }
+    if (amountOut <= 0n) return null;
+    return { amountOut, quoteToken: getAddress(quoteToken) };
+  }
+
   static async getTokenPriceUsdFromRpc(input: {
     chainId: number;
     tokenAddress: ChainAddress;
@@ -899,6 +1051,34 @@ export class TokenService {
         }
       } catch (e) {
         console.error('getTokenPriceUsdFromRpc: failed to get token price from pons', e);
+      }
+
+      // o1 / pons-outer are Uniswap v4 — quotePonsSell returns 0 for those.
+      if (!(priceUsd > 0)) {
+        try {
+          const spot = await this.quoteRhV4SpotToQuoteToken({
+            tokenAddress: tokenAddress as `0x${string}`,
+            tokenInfo,
+            amountIn: oneToken,
+          });
+          if (spot && spot.amountOut > 0n) {
+            const quoteLower = spot.quoteToken.toLowerCase();
+            const stable = stableByAddress.get(quoteLower);
+            const isNativeQuote =
+              quoteLower === this.ZERO_ADDRESS
+              || quoteLower === wNativeAddress.toLowerCase()
+              || quoteLower === rhTokens.eth.address.toLowerCase();
+            if (stable) {
+              priceUsd = toNumberFromUnits(spot.amountOut, stable.decimals);
+            } else if (isNativeQuote) {
+              const nativeUsd = await getNativePriceUsd();
+              const priceInNative = toNumberFromUnits(spot.amountOut, wNativeDecimals);
+              if (nativeUsd > 0 && priceInNative > 0) priceUsd = priceInNative * nativeUsd;
+            }
+          }
+        } catch (e) {
+          console.error('getTokenPriceUsdFromRpc: failed to get token price from rh v4 spot', e);
+        }
       }
     }
 

@@ -19,6 +19,15 @@ export interface DexScreenerPair {
     base?: number;
     quote?: number;
   };
+  volume?: {
+    h24?: number;
+  };
+  txns?: {
+    h24?: {
+      buys?: number;
+      sells?: number;
+    };
+  };
   fdv?: number;
   marketCap?: number;
   pairCreatedAt?: number;
@@ -71,23 +80,43 @@ export class DexScreenerAPI {
   }
 
   private static async getJson<T>(url: string): Promise<T> {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        accept: "application/json, text/plain, */*",
-      },
-      credentials: "omit",
-      mode: "cors",
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2_500);
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          accept: "application/json, text/plain, */*",
+        },
+        credentials: "omit",
+        mode: "cors",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return await response.json() as T;
+    } finally {
+      clearTimeout(timer);
     }
-    return await response.json() as T;
+  }
+
+  /**
+   * Rank by DexScreener `liquidity.usd`. Dust reserves with a fake USD number count as 0.
+   */
+  public static effectiveLiquidityUsd(pair: DexScreenerPair | null | undefined): number {
+    if (!pair) return 0;
+    const usd = Number(pair.liquidity?.usd ?? 0);
+    if (!Number.isFinite(usd) || usd <= 0) return 0;
+    const base = Number(pair.liquidity?.base);
+    const quote = Number(pair.liquidity?.quote);
+    if (Number.isFinite(base) && Number.isFinite(quote) && base < 1e-6 && quote < 1e-6) return 0;
+    return usd;
   }
 
   private static sortPairsByLiquidity<T extends DexScreenerPair>(pairs: T[]): T[] {
     return [...pairs].sort((a, b) => {
-      const liquidityDiff = Number(b.liquidity?.usd ?? 0) - Number(a.liquidity?.usd ?? 0);
+      const liquidityDiff = this.effectiveLiquidityUsd(b) - this.effectiveLiquidityUsd(a);
       if (liquidityDiff !== 0) return liquidityDiff;
       const marketCapDiff = Number(b.marketCap ?? b.fdv ?? 0) - Number(a.marketCap ?? a.fdv ?? 0);
       if (marketCapDiff !== 0) return marketCapDiff;
@@ -97,7 +126,7 @@ export class DexScreenerAPI {
 
   public static async getPairsByToken(chain: string, tokenAddress: string): Promise<DexScreenerPair[]> {
     const chainId = this.normalizeChain(chain);
-    const cacheKey = this.getCacheKey("token", chainId, tokenAddress);
+    const cacheKey = this.getCacheKey("token-liq-v2", chainId, tokenAddress);
     const cached = this.getCachedPairs(cacheKey);
     if (cached) return cached;
     const url = `${this.BASE_URL}/token-pairs/v1/${chainId}/${tokenAddress}`;
@@ -153,15 +182,11 @@ export class DexScreenerAPI {
       return true;
     });
 
-    return this.sortPairsByLiquidity(filtered)[0] ?? null;
+    return this.sortPairsByLiquidity(filtered).find((pair) => this.effectiveLiquidityUsd(pair) > 0) ?? null;
   }
 
   public static async getBestPairBetweenTokens(chain: string, tokenA: string, tokenB: string): Promise<DexScreenerPair | null> {
-    const [bestFromA, bestFromB] = await Promise.all([
-      this.getBestPairForToken({ chain, tokenAddress: tokenA, quoteTokenAddress: tokenB }),
-      this.getBestPairForToken({ chain, tokenAddress: tokenB, quoteTokenAddress: tokenA }),
-    ]);
-    return this.sortPairsByLiquidity([bestFromA, bestFromB].filter(Boolean) as DexScreenerPair[])[0] ?? null;
+    return await this.getBestPairForToken({ chain, tokenAddress: tokenA, quoteTokenAddress: tokenB });
   }
 }
 

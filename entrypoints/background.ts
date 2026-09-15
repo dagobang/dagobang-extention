@@ -24,6 +24,8 @@ import { TokenOpenFourLaunchService } from '@/services/token/openfourLaunch';
 import { TokenFlapService } from '@/services/token/flap';
 import { TokenAltfunService } from '@/services/token/altfun';
 import { TokenPonsService } from '@/services/token/pons';
+import { TokenO1Service } from '@/services/token/o1';
+import { TokenLongService } from '@/services/token/long';
 import FourmemeAPI from '@/services/api/fourmeme';
 import { chainNames, getChainIdByName, toGmgnChainName } from '@/constants/chains';
 import { ChainId } from '@/constants/chains/chainId';
@@ -76,7 +78,7 @@ export default defineBackground(() => {
   const GMGN_TOKEN_SNAPSHOT_PERSIST_DEBOUNCE_MS = 8000;
   const NEWPOOL_MONITOR_CACHE_LIMIT = 800;
   const NEWPOOL_MONITOR_BROADCAST_MS = 16;
-  const GMGN_LIMIT_ORDER_CHAIN_IDS = new Set<number>([ChainId.ETH, ChainId.BNB, ChainId.SOL]);
+  const GMGN_LIMIT_ORDER_CHAIN_IDS = new Set<number>([ChainId.ETH, ChainId.BNB, ChainId.SOL, ChainId.RH]);
   const parseEip7702Delegation = (code: string | null | undefined): { delegated: boolean; delegateAddress?: `0x${string}`; code: `0x${string}` } => {
     const normalized = (typeof code === 'string' && code.startsWith('0x') ? code.toLowerCase() : '0x') as `0x${string}`;
     if (!normalized.startsWith(EIP7702_DELEGATION_PREFIX) || normalized.length < 2 + 6 + 40) {
@@ -680,6 +682,30 @@ export default defineBackground(() => {
       groupId: 'default',
     }]);
   };
+  const syncGmgnFollowForOpenLimitOrders = async () => {
+    const settings = await SettingsService.get().catch(() => null);
+    if (!isGmgnLimitOrderPriceEnabled(settings)) return;
+    const orders = await getLimitOrders().catch(() => [] as Awaited<ReturnType<typeof getLimitOrders>>);
+    const byChain = new Map<number, Set<string>>();
+    for (const order of orders) {
+      if (order.status !== 'open' && order.status !== 'triggered') continue;
+      if (!GMGN_LIMIT_ORDER_CHAIN_IDS.has(order.chainId)) continue;
+      const tokenKey = normalizeTokenAddressKey(order.tokenAddress);
+      if (!tokenKey) continue;
+      const set = byChain.get(order.chainId) ?? new Set<string>();
+      set.add(String(order.tokenAddress).trim());
+      byChain.set(order.chainId, set);
+    }
+    for (const [chainId, tokens] of byChain.entries()) {
+      const chain = resolveGmgnLimitOrderChain(chainId);
+      if (!chain || tokens.size <= 0) continue;
+      await requestGmgnFollowTokensFromContent(
+        'follow',
+        chain,
+        Array.from(tokens).map((tokenAddress) => ({ tokenAddress, groupId: 'default' })),
+      ).catch(() => { });
+    }
+  };
   const maybeUnfollowGmgnForLimitOrder = async (input: {
     chainId: number;
     tokenAddress: string;
@@ -1105,6 +1131,7 @@ export default defineBackground(() => {
     },
   });
   limitOrderScanner.start();
+  void syncGmgnFollowForOpenLimitOrders().catch(() => { });
 
   const createCookingAutoSellIfEnabled = async (input: {
     enabled?: boolean;
@@ -1561,6 +1588,12 @@ export default defineBackground(() => {
           case 'token:getTokenInfo:pons':
             return { ok: true, tokenInfo: await TokenPonsService.getTokenInfo(msg.chainId, msg.tokenAddress) };
 
+          case 'token:getTokenInfo:o1':
+            return { ok: true, tokenInfo: await TokenO1Service.getTokenInfo(msg.chainId, msg.tokenAddress, msg.tokenInfo) };
+
+          case 'token:getTokenInfo:long':
+            return { ok: true, tokenInfo: await TokenLongService.getTokenInfo(msg.chainId, msg.tokenAddress, msg.tokenInfo) };
+
           case 'token:getTokenInfo:fourmemeHttp': {
             const tokenInfo = await FourmemeAPI.getTokenInfo(msg.chain, msg.address);
             return { ok: true, tokenInfo };
@@ -1966,6 +1999,11 @@ export default defineBackground(() => {
                 fromAddress: order.fromAddress,
               });
             }
+            // Same as BSC: follow on GMGN so token_stat WS pushes feed limit-order prices.
+            void ensureGmgnFollowForLimitOrder({
+              chainId: order.chainId,
+              tokenAddress: order.tokenAddress,
+            }).catch(() => { });
             broadcastStateChange();
             limitOrderScanner?.scheduleFromStorage().catch(() => { });
             return { ok: true, order };
@@ -2057,10 +2095,10 @@ export default defineBackground(() => {
           case 'trade:prewarmTurbo': {
             if (msg.input.chainId === ChainId.SOL) {
               await ensureSolanaTradePrewarm(msg.input);
-            } else {
-              await getTrade(msg.input.chainId).prewarmTurbo(msg.input);
+              return { ok: true, route: null };
             }
-            return { ok: true };
+            const route = await getTrade(msg.input.chainId).prewarmTurbo(msg.input);
+            return { ok: true, route: route ?? null };
           }
 
           case 'trade:previewRoute': {

@@ -28,7 +28,12 @@ export async function call<T extends BgRequest>(req: T): Promise<BgResponse<T>> 
         ? 20000
       : req.type.startsWith('limitOrder:')
         ? 15000
-        : 5000;
+        : (
+          req.type === 'tx:checkSellAllowanceInsufficient' ||
+          req.type === 'tx:approveMaxForSellIfNeeded'
+        )
+          ? 20000
+          : 5000;
     const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), timeoutMs));
     const res = (await Promise.race([p, timeout])) as any;
     if (typeof res?.error === 'string' && res.error) {

@@ -26,6 +26,7 @@ type BuySectionProps = {
   tokenSymbol: string | null;
   previewRouteLabel: string | null;
   previewRouteHops?: QuickTradeRouteHop[] | null;
+  previewRouteLoading?: boolean;
   isAltfunLayout?: boolean;
   busy: boolean;
   isUnlocked: boolean;
@@ -73,6 +74,7 @@ export function BuySection({
   tokenSymbol,
   previewRouteLabel,
   previewRouteHops,
+  previewRouteLoading = false,
   isAltfunLayout = false,
   busy,
   isUnlocked,
@@ -438,7 +440,7 @@ export function BuySection({
               ≈ {formatUsd(activePreviewUsd)}
             </span>
           </div>
-          <RoutePreviewHint label={previewRouteLabel} hops={previewRouteHops} tone="buy" locale={locale} />
+          <RoutePreviewHint label={previewRouteLabel} hops={previewRouteHops} loading={previewRouteLoading} tone="buy" locale={locale} />
           <div className="min-w-0 truncate text-right text-emerald-300/85">
             ≈ {formatAmount(activePreviewTokens)} {tokenSymbol || t('contentUi.common.token', locale)}
           </div>

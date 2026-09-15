@@ -12,7 +12,7 @@ export const SUPPORTED_LAUNCHPADS: Partial<Record<ChainId, string[]>> = ({
     [ChainId.ETH]: ["livo", "trench"],
 
     [ChainId.HYPER]: ["altfun", "alt.fun"],
-    [ChainId.RH]: ["pons", "pons_v1", "pons_v2"],
+    [ChainId.RH]: ["pons", "pons_v1", "pons_v2", "o1", "o1_rwa", "long", "longxyz"],
     [ChainId.SOL]: ["pumpfun", "pumpswap", "raydium", "meteora", "bonk", "bags"],
 });
 
@@ -46,6 +46,9 @@ export const PLATFORM_OPTIONS_RH = [
     { value: 'pons', label: 'pons' },
     { value: 'pons_v1', label: 'pons v1' },
     { value: 'pons_v2', label: 'pons v2' },
+    { value: 'o1', label: 'o1' },
+    { value: 'o1_rwa', label: 'o1 RWA' },
+    { value: 'long', label: 'Long.xyz' },
 ] as const;
 
 export const PLATFORM_OPTIONS_SOL = [
@@ -86,6 +89,15 @@ export function normalizeLaunchpadPlatform(value: unknown): string | undefined {
     if (raw === 'pons_v1' || raw === 'pons v1') return 'pons_v1';
     if (raw === 'pons_v2' || raw === 'pons v2') return 'pons_v2';
     if (raw === 'pons' || raw === 'ponsfamily' || raw === 'pons.family' || raw === 'pons.fun') return 'pons';
+    if (raw === 'o1_rwa' || raw === 'o1-rwa' || raw === 'o1 rwa' || raw === 'o1rwa') return 'o1_rwa';
+    if (raw === 'o1' || raw === 'o1.exchange' || raw === 'o1_launchpad' || raw === 'o1 launchpad') return 'o1';
+    if (
+      raw === 'long'
+      || raw === 'longxyz'
+      || raw === 'long.xyz'
+      || raw === 'long_xyz'
+      || raw === 'long xyz'
+    ) return 'long';
     if (raw === 'pump' || raw === 'pumpfun' || raw === 'pump.fun') return 'pumpfun';
     if (raw === 'pumpswap' || raw === 'pump_swap' || raw === 'pumpamm' || raw === 'pump amm') return 'pumpswap';
     if (raw === 'raydium') return 'raydium';
@@ -93,6 +105,17 @@ export function normalizeLaunchpadPlatform(value: unknown): string | undefined {
     if (raw === 'bonk') return 'bonk';
     if (raw === 'bags') return 'bags';
     return raw;
+}
+
+export function isO1LaunchpadPlatform(platform: string | null | undefined): boolean {
+    const value = normalizeLaunchpadPlatform(platform) ?? String(platform || '').trim().toLowerCase();
+    return value === 'o1' || value === 'o1_rwa' || value.startsWith('o1_');
+}
+
+/** Long.xyz / Doppler Airlock V4 launchpad on Robinhood Chain. */
+export function isLongLaunchpadPlatform(platform: string | null | undefined): boolean {
+    const value = normalizeLaunchpadPlatform(platform) ?? String(platform || '').trim().toLowerCase();
+    return value === 'long';
 }
 
 export function extractLaunchpadPlatform(input: {

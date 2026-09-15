@@ -204,6 +204,22 @@ export default defineContentScript({
           }
         })();
       }
+      if (message.type === 'bg:gmgn:pageTokenPoolFeeInfo') {
+        return (async () => {
+          if (!isGmgnHost) return { ok: false, error: 'not_gmgn_page' };
+          try {
+            const chain = typeof message?.chain === 'string' ? message.chain : 'bsc';
+            const tokenAddress = typeof message?.tokenAddress === 'string' ? message.tokenAddress.trim() : '';
+            if (!tokenAddress) return { ok: false, error: 'invalid_token' };
+            const request = await GmgnAPI.buildTokenPoolFeeInfoPageRequest(chain, tokenAddress);
+            const payload = await requestGmgnPageFetch(request);
+            const list = GmgnAPI.parseTokenPoolFeeInfoPayload(payload);
+            return { ok: true, list };
+          } catch (error: any) {
+            return { ok: false, error: String(error?.message || error || 'gmgn_token_pool_fee_info_failed') };
+          }
+        })();
+      }
     };
     browser.runtime.onMessage.addListener(listener);
     window.addEventListener('unload', () => {

@@ -4,7 +4,7 @@ import type { TradeExecutor } from '../types';
 
 export class EvmTradeExecutor implements TradeExecutor {
   async prewarmTurbo(input: TradeTurboPrewarmInput) {
-    await TradeService.prewarmTurbo({
+    return await TradeService.prewarmTurbo({
       ...input,
       tokenAddress: input.tokenAddress as `0x${string}`,
       fromAddress: input.fromAddress as `0x${string}` | undefined,

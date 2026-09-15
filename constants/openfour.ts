@@ -61,3 +61,10 @@ export function isOpenFour4StockName(name: string, tag?: string) {
   const haystack = `${name} ${tag || ''}`.replace(/[\s_-]+/g, '').toLowerCase();
   return haystack.includes('4stock');
 }
+
+export function isBinance4StockTicker(symbol?: string | null): boolean {
+  const value = String(symbol || '').trim().toUpperCase();
+  if (!value || value === 'BNC4') return false;
+  if (value.includes('4STOCK')) return true;
+  return /^BNC[A-Z0-9]{1,8}$/.test(value);
+}

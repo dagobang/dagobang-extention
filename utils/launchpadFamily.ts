@@ -40,11 +40,13 @@ export function resolveTokenLaunchpadPlatform(input: {
     input.launchpad_platform ?? input.launchpad ?? input.requestedPlatform,
   ) ?? String(input.launchpad_platform ?? input.launchpad ?? input.requestedPlatform ?? '').trim().toLowerCase();
   const family = inferLaunchpadFamilyByAddress(input.address);
-  if (family === 'flap') {
-    return normalized.startsWith('flap') ? normalized : 'flap';
-  }
-  if (family === 'fourmeme') {
+  // Address suffix is only a fallback. Four.Meme tokens can also end in 7777/8888;
+  // never override an explicit fourmeme identity to flap.
+  if (FOUR_MEME_PLATFORM_SET.has(normalized) || normalized.startsWith('fourmeme') || normalized === 'four.meme') {
     return FOUR_MEME_PLATFORM_SET.has(normalized) ? normalized : 'fourmeme';
   }
+  if (normalized.startsWith('flap')) return normalized;
+  if (family === 'fourmeme') return 'fourmeme';
+  if (family === 'flap') return 'flap';
   return normalized;
 }

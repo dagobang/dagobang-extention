@@ -1,16 +1,19 @@
 import { ChainId } from '@/constants/chains/chainId';
 import { EVM_CHAIN_RUNTIME } from '@/constants/chains/evmRuntime';
-import { isOpenFour4StockName, OPENFOUR_4STOCK_QUOTE_FALLBACK } from '@/constants/openfour';
-import { getBridgeTokenAddresses } from '@/constants/tokens/allTokens';
-import { USDC, USDT } from '@/constants/tokens/chains/common';
-import { bscTokens, bscBnbBridgePoolConfigByTokenAddress } from '@/constants/tokens/chains/bsc';
+import { isLongLaunchpadPlatform, isO1LaunchpadPlatform } from '@/constants/launchpad';
+import { isBinance4StockTicker, isOpenFour4StockName, OPENFOUR_4STOCK_QUOTE_FALLBACK } from '@/constants/openfour';
+import { USDC } from '@/constants/tokens/chains/common';
+import { bscBnbBridgePoolConfigByTokenAddress } from '@/constants/tokens/chains/bsc';
 import { DeployAddress, OpenFourInnerLaunchpadManager } from '@/constants/contracts/address';
 import { ContractNames } from '@/constants/contracts/names';
+import { sliceOuterMarketRoute } from '@/services/trade/outerMarketRouteCache';
+import type { SwapDescLike } from '@/services/trade/tradeTypes';
 import type { QuickTradeRouteHop, QuickTradeRoutePreview } from '@/types/extention';
 import type { TokenInfo } from '@/types/token';
 import { classifyFlapRoute } from '@/utils/flap';
 import { resolveTokenLaunchpadPlatform } from '@/utils/launchpadFamily';
 import { resolveRouteTokenLabel } from '@/utils/quoteTokenLabels';
+import { isTradeRouteTerminalQuote } from '@/utils/tradeRouteTerminals';
 
 export type EvmTradeRouteHopKind = 'launchpad' | 'bridge' | 'market';
 
@@ -47,6 +50,15 @@ function isAddress(value?: string | null): value is `0x${string}` {
   return /^0x[a-fA-F0-9]{40}$/.test(String(value || '').trim());
 }
 
+function isPoolRef(value?: string | null): value is `0x${string}` {
+  const raw = String(value || '').trim();
+  return /^0x[a-fA-F0-9]{40}$/.test(raw) || /^0x[a-fA-F0-9]{64}$/.test(raw);
+}
+
+function isRhV4PoolId(value?: string | null): boolean {
+  return /^0x[a-fA-F0-9]{64}$/.test(String(value || '').trim());
+}
+
 function normalizeToken(chainId: number, address?: string | null): `0x${string}` | null {
   const raw = String(address || '').trim();
   if (!isAddress(raw)) return null;
@@ -56,27 +68,13 @@ function normalizeToken(chainId: number, address?: string | null): `0x${string}`
 }
 
 function isTerminalQuote(chainId: number, address: `0x${string}`): boolean {
-  const lower = address.toLowerCase();
-  if (lower === ZERO_ADDRESS) return true;
-  const wrapped = EVM_CHAIN_RUNTIME[chainId]?.wrappedNativeAddress.toLowerCase();
-  if (wrapped && lower === wrapped) return true;
-  return getBridgeTokenAddresses(chainId as ChainId).some((item) => item.toLowerCase() === lower);
+  return isTradeRouteTerminalQuote(chainId, address);
 }
 
 function isBnc4(chainId: number, address?: string | null): boolean {
   return chainId === ChainId.BNB
     && !!address
     && address.toLowerCase() === OPENFOUR_4STOCK_QUOTE_FALLBACK.address.toLowerCase();
-}
-
-function usdtAddress(chainId: number): `0x${string}` | null {
-  const token = USDT[chainId as ChainId]?.address ?? (chainId === ChainId.BNB ? bscTokens.usdt.address : null);
-  return token ? token as `0x${string}` : null;
-}
-
-function usdgAddress(chainId: number): `0x${string}` | null {
-  const token = USDC[chainId as ChainId]?.address;
-  return token ? token as `0x${string}` : null;
 }
 
 function labelToken(chainId: number, address: `0x${string}`, tokenInfo: TokenInfo): string {
@@ -90,9 +88,31 @@ function labelToken(chainId: number, address: `0x${string}`, tokenInfo: TokenInf
 function isLikelyOpenFour4Stock(tokenInfo: TokenInfo): boolean {
   return isOpenFour4StockName(tokenInfo.symbol || '', tokenInfo.name)
     || isOpenFour4StockName(tokenInfo.name || '')
+    || isBinance4StockTicker(tokenInfo.symbol)
     || String(tokenInfo.quote_token || '').toUpperCase() === 'BNC4'
     || isBnc4(ChainId.BNB, tokenInfo.quote_token_address)
     || String(tokenInfo.tpool_launch_type || '').toLowerCase().includes('4stock');
+}
+
+function hopsFromCachedRouteDescs(
+  chainId: number,
+  tokenInfo: TokenInfo,
+  descs: SwapDescLike[],
+): EvmTradeRoutePlanHop[] {
+  return descs.map((desc) => {
+    const swapType = Number(desc.swapType);
+    const dexLabel = swapType === 2 ? 'V4' : (swapType === 1 || desc.fee > 0) ? 'V3' : 'V2';
+    return makeHop(
+      chainId,
+      tokenInfo,
+      desc.tokenIn,
+      desc.tokenOut,
+      'market',
+      dexLabel,
+      desc.poolAddress && desc.poolAddress !== ZERO_ADDRESS ? desc.poolAddress : null,
+      desc.fee > 0 ? desc.fee : null,
+    );
+  });
 }
 
 export function resolveEvmTradeQuoteToken(chainId: number, tokenInfo: TokenInfo): `0x${string}` | null {
@@ -105,8 +125,6 @@ export function resolveEvmTradeQuoteToken(chainId: number, tokenInfo: TokenInfo)
   const raw = normalizeToken(chainId, tokenInfo.quote_token_address);
   if (raw && !isTerminalQuote(chainId, raw)) return raw;
   if (raw) return raw;
-  // Robinhood tokens often omit quote_token_address on GMGN; default to native like the live pool.
-  if (chainId === ChainId.RH) return ZERO_ADDRESS;
   return null;
 }
 
@@ -115,6 +133,7 @@ function isPonsPlatformName(platform: string): boolean {
 }
 
 function isInnerLaunchpad(chainId: number, tokenInfo: TokenInfo, platform: string): boolean {
+  if (isO1LaunchpadPlatform(platform) || isLongLaunchpadPlatform(platform)) return false;
   if (platform.startsWith('flap')) return classifyFlapRoute(chainId, tokenInfo).isInner;
   if (isPonsPlatformName(platform)) return tokenInfo.launchpad_status !== 1;
   if (FOUR_MEME_PLATFORMS.has(platform) || OPEN_FOUR_PLATFORMS.has(platform)) {
@@ -134,8 +153,20 @@ function dexTypeLooksV3(tokenInfo: TokenInfo): boolean {
 
 function lastHopDex(chainId: number, platform: string, inner: boolean, tokenInfo: TokenInfo): string {
   if (!inner) {
-    // Pons v2 outer (and unlabeled pons outer) graduates to Uniswap v4, not v2.
-    if (platform === 'pons_v2' || (isPonsPlatformName(platform) && platform !== 'pons_v1') || dexTypeLooksV4(tokenInfo)) {
+    const rhV4Pool = chainId === ChainId.RH && (
+      isRhV4PoolId(tokenInfo.biggest_pool_address)
+      || isRhV4PoolId(tokenInfo.tpool_pool_address)
+      || isRhV4PoolId(tokenInfo.pool_pair)
+    );
+    // o1 / long.xyz launch as Uniswap v4 pools. Pons v2 outer also graduates to v4.
+    if (
+      isO1LaunchpadPlatform(platform)
+      || isLongLaunchpadPlatform(platform)
+      || rhV4Pool
+      || platform === 'pons_v2'
+      || (isPonsPlatformName(platform) && platform !== 'pons_v1')
+      || dexTypeLooksV4(tokenInfo)
+    ) {
       return 'V4';
     }
     if (platform === 'pons_v1' || dexTypeLooksV3(tokenInfo)) return 'V3';
@@ -150,6 +181,9 @@ function lastHopDex(chainId: number, platform: string, inner: boolean, tokenInfo
 
 function lastHopFee(platform: string, inner: boolean): number | null {
   if (inner) return null;
+  if (isO1LaunchpadPlatform(platform)) return 0;
+  // long.xyz PoolKey.fee is the dynamic-fee flag (0x800000), not a static bps.
+  if (isLongLaunchpadPlatform(platform)) return 0x800000;
   if (platform === 'pons_v1') return 10000;
   return null;
 }
@@ -170,8 +204,12 @@ function lastHopPool(chainId: number, tokenInfo: TokenInfo, platform: string, in
     if (OPEN_FOUR_PLATFORMS.has(platform)) return OpenFourInnerLaunchpadManager;
     return null;
   }
-  const pool = String(tokenInfo.pool_pair || tokenInfo.biggest_pool_address || '').trim();
-  if (isAddress(pool)) return pool;
+  const pool = String(tokenInfo.pool_pair || tokenInfo.biggest_pool_address || tokenInfo.tpool_pool_address || '').trim();
+  if (isPoolRef(pool)) {
+    const contracts = DeployAddress[chainId as ChainId] || {};
+    const flapManager = contracts[ContractNames.FlapshTokenManager]?.address?.toLowerCase();
+    if (!flapManager || pool.toLowerCase() !== flapManager) return pool;
+  }
   if (chainId === ChainId.RH && lastHopDex(chainId, platform, inner, tokenInfo) === 'V4') {
     return DeployAddress[ChainId.RH]?.[ContractNames.PoolManager]?.address ?? null;
   }
@@ -201,25 +239,23 @@ function makeHop(
 }
 
 function nativeStableHop(chainId: number, tokenInfo: TokenInfo, tokenOut: `0x${string}`): EvmTradeRoutePlanHop | null {
-  const usdt = usdtAddress(chainId);
-  const usdc = USDC[chainId as ChainId]?.address as `0x${string}` | undefined;
-  const target = tokenOut.toLowerCase();
-  if (usdt && target === usdt.toLowerCase()) {
-    const pool = chainId === ChainId.BNB
-      ? bscBnbBridgePoolConfigByTokenAddress[usdt.toLowerCase()]
-      : null;
-    return makeHop(
-      chainId,
-      tokenInfo,
-      ZERO_ADDRESS,
-      tokenOut,
-      'bridge',
-      pool?.kind === 'v3' ? 'V3' : 'V2',
-      pool?.poolAddress ?? null,
-      pool && 'fee' in pool ? pool.fee : null,
-    );
+  if (chainId === ChainId.BNB) {
+    const pool = bscBnbBridgePoolConfigByTokenAddress[tokenOut.toLowerCase()];
+    if (pool) {
+      return makeHop(
+        chainId,
+        tokenInfo,
+        ZERO_ADDRESS,
+        tokenOut,
+        'bridge',
+        pool.kind === 'v3' ? 'V3' : 'V2',
+        pool.poolAddress,
+        'fee' in pool ? pool.fee : null,
+      );
+    }
   }
-  if (usdc && target === usdc.toLowerCase()) {
+  const usdc = USDC[chainId as ChainId]?.address as `0x${string}` | undefined;
+  if (usdc && tokenOut.toLowerCase() === usdc.toLowerCase()) {
     return makeHop(
       chainId,
       tokenInfo,
@@ -234,6 +270,23 @@ function nativeStableHop(chainId: number, tokenInfo: TokenInfo, tokenOut: `0x${s
   return null;
 }
 
+export function isEvmRouteAlignedWithPayToken(input: {
+  chainId: number;
+  hops?: Array<{ tokenIn?: string | null } | null> | null;
+  payToken?: string | null;
+}): boolean {
+  const first = input.hops?.[0]?.tokenIn;
+  if (!first) return false;
+  const pay = normalizeToken(input.chainId, input.payToken) ?? ZERO_ADDRESS;
+  const hopIn = normalizeToken(input.chainId, first);
+  return hopIn?.toLowerCase() === pay.toLowerCase();
+}
+
+/**
+ * Topology planner only. Non-terminal quote prefix comes from the 24h outer-market
+ * cache — never invent BNB→GMEB / similar direct hops. Cache miss = last hop only;
+ * prepare fills the real prefix via DexScreener (e.g. BNB→USDT→GMEB).
+ */
 export function planEvmTradeRoute(input: {
   chainId: number;
   tokenInfo: TokenInfo;
@@ -253,30 +306,17 @@ export function planEvmTradeRoute(input: {
   if (!quote) return null;
   const hops: EvmTradeRoutePlanHop[] = [];
   let current: `0x${string}` = normalizeToken(input.chainId, input.baseTokenAddress) ?? ZERO_ADDRESS;
-  const usdt = usdtAddress(input.chainId);
 
-  if (quote && quote.toLowerCase() !== current.toLowerCase() && !isTerminalQuote(input.chainId, quote)) {
-    if (isBnc4(input.chainId, quote) && usdt && current === ZERO_ADDRESS) {
-      const first = nativeStableHop(input.chainId, input.tokenInfo, usdt);
-      if (first) hops.push(first);
-      hops.push(makeHop(input.chainId, input.tokenInfo, usdt, quote, 'market', 'V2'));
+  if (quote.toLowerCase() !== current.toLowerCase() && !isTerminalQuote(input.chainId, quote)) {
+    const cachedPrefix = sliceOuterMarketRoute(input.chainId, current, quote);
+    if (cachedPrefix?.length) {
+      hops.push(...hopsFromCachedRouteDescs(input.chainId, input.tokenInfo, cachedPrefix));
       current = quote;
-    } else if (input.chainId === ChainId.RH && current === ZERO_ADDRESS) {
-      const usdg = usdgAddress(input.chainId);
-      if (usdg && usdg.toLowerCase() !== quote.toLowerCase()) {
-        const first = nativeStableHop(input.chainId, input.tokenInfo, usdg);
-        if (first) hops.push(first);
-        hops.push(makeHop(input.chainId, input.tokenInfo, usdg, quote, 'market', 'V3'));
-        current = quote;
-      } else {
-        hops.push(makeHop(input.chainId, input.tokenInfo, current, quote, 'market', 'V3'));
-        current = quote;
-      }
     } else {
-      hops.push(makeHop(input.chainId, input.tokenInfo, current, quote, 'market', 'V2'));
+      // Incomplete until prepare; do not invent a direct pay→quote hop.
       current = quote;
     }
-  } else if (quote && isTerminalQuote(input.chainId, quote) && quote !== ZERO_ADDRESS && current === ZERO_ADDRESS) {
+  } else if (isTerminalQuote(input.chainId, quote) && quote !== ZERO_ADDRESS && current === ZERO_ADDRESS) {
     const bridge = nativeStableHop(input.chainId, input.tokenInfo, quote);
     if (bridge) {
       hops.push(bridge);

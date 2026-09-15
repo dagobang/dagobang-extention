@@ -1078,6 +1078,7 @@
     },
     "route": {
       "badge": "Router",
+      "loading": "Finding route",
       "liquidity": "Liquidity",
       "lowLiquidity": "Low"
     },

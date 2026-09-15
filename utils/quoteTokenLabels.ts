@@ -47,6 +47,12 @@ function getQuoteSymbolMap(chainId: number): Map<string, string> {
   if (chainId === ChainId.BNB) {
     map.set(OPENFOUR_4STOCK_QUOTE_FALLBACK.address.toLowerCase(), OPENFOUR_4STOCK_QUOTE_FALLBACK.symbol);
   }
+  if (chainId === ChainId.RH) {
+    for (const token of Object.values(allTokens[ChainId.RH] ?? {})) {
+      const symbol = String(token.symbol || '').trim();
+      if (symbol) map.set(token.address.toLowerCase(), symbol);
+    }
+  }
   quotesByChain.set(chainId, map);
   return map;
 }
@@ -61,10 +67,17 @@ export function getKnownQuoteTokenSymbol(chainId: number, address?: string | nul
   return getQuoteSymbolMap(chainId).get(key) ?? null;
 }
 
+export function isPlaceholderRouteSymbol(value?: string | null): boolean {
+  const symbol = String(value || '').trim();
+  if (!symbol) return true;
+  const upper = symbol.toUpperCase();
+  return upper === 'QUOTE' || upper === 'UNKNOWN' || upper === 'TOKEN';
+}
+
 export function preferRouteTokenSymbol(...candidates: Array<string | null | undefined>): string | null {
   for (const candidate of candidates) {
     const symbol = String(candidate || '').trim();
-    if (!symbol || isLikelyTokenAddressLabel(symbol)) continue;
+    if (!symbol || isLikelyTokenAddressLabel(symbol) || isPlaceholderRouteSymbol(symbol)) continue;
     if (symbol.endsWith('…') && symbol.startsWith('0x')) continue;
     return symbol;
   }
@@ -90,6 +103,9 @@ export function resolveRouteTokenLabel(input: {
   }
   const quoteCatalog = getKnownQuoteTokenSymbol(input.chainId, address);
   if (quoteCatalog) return quoteCatalog;
+  const known = Object.values(allTokens[input.chainId as ChainId] ?? {});
+  const match = known.find((token) => token.address.toLowerCase() === lower);
+  if (match?.symbol) return match.symbol;
   if (
     input.tokenInfo?.quote_token_address
     && lower === input.tokenInfo.quote_token_address.toLowerCase()
@@ -104,9 +120,6 @@ export function resolveRouteTokenLabel(input: {
       return quoteSymbol;
     }
   }
-  const known = Object.values(allTokens[input.chainId as ChainId] ?? {});
-  const match = known.find((token) => token.address.toLowerCase() === lower);
-  if (match?.symbol) return match.symbol;
   const fallback = preferRouteTokenSymbol(input.fallbackSymbol);
   if (fallback) return fallback;
   return `${address.slice(0, 6)}…`;

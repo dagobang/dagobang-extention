@@ -1,4 +1,4 @@
-import { decodeAbiParameters, decodeEventLog, encodeAbiParameters, encodeFunctionData, erc20Abi, formatUnits, isAddress, parseAbi, parseAbiParameters } from 'viem';
+import { concat, decodeAbiParameters, decodeEventLog, encodeAbiParameters, encodeFunctionData, erc20Abi, formatUnits, isAddress, keccak256, pad, parseAbi, parseAbiItem, parseAbiParameters, toHex } from 'viem';
 import { RpcService } from '../rpc';
 import { WalletService } from '../wallet';
 import { SettingsService } from '../settings';
@@ -10,11 +10,11 @@ import { ChainId } from '../../constants/chains/chainId';
 import { allTokens, getBridgeTokenAddresses, getBridgeTokenDexPreference } from '../../constants/tokens/allTokens';
 import { USDC, USDT } from '../../constants/tokens/chains/common';
 import { bscTokens } from '../../constants/tokens/chains/bsc';
-import { dagobangAbi, poolV3Abi } from '@/constants/contracts/abi';
+import { dagobangAbi, pairV2Abi, poolV3Abi } from '@/constants/contracts/abi';
 import { Address, DexExactInQuote, HyperSwapType, RhSwapType, SwapDescLike, SwapType, ZERO_ADDRESS, applySlippage, getDeadline, getRouterSwapDesc, getSlippageBps, getV3FeeForDesc, toHyperDexSwapType, toRhDexSwapType } from './tradeTypes';
 import { assertDexQuoteOk, getBridgeToken, quoteBestExactIn as quoteBestExactInDex, resolveBridgeHopExactIn, resolveDexExactIn } from './tradeDex';
 import { getGasPriceWei, prewarmNonce, sendTransaction } from './tradeTx';
-import { getSellSpenders, hasInsufficientSellAllowance, type SellAllowanceCheckResult } from './sellAllowance';
+import { getSellSpenders, hasInsufficientSellAllowance, getSellQuotePullbackTokens, type SellAllowanceCheckResult } from './sellAllowance';
 import { encodeFourMemeBuyTokenData, encodeFourMemeUint256, tryFourMemeBuyEstimatedAmount, tryFourMemeSellEstimatedFunds } from './tradeFourMeme';
 import { buildScopedTokenKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
 import {
@@ -30,6 +30,7 @@ import {
 import {
   buildPonsBuyDesc,
   buildPonsSellDesc,
+  getConfiguredPonsMemeHook,
   getConfiguredPonsV4PoolManager,
   getPonsTradeState,
   isPonsPlatform,
@@ -43,20 +44,46 @@ import { tryGetReceiptRevertReason } from '@/services/tx/errors';
 import { getNativeSymbol } from '@/constants/chains';
 import { chainNames } from '@/constants/chains';
 import { getChainRuntime } from '@/constants/chains/runtime';
-import { normalizeLaunchpadPlatform } from '@/constants/launchpad';
+import { isLongLaunchpadPlatform, isO1LaunchpadPlatform, normalizeLaunchpadPlatform } from '@/constants/launchpad';
+import { getO1LaunchState, O1_RH_SUITES } from './tradeO1';
+import { getLongLaunchState, LONG_RH_REHYPE_HOOK } from './tradeLong';
 import { OpenFourInnerLaunchpadManager, OpenFourRegistryAddress } from '@/constants/contracts/address';
 import { OPENFOUR_4STOCK_QUOTE_FALLBACK } from '@/constants/openfour';
 import FlapAPI from '@/hooks/FlapAPI';
 import DexScreenerAPI, { type DexScreenerPair, type DexScreenerTokenRef } from '@/hooks/DexScreenerAPI';
+import { recoverUniswapV4PoolKey } from '@/utils/uniswapV4PoolKey';
+import { fetchGmgnTokenPoolFeeInfoPreferPage } from '@/services/gmgn/tokenPoolFeeInfoBridge';
 
 const erc20TransferAbi = parseAbi([
   'event Transfer(address indexed from, address indexed to, uint256 value)',
 ]);
+const poolManagerExtsloadAbi = parseAbi([
+  'function extsload(bytes32 slot) view returns (bytes32 value)',
+]);
+/** Uniswap v4 PoolManager.pools mapping slot (StateLibrary.POOLS_SLOT). */
+const UNISWAP_V4_POOLS_SLOT = 6n;
+/** Known Doppler hook used on RH tokenized / stock pools. */
+const RH_DOPPLER_HOOK = '0x4e3468951D49f2EEa976eD0D6e75fFCb44a9a544' as Address;
+/** Common RH Uniswap v4 hook (e.g. STANDARD / meme V4 pools). */
+const RH_STANDARD_V4_HOOK = '0xf1Ee073811b14359d850825E48d200483200EdCd' as Address;
+const uniswapV4InitializeEvent = parseAbiItem(
+  'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)',
+);
 import { GmgnAPI } from '@/hooks/GmgnAPI';
 import { classifyFlapRoute, hasConfirmedFlapLaunchpadIdentity, hasConfirmedFlapOuterRoute, isUsableFlapDexPoolAddress, resolveFlapPlatform, resolveFlapPlatformByQuoteLineage } from '@/utils/flap';
 import { resolveTokenLaunchpadPlatform } from '@/utils/launchpadFamily';
-import { buildFastQuickTradeRoutePreview, planEvmTradeRoute, resolveEvmTradeQuoteToken, type EvmTradeRoutePlan } from '@/utils/quickTradeRoutePreview';
-import { preferRouteTokenSymbol, resolveRouteTokenLabel } from '@/utils/quoteTokenLabels';
+import { planEvmTradeRoute, resolveEvmTradeQuoteToken, type EvmTradeRoutePlan, type EvmTradeRoutePlanHop } from '@/utils/quickTradeRoutePreview';
+import { resolveQuoteFromDexScreenerPool } from '@/utils/officialPoolQuote';
+import { getTradeRouteStableAddresses, isTradeRouteNativeToken, isTradeRouteTerminalQuote } from '@/utils/tradeRouteTerminals';
+import {
+  clearOuterMarketRouteInFlight,
+  getOuterMarketRouteInFlight,
+  setOuterMarketRoute,
+  setOuterMarketRouteInFlight,
+  sliceOuterMarketRoute,
+} from './outerMarketRouteCache';
+import { preferRouteTokenSymbol, resolveRouteTokenLabel, getKnownQuoteTokenSymbol } from '@/utils/quoteTokenLabels';
+import { TokenFlapService } from '@/services/token/flap';
 import { call } from '@/utils/messaging';
 
 function getDefaultBridgeV3Fee(chainId: number): number {
@@ -64,8 +91,8 @@ function getDefaultBridgeV3Fee(chainId: number): number {
   return 500;
 }
 
-const rhV4InitializeAbi = parseAbi([
-  'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)',
+const fourmemeHelperGetTokenInfoAbi = parseAbi([
+  'function getTokenInfo(address token) view returns (uint256 version, address tokenManager, address quote, uint256 lastPrice, uint256 tradingFeeRate, uint256 minTradingFee, uint256 launchTime, uint256 offers, uint256 maxOffers, uint256 funds, uint256 maxFunds, bool liquidityAdded)',
 ]);
 
 const INNER_LAUNCHPAD_PLATFORMS = new Set([
@@ -289,14 +316,12 @@ export class TradeService {
   private static readonly fastApproveRetryPollMs = 200;
   private static readonly quoteBestExactInCache = new Map<string, { ts: number; value: { amountOut: bigint; swapType: number; fee?: number; poolAddress: string } }>();
   private static readonly quoteBestExactInInFlight = new Map<string, Promise<{ amountOut: bigint; swapType: number; fee?: number; poolAddress: string }>>();
-  private static readonly turboPrewarmInFlight = new Map<string, Promise<void>>();
+  private static readonly turboPrewarmInFlight = new Map<string, Promise<QuickTradeRoutePreview | null>>();
   private static readonly openFourNetworkCache = new Map<number, OpenFourNetworkContracts>();
   private static readonly flapOuterQuoteInfoCache = new Map<string, Promise<TokenInfo | null>>();
   private static readonly flapKnownPoolMetaCache = new Map<string, Promise<{ prefer: 'v2' | 'v3'; fee?: number; v3Factory?: Address } | null>>();
   private static readonly flapOuterQuoteRouteMaxDepth = FLAP_OUTER_QUOTE_ROUTE_MAX_DEPTH;
   private static readonly flapOuterBuyQuoteRouteCacheMs = 30_000;
-  private static readonly flapOuterBuyQuoteRouteCache = new Map<string, { ts: number; value: SwapDescLike[] | null }>();
-  private static readonly flapOuterBuyQuoteRouteInFlight = new Map<string, Promise<SwapDescLike[] | null>>();
   private static readonly flapOuterSellQuoteRouteCache = new Map<string, { ts: number; value: SwapDescLike[] | null }>();
   private static readonly flapOuterSellQuoteRouteInFlight = new Map<string, Promise<SwapDescLike[] | null>>();
   private static readonly flapPoolCounterpartyCache = new Map<string, Address | null>();
@@ -307,6 +332,11 @@ export class TradeService {
   private static readonly preparedEvmTradeRouteCache = new Map<string, { ts: number; value: PreparedEvmTradeRoute | null }>();
   private static readonly preparedEvmTradeRouteInFlight = new Map<string, Promise<PreparedEvmTradeRoute | null>>();
   private static readonly rhV4PoolKeyCache = new Map<string, Promise<{ fee: number; tickSpacing: number; hooks: Address } | null>>();
+  /** Runtime lpFee (or static display fee) keyed by poolId — preview only, never overwrite PoolKey.fee. */
+  private static readonly rhV4DisplayFeeByPoolId = new Map<string, number>();
+  /** Authoritative PoolKey from Initialize(poolId) — permanent once found. */
+  private static readonly rhV4InitializeKeyCache = new Map<string, { fee: number; tickSpacing: number; hooks: Address } | null>();
+  private static readonly rhV4InitializeKeyInFlight = new Map<string, Promise<{ fee: number; tickSpacing: number; hooks: Address } | null>>();
 
   private static makeApproveKey(chainId: number, owner: string, token: string, spender: string) {
     return `${chainId}:${owner.toLowerCase()}:${token.toLowerCase()}:${spender.toLowerCase()}`;
@@ -361,27 +391,48 @@ export class TradeService {
     maxUint256: bigint;
     client: any;
     submitChannel?: SubmitChannel;
+    force?: boolean;
   }): Promise<`0x${string}` | null> {
     const allowance = await input.client.readContract({
       address: input.tokenAddress as `0x${string}`,
       abi: erc20Abi,
       functionName: 'allowance',
       args: [input.owner, input.spender as `0x${string}`]
-    });
-    if (allowance >= input.maxUint256 / 2n) return null;
+    }) as bigint;
+    if (!input.force && allowance >= input.maxUint256 / 2n) return null;
 
     const key = this.makeApproveKey(input.chainId, input.owner, input.tokenAddress, input.spender);
     const inFlight = this.approveInFlightByKey.get(key);
     if (inFlight) return await inFlight;
 
-    const task = (async () => await this.approve(
-      input.chainId,
-      input.tokenAddress,
-      input.spender,
-      input.maxUint256.toString(),
-      input.owner,
-      input.submitChannel,
-    ))();
+    const task = (async () => {
+      // USDT / some tax tokens reject approve(max) when current allowance != 0.
+      // On force repair, always reset first — covers dust allowance and flaky reads.
+      const shouldReset = input.force === true
+        ? allowance > 0n
+        : (allowance > 0n && allowance < input.maxUint256 / 2n);
+      if (shouldReset) {
+        try {
+          await this.approve(
+            input.chainId,
+            input.tokenAddress,
+            input.spender,
+            '0',
+            input.owner,
+            input.submitChannel,
+          );
+        } catch {
+        }
+      }
+      return await this.approve(
+        input.chainId,
+        input.tokenAddress,
+        input.spender,
+        input.maxUint256.toString(),
+        input.owner,
+        input.submitChannel,
+      );
+    })();
     this.approveInFlightByKey.set(key, task);
     try {
       return await task;
@@ -423,41 +474,82 @@ export class TradeService {
     return resolved;
   }
 
-  static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo; fromAddress?: `0x${string}`; submitChannel?: SubmitChannel; baseTokenAddress?: Address }) {
+  static async prewarmTurbo(input: { chainId: number; tokenAddress: Address; tokenInfo?: TokenInfo; fromAddress?: `0x${string}`; submitChannel?: SubmitChannel; baseTokenAddress?: Address }): Promise<QuickTradeRoutePreview | null> {
     const settings = await SettingsService.get();
     const consoleLogsEnabled = settings.ui?.consoleLogsEnabled === true;
     const startedAt = Date.now();
     let tokenInfo = input.tokenInfo;
-    if (!tokenInfo) return;
+    if (!tokenInfo) return null;
     tokenInfo = await this.ensureFlapTradeTokenInfo(input.chainId, tokenInfo, consoleLogsEnabled);
     input.tokenInfo = tokenInfo;
 
-    const client = await RpcService.getClient(input.chainId);
-    const fromAddress = this.resolveOptionalEvmAddress(input.fromAddress, 'from address');
-    const account = await WalletService.getSigner(fromAddress);
-    const warmKey = this.makeTurboWarmKey({
+    const configuredBaseToken = this.resolveConfiguredBaseTokenAddress(input.chainId, settings);
+    const baseTokenAddress = (input.baseTokenAddress && isAddressLike(input.baseTokenAddress)
+      ? input.baseTokenAddress
+      : configuredBaseToken) as Address;
+    const routeTask = this.prepareEvmTradeRoute({
       chainId: input.chainId,
-      owner: account.address,
       tokenAddress: input.tokenAddress,
       tokenInfo,
-    });
-    const existing = this.turboPrewarmInFlight.get(warmKey);
-    if (existing) {
-      if (consoleLogsEnabled) {
-        console.info('[trade.buy.prewarm.reuse]', {
-          chainId: input.chainId,
-          tokenAddress: input.tokenAddress,
-          fromAddress: account.address,
-          warmKey,
-        });
-      }
-      await existing;
-      return;
-    }
+      baseTokenAddress,
+    }).catch(() => null);
 
-    const task = (async () => {
+    void this.warmTurboWalletState({
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      tokenInfo,
+      baseTokenAddress,
+      fromAddress: input.fromAddress,
+      submitChannel: input.submitChannel,
+      routeTask,
+      startedAt,
+      consoleLogsEnabled,
+    });
+
+    const prepared = await routeTask;
+    return prepared?.preview ?? null;
+  }
+
+  private static warmTurboWalletState(input: {
+    chainId: number;
+    tokenAddress: Address;
+    tokenInfo: TokenInfo;
+    baseTokenAddress: Address;
+    fromAddress?: `0x${string}`;
+    submitChannel?: SubmitChannel;
+    routeTask: Promise<PreparedEvmTradeRoute | null>;
+    startedAt: number;
+    consoleLogsEnabled: boolean;
+  }): void {
+    const warmTask = (async () => {
+      const client = await RpcService.getClient(input.chainId);
+      let account: Awaited<ReturnType<typeof WalletService.getSigner>> | null = null;
+      try {
+        const fromAddress = this.resolveOptionalEvmAddress(input.fromAddress, 'from address');
+        account = await WalletService.getSigner(fromAddress);
+      } catch {
+        return;
+      }
+      if (!account) return;
+
+      const signer = account;
+      const tokenInfo = input.tokenInfo;
+      const warmKey = this.makeTurboWarmKey({
+        chainId: input.chainId,
+        owner: signer.address,
+        tokenAddress: input.tokenAddress,
+        tokenInfo,
+      });
+      const existing = this.turboPrewarmInFlight.get(warmKey);
+      if (existing) {
+        await existing.catch(() => null);
+        return;
+      }
+
+      const task = (async (): Promise<QuickTradeRoutePreview | null> => {
       const criticalWarmTasks: Array<Promise<unknown>> = [
-        prewarmNonce(client, input.chainId, account.address, { submitChannel: input.submitChannel }).catch(() => null),
+        prewarmNonce(client, input.chainId, signer.address, { submitChannel: input.submitChannel }).catch(() => null),
+        input.routeTask,
       ];
       const backgroundWarmTasks: Array<Promise<unknown>> = [];
 
@@ -475,28 +567,15 @@ export class TradeService {
           platform: classifiedRoute.platform,
           isInner: classifiedRoute.isInner,
           openFourRuntime,
-          debug: consoleLogsEnabled,
+          debug: input.consoleLogsEnabled,
         });
-        const configuredBaseToken = this.resolveConfiguredBaseTokenAddress(input.chainId, settings);
-        const baseTokenAddress = (input.baseTokenAddress && isAddressLike(input.baseTokenAddress)
-          ? input.baseTokenAddress
-          : configuredBaseToken) as Address;
-        const needsNonTerminalQuoteRoute = this.needsNonTerminalQuoteRoute(input.chainId, baseTokenAddress, rawQuoteToken);
+        const needsNonTerminalQuoteRoute = this.needsNonTerminalQuoteRoute(input.chainId, input.baseTokenAddress, rawQuoteToken);
         const bridgeToken = needsNonTerminalQuoteRoute
           ? rawQuoteToken
           : getBridgeToken(input.chainId as ChainId, tokenInfo.address, tokenInfo.quote_token_address);
         const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
         const dexPrefer = getDexPoolPrefer(tokenInfo.dex_type);
         const tokenPrefer = dexPrefer === 'v2' || dexPrefer === 'v3' ? dexPrefer : (bridgePrefer ?? 'v2');
-
-      criticalWarmTasks.push(
-        this.prepareEvmTradeRoute({
-          chainId: input.chainId,
-          tokenAddress: token,
-          tokenInfo,
-          baseTokenAddress,
-        }).catch(() => null)
-      );
 
       const amountIn = 0n;
 
@@ -557,20 +636,11 @@ export class TradeService {
       }
 
       if (needsNonTerminalQuoteRoute && rawQuoteToken) {
-        const outerTargetPoolTask = this.getPreferredFlapOuterTargetPool({
-          chainId: input.chainId,
-          tokenAddress: token,
-          quoteTokenAddress: rawQuoteToken,
-          tokenInfo,
-          preferOnchainPool: true,
-          debug: consoleLogsEnabled,
-          logEvent: 'prewarm.target_pool.selected',
-        }).catch(() => ({ poolAddress: null, preferHint: null as 'v2' | 'v3' | null, fee: undefined }));
         const quoteTopologyTask = this.resolveFlapStocksQuoteTopology({
           chainId: input.chainId,
           rawQuoteToken,
           anchorToken: token,
-          debug: consoleLogsEnabled,
+          debug: input.consoleLogsEnabled,
           logEvent: 'prewarm.quote_topology',
         }).catch(() => null);
 
@@ -593,30 +663,21 @@ export class TradeService {
           this.buildFlapOuterSellQuoteRoute({
             chainId: input.chainId,
             currentToken: rawQuoteToken,
-            targetToken: baseTokenAddress,
-            debug: consoleLogsEnabled,
+            targetToken: input.baseTokenAddress,
+            debug: input.consoleLogsEnabled,
           }).catch(() => null)
         );
-        criticalWarmTasks.push((async () => {
-          const outerTargetPool = await outerTargetPoolTask;
-          if (!outerTargetPool.poolAddress) return null;
-          return await this.getKnownPoolRouteMeta(
-            input.chainId,
-            outerTargetPool.poolAddress,
-            outerTargetPool.preferHint,
-          );
-        })().catch(() => null));
       }
 
       await Promise.allSettled(criticalWarmTasks);
       if (backgroundWarmTasks.length > 0) {
         void Promise.allSettled(backgroundWarmTasks).then(() => {
-          const backgroundElapsedMs = Date.now() - startedAt;
-          if (consoleLogsEnabled && backgroundElapsedMs >= 600) {
+          const backgroundElapsedMs = Date.now() - input.startedAt;
+          if (input.consoleLogsEnabled && backgroundElapsedMs >= 600) {
             console.info('[trade.buy.prewarm.background]', {
               chainId: input.chainId,
               tokenAddress: input.tokenAddress,
-              fromAddress: account.address,
+              fromAddress: signer.address,
               backgroundTaskCount: backgroundWarmTasks.length,
               elapsedMs: backgroundElapsedMs,
               warmKey,
@@ -624,12 +685,12 @@ export class TradeService {
           }
         });
       }
-      const elapsedMs = Date.now() - startedAt;
-      if (consoleLogsEnabled || elapsedMs >= 600) {
+      const elapsedMs = Date.now() - input.startedAt;
+      if (input.consoleLogsEnabled || elapsedMs >= 600) {
         console.info('[trade.buy.prewarm]', {
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
-          fromAddress: account.address,
+          fromAddress: signer.address,
           warmTaskCount: criticalWarmTasks.length + backgroundWarmTasks.length,
           criticalWarmTaskCount: criticalWarmTasks.length,
           backgroundWarmTaskCount: backgroundWarmTasks.length,
@@ -639,13 +700,17 @@ export class TradeService {
           warmKey,
         });
       }
+      const prepared = await input.routeTask;
+      return prepared?.preview ?? null;
     })().finally(() => {
       const current = this.turboPrewarmInFlight.get(warmKey);
       if (current === task) this.turboPrewarmInFlight.delete(warmKey);
     });
 
-    this.turboPrewarmInFlight.set(warmKey, task);
-    await task;
+      this.turboPrewarmInFlight.set(warmKey, task);
+      await task.catch(() => null);
+    })();
+    void warmTask;
   }
 
   static async refreshNonce(input: {
@@ -765,13 +830,18 @@ export class TradeService {
     tokenInfo: TokenInfo;
     timeoutMs?: number;
     fromAddress?: `0x${string}`;
+    /** When true (e.g. after ERC20InsufficientAllowance), always re-approve even if check says OK. */
+    force?: boolean;
   }): Promise<boolean> {
-    const allowanceCheck = await this.checkSellAllowanceInsufficient(input.chainId, input.tokenAddress, input.tokenInfo, {
-      fromAddress: input.fromAddress,
-    });
-    if (!allowanceCheck.insufficient) return false;
+    if (!input.force) {
+      const allowanceCheck = await this.checkSellAllowanceInsufficient(input.chainId, input.tokenAddress, input.tokenInfo, {
+        fromAddress: input.fromAddress,
+      });
+      if (!allowanceCheck.insufficient) return false;
+    }
     const approveTx = await this.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, input.tokenInfo, {
       fromAddress: input.fromAddress,
+      force: input.force === true,
     });
     if (approveTx) {
       await this.waitApproveFastForRetry(input.chainId, approveTx);
@@ -836,7 +906,7 @@ export class TradeService {
     const openFourRuntime = (isHyperAltfun || isPons || !usesOpenFourRuntime(platform))
       ? null
       : await this.getOpenFourRuntimeState(input.client, input.chainId, input.tokenAddress);
-    const isInner = isHyperAltfun
+    const isInner = isHyperAltfun || isO1LaunchpadPlatform(platform) || isLongLaunchpadPlatform(platform)
       ? false
       : isPons
         ? input.tokenInfo.launchpad_status !== 1
@@ -891,7 +961,9 @@ export class TradeService {
     const platform = isFlap ? flapRoute?.platform || 'flap' : rawPlatform;
     const normalizedLaunchpadStatus = flapRoute?.rawLaunchpadStatus ?? null;
     const hasConfirmedOuterRoute = !!flapRoute?.hasConfirmedOuterRoute;
-    const isInner = isHyperAltfun
+    const isO1 = isO1LaunchpadPlatform(rawPlatform);
+    const isLong = isLongLaunchpadPlatform(rawPlatform);
+    const isInner = isHyperAltfun || isO1 || isLong
       ? false
       : isPons
         ? tokenInfo.launchpad_status !== 1
@@ -1124,7 +1196,7 @@ export class TradeService {
     rawQuoteToken: Address | null,
   ): boolean {
     if (!rawQuoteToken) return false;
-    if (this.isFlapOuterRouteTerminalToken(chainId, rawQuoteToken)) return false;
+    if (isTradeRouteTerminalQuote(chainId, rawQuoteToken)) return false;
     return currentToken.toLowerCase() !== rawQuoteToken.toLowerCase();
   }
 
@@ -1135,7 +1207,7 @@ export class TradeService {
   ): boolean {
     if (!tokenAddress) return false;
     if (selfToken && tokenAddress.toLowerCase() === selfToken.toLowerCase()) return false;
-    return !this.isFlapOuterRouteTerminalToken(chainId, tokenAddress);
+    return !isTradeRouteTerminalQuote(chainId, tokenAddress);
   }
 
   private static async resolveTradeRouteQuoteToken(input: {
@@ -1224,11 +1296,9 @@ export class TradeService {
       const usdt = (USDT[chainId as ChainId]?.address ?? (chainId === ChainId.BNB ? bscTokens.usdt.address : null)) as Address | null;
       return usdt ? [usdt] : [ZERO_ADDRESS];
     }
-    const terminals: Address[] = [ZERO_ADDRESS];
-    const usdt = USDT[chainId as ChainId]?.address as Address | undefined;
-    if (usdt) terminals.unshift(usdt);
-    else if (chainId === ChainId.BNB) terminals.unshift(bscTokens.usdt.address as Address);
-    return terminals;
+    const stables = getTradeRouteStableAddresses(chainId)
+      .filter((item) => !targetToken || item.toLowerCase() !== targetToken.toLowerCase()) as Address[];
+    return [...stables, ZERO_ADDRESS];
   }
 
   private static isKnownOpenFourQuoteToken(chainId: number, tokenAddress?: string | null): boolean {
@@ -1429,7 +1499,7 @@ export class TradeService {
     const startToken = this.isFlapOuterRouteTerminalToken(input.chainId, input.anchorToken)
       ? input.anchorToken
       : ZERO_ADDRESS;
-    const route = await this.buildFlapOuterBuyQuoteRoute({
+    const route = await this.buildOuterMarketBuyQuoteRoute({
       chainId: input.chainId,
       currentToken: startToken,
       targetToken: input.rawQuoteToken,
@@ -1516,12 +1586,7 @@ export class TradeService {
   }): Promise<QuickTradeRoutePreview | null> {
     if (!input.tokenInfo) return null;
     const prepared = await this.prepareEvmTradeRoute(input);
-    return prepared?.preview ?? buildFastQuickTradeRoutePreview({
-      chainId: input.chainId,
-      tokenInfo: input.tokenInfo,
-      tokenAddress: input.tokenAddress,
-      baseTokenAddress: input.baseTokenAddress,
-    });
+    return prepared?.preview ?? null;
   }
 
   private static makePreparedEvmTradeRouteKey(input: {
@@ -1531,6 +1596,7 @@ export class TradeService {
     baseTokenAddress?: string;
   }): string {
     return [
+      'official-quote-v4',
       input.chainId,
       String(input.tokenAddress || input.tokenInfo.address || '').toLowerCase(),
       String(input.baseTokenAddress || ZERO_ADDRESS).toLowerCase(),
@@ -1538,7 +1604,31 @@ export class TradeService {
       String(input.tokenInfo.launchpad_platform || ''),
       String(input.tokenInfo.launchpad_status ?? ''),
       String(input.tokenInfo.pool_pair || ''),
+      String(input.tokenInfo.biggest_pool_address || ''),
+      String(input.tokenInfo.tpool_pool_address || ''),
     ].join(':');
+  }
+
+  private static isUsableRhV4PoolKey(
+    key?: { fee: number; tickSpacing: number; hooks?: Address } | null,
+  ): key is { fee: number; tickSpacing: number; hooks: Address } {
+    if (!key) return false;
+    if (!Number.isFinite(key.fee) || key.fee < 0) return false;
+    if (!Number.isFinite(key.tickSpacing) || key.tickSpacing <= 0) return false;
+    // fee=0 is valid on RH hook launchpads (o1 / many V4 hook pools). Do not treat as "not ready".
+    return true;
+  }
+
+  private static hasUnusableRhV4Fee(descs?: SwapDescLike[] | null): boolean {
+    if (!Array.isArray(descs) || !descs.length) return false;
+    return descs.some((desc) => {
+      if (!desc) return false;
+      if (!(desc.swapType === RhSwapType.V4_EXACT_IN || desc.swapType === SwapType.V4_EXACT_IN)) return false;
+      // Incomplete key only: missing/invalid tickSpacing, or negative fee.
+      if (!(typeof desc.tickSpacing === 'number' && desc.tickSpacing > 0)) return true;
+      if (!(typeof desc.fee === 'number' && Number.isFinite(desc.fee) && desc.fee >= 0)) return true;
+      return false;
+    });
   }
 
   private static async prepareEvmTradeRoute(input: {
@@ -1559,9 +1649,13 @@ export class TradeService {
       });
       const cached = this.preparedEvmTradeRouteCache.get(cacheKey);
       if (cached && Date.now() - cached.ts < this.preparedEvmTradeRouteCacheMs) {
-        return cached.value
-          ? { descs: this.cloneSwapDescLikeArray(cached.value.descs) ?? [], preview: cached.value.preview }
-          : null;
+        if (cached.value && this.hasUnusableRhV4Fee(cached.value.descs)) {
+          this.preparedEvmTradeRouteCache.delete(cacheKey);
+        } else {
+          return cached.value
+            ? { descs: this.cloneSwapDescLikeArray(cached.value.descs) ?? [], preview: cached.value.preview }
+            : null;
+        }
       }
       const inflight = this.preparedEvmTradeRouteInFlight.get(cacheKey);
       if (inflight) {
@@ -1570,16 +1664,25 @@ export class TradeService {
           ? { descs: this.cloneSwapDescLikeArray(value.descs) ?? [], preview: value.preview }
           : null;
       }
-      const task = this.buildPreparedEvmTradeRoute(input.chainId, tokenInfo, input.tokenAddress, input.baseTokenAddress)
-        .then((value) => {
-          this.preparedEvmTradeRouteCache.set(cacheKey, { ts: Date.now(), value });
-          return value;
-        })
-        .finally(() => {
-          this.preparedEvmTradeRouteInFlight.delete(cacheKey);
-        });
-      this.preparedEvmTradeRouteInFlight.set(cacheKey, task);
-      const value = await task;
+      const buildTask = this.buildPreparedEvmTradeRoute(
+        input.chainId,
+        tokenInfo,
+        input.tokenAddress,
+        input.baseTokenAddress,
+      ).then((value) => {
+        this.preparedEvmTradeRouteCache.set(cacheKey, { ts: Date.now(), value });
+        return value;
+      }).finally(() => {
+        this.preparedEvmTradeRouteInFlight.delete(cacheKey);
+      });
+      this.preparedEvmTradeRouteInFlight.set(cacheKey, buildTask);
+      // Hard cap so UI never spins forever. Fee resolve uses page-bridge ≤900ms + PoolManager lpFee.
+      const value = await Promise.race([
+        buildTask,
+        new Promise<PreparedEvmTradeRoute | null>((resolve) => {
+          setTimeout(() => resolve(null), 1_200);
+        }),
+      ]);
       return value
         ? { descs: this.cloneSwapDescLikeArray(value.descs) ?? [], preview: value.preview }
         : null;
@@ -1605,6 +1708,79 @@ export class TradeService {
     return null;
   }
 
+  private static async readFourmemeOfficialQuote(
+    chainId: number,
+    tokenAddress: Address,
+  ): Promise<Address | null> {
+    if (chainId !== ChainId.BNB) return null;
+    const helper = DeployAddress[ChainId.BNB]?.[ContractNames.TokenManagerHelper3]?.address;
+    if (!helper || helper === ZERO_ADDRESS) return null;
+    try {
+      const client = await RpcService.getClient(chainId);
+      const result = await client.readContract({
+        address: helper as Address,
+        abi: fourmemeHelperGetTokenInfoAbi,
+        functionName: 'getTokenInfo',
+        args: [tokenAddress],
+      });
+      const version = Number(result[0] ?? 0);
+      const quote = result[2] as Address;
+      if (!(version > 0) || !isAddressLike(quote) || quote === ZERO_ADDRESS) return null;
+      if (!this.isNonTerminalQuoteToken(chainId, quote, tokenAddress)) return null;
+      return quote;
+    } catch {
+      return null;
+    }
+  }
+
+  private static async resolvePreparedRouteTokenInfo(
+    chainId: number,
+    tokenInfo: TokenInfo,
+    tokenAddress: Address,
+  ): Promise<TokenInfo> {
+    const declaredQuote = resolveEvmTradeQuoteToken(chainId, tokenInfo);
+    const canReadOuterPool = chainId === ChainId.BNB
+      && Number(tokenInfo.launchpad_status ?? 0) === 1
+      && tokenInfo.flap_pool_model !== 'v4_cl';
+    const poolQuote = canReadOuterPool
+      ? await this.resolveQuoteFromOfficialPool({
+        chainId,
+        tokenAddress,
+        tokenInfo,
+      })
+      : null;
+    if (declaredQuote) {
+      if (
+        !poolQuote
+        || this.isEquivalentFlapRouteToken(chainId, declaredQuote, poolQuote.quoteTokenAddress)
+      ) {
+        return tokenInfo;
+      }
+      return {
+        ...tokenInfo,
+        quote_token_address: poolQuote.quoteTokenAddress,
+        quote_token: poolQuote.quoteSymbol || tokenInfo.quote_token,
+        dex_type: tokenInfo.dex_type || poolQuote.dexType,
+      };
+    }
+    if (poolQuote) {
+      return {
+        ...tokenInfo,
+        quote_token_address: poolQuote.quoteTokenAddress,
+        quote_token: poolQuote.quoteSymbol || tokenInfo.quote_token,
+        dex_type: tokenInfo.dex_type || poolQuote.dexType,
+      };
+    }
+    const officialQuote = await this.readFourmemeOfficialQuote(chainId, tokenAddress);
+    if (officialQuote) {
+      return {
+        ...tokenInfo,
+        quote_token_address: officialQuote,
+      };
+    }
+    return tokenInfo;
+  }
+
   private static async buildPreparedEvmTradeRoute(
     chainId: number,
     tokenInfo: TokenInfo,
@@ -1612,26 +1788,86 @@ export class TradeService {
     rawBaseTokenAddress?: Address,
   ): Promise<PreparedEvmTradeRoute | null> {
     try {
+      const tokenAddress = this.resolveEvmAddress(
+        rawTokenAddress || tokenInfo.address,
+        'token address',
+      ) as Address;
+      const routedInfo = await this.resolvePreparedRouteTokenInfo(chainId, tokenInfo, tokenAddress);
       const plan = planEvmTradeRoute({
         chainId,
-        tokenInfo,
-        tokenAddress: rawTokenAddress,
+        tokenInfo: routedInfo,
+        tokenAddress,
         baseTokenAddress: rawBaseTokenAddress,
       });
       if (!plan?.hops.length) return null;
-      const materialized = await this.materializeEvmTradeRoutePlan(chainId, tokenInfo, plan);
-      if (!materialized.descs.length) return null;
-      return {
-        descs: materialized.descs,
+      const lastHop = plan.hops[plan.hops.length - 1];
+      const quote = lastHop.tokenIn as Address;
+      const start = (
+        this.normalizeFlapPoolCounterpartyToken(chainId, rawBaseTokenAddress)
+        ?? ZERO_ADDRESS
+      ) as Address;
+      const finishPrepared = (
+        descs: SwapDescLike[],
+        liquidityUsd: Array<number | null>,
+        symbols: Array<Record<string, string>>,
+        displayPools: Array<string | null>,
+      ): PreparedEvmTradeRoute => ({
+        descs,
         preview: this.toQuickTradeRoutePreview(
           chainId,
-          tokenInfo,
-          materialized.descs,
-          materialized.liquidityUsd,
-          materialized.symbols,
-          materialized.displayPools,
+          routedInfo,
+          descs,
+          liquidityUsd,
+          symbols,
+          displayPools,
         ),
+      });
+      const concatPrefixLast = async (prefixDescs: SwapDescLike[]) => {
+        const lastPlan: EvmTradeRoutePlan = {
+          ...plan,
+          hops: [{ ...lastHop, tokenIn: quote }],
+        };
+        const lastHopRoute = await this.materializeEvmTradeRoutePlan(chainId, routedInfo, lastPlan);
+        if (!lastHopRoute.descs.length) return null;
+        return finishPrepared(
+          [...prefixDescs, ...lastHopRoute.descs],
+          [...prefixDescs.map(() => null), ...lastHopRoute.liquidityUsd],
+          [...prefixDescs.map(() => ({}) as Record<string, string>), ...lastHopRoute.symbols],
+          [
+            ...prefixDescs.map((desc) => (
+              desc.poolAddress && desc.poolAddress !== ZERO_ADDRESS ? desc.poolAddress : null
+            )),
+            ...lastHopRoute.displayPools,
+          ],
+        );
       };
+
+      const needsPrefix = !this.isEquivalentFlapRouteToken(chainId, start, quote);
+      if (needsPrefix) {
+        // Always resolve pay→quote via outer-market pipeline (cache / DexScreener).
+        // Never invent a direct hop from the topology planner.
+        const via = await this.buildOuterMarketBuyQuoteRoute({
+          chainId,
+          currentToken: start,
+          targetToken: quote,
+        }).catch(() => null);
+        if (
+          !via?.length
+          || !this.isEquivalentFlapRouteToken(chainId, via[via.length - 1]?.tokenOut, quote)
+        ) {
+          return null;
+        }
+        return await concatPrefixLast(via);
+      }
+
+      const materialized = await this.materializeEvmTradeRoutePlan(chainId, routedInfo, plan);
+      if (!materialized.descs.length) return null;
+      return finishPrepared(
+        materialized.descs,
+        materialized.liquidityUsd,
+        materialized.symbols,
+        materialized.displayPools,
+      );
     } catch {
       return null;
     }
@@ -1691,7 +1927,7 @@ export class TradeService {
     const left = this.toDexScreenerPairToken(chainId, tokenA) ?? tokenA;
     const right = this.toDexScreenerPairToken(chainId, tokenB) ?? tokenB;
     const pair = await DexScreenerAPI.getBestPairBetweenTokens(chain, left, right).catch(() => null);
-    const liquidityUsd = Number(pair?.liquidity?.usd ?? 0);
+    const liquidityUsd = DexScreenerAPI.effectiveLiquidityUsd(pair);
     const pairAddress = String(pair?.pairAddress || '').trim();
     const poolAddress = isAddressLike(pairAddress) ? pairAddress as Address : null;
     const dexType = this.mapDexScreenerPairDexType(pair);
@@ -1784,19 +2020,28 @@ export class TradeService {
     return /^0x[a-fA-F0-9]{64}$/.test(String(value || '').trim());
   }
 
-  private static parseRhV4InitializeLog(log: {
-    args?: { fee?: unknown; tickSpacing?: unknown; hooks?: unknown; id?: unknown };
-  }): { fee: number; tickSpacing: number; hooks: Address; id: string } | null {
-    const fee = Number(log.args?.fee ?? 0);
-    const tickSpacing = Number(log.args?.tickSpacing ?? 0);
-    if (!Number.isFinite(fee) || !Number.isFinite(tickSpacing) || tickSpacing <= 0) return null;
-    const hooks = isAddressLike(log.args?.hooks) ? log.args.hooks as Address : ZERO_ADDRESS;
-    return {
-      fee,
-      tickSpacing,
-      hooks,
-      id: String(log.args?.id || '').trim().toLowerCase(),
-    };
+  private static pickRhV4Fee(...candidates: Array<number | null | undefined>): number {
+    for (const value of candidates) {
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+    }
+    return 3000;
+  }
+
+  private static rhV4PoolIdFromTokenInfo(
+    tokenInfo: TokenInfo,
+    hopPool?: string | null,
+    displayPool?: string | null,
+  ): string | null {
+    for (const candidate of [
+      hopPool,
+      tokenInfo.biggest_pool_address,
+      tokenInfo.tpool_pool_address,
+      tokenInfo.pool_pair,
+      displayPool,
+    ]) {
+      if (this.isRhV4PoolId(candidate)) return String(candidate).trim().toLowerCase();
+    }
+    return displayPool && isPoolRefLike(displayPool) ? displayPool : null;
   }
 
   private static buildRhV4MarketDesc(input: {
@@ -1806,7 +2051,7 @@ export class TradeService {
     tickSpacing?: number | null;
     hooks?: Address | null;
   }): SwapDescLike {
-    const fee = input.fee && input.fee > 0 ? input.fee : 3000;
+    const fee = this.pickRhV4Fee(input.fee);
     const tickSpacing = input.tickSpacing && input.tickSpacing > 0
       ? input.tickSpacing
       : this.v4TickSpacingForFee(fee);
@@ -1822,10 +2067,6 @@ export class TradeService {
     });
   }
 
-  private static sortRhV4Currencies(tokenA: Address, tokenB: Address): [Address, Address] {
-    return tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
-  }
-
   private static rhV4CurrencyCandidates(token: Address): Address[] {
     const normalized = this.normalizeFlapPoolCounterpartyToken(ChainId.RH, token) ?? token;
     const wrapped = getChainRuntime(ChainId.RH).wrappedNativeAddress as Address;
@@ -1837,11 +2078,237 @@ export class TradeService {
     return [...out].map((item) => item as Address);
   }
 
+  private static async readRhV4LpFeeFromPoolManager(poolId: string): Promise<number | null> {
+    const id = String(poolId || '').trim().toLowerCase();
+    if (!this.isRhV4PoolId(id)) return null;
+    const poolManager = this.rhV4PoolManager();
+    if (!poolManager || poolManager === ZERO_ADDRESS) return null;
+    try {
+      const stateSlot = keccak256(
+        concat([
+          id as `0x${string}`,
+          pad(toHex(UNISWAP_V4_POOLS_SLOT), { size: 32 }),
+        ]),
+      );
+      const data = await RpcService.withBalancedReadClient({
+        chainId: ChainId.RH,
+        caller: 'trade.v4.lpFee',
+        run: async (client) => await client.readContract({
+          address: poolManager,
+          abi: poolManagerExtsloadAbi,
+          functionName: 'extsload',
+          args: [stateSlot],
+        }) as `0x${string}`,
+      });
+      const lpFee = Number((BigInt(data) >> 208n) & 0xffffffn);
+      // Runtime lpFee can be 0 for uninitialized / dynamic-before-swap; treat as miss.
+      return Number.isFinite(lpFee) && lpFee > 0 ? lpFee : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private static rhV4KnownHooks(): Address[] {
+    const hooks: Address[] = [
+      ZERO_ADDRESS,
+      RH_DOPPLER_HOOK,
+      LONG_RH_REHYPE_HOOK,
+      RH_STANDARD_V4_HOOK,
+    ];
+    try {
+      hooks.push(getConfiguredPonsMemeHook());
+    } catch {
+    }
+    for (const suite of O1_RH_SUITES) {
+      hooks.push(suite.hook);
+    }
+    return hooks;
+  }
+
+  /**
+   * Targeted Initialize(poolId) lookup — topic-filtered, not a full-chain scan.
+   * Needed when hooks are unknown (GMGN fee_info has no hooks field).
+   */
+  private static async readRhV4PoolKeyFromInitialize(
+    poolId: string,
+  ): Promise<{ fee: number; tickSpacing: number; hooks: Address } | null> {
+    const id = String(poolId || '').trim().toLowerCase();
+    if (!this.isRhV4PoolId(id)) return null;
+    if (this.rhV4InitializeKeyCache.has(id)) {
+      return this.rhV4InitializeKeyCache.get(id) ?? null;
+    }
+    const inflight = this.rhV4InitializeKeyInFlight.get(id);
+    if (inflight) return await inflight;
+
+    const task = (async () => {
+      const poolManager = this.rhV4PoolManager();
+      if (!poolManager || poolManager === ZERO_ADDRESS) {
+        this.rhV4InitializeKeyCache.set(id, null);
+        return null;
+      }
+      try {
+        const latest = await RpcService.withBalancedReadClient({
+          chainId: ChainId.RH,
+          caller: 'trade.v4.initialize.blockNumber',
+          run: async (client) => await client.getBlockNumber(),
+        });
+        // Expand windows newest-first; indexed topic1=poolId keeps each query light.
+        const windows = [100_000n, 1_000_000n, 10_000_000n, latest];
+        for (const window of windows) {
+          const fromBlock = window >= latest ? 0n : (latest > window ? latest - window : 0n);
+          try {
+            const logs = await RpcService.withBalancedReadClient({
+              chainId: ChainId.RH,
+              caller: 'trade.v4.initialize.getLogs',
+              run: async (client) => await client.getLogs({
+                address: poolManager,
+                event: uniswapV4InitializeEvent,
+                args: { id: id as `0x${string}` },
+                fromBlock,
+                toBlock: 'latest',
+              }),
+            });
+            const log = logs?.[0];
+            if (!log) continue;
+            const fee = Number((log as any).args?.fee ?? 0);
+            const tickSpacing = Number((log as any).args?.tickSpacing ?? 0);
+            const hooksRaw = String((log as any).args?.hooks || '').trim();
+            const hooks = (isAddressLike(hooksRaw) ? hooksRaw : ZERO_ADDRESS) as Address;
+            if (!(fee >= 0) || !(tickSpacing > 0)) continue;
+            const value = { fee, tickSpacing, hooks };
+            this.rhV4InitializeKeyCache.set(id, value);
+            if (fee > 0 && (fee & ~0x800000) > 0) {
+              this.rhV4DisplayFeeByPoolId.set(id, fee & ~0x800000);
+            } else if (fee > 0) {
+              // dynamic — keep prior lpFee display if any
+            }
+            return value;
+          } catch {
+            // RPC may reject oversized ranges; try next window.
+          }
+        }
+        this.rhV4InitializeKeyCache.set(id, null);
+        return null;
+      } catch {
+        this.rhV4InitializeKeyCache.set(id, null);
+        return null;
+      } finally {
+        this.rhV4InitializeKeyInFlight.delete(id);
+      }
+    })();
+
+    this.rhV4InitializeKeyInFlight.set(id, task);
+    return await task;
+  }
+
+  private static async resolveRhV4PoolKeyFromSources(input: {
+    chainId: number;
+    tokenIn: Address;
+    tokenOut: Address;
+    poolId?: string | null;
+    feeHint?: number | null;
+  }): Promise<{ fee: number; tickSpacing: number; hooks: Address } | null> {
+    const poolId = String(input.poolId || '').trim().toLowerCase();
+    if (!this.isRhV4PoolId(poolId)) return null;
+    const chain = String(chainNames[input.chainId as ChainId] || '').trim().toLowerCase() || 'robinhood';
+    const tokens = [input.tokenOut, input.tokenIn].filter((token, index, all) => {
+      if (!token || !isAddressLike(token)) return false;
+      if (token.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return false;
+      return all.findIndex((item) => item.toLowerCase() === token.toLowerCase()) === index;
+    });
+
+    // Parallel: GMGN fee + PoolManager lpFee + targeted Initialize(poolId) for hooks.
+    const [gmgnLists, lpFee, fromInit] = await Promise.all([
+      tokens.length
+        ? Promise.all(
+          tokens.map((token) => fetchGmgnTokenPoolFeeInfoPreferPage(chain, token, { timeoutMs: 800 }).catch(() => [])),
+        )
+        : Promise.resolve([] as Awaited<ReturnType<typeof fetchGmgnTokenPoolFeeInfoPreferPage>>[]),
+      this.readRhV4LpFeeFromPoolManager(poolId),
+      this.readRhV4PoolKeyFromInitialize(poolId),
+    ]);
+
+    // Initialize is authoritative (fee + tickSpacing + hooks).
+    if (fromInit && fromInit.tickSpacing > 0 && fromInit.fee >= 0) {
+      const display = (fromInit.fee & ~0x800000) > 0
+        ? (fromInit.fee & ~0x800000)
+        : (lpFee && lpFee > 0 ? lpFee : null);
+      if (display && display > 0) this.rhV4DisplayFeeByPoolId.set(poolId, display);
+      return fromInit;
+    }
+
+    let gmgnFee: number | null = null;
+    for (const list of gmgnLists) {
+      const hit = GmgnAPI.findTokenPoolFeeInfo(list, poolId);
+      if (!hit) continue;
+      const feeFromRatio = GmgnAPI.feeRatioToUniswapFee(
+        Number(hit.fee_ratio),
+        hit.is_dynamic_fee === true,
+      );
+      if (typeof feeFromRatio === 'number' && feeFromRatio >= 0) {
+        gmgnFee = feeFromRatio;
+        break;
+      }
+    }
+
+    // fee=0 is valid (o1 / many RH V4 hook pools); do not drop it like an "unknown" fee.
+    const feeHint = typeof input.feeHint === 'number' && Number.isFinite(input.feeHint) && input.feeHint >= 0
+      ? input.feeHint
+      : null;
+    const feeCandidates = [...new Set(
+      [gmgnFee, lpFee, feeHint]
+        .filter((fee): fee is number => typeof fee === 'number' && Number.isFinite(fee) && fee >= 0),
+    )];
+    // Always try fee=0 when recovering hook pools (Initialize miss / lpFee unread).
+    if (!feeCandidates.includes(0)) feeCandidates.push(0);
+    if (!feeCandidates.length) return null;
+
+    const displayFee = (lpFee && lpFee > 0)
+      ? lpFee
+      : (gmgnFee && (gmgnFee & ~0x800000) > 0 ? (gmgnFee & ~0x800000) : null);
+    if (displayFee && displayFee > 0) {
+      this.rhV4DisplayFeeByPoolId.set(poolId, displayFee);
+    }
+
+    const currencies = [
+      ...this.rhV4CurrencyCandidates(input.tokenIn),
+      ...this.rhV4CurrencyCandidates(input.tokenOut),
+    ];
+    const tickHints = [
+      ...feeCandidates.map((fee) => {
+        const staticFee = fee & ~0x800000;
+        return this.v4TickSpacingForFee(staticFee > 0 ? staticFee : fee);
+      }),
+      1, 8, 10, 60, 200,
+    ];
+
+    const recovered = recoverUniswapV4PoolKey({
+      poolId,
+      currencies,
+      hooks: this.rhV4KnownHooks(),
+      fees: feeCandidates,
+      tickSpacings: tickHints,
+      strictFees: true,
+    });
+    if (recovered && recovered.tickSpacing > 0 && recovered.fee >= 0) {
+      // Keep fee=0 when hash-verified (common for o1 / hook pools). Do not replace with lpFee.
+      return {
+        fee: recovered.fee,
+        tickSpacing: recovered.tickSpacing,
+        hooks: recovered.hooks,
+      };
+    }
+
+    // Do NOT guess hooks=0 — that built "V4 1%" labels that still revert (e.g. STANDARD).
+    return null;
+  }
+
   private static async resolveRhV4PoolKey(input: {
     tokenIn: Address;
     tokenOut: Address;
     poolId?: string | null;
     feeHint?: number | null;
+    chainId?: number;
   }): Promise<{ fee: number; tickSpacing: number; hooks: Address } | null> {
     const poolId = String(input.poolId || '').trim().toLowerCase();
     const cacheKey = [
@@ -1852,27 +2319,19 @@ export class TradeService {
     ].join(':');
     const cached = this.rhV4PoolKeyCache.get(cacheKey);
     if (cached) return await cached;
+    // Fee/hooks: Initialize(poolId) when needed, else GMGN/lpFee + hash verify on known hooks.
+    // No full-chain getLogs scan / fee brute-force.
     const task = (async () => {
-      const poolManager = this.rhV4PoolManager();
-      if (!poolManager || poolManager === ZERO_ADDRESS) return null;
-      const client = await RpcService.getClient(ChainId.RH);
       if (this.isRhV4PoolId(poolId)) {
-        try {
-          const idLogs = await client.getLogs({
-            address: poolManager,
-            event: rhV4InitializeAbi[0],
-            args: { id: poolId as `0x${string}` },
-            fromBlock: 0n,
-            toBlock: 'latest',
-          });
-          const parsed = idLogs.length ? this.parseRhV4InitializeLog(idLogs[0]) : null;
-          if (parsed) {
-            return { fee: parsed.fee, tickSpacing: parsed.tickSpacing, hooks: parsed.hooks };
-          }
-        } catch {
-          // Fall through to currency-pair Initialize search.
-        }
+        return await this.resolveRhV4PoolKeyFromSources({
+          chainId: input.chainId ?? ChainId.RH,
+          tokenIn: input.tokenIn,
+          tokenOut: input.tokenOut,
+          poolId,
+          feeHint: input.feeHint,
+        });
       }
+
       const pons = await getPonsTradeState(input.tokenOut).catch(() => null);
       if (pons?.tradeable && pons.isOuter && pons.poolFee > 0 && pons.tickSpacing > 0) {
         if (this.isEquivalentFlapRouteToken(ChainId.RH, pons.quoteRouterToken, input.tokenIn)) {
@@ -1883,50 +2342,18 @@ export class TradeService {
           };
         }
       }
-      const lefts = this.rhV4CurrencyCandidates(input.tokenIn);
-      const rights = this.rhV4CurrencyCandidates(input.tokenOut);
-      const seen = new Set<string>();
-      const pairs: Array<[Address, Address]> = [];
-      for (const left of lefts) {
-        for (const right of rights) {
-          if (left.toLowerCase() === right.toLowerCase()) continue;
-          const [currency0, currency1] = this.sortRhV4Currencies(left, right);
-          const key = `${currency0.toLowerCase()}:${currency1.toLowerCase()}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          pairs.push([currency0, currency1]);
-        }
-      }
-      const logs = (await Promise.all(pairs.map(async ([currency0, currency1]) => {
-        try {
-          return await client.getLogs({
-            address: poolManager,
-            event: rhV4InitializeAbi[0],
-            args: { currency0, currency1 },
-            fromBlock: 0n,
-            toBlock: 'latest',
-          });
-        } catch {
-          return [];
-        }
-      }))).flat();
-      if (!logs.length) return null;
-      const scored = logs.map((log) => {
-        const parsed = this.parseRhV4InitializeLog(log);
-        if (!parsed) return null;
-        let score = 0;
-        if (poolId && parsed.id === poolId) score += 100;
-        if (input.feeHint && parsed.fee === input.feeHint) score += 20;
-        if (log.blockNumber) score += Number(log.blockNumber % 1000n) / 10000;
-        return { ...parsed, score };
-      }).filter((item): item is NonNullable<typeof item> => !!item)
-        .sort((a, b) => b.score - a.score);
-      const best = scored[0];
-      if (!best) return null;
-      return { fee: best.fee, tickSpacing: best.tickSpacing, hooks: best.hooks };
+      return null;
     })();
     this.rhV4PoolKeyCache.set(cacheKey, task);
-    return await task;
+    try {
+      const result = await task;
+      // Do not stick a miss forever (RPC blip / gmgn tab not open yet).
+      if (!result) this.rhV4PoolKeyCache.delete(cacheKey);
+      return result;
+    } catch (error) {
+      this.rhV4PoolKeyCache.delete(cacheKey);
+      throw error;
+    }
   }
 
   private static async resolveRhV4MarketHopDesc(input: {
@@ -1949,6 +2376,7 @@ export class TradeService {
     const pairMeta = await this.peekDexScreenerPairMeta(input.chainId, input.tokenIn, input.tokenOut);
     if (pairMeta.preferHint !== 'v4') return null;
     const v4Key = await this.resolveRhV4PoolKey({
+      chainId: input.chainId,
       tokenIn: input.tokenIn,
       tokenOut: input.tokenOut,
       poolId: pairMeta.displayPool,
@@ -2062,7 +2490,7 @@ export class TradeService {
     displayPools: Array<string | null>;
   }> {
     const launchpadConfig = plan.inner ? this.getLaunchpadConfig(tokenInfo, chainId) : null;
-    const hops = await Promise.all(plan.hops.map(async (hop) => {
+    const hops = await Promise.all(plan.hops.map(async (hop: EvmTradeRoutePlanHop) => {
       const tokenIn = hop.tokenIn as Address;
       const tokenOut = hop.tokenOut as Address;
       try {
@@ -2080,24 +2508,148 @@ export class TradeService {
             displayPool: launchpadConfig.manager !== ZERO_ADDRESS ? launchpadConfig.manager : null,
           };
         }
-        if (chainId === ChainId.RH) {
+        if (chainId === ChainId.RH && isPonsPlatform(resolveTradeLaunchpadPlatform(tokenInfo))) {
           const finalOut = plan.hops[plan.hops.length - 1]?.tokenOut;
           if (finalOut && tokenOut.toLowerCase() === String(finalOut).toLowerCase()) {
             const ponsState = await getPonsTradeState(tokenOut).catch(() => null);
             if (ponsState?.tradeable && ponsState.isOuter) {
-              const pairMeta = await this.peekDexScreenerPairMeta(chainId, tokenIn, tokenOut);
               const desc = buildPonsBuyDesc({ state: ponsState, tokenOut, minOut: 0n });
               return {
                 desc,
-                liquidityUsd: pairMeta.liquidityUsd,
-                symbols: pairMeta.symbols,
-                displayPool: pairMeta.displayPool
-                  || (ponsState.version === 1 ? ponsState.v3Pool : ponsState.v4PoolManager),
+                liquidityUsd: null,
+                symbols: {} as Record<string, string>,
+                displayPool: ponsState.version === 1 ? ponsState.v3Pool : ponsState.v4PoolManager,
               };
             }
           }
         }
-        const pairMeta = await this.peekDexScreenerPairMeta(chainId, tokenIn, tokenOut);
+        const knownHopPool = hop.poolAddress && isAddressLike(hop.poolAddress) && hop.dexLabel !== 'V4'
+          ? hop.poolAddress as Address
+          : null;
+        if (knownHopPool && chainId !== ChainId.RH) {
+          try {
+            const desc = await this.resolveKnownPoolRouteDesc({
+              chainId,
+              tokenIn,
+              tokenOut,
+              poolAddress: knownHopPool,
+              preferHint: hop.dexLabel === 'V3' ? 'v3' : hop.dexLabel === 'V2' ? 'v2' : null,
+              fee: hop.fee,
+            });
+            return {
+              desc,
+              liquidityUsd: null,
+              symbols: {} as Record<string, string>,
+              displayPool: knownHopPool,
+            };
+          } catch {
+          }
+        }
+        const isLastMarketHop = tokenOut.toLowerCase() === String(tokenInfo.address || '').toLowerCase();
+        if (isLastMarketHop && chainId !== ChainId.RH) {
+          const official = this.getKnownDexPoolAddress(tokenInfo);
+          const lastPool = (official && isAddressLike(official)) ? official : knownHopPool;
+          if (lastPool) {
+            const desc = await this.resolveKnownPoolRouteDesc({
+              chainId,
+              tokenIn,
+              tokenOut,
+              poolAddress: lastPool,
+              preferHint: (() => {
+                const fromDex = this.normalizeDexPrefer(tokenInfo.dex_type);
+                if (fromDex === 'v2' || fromDex === 'v3') return fromDex;
+                if (hop.dexLabel === 'V3') return 'v3';
+                if (hop.dexLabel === 'V2') return 'v2';
+                return null;
+              })(),
+              fee: hop.fee,
+              dexType: tokenInfo.dex_type,
+            });
+            return {
+              desc,
+              liquidityUsd: null,
+              symbols: {} as Record<string, string>,
+              displayPool: lastPool,
+            };
+          }
+        }
+        const platformNow = resolveTradeLaunchpadPlatform(tokenInfo);
+        const isO1Hop = isLastMarketHop && isO1LaunchpadPlatform(platformNow);
+        const isLongHop = isLastMarketHop && isLongLaunchpadPlatform(platformNow);
+        const hopPoolIsV4 = chainId === ChainId.RH && this.isRhV4PoolId(hop.poolAddress);
+        const rhWantV4 = chainId === ChainId.RH && (
+          hop.dexLabel === 'V4'
+          || hop.dexLabel === 'pons'
+          || hopPoolIsV4
+          || isO1Hop
+          || isLongHop
+        );
+        if (rhWantV4) {
+          const hintedPoolId = this.rhV4PoolIdFromTokenInfo(tokenInfo, hop.poolAddress, null);
+          const o1State = isO1Hop
+            ? await getO1LaunchState(tokenOut, {
+                poolId: hintedPoolId,
+                extraCurrencies: [tokenIn, hop.poolAddress],
+              }).catch(() => null)
+            : null;
+          const longState = (!o1State && isLongHop)
+            ? await getLongLaunchState(tokenOut, {
+                poolId: hintedPoolId,
+                extraCurrencies: [tokenIn, hop.poolAddress, tokenInfo.quote_token_address],
+              }).catch(() => null)
+            : null;
+          const launchKey = o1State
+            ? { fee: o1State.fee, tickSpacing: o1State.tickSpacing, hooks: o1State.hooks, poolId: o1State.poolId }
+            : longState
+              ? { fee: longState.fee, tickSpacing: longState.tickSpacing, hooks: longState.hooks, poolId: longState.poolId }
+              : null;
+          const v4Key = launchKey
+            ? { fee: launchKey.fee, tickSpacing: launchKey.tickSpacing, hooks: launchKey.hooks }
+            : await this.resolveRhV4PoolKey({
+                chainId,
+                tokenIn,
+                tokenOut,
+                poolId: hintedPoolId,
+                feeHint: hop.fee,
+              });
+          // fee=0 and dynamic-fee flag are valid for RH hook pools. Require tickSpacing.
+          if (this.isUsableRhV4PoolKey(v4Key)) {
+            const fee = this.pickRhV4Fee(v4Key.fee, hop.fee);
+            const tickSpacing = (v4Key.tickSpacing && v4Key.tickSpacing > 0)
+              ? v4Key.tickSpacing
+              : this.v4TickSpacingForFee(fee > 0 ? fee : 3000);
+            const desc = this.buildRhV4MarketDesc({
+              tokenIn,
+              tokenOut,
+              fee,
+              tickSpacing,
+              hooks: v4Key.hooks,
+            });
+            return {
+              desc,
+              liquidityUsd: null,
+              symbols: {} as Record<string, string>,
+              displayPool: launchKey?.poolId || hintedPoolId || hop.poolAddress || desc.poolManager,
+            };
+          }
+        }
+        // V4 poolIds are 32-byte refs; do not treat them as "known pool address" and skip
+        // DexScreener — that path previously locked preferHint to the (often wrong) hop.dexLabel.
+        const hopHasPoolRef = !!(hop.poolAddress && isAddressLike(hop.poolAddress));
+        const pairMeta = hopHasPoolRef
+          ? {
+              liquidityUsd: null as number | null,
+              symbols: {} as Record<string, string>,
+              poolAddress: hop.poolAddress as Address,
+              displayPool: hop.poolAddress || null,
+              preferHint: (
+                hop.dexLabel === 'V4' ? 'v4'
+                  : hop.dexLabel === 'V3' ? 'v3'
+                    : hop.dexLabel === 'V2' ? 'v2'
+                      : null
+              ) as 'v2' | 'v3' | 'v4' | null,
+            }
+          : await this.peekDexScreenerPairMeta(chainId, tokenIn, tokenOut);
         if (hop.poolAddress && isAddressLike(hop.poolAddress) && hop.kind === 'bridge') {
           return {
             desc: getRouterSwapDesc({
@@ -2117,7 +2669,7 @@ export class TradeService {
           : hop.poolAddress && isAddressLike(hop.poolAddress)
             ? hop.poolAddress as Address
             : pairMeta.poolAddress;
-        const preferred = knownPool
+        const preferred = (knownPool || !isLastMarketHop)
           ? null
           : await this.getPreferredFlapOuterTargetPool({
             chainId,
@@ -2128,29 +2680,34 @@ export class TradeService {
           }).catch(() => null);
         const preferHint = preferred?.preferHint
           ?? pairMeta.preferHint
-          ?? (hop.dexLabel === 'V3' ? 'v3' as const : hop.dexLabel === 'V2' ? 'v2' as const : null);
-        const rhWantV4 = chainId === ChainId.RH && (
-          preferHint === 'v4'
-          || ((hop.dexLabel === 'V4' || hop.dexLabel === 'pons') && preferHint !== 'v2' && preferHint !== 'v3')
-        );
-        if (rhWantV4) {
-          const v4Key = await this.resolveRhV4PoolKey({
-            tokenIn,
-            tokenOut,
-            poolId: pairMeta.displayPool,
-            feeHint: hop.fee ?? pairMeta.fee,
-          });
-          if (v4Key) {
-            const fee = (v4Key.fee && v4Key.fee > 0)
-              ? v4Key.fee
-              : (hop.fee && hop.fee > 0)
-                ? hop.fee
-                : (pairMeta.fee && pairMeta.fee > 0 ? pairMeta.fee : 3000);
+          ?? (hop.dexLabel === 'V4' ? 'v4' as const
+            : hop.dexLabel === 'V3' ? 'v3' as const
+              : hop.dexLabel === 'V2' ? 'v2' as const
+                : null);
+        if (chainId === ChainId.RH && preferHint === 'v4') {
+          const hintedPoolId = this.rhV4PoolIdFromTokenInfo(tokenInfo, hop.poolAddress, pairMeta.displayPool);
+          const longFallback = isLongLaunchpadPlatform(resolveTradeLaunchpadPlatform(tokenInfo))
+            ? await getLongLaunchState(tokenOut, {
+                poolId: hintedPoolId,
+                extraCurrencies: [tokenIn, hop.poolAddress, tokenInfo.quote_token_address],
+              }).catch(() => null)
+            : null;
+          const v4Key = longFallback
+            ? { fee: longFallback.fee, tickSpacing: longFallback.tickSpacing, hooks: longFallback.hooks }
+            : await this.resolveRhV4PoolKey({
+                chainId,
+                tokenIn,
+                tokenOut,
+                poolId: hintedPoolId,
+                feeHint: hop.fee ?? pairMeta.fee,
+              });
+          if (this.isUsableRhV4PoolKey(v4Key)) {
+            const fee = this.pickRhV4Fee(v4Key.fee, hop.fee, pairMeta.fee);
             const tickSpacing = (v4Key.tickSpacing && v4Key.tickSpacing > 0)
               ? v4Key.tickSpacing
               : (pairMeta.tickSpacing && pairMeta.tickSpacing > 0)
                 ? pairMeta.tickSpacing
-                : this.v4TickSpacingForFee(fee);
+                : this.v4TickSpacingForFee(fee > 0 ? fee : 3000);
             const desc = this.buildRhV4MarketDesc({
               tokenIn,
               tokenOut,
@@ -2162,22 +2719,94 @@ export class TradeService {
               desc,
               liquidityUsd: pairMeta.liquidityUsd,
               symbols: pairMeta.symbols,
-              displayPool: pairMeta.displayPool || desc.poolManager,
+              displayPool: longFallback?.poolId || pairMeta.displayPool || hintedPoolId || desc.poolManager,
             };
           }
         }
-        const execPrefer = chainId === ChainId.RH && (preferHint === 'v4' || hop.dexLabel === 'V4')
-          ? 'v3' as const
-          : preferHint;
+        const execPrefer = preferHint;
         const poolAddress = knownPool ?? preferred?.poolAddress ?? ZERO_ADDRESS;
-        const wantV3 = execPrefer === 'v3' || hop.dexLabel === 'V3' || (chainId === ChainId.RH && execPrefer !== 'v2');
-        let v3Fee = wantV3
-          ? (preferred?.fee ?? hop.fee ?? getDefaultBridgeV3Fee(chainId))
-          : (hop.fee ?? 0);
-        if (chainId === ChainId.RH && wantV3 && poolAddress !== ZERO_ADDRESS) {
-          const poolMeta = await this.getKnownPoolRouteMeta(chainId, poolAddress, 'v3').catch(() => null);
-          if (poolMeta?.fee && poolMeta.fee > 0) v3Fee = poolMeta.fee;
+        const hopLiquidityUsd = typeof preferred?.liquidityUsd === 'number' && preferred.liquidityUsd > 0
+          ? preferred.liquidityUsd
+          : pairMeta.liquidityUsd;
+        const hopSymbols = {
+          ...pairMeta.symbols,
+          ...(preferred?.symbols ?? {}),
+        };
+        const hopDisplayPool = pairMeta.displayPool || (poolAddress !== ZERO_ADDRESS ? poolAddress : null);
+        // Known V3/V2 pair address: resolve fee from the pool contract (all chains including RH).
+        // RH previously skipped this and fell through to default fee=500 → POOL_NOT_FOUND.
+        if (
+          poolAddress !== ZERO_ADDRESS
+          && isAddressLike(poolAddress)
+          && !this.isRhV4PoolId(poolAddress)
+          && execPrefer !== 'v4'
+          && hop.dexLabel !== 'V4'
+        ) {
+          try {
+            const desc = await this.resolveKnownPoolRouteDesc({
+              chainId,
+              tokenIn,
+              tokenOut,
+              poolAddress,
+              // Do not invent preferHint here — getKnownPoolRouteMeta classifies on-chain.
+              preferHint: execPrefer === 'v3' ? 'v3' : execPrefer === 'v2' ? 'v2' : null,
+              fee: preferred?.fee ?? hop.fee ?? pairMeta.fee,
+            });
+            return {
+              desc,
+              liquidityUsd: hopLiquidityUsd,
+              symbols: hopSymbols,
+              displayPool: hopDisplayPool,
+            };
+          } catch {
+          }
         }
+        // RH V4 without a resolved fee must not fall into V3 defaults or fee=0 executable descs.
+        if (
+          chainId === ChainId.RH
+          && (
+            execPrefer === 'v4'
+            || hop.dexLabel === 'V4'
+            || this.isRhV4PoolId(hop.poolAddress)
+            || this.isRhV4PoolId(pairMeta.displayPool)
+          )
+        ) {
+          const v4Display = hopDisplayPool || hop.poolAddress || pairMeta.displayPool;
+          const feeHint = preferred?.fee ?? hop.fee ?? pairMeta.fee;
+          const v4Key = await this.resolveRhV4PoolKey({
+            chainId,
+            tokenIn,
+            tokenOut,
+            poolId: v4Display,
+            feeHint,
+          });
+          if (this.isUsableRhV4PoolKey(v4Key)) {
+            const fee = this.pickRhV4Fee(v4Key.fee, preferred?.fee, hop.fee, pairMeta.fee);
+            const tickSpacing = v4Key.tickSpacing > 0
+              ? v4Key.tickSpacing
+              : this.v4TickSpacingForFee(fee > 0 ? fee : 3000);
+            const desc = this.buildRhV4MarketDesc({
+              tokenIn,
+              tokenOut,
+              fee,
+              tickSpacing,
+              hooks: v4Key.hooks,
+            });
+            return {
+              desc,
+              liquidityUsd: hopLiquidityUsd,
+              symbols: hopSymbols,
+              displayPool: v4Display || desc.poolManager,
+            };
+          }
+          throw new Error(
+            `RH Uniswap V4 pool fee 未就绪 (${tokenIn}/${tokenOut}, pool=${v4Display || 'unknown'})`,
+          );
+        }
+        const wantV3 = execPrefer === 'v3' || hop.dexLabel === 'V3' || (chainId === ChainId.RH && !execPrefer);
+        const v3Fee = wantV3
+          ? (preferred?.fee ?? hop.fee ?? pairMeta.fee ?? getDefaultBridgeV3Fee(chainId))
+          : (hop.fee ?? 0);
         return {
           desc: getRouterSwapDesc({
             swapType: this.toPreviewDexSwapType(chainId, hop, execPrefer),
@@ -2186,14 +2815,9 @@ export class TradeService {
             poolAddress,
             fee: v3Fee,
           }),
-          liquidityUsd: typeof preferred?.liquidityUsd === 'number' && preferred.liquidityUsd > 0
-            ? preferred.liquidityUsd
-            : pairMeta.liquidityUsd,
-          symbols: {
-            ...pairMeta.symbols,
-            ...(preferred?.symbols ?? {}),
-          },
-          displayPool: pairMeta.displayPool || (poolAddress !== ZERO_ADDRESS ? poolAddress : null),
+          liquidityUsd: hopLiquidityUsd,
+          symbols: hopSymbols,
+          displayPool: hopDisplayPool,
         };
       } catch {
         return {
@@ -2248,6 +2872,21 @@ export class TradeService {
     return 'DEX';
   }
 
+  private static previewFeeFromDesc(desc: SwapDescLike, displayPool?: string | null): number | null {
+    const fee = typeof desc.fee === 'number' && Number.isFinite(desc.fee) ? desc.fee : null;
+    if (fee == null || fee < 0) return null;
+    const dynamic = 0x800000;
+    const isPureDynamic = (fee & dynamic) !== 0 && (fee & ~dynamic) === 0;
+    if (isPureDynamic) {
+      const poolId = String(displayPool || '').trim().toLowerCase();
+      const cached = poolId ? this.rhV4DisplayFeeByPoolId.get(poolId) : null;
+      // Prefer runtime lpFee for the badge; keep a dynamic marker so UI can show「动态」if unknown.
+      if (typeof cached === 'number' && cached > 0) return cached;
+      return fee;
+    }
+    return fee > 0 ? fee : null;
+  }
+
   private static toQuickTradeRoutePreview(
     chainId: number,
     tokenInfo: TokenInfo,
@@ -2273,7 +2912,7 @@ export class TradeService {
       ),
       dexLabel: this.labelQuickTradeDex(desc.swapType, chainId),
       poolAddress: this.previewPoolAddress(desc, displayPools?.[index]),
-      fee: typeof desc.fee === 'number' && desc.fee > 0 ? desc.fee : null,
+      fee: this.previewFeeFromDesc(desc, displayPools?.[index]),
       liquidityUsd: typeof liquidityUsd?.[index] === 'number' && (liquidityUsd?.[index] ?? 0) > 0
         ? liquidityUsd[index]
         : null,
@@ -2431,7 +3070,7 @@ export class TradeService {
     let routeCurrentToken = input.currentToken;
     if (routeCurrentToken.toLowerCase() !== routeQuoteToken.toLowerCase()) {
       if (!this.isFlapOuterRouteTerminalToken(input.chainId, routeQuoteToken)) {
-        const prefix = await this.buildFlapOuterBuyQuoteRoute({
+        const prefix = await this.buildOuterMarketBuyQuoteRoute({
           chainId: input.chainId,
           currentToken: input.currentToken,
           targetToken: routeQuoteToken,
@@ -2537,6 +3176,9 @@ export class TradeService {
   private static async ensureFlapTradeTokenInfo(chainId: number, tokenInfo: TokenInfo, debug?: boolean): Promise<TokenInfo> {
     const platform = resolveTradeLaunchpadPlatform(tokenInfo);
     if (!platform.startsWith('flap')) return tokenInfo;
+    const hasQuote = isAddressLike(tokenInfo.quote_token_address);
+    const hasPool = !!(tokenInfo.pool_pair || tokenInfo.biggest_pool_address || tokenInfo.tpool_pool_address || tokenInfo.flap_v4_fee);
+    if (hasQuote && hasPool) return tokenInfo;
     const rawStatus = Number(tokenInfo.launchpad_status ?? Number.NaN);
     const isOuter = Number.isFinite(rawStatus)
       ? rawStatus === 1
@@ -2550,13 +3192,9 @@ export class TradeService {
 
   private static async getFlapTokenIdentityInfo(chainId: number, tokenAddress: Address): Promise<Partial<TokenInfo> | null> {
     try {
-      const res = await call({
-        type: 'token:getTokenInfo:flap',
-        chainId,
-        tokenAddress,
-      } as const);
-      if ((res as any)?.ok === false) return null;
-      const state = res as unknown as FlapTokenStateV7;
+      // Direct service call — never browser.runtime.sendMessage from background
+      // (self-messaging deadlocks the prewarm/prepare handler until timeout).
+      const state = await TokenFlapService.getTokenInfo(chainId, tokenAddress);
       return {
         address: tokenAddress,
         launchpad: 'flap',
@@ -2652,14 +3290,7 @@ export class TradeService {
       task = (async () => {
         let onchain: FlapTokenStateV7 | null = null;
         try {
-          const res = await call({
-            type: 'token:getTokenInfo:flap',
-            chainId,
-            tokenAddress,
-          } as const);
-          if ((res as any)?.ok !== false) {
-            onchain = res as unknown as FlapTokenStateV7;
-          }
+          onchain = await TokenFlapService.getTokenInfo(chainId, tokenAddress);
         } catch {
           onchain = null;
         }
@@ -2700,7 +3331,7 @@ export class TradeService {
             || officialInfo?.tpool_pool_address
             || tradeInfo?.tpool_pool_address;
         let mergedDexType = officialInfo?.dex_type || tradeInfo?.dex_type;
-        const mergedQuoteToken = officialInfo?.quote_token || tradeInfo?.quote_token || '';
+        let mergedQuoteToken = officialInfo?.quote_token || tradeInfo?.quote_token || '';
         const mergedNativeToQuoteSwapEnabled = onchain?.nativeToQuoteSwapEnabled
           ?? officialInfo?.nativeToQuoteSwapEnabled
           ?? tradeInfo?.nativeToQuoteSwapEnabled;
@@ -2818,7 +3449,19 @@ export class TradeService {
         const mergedTpoolPoolAddress = officialInfo?.tpool_pool_address || tradeInfo?.tpool_pool_address;
         const mergedBiggestPoolAddress = officialInfo?.biggest_pool_address || tradeInfo?.biggest_pool_address;
 
-        if (!mergedPoolPair || !mergedQuoteTokenAddress || !mergedDexType) {
+        if (mergedPoolPair && !mergedQuoteTokenAddress) {
+          const officialPoolQuote = await this.resolveQuoteFromOfficialPool({
+            chainId,
+            tokenAddress,
+            poolAddress: mergedPoolPair,
+            debug,
+          });
+          if (officialPoolQuote) {
+            mergedQuoteTokenAddress = officialPoolQuote.quoteTokenAddress;
+            mergedQuoteToken = officialPoolQuote.quoteSymbol || mergedQuoteToken;
+            mergedDexType = officialPoolQuote.dexType || mergedDexType;
+          }
+        } else if (!mergedPoolPair && (!mergedQuoteTokenAddress || !mergedDexType)) {
           const dexFallback = await this.getDexScreenerOuterQuoteFallback({
             chain,
             chainId,
@@ -2945,40 +3588,68 @@ export class TradeService {
     return this.getAllowedRouterV3Factories(chainId).some((item) => item.toLowerCase() === lower);
   }
 
+  private static inferV3Factory(chainId: number, dexType?: string | null): Address | undefined {
+    const deploys = DeployAddress[chainId as ChainId] ?? {};
+    const pancake = deploys[ContractNames.PancakeFactoryV3]?.address;
+    const uni = deploys[ContractNames.UniswapFactoryV3]?.address;
+    const raw = String(dexType || '').toLowerCase();
+    if (raw.includes('uniswap') && isAddressLike(uni)) return uni as Address;
+    if (raw.includes('pancake') && isAddressLike(pancake)) return pancake as Address;
+    if (chainId === ChainId.BNB && isAddressLike(pancake)) return pancake as Address;
+    if (isAddressLike(uni)) return uni as Address;
+    return isAddressLike(pancake) ? pancake as Address : undefined;
+  }
+
   private static async getKnownPoolRouteMeta(
     chainId: number,
     poolAddress: Address,
-    preferHint?: 'v2' | 'v3' | null
+    preferHint?: 'v2' | 'v3' | null,
+    feeHint?: number | null,
+    dexType?: string | null,
   ): Promise<{ prefer: 'v2' | 'v3'; fee?: number; v3Factory?: Address } | null> {
-    const key = `${chainId}:${poolAddress.toLowerCase()}:${preferHint ?? 'auto'}`;
+    // Cache by pool only — same address must not flip V2/V3 across preferHint variants.
+    const key = `${chainId}:${poolAddress.toLowerCase()}`;
     let task = this.flapKnownPoolMetaCache.get(key);
     if (!task) {
       task = (async () => {
         const client = await RpcService.getClient(chainId);
+        // On-chain type is authoritative. preferHint alone used to force V3 with default
+        // fee=500 when fee() reverted on a V2 pair (e.g. 4Stock/BNC4) → label flip-flop.
         try {
-          const [feeRaw, factoryRaw] = await Promise.all([
-            client.readContract({
-              address: poolAddress,
-              abi: poolV3Abi,
-              functionName: 'fee',
-            }),
-            client.readContract({
-              address: poolAddress,
-              abi: poolV3Abi,
-              functionName: 'factory',
-            }).catch(() => ZERO_ADDRESS),
-          ]);
+          const feeRaw = await client.readContract({
+            address: poolAddress,
+            abi: poolV3Abi,
+            functionName: 'fee',
+          });
           const fee = Number(feeRaw);
-          const v3Factory = isAddressLike(factoryRaw) && factoryRaw !== ZERO_ADDRESS
-            ? factoryRaw as Address
-            : undefined;
-          if (Number.isFinite(fee) && fee > 0) {
-            return { prefer: 'v3' as const, fee, v3Factory };
+          if (Number.isFinite(fee) && fee > 0 && fee <= 1_000_000) {
+            return {
+              prefer: 'v3' as const,
+              fee,
+              v3Factory: this.inferV3Factory(chainId, dexType),
+            };
           }
         } catch {
         }
+        try {
+          await client.readContract({
+            address: poolAddress,
+            abi: pairV2Abi,
+            functionName: 'getReserves',
+          });
+          return { prefer: 'v2' as const };
+        } catch {
+        }
+        // Last resort only when chain probes both fail (rare / broken RPC).
         if (preferHint === 'v3') {
-          return { prefer: 'v3' as const, fee: getDefaultBridgeV3Fee(chainId) };
+          const fee = typeof feeHint === 'number' && feeHint > 0
+            ? feeHint
+            : getDefaultBridgeV3Fee(chainId);
+          return {
+            prefer: 'v3' as const,
+            fee,
+            v3Factory: this.inferV3Factory(chainId, dexType),
+          };
         }
         return { prefer: 'v2' as const };
       })();
@@ -2993,9 +3664,17 @@ export class TradeService {
     tokenOut: Address;
     poolAddress: Address;
     preferHint?: 'v2' | 'v3' | null;
+    fee?: number | null;
+    dexType?: string | null;
     debug?: boolean;
   }): Promise<SwapDescLike> {
-    const meta = await this.getKnownPoolRouteMeta(input.chainId, input.poolAddress, input.preferHint);
+    const meta = await this.getKnownPoolRouteMeta(
+      input.chainId,
+      input.poolAddress,
+      input.preferHint,
+      input.fee,
+      input.dexType,
+    );
     if (!meta) {
       throw new Error(`找不到 ${input.tokenIn}/${input.tokenOut} 的交易池`);
     }
@@ -3039,7 +3718,7 @@ export class TradeService {
 
   private static async attachV3FactoriesToDescs(chainId: number, descs: SwapDescLike[]): Promise<SwapDescLike[]> {
     if (chainId === ChainId.RH) return descs;
-    return await Promise.all(descs.map(async (desc) => {
+    return descs.map((desc) => {
       if (desc.swapType !== SwapType.V3_EXACT_IN) return desc;
       if (!desc.poolAddress || desc.poolAddress === ZERO_ADDRESS) return desc;
       if (desc.poolManager && desc.poolManager !== ZERO_ADDRESS) {
@@ -3048,14 +3727,13 @@ export class TradeService {
         }
         return desc;
       }
-      const meta = await this.getKnownPoolRouteMeta(chainId, desc.poolAddress, 'v3');
-      const factory = meta?.v3Factory;
+      const factory = this.inferV3Factory(chainId);
       if (!factory) return desc;
       if (!this.isAllowedRouterV3Factory(chainId, factory)) {
         throw new Error('该 V3 池不属于 Pancake/Uniswap，当前路由无法成交');
       }
       return { ...desc, poolManager: factory };
-    }));
+    });
   }
 
   private static isFlapOuterRouteTerminalToken(chainId: number, tokenAddress: Address): boolean {
@@ -3075,9 +3753,9 @@ export class TradeService {
     return raw as Address;
   }
 
-  private static normalizeDexPrefer(dexType?: string): 'v2' | 'v3' | null {
+  private static normalizeDexPrefer(dexType?: string): 'v2' | 'v3' | 'v4' | null {
     const prefer = dexType ? getDexPoolPrefer(dexType) : null;
-    return prefer === 'v2' || prefer === 'v3' ? prefer : null;
+    return prefer === 'v2' || prefer === 'v3' || prefer === 'v4' ? prefer : null;
   }
 
   private static mapDexScreenerPairDexType(pair: DexScreenerPair | null | undefined): string | undefined {
@@ -3151,13 +3829,17 @@ export class TradeService {
     const rawCounterparty = this.getDexScreenerCounterpartyToken(pair, input.tokenAddress);
     if (!rawCounterparty) return null;
     const counterparty = this.normalizeFlapPoolCounterpartyToken(input.chainId, rawCounterparty) ?? rawCounterparty;
-    const liquidityUsd = Number(pair.liquidity?.usd ?? 0);
+    const liquidityUsd = DexScreenerAPI.effectiveLiquidityUsd(pair);
     if (liquidityUsd < FLAP_DEXSCREENER_MIN_LIQUIDITY_USD) return null;
+    const dexType = this.mapDexScreenerPairDexType(pair);
+    if (String(dexType || '').toLowerCase().includes('v4')) return null;
+    const fee = this.parseDexScreenerSwapFee(pair);
+    const preferHint = this.normalizeDexPrefer(dexType) ?? (fee ? 'v3' : 'v2');
     return {
       pair,
       counterparty,
       liquidityUsd,
-      preferHint: this.normalizeDexPrefer(this.mapDexScreenerPairDexType(pair)),
+      preferHint,
     };
   }
 
@@ -3194,53 +3876,35 @@ export class TradeService {
 
     const tokenLower = input.tokenAddress.toLowerCase();
     const pairs = await DexScreenerAPI.getPairsByToken(chain, input.tokenAddress).catch(() => []);
-    const counterparties: Address[] = [];
-    const seenCounterparties = new Set<string>();
-    const addCounterparty = (token?: string | null) => {
-      const queryToken = this.toDexScreenerPairToken(input.chainId, token);
-      if (!queryToken) return;
-      if (queryToken.toLowerCase() === tokenLower) return;
-      const routeToken = this.normalizeFlapPoolCounterpartyToken(input.chainId, queryToken) ?? queryToken;
-      const routeLower = routeToken.toLowerCase();
-      if (input.excludeTokens?.has(routeLower) || input.excludeTokens?.has(queryToken.toLowerCase())) return;
-      if (seenCounterparties.has(queryToken.toLowerCase())) return;
-      seenCounterparties.add(queryToken.toLowerCase());
-      counterparties.push(queryToken);
-    };
-
-    addCounterparty(input.currentToken);
-    for (const token of this.getPreferredDexCounterpartyCandidates(input.chainId, input.currentToken ?? ZERO_ADDRESS)) {
-      addCounterparty(token);
-    }
+    const resolved: Array<DexScreenerQuoteHop & { rank: number }> = [];
     for (const pair of pairs) {
-      addCounterparty(this.getDexScreenerCounterpartyToken(pair, input.tokenAddress));
-    }
-
-    const resolved = (await Promise.all(counterparties.map(async (counterparty) => {
-      const best = await this.resolveBestDexScreenerPairBetweenTokens({
-        chainId: input.chainId,
-        chain,
-        tokenAddress: input.tokenAddress,
+      if (!pair?.pairAddress || !isAddressLike(pair.pairAddress)) continue;
+      if (!this.isRouterSupportedDexScreenerPair(input.chainId, pair)) continue;
+      const liquidityUsd = DexScreenerAPI.effectiveLiquidityUsd(pair);
+      if (liquidityUsd <= 0) continue;
+      const rawCounterparty = this.getDexScreenerCounterpartyToken(pair, input.tokenAddress);
+      if (!rawCounterparty) continue;
+      const counterparty = this.normalizeFlapPoolCounterpartyToken(input.chainId, rawCounterparty) ?? rawCounterparty;
+      if (counterparty.toLowerCase() === tokenLower) continue;
+      const routeLower = counterparty.toLowerCase();
+      if (input.excludeTokens?.has(routeLower) || input.excludeTokens?.has(rawCounterparty.toLowerCase())) continue;
+      const isCurrent = this.isEquivalentFlapRouteToken(input.chainId, counterparty, input.currentToken);
+      const isTerminal = this.isFlapOuterRouteTerminalToken(input.chainId, counterparty);
+      if (input.preferTerminalOnly && !isCurrent && !isTerminal) continue;
+      const dexType = this.mapDexScreenerPairDexType(pair);
+      if (String(dexType || '').toLowerCase().includes('v4')) continue;
+      resolved.push({
+        poolAddress: pair.pairAddress as Address,
         counterparty,
-      });
-      if (!best) return null;
-      const isCurrent = this.isEquivalentFlapRouteToken(input.chainId, best.counterparty, input.currentToken);
-      const isTerminal = this.isFlapOuterRouteTerminalToken(input.chainId, best.counterparty);
-      if (input.preferTerminalOnly && !isCurrent && !isTerminal) return null;
-      return {
-        poolAddress: best.pair.pairAddress as Address,
-        counterparty: best.counterparty,
-        preferHint: best.preferHint,
-        liquidityUsd: best.liquidityUsd,
+        preferHint: this.normalizeDexPrefer(dexType) ?? (this.parseDexScreenerSwapFee(pair) ? 'v3' : 'v2'),
+        liquidityUsd,
         rank: isCurrent ? 0 : isTerminal ? 1 : 2,
-        dexId: best.pair.dexId,
-        labels: best.pair.labels ?? [],
-      };
-    }))).filter(Boolean) as Array<DexScreenerQuoteHop & { rank: number; dexId?: string; labels: string[] }>;
+      });
+    }
 
     resolved.sort((a, b) => {
-      if (a.rank !== b.rank) return a.rank - b.rank;
       if (a.liquidityUsd !== b.liquidityUsd) return b.liquidityUsd - a.liquidityUsd;
+      if (a.rank !== b.rank) return a.rank - b.rank;
       return 0;
     });
 
@@ -3264,19 +3928,16 @@ export class TradeService {
       tokenAddress: input.tokenAddress,
       currentToken: input.currentToken ?? null,
       preferTerminalOnly: input.preferTerminalOnly === true,
-      method: 'best_pair_between_tokens',
-      counterpartyCount: counterparties.length,
+      method: 'token_pairs_liquidity_usd',
+      pairCount: pairs.length,
       consideredHopCount: resolved.length,
       keptHopCount: unique.length,
-      counterparties,
       consideredHops: resolved.slice(0, 10).map((hop) => ({
         pool: hop.poolAddress,
         counterparty: hop.counterparty,
         preferHint: hop.preferHint,
         liquidityUsd: hop.liquidityUsd,
         rank: hop.rank,
-        dexId: hop.dexId ?? null,
-        labels: hop.labels,
       })),
       keptHops: unique.map((hop) => ({
         pool: hop.poolAddress,
@@ -3308,6 +3969,58 @@ export class TradeService {
     return unique;
   }
 
+  private static async resolveTokenDeepestDexHome(input: {
+    chainId: number;
+    tokenAddress: Address;
+    debug?: boolean;
+  }): Promise<DexScreenerQuoteHop | null> {
+    const chain = String(chainNames[input.chainId as ChainId] || '').trim().toLowerCase();
+    if (!chain) return null;
+    const pairs = await DexScreenerAPI.getPairsByToken(chain, input.tokenAddress).catch(() => []);
+    if (!pairs.length) return null;
+
+    const candidates: DexScreenerQuoteHop[] = [];
+    for (const pair of pairs) {
+      if (!pair?.pairAddress || !isAddressLike(pair.pairAddress)) continue;
+      if (!this.isRouterSupportedDexScreenerPair(input.chainId, pair)) continue;
+      const rawCounterparty = this.getDexScreenerCounterpartyToken(pair, input.tokenAddress);
+      if (!rawCounterparty) continue;
+      const counterparty = this.normalizeFlapPoolCounterpartyToken(input.chainId, rawCounterparty) ?? rawCounterparty;
+      if (this.isEquivalentFlapRouteToken(input.chainId, counterparty, input.tokenAddress)) continue;
+      const liquidityUsd = DexScreenerAPI.effectiveLiquidityUsd(pair);
+      if (liquidityUsd < FLAP_DEXSCREENER_MIN_LIQUIDITY_USD) continue;
+      candidates.push({
+        poolAddress: pair.pairAddress as Address,
+        counterparty,
+        preferHint: this.normalizeDexPrefer(this.mapDexScreenerPairDexType(pair)),
+        liquidityUsd,
+      });
+    }
+    if (!candidates.length) return null;
+
+    // Prefer stable terminals (USDT/USDC/…) over native/WBNB so catalog quotes like GMEB
+    // resolve as BNB→USDT→GMEB instead of a thin direct BNB pair.
+    const stableHomes = candidates.filter((item) => (
+      isTradeRouteTerminalQuote(input.chainId, item.counterparty)
+      && !isTradeRouteNativeToken(input.chainId, item.counterparty)
+    ));
+    const pool = (stableHomes.length ? stableHomes : candidates)
+      .slice()
+      .sort((a, b) => b.liquidityUsd - a.liquidityUsd)[0];
+    if (!pool) return null;
+
+    this.logRoutePool(input.debug, 'dex.home.selected', {
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      home: pool.counterparty,
+      pool: pool.poolAddress,
+      liquidityUsd: pool.liquidityUsd,
+      homeIsTerminal: isTradeRouteTerminalQuote(input.chainId, pool.counterparty),
+      preferredStableHome: stableHomes.length > 0,
+    });
+    return pool;
+  }
+
   private static async assembleBuyRouteViaDexHop(input: {
     chainId: number;
     currentToken: Address;
@@ -3320,7 +4033,7 @@ export class TradeService {
     const descs: SwapDescLike[] = [];
     const viaToken = input.hop.counterparty;
     if (!this.isEquivalentFlapRouteToken(input.chainId, input.currentToken, viaToken)) {
-      if (this.isFlapOuterRouteTerminalToken(input.chainId, viaToken)) {
+      if (isTradeRouteTerminalQuote(input.chainId, viaToken)) {
         descs.push(await this.resolveRouteHopDesc({
           chainId: input.chainId,
           tokenIn: input.currentToken,
@@ -3328,7 +4041,7 @@ export class TradeService {
           prefer: getBridgeTokenDexPreference(input.chainId as ChainId, viaToken) ?? null,
         }));
       } else {
-        const prefix = await this.buildFlapOuterBuyQuoteRoute({
+        const prefix = await this.buildOuterMarketBuyQuoteRoute({
           chainId: input.chainId,
           currentToken: input.currentToken,
           targetToken: viaToken,
@@ -3353,6 +4066,66 @@ export class TradeService {
       debug: input.debug,
     }));
     return descs;
+  }
+
+  private static async resolveQuoteFromOfficialPool(input: {
+    chainId: number;
+    tokenAddress: Address;
+    tokenInfo?: Pick<TokenInfo, 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address'> | null;
+    poolAddress?: string | null;
+    debug?: boolean;
+  }): Promise<{ quoteTokenAddress: Address; quoteSymbol?: string; dexType?: string; poolAddress: Address } | null> {
+    const knownPool = input.tokenInfo
+      ? this.getKnownDexPoolAddress(input.tokenInfo)
+      : null;
+    const poolAddress = (
+      (isAddressLike(input.poolAddress) ? input.poolAddress : null)
+      || knownPool
+    ) as Address | null;
+    if (!poolAddress) return null;
+    const chain = String(chainNames[input.chainId as ChainId] || '').trim().toLowerCase();
+    if (chain) {
+      const fromDex = await resolveQuoteFromDexScreenerPool({
+        chain,
+        tokenAddress: input.tokenAddress,
+        poolAddress,
+      }).catch(() => null);
+      if (fromDex?.quoteTokenAddress) {
+        const quote = this.normalizeFlapPoolCounterpartyToken(input.chainId, fromDex.quoteTokenAddress)
+          ?? fromDex.quoteTokenAddress;
+        this.logRoutePool(input.debug, 'official_pool.quote', {
+          chainId: input.chainId,
+          tokenAddress: input.tokenAddress,
+          poolAddress,
+          quoteTokenAddress: quote,
+          source: 'dexscreener_pair',
+        });
+        return {
+          quoteTokenAddress: quote,
+          quoteSymbol: fromDex.quoteSymbol,
+          dexType: fromDex.dexType,
+          poolAddress,
+        };
+      }
+    }
+    const onchainQuote = await this.primeKnownPoolCounterpartyToken(
+      input.chainId,
+      poolAddress,
+      input.tokenAddress,
+      input.debug,
+    );
+    if (!onchainQuote) return null;
+    this.logRoutePool(input.debug, 'official_pool.quote', {
+      chainId: input.chainId,
+      tokenAddress: input.tokenAddress,
+      poolAddress,
+      quoteTokenAddress: onchainQuote,
+      source: 'onchain_pair',
+    });
+    return {
+      quoteTokenAddress: onchainQuote,
+      poolAddress,
+    };
   }
 
   private static async getDexScreenerOuterQuoteFallback(input: {
@@ -3382,13 +4155,16 @@ export class TradeService {
       const pair = await DexScreenerAPI.getBestPairBetweenTokens(input.chain, input.tokenAddress, quoteTokenAddress).catch(() => null);
       if (!pair?.pairAddress || !isAddressLike(pair.pairAddress)) return null;
       if (!this.isRouterSupportedDexScreenerPair(input.chainId, pair)) return null;
+      if (DexScreenerAPI.effectiveLiquidityUsd(pair) < FLAP_DEXSCREENER_MIN_LIQUIDITY_USD) return null;
       const counterparty = this.getDexScreenerCounterpartyToken(pair, input.tokenAddress);
       if (!counterparty) return null;
       return { pair, counterparty };
     }))).filter(Boolean) as Array<{ pair: DexScreenerPair; counterparty: Address }>;
 
-    const best = pairs.sort((a, b) => Number(b.pair.liquidity?.usd ?? 0) - Number(a.pair.liquidity?.usd ?? 0))[0];
-    if (!best) return null;
+    const best = pairs.sort((a, b) => (
+      DexScreenerAPI.effectiveLiquidityUsd(b.pair) - DexScreenerAPI.effectiveLiquidityUsd(a.pair)
+    ))[0];
+    if (!best || DexScreenerAPI.effectiveLiquidityUsd(best.pair) < FLAP_DEXSCREENER_MIN_LIQUIDITY_USD) return null;
 
     return {
       quoteTokenAddress: best.counterparty,
@@ -3407,76 +4183,52 @@ export class TradeService {
     debug?: boolean;
     logEvent?: string;
   }): Promise<{ poolAddress: Address | null; preferHint: 'v2' | 'v3' | null; fee?: number; liquidityUsd?: number; symbols?: Record<string, string> }> {
-    const fallbackPool = input.pairOnly ? null : this.getKnownDexPoolAddress(input.tokenInfo);
-    const fallbackPrefer = input.pairOnly ? null : this.normalizeDexPrefer(input.tokenInfo?.dex_type);
-    const chain = String(chainNames[input.chainId as ChainId] || '').trim().toLowerCase();
-
-    if (input.preferOnchainPool && fallbackPool) {
-      const counterparty = await this.primeKnownPoolCounterpartyToken(
-        input.chainId,
-        fallbackPool,
-        input.tokenAddress,
-        input.debug,
-      );
-      if (counterparty && this.isEquivalentFlapRouteToken(input.chainId, counterparty, input.quoteTokenAddress)) {
-        const fallbackMeta = await this.getKnownPoolRouteMeta(input.chainId, fallbackPool, fallbackPrefer);
-        this.logRoutePool(input.debug, 'preferred_pool.selected', {
-          chainId: input.chainId,
-          tokenAddress: input.tokenAddress,
-          quoteTokenAddress: input.quoteTokenAddress,
-          source: input.logEvent ?? 'target.pool.selected',
-          pickedFrom: 'onchain_official',
-          pool: fallbackPool,
-          preferHint: fallbackMeta?.prefer ?? fallbackPrefer ?? null,
-          fee: fallbackMeta?.fee ?? null,
-        });
-        return {
-          poolAddress: fallbackPool,
-          preferHint: fallbackMeta?.prefer ?? fallbackPrefer,
-          fee: fallbackMeta?.fee,
-        };
-      }
-    }
-
-    if (chain) {
-      const queryQuoteToken = this.toDexScreenerPairToken(input.chainId, input.quoteTokenAddress) ?? input.quoteTokenAddress;
-      const dexPair = await DexScreenerAPI.getBestPairBetweenTokens(chain, input.tokenAddress, queryQuoteToken).catch(() => null);
-      const pairAddress = dexPair?.pairAddress && isAddressLike(dexPair.pairAddress)
-        ? (dexPair.pairAddress as Address)
-        : null;
-      const supported = !!dexPair && this.isRouterSupportedDexScreenerPair(input.chainId, dexPair);
-      this.logRoutePool(input.debug, 'preferred_pool.dexscreener', {
+    const officialPool = input.pairOnly ? null : this.getKnownDexPoolAddress(input.tokenInfo);
+    const officialPrefer = input.pairOnly ? null : this.normalizeDexPrefer(input.tokenInfo?.dex_type);
+    if (officialPool) {
+      this.logRoutePool(input.debug, 'preferred_pool.selected', {
         chainId: input.chainId,
         tokenAddress: input.tokenAddress,
         quoteTokenAddress: input.quoteTokenAddress,
         source: input.logEvent ?? 'target.pool.selected',
-        pool: pairAddress,
-        dexId: dexPair?.dexId ?? null,
-        labels: dexPair?.labels ?? [],
-        liquidityUsd: Number(dexPair?.liquidity?.usd ?? 0),
-        supported,
-        fallbackPool: fallbackPool ?? null,
-        fallbackPrefer: fallbackPrefer ?? null,
+        pickedFrom: 'official_pool',
+        pool: officialPool,
+        preferHint: officialPrefer,
       });
-      const pairCounterparty = dexPair
-        ? this.getDexScreenerCounterpartyToken(dexPair, input.tokenAddress)
-        : null;
-      const pairMatchesQuote = !!pairCounterparty
-        && this.isEquivalentFlapRouteToken(input.chainId, pairCounterparty, input.quoteTokenAddress);
-      if (pairAddress && supported && dexPair && pairMatchesQuote) {
-        const pairPrefer = this.normalizeDexPrefer(this.mapDexScreenerPairDexType(dexPair));
-        const pairMeta = await this.getKnownPoolRouteMeta(input.chainId, pairAddress, pairPrefer).catch(() => null);
-        this.logFlapStocksRoute(input.debug, input.logEvent ?? 'target.pool.selected', {
-          chainId: input.chainId,
-          tokenAddress: input.tokenAddress,
-          quoteTokenAddress: input.quoteTokenAddress,
-          source: 'dexscreener',
-          poolAddress: pairAddress,
-          prefer: pairMeta?.prefer ?? pairPrefer ?? null,
-          fee: pairMeta?.fee ?? null,
-          fallbackPool: fallbackPool ?? null,
-          fallbackPrefer: fallbackPrefer ?? null,
-        });
+      return {
+        poolAddress: officialPool,
+        preferHint: officialPrefer,
+      };
+    }
+
+    const chain = String(chainNames[input.chainId as ChainId] || '').trim().toLowerCase();
+    if (!chain) return { poolAddress: null, preferHint: null };
+    const queryQuoteToken = this.toDexScreenerPairToken(input.chainId, input.quoteTokenAddress) ?? input.quoteTokenAddress;
+    const dexPair = await DexScreenerAPI.getBestPairForToken({
+      chain,
+      tokenAddress: input.tokenAddress,
+      quoteTokenAddress: queryQuoteToken,
+    }).catch(() => null);
+    const pairAddress = dexPair?.pairAddress && isAddressLike(dexPair.pairAddress)
+      ? (dexPair.pairAddress as Address)
+      : null;
+    const pairLiquidityUsd = DexScreenerAPI.effectiveLiquidityUsd(dexPair);
+    const pairCounterparty = dexPair
+      ? this.getDexScreenerCounterpartyToken(dexPair, input.tokenAddress)
+      : null;
+    const pairMatchesQuote = !!pairCounterparty
+      && this.isEquivalentFlapRouteToken(input.chainId, pairCounterparty, input.quoteTokenAddress);
+    if (
+      pairAddress
+      && dexPair
+      && this.isRouterSupportedDexScreenerPair(input.chainId, dexPair)
+      && pairMatchesQuote
+      && pairLiquidityUsd > 0
+    ) {
+      const dexType = this.mapDexScreenerPairDexType(dexPair);
+      if (!String(dexType || '').toLowerCase().includes('v4')) {
+        const pairFee = this.parseDexScreenerSwapFee(dexPair);
+        const pairPrefer = this.normalizeDexPrefer(dexType) ?? (pairFee ? 'v3' : 'v2');
         this.logRoutePool(input.debug, 'preferred_pool.selected', {
           chainId: input.chainId,
           tokenAddress: input.tokenAddress,
@@ -3484,65 +4236,20 @@ export class TradeService {
           source: input.logEvent ?? 'target.pool.selected',
           pickedFrom: 'dexscreener',
           pool: pairAddress,
-          preferHint: pairMeta?.prefer ?? pairPrefer ?? null,
-          fee: pairMeta?.fee ?? null,
-          factory: pairMeta?.v3Factory ?? null,
+          preferHint: pairPrefer,
+          fee: pairFee,
+          liquidityUsd: pairLiquidityUsd,
         });
         return {
           poolAddress: pairAddress,
-          preferHint: pairMeta?.prefer ?? pairPrefer,
-          fee: pairMeta?.fee,
-          liquidityUsd: Number(dexPair.liquidity?.usd ?? 0) || undefined,
+          preferHint: pairPrefer,
+          fee: pairFee ?? undefined,
+          liquidityUsd: pairLiquidityUsd || undefined,
           symbols: this.collectDexScreenerPairSymbols(input.chainId, dexPair),
         };
       }
     }
-
-    const fallbackMeta = fallbackPool
-      ? await this.getKnownPoolRouteMeta(input.chainId, fallbackPool, fallbackPrefer)
-      : null;
-    const fallbackCounterparty = fallbackPool
-      ? await this.primeKnownPoolCounterpartyToken(input.chainId, fallbackPool, input.tokenAddress, input.debug)
-      : null;
-    const fallbackMatchesQuote = !!fallbackCounterparty
-      && this.isEquivalentFlapRouteToken(input.chainId, fallbackCounterparty, input.quoteTokenAddress);
-    this.logFlapStocksRoute(input.debug, input.logEvent ?? 'target.pool.selected', {
-      chainId: input.chainId,
-      tokenAddress: input.tokenAddress,
-      quoteTokenAddress: input.quoteTokenAddress,
-      source: fallbackMatchesQuote ? 'token_info' : 'none',
-      poolAddress: fallbackMatchesQuote ? fallbackPool : null,
-      prefer: fallbackMatchesQuote ? (fallbackMeta?.prefer ?? fallbackPrefer ?? null) : null,
-      fee: fallbackMatchesQuote ? (fallbackMeta?.fee ?? null) : null,
-      fallbackPool: fallbackPool ?? null,
-      fallbackPrefer: fallbackPrefer ?? null,
-      fallbackCounterparty: fallbackCounterparty ?? null,
-    });
-    this.logRoutePool(input.debug, 'preferred_pool.selected', {
-      chainId: input.chainId,
-      tokenAddress: input.tokenAddress,
-      quoteTokenAddress: input.quoteTokenAddress,
-      source: input.logEvent ?? 'target.pool.selected',
-      pickedFrom: fallbackMatchesQuote ? 'token_info' : 'none',
-      pool: fallbackMatchesQuote ? fallbackPool : null,
-      preferHint: fallbackMatchesQuote ? (fallbackMeta?.prefer ?? fallbackPrefer ?? null) : null,
-      fee: fallbackMatchesQuote ? (fallbackMeta?.fee ?? null) : null,
-      factory: fallbackMatchesQuote ? (fallbackMeta?.v3Factory ?? null) : null,
-      fallbackPool: fallbackPool ?? null,
-      fallbackCounterparty: fallbackCounterparty ?? null,
-    });
-    if (!fallbackMatchesQuote) {
-      return {
-        poolAddress: null,
-        preferHint: null,
-        fee: undefined,
-      };
-    }
-    return {
-      poolAddress: fallbackPool,
-      preferHint: fallbackMeta?.prefer ?? fallbackPrefer,
-      fee: fallbackMeta?.fee,
-    };
+    return { poolAddress: null, preferHint: null };
   }
 
   private static getPreferredDexCounterpartyCandidates(chainId: number, baseTokenAddress: Address): Address[] {
@@ -3692,7 +4399,10 @@ export class TradeService {
     const bnbContracts = DeployAddress[ChainId.BNB];
     const poolManager = bnbContracts?.[ContractNames.PoolManager]?.address?.toLowerCase();
     const infinityVault = bnbContracts?.[ContractNames.PancakeInfinityVault]?.address?.toLowerCase();
-    return normalized === poolManager || normalized === infinityVault;
+    const flapManager = bnbContracts?.[ContractNames.FlapshTokenManager]?.address?.toLowerCase();
+    return normalized === poolManager
+      || normalized === infinityVault
+      || normalized === flapManager;
   }
 
   private static getKnownDexPoolAddress(tokenInfo?: Partial<Pick<TokenInfo, 'address' | 'pool_pair' | 'biggest_pool_address' | 'tpool_pool_address' | 'launchpad' | 'launchpad_platform' | 'launchpad_status'>> | null): Address | null {
@@ -3714,6 +4424,7 @@ export class TradeService {
       ];
     const picked = (() => {
       for (const candidate of candidates) {
+        if (this.isRhV4PoolId(candidate)) return candidate as Address;
         if (this.isFlapCompatPoolAddress(candidate)) continue;
         if (tokenAddress) {
           if (isUsableFlapDexPoolAddress(tokenAddress, candidate)) return candidate as Address;
@@ -3746,14 +4457,6 @@ export class TradeService {
       fee: desc.fee,
       poolManager: desc.poolManager,
     }));
-  }
-
-  private static makeFlapOuterBuyQuoteRouteCacheKey(chainId: number, currentToken: Address, targetToken: Address) {
-    return [
-      chainId,
-      currentToken.toLowerCase(),
-      targetToken.toLowerCase(),
-    ].join(':');
   }
 
   private static makeFlapOuterSellQuoteRouteCacheKey(chainId: number, currentToken: Address, targetToken: Address) {
@@ -3835,7 +4538,7 @@ export class TradeService {
     const descs: SwapDescLike[] = [];
     let routeCurrentToken = currentToken;
     if (!this.isEquivalentFlapRouteToken(chainId, routeCurrentToken, officialQuote)) {
-      if (this.isFlapOuterRouteTerminalToken(chainId, officialQuote)) {
+      if (isTradeRouteTerminalQuote(chainId, officialQuote)) {
         descs.push(await this.resolveRouteHopDesc({
           chainId,
           tokenIn: routeCurrentToken,
@@ -3843,7 +4546,7 @@ export class TradeService {
           prefer: getBridgeTokenDexPreference(chainId as ChainId, officialQuote) ?? null,
         }));
       } else {
-        const prefix = await this.buildFlapOuterBuyQuoteRoute({
+        const prefix = await this.buildOuterMarketBuyQuoteRoute({
           chainId,
           currentToken,
           targetToken: officialQuote,
@@ -3875,6 +4578,7 @@ export class TradeService {
         tokenOut: targetToken,
         poolAddress: officialPool.poolAddress,
         preferHint: officialPool.preferHint,
+        fee: officialPool.fee,
         debug,
       }));
       return descs;
@@ -4037,12 +4741,13 @@ export class TradeService {
       tokenOut: targetToken,
       poolAddress: best.pool.poolAddress,
       preferHint: best.pool.preferHint,
+      fee: best.pool.fee,
       debug,
     }));
     return descs;
   }
 
-  private static async buildFlapOuterBuyQuoteRoute(input: {
+  private static async buildOuterMarketBuyQuoteRoute(input: {
     chainId: number;
     currentToken: Address;
     targetToken: Address;
@@ -4052,46 +4757,46 @@ export class TradeService {
     skipCache?: boolean;
     amountIn?: bigint;
   }): Promise<SwapDescLike[] | null> {
+    // Native → quote for every outer-market token. Cached 24h, not Flap-only.
     const { chainId, currentToken, targetToken } = input;
     const debug = input.debug === true;
     const depth = input.depth ?? 0;
-    const useCache = input.skipCache !== true && !input.visited && depth === 0;
-    if (useCache) {
-      const cacheKey = this.makeFlapOuterBuyQuoteRouteCacheKey(chainId, currentToken, targetToken);
-      const cached = this.flapOuterBuyQuoteRouteCache.get(cacheKey);
-      if (cached && Date.now() - cached.ts < this.flapOuterBuyQuoteRouteCacheMs) {
-        this.logFlapStocksRoute(debug, 'buy.route.cache_hit', {
-          chainId,
-          currentToken,
-          targetToken,
-          cached: cached.value?.length ?? 0,
-        });
-        return this.cloneSwapDescLikeArray(cached.value);
-      }
-      const inflight = this.flapOuterBuyQuoteRouteInFlight.get(cacheKey);
+    if (this.isEquivalentFlapRouteToken(chainId, currentToken, targetToken)) return [];
+
+    const sliced = sliceOuterMarketRoute(chainId, currentToken, targetToken);
+    if (sliced) {
+      this.logFlapStocksRoute(debug, 'buy.route.cache_hit', {
+        chainId,
+        currentToken,
+        targetToken,
+        cached: sliced.length,
+      });
+      return sliced;
+    }
+
+    const nativeCurrent = isTradeRouteNativeToken(chainId, currentToken);
+    if (nativeCurrent && input.skipCache !== true) {
+      const inflight = getOuterMarketRouteInFlight(chainId, targetToken);
       if (inflight) {
         this.logFlapStocksRoute(debug, 'buy.route.cache_await', {
           chainId,
           currentToken,
           targetToken,
         });
-        return this.cloneSwapDescLikeArray(await inflight);
+        const value = await inflight;
+        return sliceOuterMarketRoute(chainId, currentToken, targetToken)
+          ?? this.cloneSwapDescLikeArray(value);
       }
-      const task = this.buildFlapOuterBuyQuoteRoute({
+      const task = this.buildOuterMarketBuyQuoteRoute({
         ...input,
         skipCache: true,
       }).then((result) => {
-          if (result?.length) {
-            this.flapOuterBuyQuoteRouteCache.set(cacheKey, {
-              ts: Date.now(),
-              value: this.cloneSwapDescLikeArray(result),
-            });
-          }
+        if (result?.length) setOuterMarketRoute(chainId, targetToken, result);
         return result;
       }).finally(() => {
-        this.flapOuterBuyQuoteRouteInFlight.delete(cacheKey);
+        clearOuterMarketRouteInFlight(chainId, targetToken);
       });
-      this.flapOuterBuyQuoteRouteInFlight.set(cacheKey, task);
+      setOuterMarketRouteInFlight(chainId, targetToken, task);
       this.logFlapStocksRoute(debug, 'buy.route.cache_miss', {
         chainId,
         currentToken,
@@ -4099,7 +4804,7 @@ export class TradeService {
       });
       return this.cloneSwapDescLikeArray(await task);
     }
-    if (currentToken.toLowerCase() === targetToken.toLowerCase()) return [];
+
     if (depth > this.flapOuterQuoteRouteMaxDepth) {
       this.logFlapStocksRoute(debug, 'buy.route.max_depth', {
         chainId,
@@ -4119,7 +4824,7 @@ export class TradeService {
       });
       return null;
     }
-    if (this.isFlapOuterRouteTerminalToken(chainId, targetToken)) {
+    if (isTradeRouteTerminalQuote(chainId, targetToken)) {
       this.logFlapStocksRoute(debug, 'buy.route.terminal', {
         chainId,
         depth,
@@ -4134,7 +4839,53 @@ export class TradeService {
       })];
     }
 
-    const officialQuote = await this.resolveOfficialLaunchpadQuote(chainId, targetToken, debug);
+    // Catalog quote assets (GMEB/ASTER/…) are outer-market hops — DexScreener home,
+    // not Flap launchpad identity. Skipping identity avoids slow/wrong official lineage.
+    const isCatalogQuoteAsset = !!getKnownQuoteTokenSymbol(chainId, targetToken);
+    if (isCatalogQuoteAsset && isTradeRouteNativeToken(chainId, currentToken)) {
+      const stables = getTradeRouteStableAddresses(chainId)
+        .filter((item) => item.toLowerCase() !== targetToken.toLowerCase()) as Address[];
+      for (const stable of stables) {
+        const pairMeta = await this.peekDexScreenerPairMeta(chainId, targetToken, stable).catch(() => null);
+        if (!pairMeta?.poolAddress || !(typeof pairMeta.liquidityUsd === 'number' && pairMeta.liquidityUsd > 0)) {
+          continue;
+        }
+        try {
+          const bridge = await this.resolveRouteHopDesc({
+            chainId,
+            tokenIn: currentToken,
+            tokenOut: stable,
+            prefer: getBridgeTokenDexPreference(chainId as ChainId, stable) ?? null,
+          });
+          const last = await this.resolveKnownPoolRouteDesc({
+            chainId,
+            tokenIn: stable,
+            tokenOut: targetToken,
+            poolAddress: pairMeta.poolAddress,
+            preferHint: pairMeta.preferHint === 'v3' ? 'v3' : pairMeta.preferHint === 'v2' ? 'v2' : null,
+            fee: pairMeta.fee,
+            debug,
+          });
+          this.logRoutePool(debug, 'buy.branch', {
+            chainId,
+            currentToken,
+            targetToken,
+            branch: 'catalog_stable_home',
+            home: stable,
+            pool: pairMeta.poolAddress,
+            liquidityUsd: pairMeta.liquidityUsd,
+            hops: this.summarizeRouteDescs([bridge, last]),
+          });
+          return [bridge, last];
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    const officialQuote = isCatalogQuoteAsset
+      ? null
+      : await this.resolveOfficialLaunchpadQuote(chainId, targetToken, debug);
     if (officialQuote) {
       const officialRoute = await this.buildOfficialQuoteLineageRoute({
         chainId,
@@ -4145,7 +4896,7 @@ export class TradeService {
         debug,
         depth,
         amountIn: input.amountIn,
-      });
+      }).catch(() => null);
       if (officialRoute?.length) {
         this.logRoutePool(debug, 'buy.branch', {
           chainId,
@@ -4163,7 +4914,37 @@ export class TradeService {
         targetToken,
         officialQuote,
       });
-      return null;
+      // Fall through to DexScreener / market home — do not abort the whole prefix.
+    }
+
+    const dexHome = await this.resolveTokenDeepestDexHome({
+      chainId,
+      tokenAddress: targetToken,
+      debug,
+    });
+    if (dexHome) {
+      const dexHomeRoute = await this.assembleBuyRouteViaDexHop({
+        chainId,
+        currentToken,
+        targetToken,
+        hop: dexHome,
+        visited,
+        debug,
+        depth,
+      }).catch(() => null);
+      if (dexHomeRoute?.length) {
+        this.logRoutePool(debug, 'buy.branch', {
+          chainId,
+          currentToken,
+          targetToken,
+          branch: 'dex_home',
+          home: dexHome.counterparty,
+          pool: dexHome.poolAddress,
+          liquidityUsd: dexHome.liquidityUsd,
+          hops: this.summarizeRouteDescs(dexHomeRoute),
+        });
+        return dexHomeRoute;
+      }
     }
 
     const marketRoute = await this.buildMarketTokenHomeRoute({
@@ -4250,7 +5031,7 @@ export class TradeService {
 
     if (currentToken.toLowerCase() === targetToken.toLowerCase()) return [];
 
-    const buyRoute = await this.buildFlapOuterBuyQuoteRoute({
+    const buyRoute = await this.buildOuterMarketBuyQuoteRoute({
       chainId,
       currentToken: targetToken,
       targetToken: currentToken,
@@ -4580,14 +5361,6 @@ export class TradeService {
         debug: consoleLogsEnabled,
       });
     const nativeToQuoteSwapEnabled = tokenInfo.nativeToQuoteSwapEnabled === true;
-    if (!isHyperAltfun && !isPonsInner && !planEvmTradeRoute({
-      chainId: input.chainId,
-      tokenInfo,
-      tokenAddress: tokenOut,
-      baseTokenAddress,
-    })) {
-      throw new Error('官方报价路径尚未就绪，请稍后再试');
-    }
     const preparedRoute = (isHyperAltfun || isPonsInner)
       ? null
       : await timeStep('route:prepare', () => this.prepareEvmTradeRoute({
@@ -4596,6 +5369,12 @@ export class TradeService {
         tokenInfo,
         baseTokenAddress,
       }));
+    if (!isHyperAltfun && !isPonsInner && !preparedRoute?.descs.length) {
+      throw new Error('官方报价路径尚未就绪，请稍后再试');
+    }
+    if (input.chainId === ChainId.RH && this.hasUnusableRhV4Fee(preparedRoute?.descs)) {
+      throw new Error('RH Uniswap V4 pool fee 未就绪，请稍后重试');
+    }
     const preparedSplit = this.splitPreparedBuyRoute(preparedRoute, tokenOut);
     const descs: SwapDescLike[] = [];
     let currentRouterToken: Address = baseTokenAddress;
@@ -4824,7 +5603,7 @@ export class TradeService {
             const quoteRouteDescs = preparedSplit?.quoteDescs.length
               ? preparedSplit.quoteDescs
               : await timeStep('quote:flapstocks:buy:route', () =>
-                this.buildFlapOuterBuyQuoteRoute({
+                this.buildOuterMarketBuyQuoteRoute({
                   chainId: input.chainId,
                   currentToken: currentRouterToken,
                   targetToken: rawQuoteToken,
@@ -4867,7 +5646,7 @@ export class TradeService {
           const quoteRouteDescs = preparedSplit?.quoteDescs.length
             ? preparedSplit.quoteDescs
             : await timeStep('quote:flapstocks:outer:buy:route', () =>
-              this.buildFlapOuterBuyQuoteRoute({
+              this.buildOuterMarketBuyQuoteRoute({
                 chainId: input.chainId,
                 currentToken: currentRouterToken,
                 targetToken: rawQuoteToken,
@@ -4883,95 +5662,55 @@ export class TradeService {
           currentAmount = 1n;
         }
 
-          const outerTargetPool = preparedSplit?.lastHop.poolAddress && preparedSplit.lastHop.poolAddress !== ZERO_ADDRESS
-            ? {
-              poolAddress: preparedSplit.lastHop.poolAddress,
-              preferHint: this.preferHintFromDesc(preparedSplit.lastHop),
-              fee: preparedSplit.lastHop.fee || undefined,
-            }
-            : needsStocksQuoteRoute && rawQuoteToken
-            ? await this.getPreferredFlapOuterTargetPool({
-              chainId: input.chainId,
-              tokenAddress: tokenOut,
-              quoteTokenAddress: rawQuoteToken,
-              tokenInfo,
-              preferOnchainPool: true,
-              debug: consoleLogsEnabled,
-              logEvent: 'buy.target_pool.selected',
-            })
-            : {
-              poolAddress: this.getKnownDexPoolAddress(tokenInfo),
-              preferHint: this.normalizeDexPrefer(tokenInfo.dex_type),
-              fee: undefined as number | undefined,
-            };
-          const outerPoolPair = outerTargetPool.poolAddress;
-          this.logRoutePool(consoleLogsEnabled, 'buy.last_hop.pool', {
-            chainId: input.chainId,
-            tokenIn: currentRouterToken,
-            tokenOut,
-            pool: outerPoolPair,
-            preferHint: outerTargetPool.preferHint ?? null,
-            fee: outerTargetPool.fee ?? null,
-            needsStocksQuoteRoute,
-            rawQuoteToken: rawQuoteToken ?? null,
-            tokenInfoPoolPair: tokenInfo.pool_pair ?? null,
-            tokenInfoBiggestPool: tokenInfo.biggest_pool_address ?? null,
-          });
-          const outerPoolMeta = outerPoolPair
-            ? await this.getKnownPoolRouteMeta(input.chainId, outerPoolPair, outerTargetPool.preferHint)
-            : null;
-          const poolVersion = outerPoolMeta?.prefer ?? outerTargetPool.preferHint ?? getDexPoolPrefer(tokenInfo.dex_type);
-          const bridgePrefer = bridgeToken ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
           const preparedV4LastHop = this.takePreparedV4LastHop(preparedSplit, false, input.chainId);
           if (preparedV4LastHop) {
             minOut = 0n;
             descs.push(preparedV4LastHop);
-          } else {
-            const q2 = await timeStep('quote:token:hop2', () =>
-              resolveDexExactIn(
-                input.chainId,
-                currentRouterToken,
-                tokenOut,
-                currentAmount,
-                {
-                  v3Fee: outerTargetPool.fee ?? outerPoolMeta?.fee ?? input.poolFee,
-                  poolPair: outerPoolPair ?? undefined,
-                  prefer: poolVersion ?? (bridgePrefer ?? (turboRouteMode && !input.poolFee
-                    ? (input.chainId === ChainId.RH ? 'v3' : 'v2')
-                    : undefined)),
-                },
-                turboRouteMode
-              )
-            );
-
-            if (turboRouteMode) {
-              if (!q2.poolAddress || q2.poolAddress === ZERO_ADDRESS) {
-                throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-              }
-            } else {
-              try {
-                assertDexQuoteOk(q2);
-              } catch {
-                throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-              }
+          } else if (preparedSplit?.lastHop) {
+            const lastHop = { ...preparedSplit.lastHop };
+            const hintPool = (lastHop.poolAddress && lastHop.poolAddress !== ZERO_ADDRESS)
+              ? lastHop.poolAddress
+              : this.getKnownDexPoolAddress(tokenInfo);
+            if (!hintPool) {
+              throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
             }
-            const usedFee = getV3FeeForDesc(q2, input.poolFee ?? baseFee);
-            if (turboRouteMode) {
-              minOut = 0n;
-            } else {
-              if (q2.amountOut <= 0n) {
-                throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-              }
-              const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
-              minOut = applySlippage(q2.amountOut, slippageBps);
-            }
-            descs.push(getRouterSwapDesc({
-              swapType: input.chainId === ChainId.RH ? toRhDexSwapType(q2.swapType) : q2.swapType,
+            this.logRoutePool(consoleLogsEnabled, 'buy.last_hop.pool', {
+              chainId: input.chainId,
               tokenIn: currentRouterToken,
               tokenOut,
-              poolAddress: q2.poolAddress,
-              fee: usedFee,
-            }));
+              pool: hintPool,
+              preferHint: this.preferHintFromDesc(lastHop),
+              fee: lastHop.fee || null,
+              source: 'prepared',
+            });
+            if (!turboRouteMode) {
+              const q2 = await timeStep('quote:token:hop2', () =>
+                resolveDexExactIn(
+                  input.chainId,
+                  currentRouterToken,
+                  tokenOut,
+                  currentAmount,
+                  {
+                    v3Fee: lastHop.fee || input.poolFee,
+                    poolPair: hintPool,
+                    prefer: this.preferHintFromDesc(lastHop) ?? undefined,
+                  },
+                  false
+                )
+              );
+              if (q2.amountOut > 0n) {
+                const slippageBps = getSlippageBps(settings, input.chainId, input.slippageBps);
+                minOut = applySlippage(q2.amountOut, slippageBps);
+              } else {
+                minOut = 0n;
+              }
+            } else {
+              minOut = 0n;
+            }
+            lastHop.poolAddress = hintPool;
+            descs.push(lastHop);
+          } else {
+            throw new Error('官方报价路径尚未就绪，请稍后再试');
           }
       }
     }
@@ -5276,6 +6015,9 @@ export class TradeService {
             tokenInfo: input.tokenInfo,
             timeoutMs,
             fromAddress: this.resolveOptionalEvmAddress(input.fromAddress, 'from address'),
+            // Some Flap/tax tokens lie on allowance() or leave dust that blocks approve(max).
+            // After an on-chain insufficient-allowance revert, always force re-approve.
+            force: allowanceLike,
           });
         } catch (repairErr: any) {
           lastErr = repairErr;
@@ -5309,7 +6051,7 @@ export class TradeService {
     chainId: number,
     tokenAddress: string,
     tokenInfo: TokenInfo,
-    opts?: { extraSpenders?: string[]; fromAddress?: `0x${string}`; submitChannel?: SubmitChannel }
+    opts?: { extraSpenders?: string[]; fromAddress?: `0x${string}`; submitChannel?: SubmitChannel; force?: boolean }
   ) {
     const routerAddress = DeployAddress[chainId as ChainId]?.DagobangRouter?.address;
     if (!routerAddress) throw new Error('Router address not set');
@@ -5318,10 +6060,6 @@ export class TradeService {
     const client = await RpcService.getClient(chainId);
 
     const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
-      const classification = this.classifyLaunchpadRoute(chainId, tokenInfo);
-      const platform = classification.platform;
-      const isInner = classification.isInner;
-    const isInnerFourMeme = isInner && platform.includes('four');
     const resolvedRouteManager = await this.resolveSellRouteManagerForAllowance({
       chainId,
       tokenAddress: tokenAddress as Address,
@@ -5346,7 +6084,12 @@ export class TradeService {
       },
     });
     let lastTxHash: `0x${string}` | null = null;
-    for (const spender of spenders) {
+    // Router first: meme-token approve for router pull / UI consistency.
+    const orderedSpenders = [
+      routerAddress,
+      ...spenders.filter((s) => s.toLowerCase() !== routerAddress.toLowerCase()),
+    ];
+    for (const spender of orderedSpenders) {
       const txHash = await this.approveMaxForSpenderIfNeeded({
         chainId,
         tokenAddress,
@@ -5355,20 +6098,29 @@ export class TradeService {
         maxUint256,
         client,
         submitChannel: opts?.submitChannel,
+        force: opts?.force === true && spender.toLowerCase() === routerAddress.toLowerCase(),
       });
       if (txHash) lastTxHash = txHash;
     }
 
-    const bridgeToken = isInnerFourMeme ? getBridgeToken(chainId, tokenInfo.address, tokenInfo.quote_token_address) : null;
-    if (bridgeToken && bridgeToken !== ZERO_ADDRESS) {
+    // Four.meme multi-hop: after sellToToken, router transferFroms the quote token from the user.
+    // Must approve quote→Router even when quote is not on the bridge allowlist (e.g. DJTB).
+    const pullbackTokens = getSellQuotePullbackTokens({
+      chainId,
+      tokenAddress,
+      tokenInfo,
+      isInnerDisk: (ti) => this.isInnerDisk(ti, chainId),
+    });
+    for (const pullToken of pullbackTokens) {
       const txHash = await this.approveMaxForSpenderIfNeeded({
         chainId,
-        tokenAddress: bridgeToken,
+        tokenAddress: pullToken,
         owner: account.address,
         spender: routerAddress,
         maxUint256,
         client,
         submitChannel: opts?.submitChannel,
+        force: opts?.force === true,
       });
       if (txHash) lastTxHash = txHash;
     }
@@ -5521,14 +6273,6 @@ export class TradeService {
       const needsBridgeHop2 = !!bridgeToken && bridgeToken.toLowerCase() !== ZERO_ADDRESS.toLowerCase();
       const bridgePrefer = needsBridgeHop2 ? getBridgeTokenDexPreference(input.chainId as ChainId, bridgeToken) : null;
       const needsStocksQuoteRoute = this.needsNonTerminalQuoteRoute(input.chainId, baseTokenAddress, rawQuoteToken);
-      if (!isHyperAltfun && !isPonsInner && !planEvmTradeRoute({
-        chainId: input.chainId,
-        tokenInfo,
-        tokenAddress: sellToken,
-        baseTokenAddress,
-      })) {
-        throw new Error('官方报价路径尚未就绪，请稍后再试');
-      }
       const preparedRoute = (isHyperAltfun || isPonsInner)
         ? null
         : await timeStep('route:prepare', () => this.prepareEvmTradeRoute({
@@ -5537,6 +6281,12 @@ export class TradeService {
           tokenInfo,
           baseTokenAddress,
         }));
+      if (!isHyperAltfun && !isPonsInner && !preparedRoute?.descs.length) {
+        throw new Error('官方报价路径尚未就绪，请稍后再试');
+      }
+      if (input.chainId === ChainId.RH && this.hasUnusableRhV4Fee(preparedRoute?.descs)) {
+        throw new Error('RH Uniswap V4 pool fee 未就绪，请稍后重试');
+      }
       const preparedSplit = this.splitPreparedBuyRoute(preparedRoute, sellToken);
       const descs: SwapDescLike[] = [];
       let estimatedOut = 0n;
@@ -5784,58 +6534,35 @@ export class TradeService {
             : baseTokenAddress;
         const hop1NeedAmountOut = !turboRouteMode && (needsBridgeHop2 || needsStocksQuoteRoute);
         const preparedV4FirstHop = this.takePreparedV4LastHop(preparedSplit, true, input.chainId);
-        const outerTargetPool = preparedSplit?.lastHop.poolAddress && preparedSplit.lastHop.poolAddress !== ZERO_ADDRESS
-          ? {
-            poolAddress: preparedSplit.lastHop.poolAddress,
-            preferHint: this.preferHintFromDesc(preparedSplit.lastHop),
-            fee: preparedSplit.lastHop.fee || undefined,
-          }
-          : needsStocksQuoteRoute && rawQuoteToken
-          ? await this.getPreferredFlapOuterTargetPool({
-            chainId: input.chainId,
-            tokenAddress: sellToken,
-            quoteTokenAddress: rawQuoteToken,
-            tokenInfo,
-            preferOnchainPool: true,
-            debug: sellDebug,
-            logEvent: 'sell.target_pool.selected',
-          })
-          : {
-            poolAddress: this.getKnownDexPoolAddress(tokenInfo),
-            preferHint: this.normalizeDexPrefer(tokenInfo.dex_type),
-            fee: undefined as number | undefined,
-          };
-        const outerPoolPair = outerTargetPool.poolAddress;
+        const lastHop = preparedSplit?.lastHop;
+        const outerPoolPair = (lastHop?.poolAddress && lastHop.poolAddress !== ZERO_ADDRESS)
+          ? lastHop.poolAddress
+          : this.getKnownDexPoolAddress(tokenInfo);
+        const preferHint = this.preferHintFromDesc(lastHop) ?? this.normalizeDexPrefer(tokenInfo.dex_type);
+        const outerFee = lastHop?.fee || undefined;
         this.logRoutePool(sellDebug, 'sell.first_hop.pool', {
           chainId: input.chainId,
           tokenIn: sellToken,
           tokenOut: hop1RouterOut,
           pool: outerPoolPair,
-          preferHint: outerTargetPool.preferHint ?? null,
-          fee: outerTargetPool.fee ?? null,
-          needsStocksQuoteRoute,
-          rawQuoteToken: rawQuoteToken ?? null,
-          tokenInfoPoolPair: tokenInfo.pool_pair ?? null,
-          tokenInfoBiggestPool: tokenInfo.biggest_pool_address ?? null,
+          preferHint,
+          fee: outerFee ?? null,
+          source: 'prepared',
         });
-        const outerPoolMeta = outerPoolPair
-          ? await this.getKnownPoolRouteMeta(input.chainId, outerPoolPair, outerTargetPool.preferHint)
-          : null;
-        const poolVersion = outerPoolMeta?.prefer ?? outerTargetPool.preferHint ?? this.normalizeDexPrefer(tokenInfo.dex_type);
         let hop1AmountOut = 0n;
 
         if (preparedV4FirstHop) {
           descs.push(preparedV4FirstHop);
+        } else if (!outerPoolPair) {
+          throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
         } else if (needsStocksQuoteRoute && rawQuoteToken) {
-          if (!outerPoolPair) {
-            throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-          }
           descs.push(await this.resolveKnownPoolRouteDesc({
             chainId: input.chainId,
             tokenIn: sellToken,
             tokenOut: hop1RouterOut,
             poolAddress: outerPoolPair,
-            preferHint: poolVersion,
+            preferHint,
+            fee: outerFee,
             debug: sellDebug,
           }));
         } else {
@@ -5846,37 +6573,21 @@ export class TradeService {
               hop1RouterOut,
               amountInForQuote,
               {
-                v3Fee: outerTargetPool.fee ?? outerPoolMeta?.fee ?? input.poolFee,
-                poolPair: outerPoolPair ?? undefined,
-                prefer: poolVersion ?? (bridgePrefer ?? (turboRouteMode && !input.poolFee
-                  ? (input.chainId === ChainId.RH ? 'v3' : 'v2')
-                  : undefined)),
+                v3Fee: outerFee ?? input.poolFee,
+                poolPair: outerPoolPair,
+                prefer: preferHint ?? undefined,
               },
               turboRouteMode,
               hop1NeedAmountOut
             )
           );
-          if (turboRouteMode && !hop1NeedAmountOut) {
-            if (!hop1.poolAddress || hop1.poolAddress === ZERO_ADDRESS) {
-              throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-            }
-          } else {
-            try {
-              assertDexQuoteOk(hop1);
-            } catch {
-              throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-            }
-          }
-          if (!turboRouteMode && hop1.amountOut <= 0n) {
-            throw new Error('找不到该代币的 V2/V3 交易池，可能还没有在 DEX 上创建流动性');
-          }
           hop1AmountOut = hop1.amountOut;
           descs.push(getRouterSwapDesc({
             swapType: input.chainId === ChainId.RH ? toRhDexSwapType(hop1.swapType) : hop1.swapType,
             tokenIn: sellToken,
             tokenOut: hop1RouterOut,
-            poolAddress: hop1.poolAddress,
-            fee: getV3FeeForDesc(hop1, input.poolFee ?? baseFee),
+            poolAddress: outerPoolPair,
+            fee: outerFee || getV3FeeForDesc(hop1, input.poolFee ?? baseFee),
           }));
         }
 
@@ -6075,15 +6786,27 @@ export class TradeService {
           token: input.tokenAddress,
           insufficient: allowanceCheck.insufficient,
           checked: allowanceCheck.checked,
+          forceRepair: true,
         });
-        if (!allowanceCheck.insufficient) throw e;
+        // On-chain revert is authoritative. Do not bail out when allowance() still looks fine
+        // (common with broken/tax tokens that report max but enforce 0 on transferFrom).
         const approveTx = await this.approveMaxForSellIfNeeded(input.chainId, input.tokenAddress, tokenInfo, {
           extraSpenders: allowanceExtraSpenders,
           submitChannel: input.submitChannel,
+          fromAddress: account.address,
+          force: true,
         });
         if (approveTx) {
           console.log('[trade.sell.retry.approve]', { chainId: input.chainId, token: input.tokenAddress, approveTx });
           await this.waitApproveFastForRetry(input.chainId, approveTx);
+        } else if (!allowanceCheck.insufficient) {
+          // Forced approve still skipped (lying allowance() + force path failed to send).
+          // Surface original revert rather than silently retrying the same failure.
+          console.warn('[trade.sell.allowance.repair.noop]', {
+            chainId: input.chainId,
+            token: input.tokenAddress,
+            checked: allowanceCheck.checked,
+          });
         }
         console.log('[trade.sell.retry.send]', { chainId: input.chainId, token: input.tokenAddress });
         allowanceRetried = true;

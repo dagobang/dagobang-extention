@@ -31,6 +31,7 @@ export type SellSectionProps = {
   tokenPriceUsd: number | null;
   previewRouteLabel: string | null;
   previewRouteHops?: QuickTradeRouteHop[] | null;
+  previewRouteLoading?: boolean;
   isAltfunLayout?: boolean;
   approveStatus: 'ready' | 'approving' | 'approved';
   approveStatusTitle: string;
@@ -74,6 +75,7 @@ export function SellSection({
   tokenPriceUsd,
   previewRouteLabel,
   previewRouteHops,
+  previewRouteLoading = false,
   isAltfunLayout = false,
   approveStatus,
   approveStatusTitle,
@@ -409,7 +411,7 @@ export function SellSection({
             </span>
           </div>
           {!isTransferTab ? (
-            <RoutePreviewHint label={previewRouteLabel} hops={previewRouteHops} tone="sell" locale={locale} />
+            <RoutePreviewHint label={previewRouteLabel} hops={previewRouteHops} loading={previewRouteLoading} tone="sell" locale={locale} />
           ) : null}
           {isTransferTab ? (
             <div className="min-w-0 text-right text-sky-300/85">

@@ -1,5 +1,8 @@
 import type { TokenInfo } from '@/types/token';
-import { getFlapStocksVaultVersion } from '@/constants/flap';
+import { FlapPortalAddress, getFlapStocksVaultVersion } from '@/constants/flap';
+import { DeployAddress } from '@/constants/contracts/address';
+import { ContractNames } from '@/constants/contracts/names';
+import { ChainId } from '@/constants/chains/chainId';
 import { isFlapSuffixAddress, resolveTokenLaunchpadPlatform } from '@/utils/launchpadFamily';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -16,12 +19,27 @@ function isAddressLike(value: string | undefined | null): value is `0x${string}`
   return /^0x[a-fA-F0-9]{40}$/.test(String(value || '').trim());
 }
 
+/** Flap Portal / TokenManager is not a DEX pool — never treat it as pair liquidity. */
+export function isFlapPortalOrManagerAddress(chainId: number, poolAddress?: string | null): boolean {
+  const pool = String(poolAddress || '').trim().toLowerCase();
+  if (!isAddressLike(pool)) return false;
+  const portal = String(FlapPortalAddress[chainId as ChainId] || '').toLowerCase();
+  const manager = String(
+    DeployAddress[chainId as ChainId]?.[ContractNames.FlapshTokenManager]?.address || '',
+  ).toLowerCase();
+  return (!!portal && pool === portal) || (!!manager && pool === manager);
+}
+
 export function isUsableFlapDexPoolAddress(tokenAddress: string, poolAddress?: string | null): poolAddress is `0x${string}` {
   const token = String(tokenAddress || '').trim().toLowerCase();
   const pool = String(poolAddress || '').trim();
   if (!isAddressLike(pool)) return false;
-  if (pool.toLowerCase() === '0x0000000000000000000000000000000000000000') return false;
-  return pool.toLowerCase() !== token;
+  if (pool.toLowerCase() === ZERO_ADDRESS) return false;
+  if (pool.toLowerCase() === token) return false;
+  // Default chain for Flap meme routing today is BSC; reject portal/manager on all known chains.
+  if (isFlapPortalOrManagerAddress(ChainId.BNB, pool)) return false;
+  if (isFlapPortalOrManagerAddress(ChainId.ETH, pool)) return false;
+  return true;
 }
 
 export function hasConfirmedFlapStocksIdentity(

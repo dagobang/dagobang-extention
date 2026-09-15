@@ -1078,6 +1078,7 @@
     },
     "route": {
       "badge": "路由",
+      "loading": "路由查詢中",
       "liquidity": "流動性",
       "lowLiquidity": "偏低"
     },

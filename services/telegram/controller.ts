@@ -4,6 +4,8 @@ import { SettingsService } from '@/services/settings';
 import { TokenService } from '@/services/token';
 import { TokenAltfunService } from '@/services/token/altfun';
 import { TokenPonsService } from '@/services/token/pons';
+import { TokenO1Service } from '@/services/token/o1';
+import { TokenLongService } from '@/services/token/long';
 import {
   buildStrategyRollingTakeProfitOrderInputs,
   buildStrategySellOrderInputs,
@@ -1218,6 +1220,16 @@ export function createTelegramController(deps: {
       }
     }
     if ((String(chainCode).toLowerCase() === 'rh' || chainId === ChainId.RH) && isEvmAddress(tokenAddress)) {
+      try {
+        const longInfo = await TokenLongService.getTokenInfo(chainId, tokenAddress);
+        if (longInfo) return longInfo;
+      } catch {
+      }
+      try {
+        const o1Info = await TokenO1Service.getTokenInfo(chainId, tokenAddress);
+        if (o1Info) return o1Info;
+      } catch {
+      }
       try {
         const ponsInfo = await TokenPonsService.getTokenInfo(chainId, tokenAddress);
         if (ponsInfo) return ponsInfo;

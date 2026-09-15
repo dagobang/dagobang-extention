@@ -854,7 +854,10 @@ export function LimitTradePanel({
   const getCurrentDisplayForOrder = (o: LimitOrder) => {
     const key = toTokenKey(o.chainId, o.tokenAddress);
     const scannerCached = scanPriceByTokenKey[key];
-    const loading = !scannerCached && !!scanStatus?.running;
+    // Only show "..." on the very first load. After any completed scan without a
+    // price, show "-" so it's clear the order cannot trigger yet.
+    const hasCompletedScan = Number(scanStatus?.lastScanAtMs ?? 0) > 0;
+    const loading = !scannerCached && !!scanStatus?.running && !hasCompletedScan;
     const currentPriceUsd = scannerCached?.priceUsd ?? null;
     const text = formatCurrentValue(currentPriceUsd, loading);
     const colorClass = currentPriceColorClass(currentPriceUsd, o.triggerPriceUsd, loading);

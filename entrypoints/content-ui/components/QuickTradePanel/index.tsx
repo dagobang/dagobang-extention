@@ -86,6 +86,7 @@ type QuickTradePanelProps = {
   sellPreviewRoute: string | null;
   buyPreviewRouteHops?: QuickTradeRouteHop[] | null;
   sellPreviewRouteHops?: QuickTradeRouteHop[] | null;
+  routePreviewLoading?: boolean;
   channelRouteTagLabel?: string | null;
   approveStatus: 'ready' | 'approving' | 'approved';
   approveStatusTitle: string;
@@ -189,6 +190,7 @@ export function QuickTradePanel({
   sellPreviewRoute,
   buyPreviewRouteHops,
   sellPreviewRouteHops,
+  routePreviewLoading = false,
   channelRouteTagLabel,
   approveStatus,
   approveStatusTitle,
@@ -245,6 +247,7 @@ export function QuickTradePanel({
     tokenPriceUsd,
     previewRouteLabel: sellPreviewRoute,
     previewRouteHops: sellPreviewRouteHops,
+    previewRouteLoading: routePreviewLoading,
     isAltfunLayout: siteInfo.platform === 'altfun',
     approveStatus,
     approveStatusTitle,
@@ -359,6 +362,7 @@ export function QuickTradePanel({
             tokenSymbol={tokenSymbol}
             previewRouteLabel={buyPreviewRoute}
             previewRouteHops={buyPreviewRouteHops}
+            previewRouteLoading={routePreviewLoading}
             isAltfunLayout={siteInfo.platform === 'altfun'}
             busy={busy}
             isUnlocked={isUnlocked}

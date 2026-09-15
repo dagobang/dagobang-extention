@@ -1,7 +1,8 @@
 export function getDexPoolPrefer(dex_type: string | undefined): string | undefined {
     const lowered = dex_type?.toLowerCase();
     if (!lowered) return undefined;
-    if (lowered === 'pancake_swap_v3' || lowered === 'uniswap_v3') return 'v3';
+    if (lowered.includes('v4') || lowered.includes('infinity')) return 'v4';
+    if (lowered === 'pancake_swap_v3' || lowered === 'uniswap_v3' || lowered.includes('v3') || lowered.includes('clmm')) return 'v3';
     if (lowered === 'pancake_swap' || lowered === 'uniswap') return 'v2';
     return undefined;
 }

@@ -907,6 +907,8 @@ export type BgRequest =
   | { type: 'token:getTokenInfo:flap'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:altfun'; chainId: number; tokenAddress: `0x${string}` }
   | { type: 'token:getTokenInfo:pons'; chainId: number; tokenAddress: `0x${string}` }
+  | { type: 'token:getTokenInfo:o1'; chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo | null }
+  | { type: 'token:getTokenInfo:long'; chainId: number; tokenAddress: `0x${string}`; tokenInfo?: TokenInfo | null }
   | { type: 'token:getTokenInfo:fourmemeHttp'; platform: string; chain: string; address: ChainAddress }
   | { type: 'token:getTokenInfo:flapHttp'; platform: string; chain: string; address: ChainAddress }
   | {
@@ -1176,6 +1178,10 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   ? { ok: true; tokenInfo: TokenInfo | null }
   : T extends { type: 'token:getTokenInfo:pons' }
   ? { ok: true; tokenInfo: TokenInfo | null }
+  : T extends { type: 'token:getTokenInfo:o1' }
+  ? { ok: true; tokenInfo: TokenInfo | null }
+  : T extends { type: 'token:getTokenInfo:long' }
+  ? { ok: true; tokenInfo: TokenInfo | null }
   : T extends { type: 'token:getTokenInfo:fourmemeHttp' }
   ? { ok: true; tokenInfo: TokenInfo | null }
   : T extends { type: 'token:getTokenInfo:flapHttp' }
@@ -1281,7 +1287,7 @@ export type BgResponse<T extends BgRequest> = T extends { type: 'bg:ping' }
   : T extends { type: 'rpc:resetProfiles' }
   ? { ok: true }
   : T extends { type: 'trade:prewarmTurbo' }
-  ? { ok: true }
+  ? { ok: true; route: QuickTradeRoutePreview | null }
   : T extends { type: 'trade:previewRoute' }
   ? { ok: true; route: QuickTradeRoutePreview | null }
   : T extends { type: 'trade:refreshNonce' }

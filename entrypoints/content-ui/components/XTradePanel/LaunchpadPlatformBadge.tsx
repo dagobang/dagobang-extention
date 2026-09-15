@@ -50,6 +50,27 @@ const LAUNCHPAD_BADGES: Record<string, LaunchpadBadgeMeta> = {
     iconClassName: 'border-violet-400/60 bg-violet-500/20 text-violet-100',
     agent: false,
   },
+  o1: {
+    title: 'o1',
+    iconText: 'o1',
+    capsuleClassName: 'border-sky-500/55 bg-sky-500/10 text-sky-200',
+    iconClassName: 'border-sky-400/60 bg-sky-500/20 text-sky-100',
+    agent: false,
+  },
+  o1_rwa: {
+    title: 'o1 RWA',
+    iconText: 'o1',
+    capsuleClassName: 'border-sky-500/55 bg-sky-500/10 text-sky-200',
+    iconClassName: 'border-sky-400/60 bg-sky-500/20 text-sky-100',
+    agent: false,
+  },
+  long: {
+    title: 'Long.xyz',
+    iconText: 'L',
+    capsuleClassName: 'border-emerald-500/55 bg-emerald-500/10 text-emerald-200',
+    iconClassName: 'border-emerald-400/60 bg-emerald-500/20 text-emerald-100',
+    agent: false,
+  },
 };
 
 export function LaunchpadPlatformBadge({

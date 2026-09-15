@@ -1,6 +1,7 @@
 import { formatUnits } from 'viem';
 
 import { ChainId } from '@/constants/chains';
+import { rhTokens } from '@/constants/tokens/chains/rh';
 import type { TokenInfo } from '@/types/token';
 import { SettingsService } from '../settings';
 import {
@@ -43,7 +44,12 @@ export class TokenPonsService {
 
     const supplyText = formatUnits(meta.totalSupply, meta.decimals || 18);
     const launchpad = state.version === 1 ? 'pons_v1' : 'pons_v2';
-    const quoteToken = state.isNativeQuote ? 'ETH' : 'QUOTE';
+    const quoteAddress = String(state.quoteRouterToken || '').toLowerCase();
+    const quoteToken = state.isNativeQuote || quoteAddress === rhTokens.weth.address.toLowerCase() || quoteAddress === rhTokens.eth.address.toLowerCase()
+      ? 'ETH'
+      : quoteAddress === rhTokens.usdg.address.toLowerCase()
+        ? 'USDG'
+        : undefined;
     const result = {
       chain: 'rh',
       address: tokenAddress,

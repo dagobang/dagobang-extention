@@ -1,13 +1,20 @@
-import { AlertTriangle, Route } from 'lucide-react';
+import { AlertTriangle, LoaderCircle, Route } from 'lucide-react';
 import type { QuickTradeRouteHop } from '@/types/extention';
 import { t, type Locale } from '@/utils/i18n';
 import { preferRouteTokenSymbol } from '@/utils/quoteTokenLabels';
 
 const LOW_LIQUIDITY_USD_WARN = 10_000;
+const UNISWAP_V4_DYNAMIC_FEE_FLAG = 0x800000;
 
 function formatHopFee(fee?: number | null): string | null {
-  if (!(typeof fee === 'number') || fee <= 0) return null;
-  const pct = fee / 10000;
+  if (!(typeof fee === 'number') || !Number.isFinite(fee) || fee < 0) return null;
+  const hasDynamic = (fee & UNISWAP_V4_DYNAMIC_FEE_FLAG) !== 0;
+  const staticFee = fee & ~UNISWAP_V4_DYNAMIC_FEE_FLAG;
+  // PoolKey.fee == 0x800000 is the dynamic-fee flag, NOT 838.86%.
+  if (hasDynamic && staticFee === 0) return '动态';
+  const display = staticFee > 0 ? staticFee : fee;
+  if (!(display > 0)) return null;
+  const pct = display / 10000;
   const text = pct >= 1 ? pct.toFixed(pct % 1 === 0 ? 0 : 2) : pct.toFixed(pct >= 0.1 ? 2 : 3);
   return `${text.replace(/\.?0+$/, '')}%`;
 }
@@ -49,6 +56,11 @@ export function reverseQuickTradeRouteHops(hops: QuickTradeRouteHop[] | null | u
     .reverse();
 }
 
+export function labelQuickTradeRouteHops(hops: QuickTradeRouteHop[] | null | undefined): string | null {
+  if (!hops?.length) return null;
+  return [hops[0].tokenInSymbol, ...hops.map((hop) => hop.tokenOutSymbol)].join(' → ');
+}
+
 const DEX_LABEL_RANK: Record<string, number> = {
   V4: 4,
   pons: 3,
@@ -71,6 +83,48 @@ export function mergeQuickTradeRouteHops(
 ): QuickTradeRouteHop[] | null {
   if (!base?.length) return extra?.length ? extra : null;
   if (!extra?.length) return base;
+
+  const overlayHop = (hop: QuickTradeRouteHop, match?: QuickTradeRouteHop) => {
+    if (!match) return hop;
+    return {
+      ...hop,
+      tokenInSymbol: preferRouteTokenSymbol(match.tokenInSymbol, hop.tokenInSymbol) ?? hop.tokenInSymbol,
+      tokenOutSymbol: preferRouteTokenSymbol(match.tokenOutSymbol, hop.tokenOutSymbol) ?? hop.tokenOutSymbol,
+      dexLabel: (match.poolAddress || (typeof match.liquidityUsd === 'number' && match.liquidityUsd > 0))
+        ? (match.dexLabel || hop.dexLabel)
+        : preferDexLabel(hop.dexLabel, match.dexLabel),
+      poolAddress: hop.poolAddress || match.poolAddress,
+      fee: hop.fee ?? match.fee,
+      liquidityUsd: hop.liquidityUsd ?? match.liquidityUsd,
+    };
+  };
+
+  const samePath = extra.length === base.length
+    && extra.every((hop, index) => (
+      sameHopToken(hop.tokenIn, base[index]?.tokenIn)
+      && sameHopToken(hop.tokenOut, base[index]?.tokenOut)
+    ));
+
+  if (!samePath) {
+    const extraStartsWithPay = extra.length > 0 && sameHopToken(extra[0]?.tokenIn, base[0]?.tokenIn);
+    const extraEndsWithToken = extra.length > 0
+      && sameHopToken(extra[extra.length - 1]?.tokenOut, base[base.length - 1]?.tokenOut);
+    if (!extraStartsWithPay && extraEndsWithToken) {
+      return base.map((hop) => overlayHop(
+        hop,
+        extra.find((item) => (
+          sameHopToken(item.tokenIn, hop.tokenIn) && sameHopToken(item.tokenOut, hop.tokenOut)
+        )),
+      ));
+    }
+    return extra.map((hop) => overlayHop(
+      hop,
+      base.find((item) => (
+        sameHopToken(item.tokenIn, hop.tokenIn) && sameHopToken(item.tokenOut, hop.tokenOut)
+      )),
+    ));
+  }
+
   return base.map((hop) => {
     const match = extra.find((item) => (
       sameHopToken(item.tokenIn, hop.tokenIn) && sameHopToken(item.tokenOut, hop.tokenOut)
@@ -93,14 +147,27 @@ export function mergeQuickTradeRouteHops(
 export function RoutePreviewHint({
   label,
   hops,
+  loading = false,
   tone = 'buy',
   locale,
 }: {
   label: string | null;
   hops?: QuickTradeRouteHop[] | null;
+  loading?: boolean;
   tone?: 'buy' | 'sell';
   locale: Locale;
 }) {
+  if (loading && !hops?.length) {
+    const toneClass = tone === 'sell'
+      ? 'border-rose-500/20 bg-rose-500/10 text-rose-300/90'
+      : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300/90';
+    return (
+      <div className={`inline-flex items-center gap-0.5 rounded border px-1 py-px text-[10px] leading-4 ${toneClass}`}>
+        <LoaderCircle size={10} strokeWidth={2.2} className="animate-spin" />
+        <span>{t('contentUi.route.loading', locale)}</span>
+      </div>
+    );
+  }
   if (!hops?.length && !label) return null;
   const toneClass = tone === 'sell'
     ? 'border-rose-500/20 bg-rose-500/10 text-rose-300/90 hover:text-rose-200'

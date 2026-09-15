@@ -23,7 +23,7 @@ declare module '#imports' {
   export { default as AxiomAPI, AxiomAPI, AxiomPairInfoResponse } from '../hooks/AxiomAPI';
   export { default as DexScreenerAPI, DexScreenerAPI, DexScreenerTokenRef, DexScreenerPair } from '../hooks/DexScreenerAPI';
   export { default as FlapAPI, FlapAPI, FlapCoinApiResponse } from '../hooks/FlapAPI';
-  export { default as GmgnAPI, extractGmgnAuthData, GmgnAPI, MultiTokenInfoResponse, GmgnSearchTokenItem, FlapQuoteSupportResult, GmgnTokenHolding, GmgnPageFetchRequest, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams, TokenHoldingDetail, TokenHoldingDetailResponse } from '../hooks/GmgnAPI';
+  export { default as GmgnAPI, extractGmgnAuthData, GmgnAPI, MultiTokenInfoResponse, GmgnSearchTokenItem, FlapQuoteSupportResult, GmgnTokenPoolFeeInfo, GmgnTokenHolding, GmgnPageFetchRequest, TokenCandle, TokenCandlesResponse, ApiUrlParams, SwapOrderRequest, SwapOrderResponse, BuyOrderParams, SellOrderParams, TokenCandlesParams, DailyProfit, DailyProfitResponse, DailyProfitParams, TokenHoldingDetail, TokenHoldingDetailResponse } from '../hooks/GmgnAPI';
   export { TokenAPI, TokenAPI } from '../hooks/TokenAPI';
   export { loadContractAbi, useContractAbi, ContractAddress } from '../hooks/useContractAbi';
   export { useTradeSuccessSound } from '../hooks/useTradeSuccessSound';
@@ -31,17 +31,20 @@ declare module '#imports' {
   export { encryptJson, decryptJson } from '../utils/crypto';
   export { defaultSettings } from '../utils/defaults';
   export { getDexPoolPrefer, parseGweiToWei } from '../utils/dexUtils';
-  export { isUsableFlapDexPoolAddress, hasConfirmedFlapStocksIdentity, hasConfirmedFlapOuterRoute, normalizeFlapLaunchpadStatus, hasNonTerminalFlapOuterQuote, resolveFlapPlatform, hasConfirmedFlapLaunchpadIdentity, resolveFlapPlatformByQuoteLineage, classifyFlapRoute } from '../utils/flap';
+  export { isFlapPortalOrManagerAddress, isUsableFlapDexPoolAddress, hasConfirmedFlapStocksIdentity, hasConfirmedFlapOuterRoute, normalizeFlapLaunchpadStatus, hasNonTerminalFlapOuterQuote, resolveFlapPlatform, hasConfirmedFlapLaunchpadIdentity, resolveFlapPlatformByQuoteLineage, classifyFlapRoute } from '../utils/flap';
   export { normalizeHexPrivateKey, isHexPrivateKey, parseNumberLoose, normalizePriceValue, formatPriceValue, formatTime, formatAgeShort, formatCountShort, formatCompactNumber, formatBnbAmount, formatShortAddress, formatBroadcastProvider, formatRpcEndpointLabel } from '../utils/format';
   export { isObject, asAddress, normalizeGmgnChainName, toArrayPayload, normalizeInlineWebpData, shouldUseMergedTokenValue, normalizePublicTokenData, normalizeNewPoolTokenData, resolveTrenchesStageByFid, normalizeTrenchesTokenData, normalizeTokenPageTokenData, normalizeTokenStatTokenData, extractPublicBroadcastCreates, extractFirstFromObject, extractNumber, normalizeTokenAddressKey, extractTokenAddress, extractTokenAddresses, extractTweetId, extractText, extractMedia, extractGmgnTweetText, extractGmgnUserFields, extractUser, extractTimestampMs, parseGmgnEnvelope, extractGmgnWsConnectionInfo, TrenchesStage } from '../utils/gmgnWs';
   export { t, normalizeLocale, Locale } from '../utils/i18n';
   export { isFlapSuffixAddress, isFourMemeSuffixAddress, inferLaunchpadFamilyByAddress, resolveTokenLaunchpadPlatform, LaunchpadFamily } from '../utils/launchpadFamily';
   export { call } from '../utils/messaging';
-  export { resolveEvmTradeQuoteToken, planEvmTradeRoute, buildFastQuickTradeRoutePreview, EvmTradeRouteHopKind, EvmTradeRoutePlanHop, EvmTradeRoutePlan } from '../utils/quickTradeRoutePreview';
-  export { isLikelyTokenAddressLabel, getKnownQuoteTokenSymbol, preferRouteTokenSymbol, resolveRouteTokenLabel } from '../utils/quoteTokenLabels';
+  export { resolveQuoteFromDexScreenerPool } from '../utils/officialPoolQuote';
+  export { resolveEvmTradeQuoteToken, isEvmRouteAlignedWithPayToken, planEvmTradeRoute, buildFastQuickTradeRoutePreview, EvmTradeRouteHopKind, EvmTradeRoutePlanHop, EvmTradeRoutePlan } from '../utils/quickTradeRoutePreview';
+  export { isLikelyTokenAddressLabel, getKnownQuoteTokenSymbol, isPlaceholderRouteSymbol, preferRouteTokenSymbol, resolveRouteTokenLabel } from '../utils/quoteTokenLabels';
   export { parsePlatformTokenLink, navigateToUrl, parseCurrentUrl, parseCurrentUrlFull, SiteInfo } from '../utils/sites';
   export { DEFAULT_SOLANA_TIP_PRESET_VALUES, getSolanaTipProviderLabel, getSolanaTipMinimumNative, getSolanaTipAccounts, getRandomSolanaTipRecipient, getSolanaTipPresetValue, resolveEnabledSolanaSwqosProviderTypes, resolveSingleEnabledSolanaTipProvider, resolveSolanaTipConfig } from '../utils/solanaTip';
+  export { getTradeRouteStableAddresses, normalizeTradeRouteToken, isTradeRouteNativeToken, isTradeRouteTerminalQuote } from '../utils/tradeRouteTerminals';
   export { collectErrorText, classifyBroadcastError, getNonceErrorKindFromText, extractNextNonceHintFromText, isAllowanceLikeText, isInFlightLimitLikeText, BroadcastErrorClass } from '../utils/txErrorClassify';
+  export { hashUniswapV4PoolId, recoverUniswapV4PoolKey, UniswapV4PoolKey } from '../utils/uniswapV4PoolKey';
   export { validateSettings } from '../utils/validate';
   export { pickFiniteNumber, normalizePercentValue, pickMaxFiniteNumber, pickMaxPercentValue } from '../utils/value';
 }
