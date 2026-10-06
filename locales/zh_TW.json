@@ -1130,6 +1130,18 @@
         "analysis": "分析",
         "summary": "總結"
       },
+      "sync": {
+        "title": "Supabase",
+        "hint": "填 Project URL 和 anon key。兩個都留空再儲存，就回到本機。表結構在 services/review/trade_reviews.sql，到 Supabase SQL Editor 執行一次。",
+        "url": "Project URL",
+        "anonKey": "anon key",
+        "save": "儲存並同步",
+        "needBoth": "URL 和 anon key 要一起填",
+        "badUrl": "URL 需要以 https:// 開頭",
+        "saved": "已連接 Supabase",
+        "cleared": "已改回本機快取",
+        "saveFailed": "儲存設定失敗"
+      },
       "toast": {
         "fetchFailed": "載入復盤失敗",
         "walletRequired": "缺少錢包地址",

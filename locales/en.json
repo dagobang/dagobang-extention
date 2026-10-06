@@ -1130,6 +1130,18 @@
         "analysis": "Analysis",
         "summary": "Lessons"
       },
+      "sync": {
+        "title": "Supabase",
+        "hint": "Project URL and anon key. Leave both empty and save to use this browser only. Run services/review/trade_reviews.sql once in the Supabase SQL editor.",
+        "url": "Project URL",
+        "anonKey": "anon key",
+        "save": "Save and sync",
+        "needBoth": "Enter both the URL and the anon key",
+        "badUrl": "URL must start with https://",
+        "saved": "Connected to Supabase",
+        "cleared": "Using local cache",
+        "saveFailed": "Could not save the config"
+      },
       "toast": {
         "fetchFailed": "Failed to load reviews",
         "walletRequired": "Wallet address is required",

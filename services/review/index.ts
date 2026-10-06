@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { browser } from 'wxt/browser';
 import type { TradeReview, TradeReviewFilters, TradeReviewUpsertInput } from '@/types/review';
 import { isSolanaAddress, normalizeAddress, normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 import { normalizeUnixSeconds } from '@/services/review/sample';
@@ -6,6 +7,15 @@ import { readReviewSample } from '@/services/review/sample';
 
 const TABLE_NAME = 'trade_reviews';
 const CACHE_KEY = 'dagobang_trade_reviews_cache_v1';
+const SUPABASE_STORAGE_KEY = 'dagobang_supabase_config_v1';
+const SUPABASE_URL_KEY = 'dagobang_supabase_url';
+const SUPABASE_ANON_KEY = 'dagobang_supabase_anon_key';
+
+type SupabaseConfig = { url: string; anonKey: string };
+
+let storedConfig: SupabaseConfig | null = null;
+let configHydrated = false;
+let hydratePromise: Promise<SupabaseConfig> | null = null;
 
 type TradeReviewRow = {
   id: string;
@@ -247,14 +257,82 @@ function toRow(input: TradeReviewUpsertInput): Omit<TradeReviewRow, 'created_at'
   };
 }
 
-function getSupabaseConfig() {
-  const envUrl = (import.meta as any).env?.WXT_PUBLIC_SUPABASE_URL || '';
-  const envAnon = (import.meta as any).env?.WXT_PUBLIC_SUPABASE_ANON_KEY || '';
-  const localUrl = window.localStorage.getItem('dagobang_supabase_url') || '';
-  const localAnon = window.localStorage.getItem('dagobang_supabase_anon_key') || '';
-  const url = String(localUrl || envUrl || '').trim();
-  const anonKey = String(localAnon || envAnon || '').trim();
-  return { url, anonKey };
+function readPageConfig(): SupabaseConfig {
+  try {
+    return {
+      url: String(window.localStorage.getItem(SUPABASE_URL_KEY) || '').trim(),
+      anonKey: String(window.localStorage.getItem(SUPABASE_ANON_KEY) || '').trim(),
+    };
+  } catch {
+    return { url: '', anonKey: '' };
+  }
+}
+
+function writePageConfig(config: SupabaseConfig) {
+  try {
+    if (config.url) window.localStorage.setItem(SUPABASE_URL_KEY, config.url);
+    else window.localStorage.removeItem(SUPABASE_URL_KEY);
+    if (config.anonKey) window.localStorage.setItem(SUPABASE_ANON_KEY, config.anonKey);
+    else window.localStorage.removeItem(SUPABASE_ANON_KEY);
+  } catch {
+  }
+}
+
+function readEnvConfig(): SupabaseConfig {
+  return {
+    url: String((import.meta as any).env?.WXT_PUBLIC_SUPABASE_URL || '').trim(),
+    anonKey: String((import.meta as any).env?.WXT_PUBLIC_SUPABASE_ANON_KEY || '').trim(),
+  };
+}
+
+function getSupabaseConfig(): SupabaseConfig {
+  const page = readPageConfig();
+  const env = readEnvConfig();
+  const stored = configHydrated ? storedConfig : null;
+  return {
+    url: String(stored?.url || page.url || env.url || '').trim(),
+    anonKey: String(stored?.anonKey || page.anonKey || env.anonKey || '').trim(),
+  };
+}
+
+export async function loadReviewSupabaseConfig(): Promise<SupabaseConfig> {
+  if (!hydratePromise) {
+    hydratePromise = (async () => {
+      try {
+        const res = await browser.storage.local.get(SUPABASE_STORAGE_KEY);
+        const raw = res?.[SUPABASE_STORAGE_KEY] as Partial<SupabaseConfig> | undefined;
+        if (!configHydrated) {
+          storedConfig = {
+            url: String(raw?.url || '').trim(),
+            anonKey: String(raw?.anonKey || '').trim(),
+          };
+          configHydrated = true;
+          ReviewService.resetClient();
+        }
+      } catch {
+        if (!configHydrated) {
+          storedConfig = { url: '', anonKey: '' };
+          configHydrated = true;
+        }
+      }
+      return getSupabaseConfig();
+    })();
+  }
+  return hydratePromise;
+}
+
+export async function saveReviewSupabaseConfig(url: string, anonKey: string): Promise<SupabaseConfig> {
+  const next = { url: String(url || '').trim(), anonKey: String(anonKey || '').trim() };
+  storedConfig = next;
+  configHydrated = true;
+  hydratePromise = Promise.resolve(getSupabaseConfig());
+  writePageConfig(next);
+  ReviewService.resetClient();
+  try {
+    await browser.storage.local.set({ [SUPABASE_STORAGE_KEY]: next });
+  } catch {
+  }
+  return getSupabaseConfig();
 }
 
 function getCache(): TradeReview[] {
@@ -324,6 +402,11 @@ export class ReviewService {
   private static client: SupabaseClient | null = null;
   private static configKey = '';
 
+  static resetClient() {
+    this.client = null;
+    this.configKey = '';
+  }
+
   private static getClient() {
     const cfg = getSupabaseConfig();
     const key = `${cfg.url}|${cfg.anonKey}`;
@@ -339,6 +422,7 @@ export class ReviewService {
   }
 
   static async list(filters: TradeReviewFilters = {}): Promise<{ items: TradeReview[]; source: 'cloud' | 'local' }> {
+    await loadReviewSupabaseConfig();
     const client = this.getClient();
     if (!client) {
       return { items: filterReviews(getCache(), filters), source: 'local' };
@@ -374,6 +458,7 @@ export class ReviewService {
   }
 
   static async upsert(input: TradeReviewUpsertInput): Promise<{ item: TradeReview; source: 'cloud' | 'local' }> {
+    await loadReviewSupabaseConfig();
     const row = toRow(input);
     const client = this.getClient();
     if (!client) {
@@ -440,6 +525,7 @@ export class ReviewService {
   }
 
   static async remove(id: string): Promise<{ ok: true; source: 'cloud' | 'local' }> {
+    await loadReviewSupabaseConfig();
     const client = this.getClient();
     if (!client) {
       setCache(getCache().filter((it) => it.id !== id));

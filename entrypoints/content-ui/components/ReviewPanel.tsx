@@ -1,12 +1,12 @@
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import toast from 'react-hot-toast';
-import { X, RefreshCw, Save, Trash2, Search, Cloud, HardDrive } from 'lucide-react';
+import { X, RefreshCw, Save, Trash2, Search, Cloud, HardDrive, Settings as SettingsIcon } from 'lucide-react';
 import type { Settings } from '@/types/extention';
 import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { parseCurrentUrl, parsePlatformTokenLink } from '@/utils/sites';
 import GmgnAPI from '@/hooks/GmgnAPI';
 import type { ReviewMetrics, TradeReview, TradeReviewUpsertInput } from '@/types/review';
-import { ReviewService } from '@/services/review';
+import { ReviewService, loadReviewSupabaseConfig, saveReviewSupabaseConfig } from '@/services/review';
 import { isSolanaAddress, normalizeAddress, normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 import {
   CATALYSTS,
@@ -345,6 +345,10 @@ function ReviewPanelBody({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dataSource, setDataSource] = useState<'cloud' | 'local'>('local');
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [syncUrl, setSyncUrl] = useState('');
+  const [syncKey, setSyncKey] = useState('');
+  const [syncSaving, setSyncSaving] = useState(false);
   const [viewMode, setViewMode] = useState<'input' | 'analysis' | 'summary'>('input');
   const [chainFilter, setChainFilter] = useState<'all' | 'BSC' | 'SOL' | 'RH'>('all');
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -604,6 +608,17 @@ function ReviewPanelBody({
   };
 
   useEffect(() => {
+    if (!visible) return;
+    let live = true;
+    void loadReviewSupabaseConfig().then((cfg) => {
+      if (!live) return;
+      setSyncUrl(cfg.url);
+      setSyncKey(cfg.anonKey);
+    });
+    return () => { live = false; };
+  }, [visible]);
+
+  useEffect(() => {
     if (!visible || !address) return;
     void resolveTokenReview();
   }, [visible, address, tokenAddress, pageChain]);
@@ -688,6 +703,30 @@ function ReviewPanelBody({
         holdDurationSec: opened && closed ? Math.max(0, closed - opened) : (draft.metrics?.holdDurationSec ?? null),
       },
     };
+  };
+
+  const handleSaveSync = async () => {
+    const url = syncUrl.trim();
+    const anonKey = syncKey.trim();
+    if ((url && !anonKey) || (!url && anonKey)) {
+      toast.error(tt('contentUi.review.sync.needBoth'));
+      return;
+    }
+    if (url && !/^https:\/\/.+/i.test(url)) {
+      toast.error(tt('contentUi.review.sync.badUrl'));
+      return;
+    }
+    setSyncSaving(true);
+    try {
+      await saveReviewSupabaseConfig(url, anonKey);
+      setSyncOpen(false);
+      toast.success(url ? tt('contentUi.review.sync.saved') : tt('contentUi.review.sync.cleared'));
+      await fetchReviews();
+    } catch (err: any) {
+      toast.error(err?.message || tt('contentUi.review.sync.saveFailed'));
+    } finally {
+      setSyncSaving(false);
+    }
   };
 
   const handleSave = async (quiet = false): Promise<TradeReview | null> => {
@@ -883,6 +922,15 @@ function ReviewPanelBody({
           <div className="flex items-center gap-2">
             <span className="font-semibold text-zinc-100">{tt('contentUi.review.title')}</span>
             {sourceBadge}
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-md border border-zinc-700 p-1 text-zinc-400 hover:text-zinc-100"
+              onClick={() => setSyncOpen((open) => !open)}
+              onPointerDown={(e) => e.stopPropagation()}
+              title={tt('contentUi.review.sync.title')}
+            >
+              <SettingsIcon size={13} />
+            </button>
             <div className="ml-1 inline-flex rounded-md border border-zinc-700 bg-zinc-900/70 p-0.5">
               <button
                 type="button"
@@ -926,6 +974,41 @@ function ReviewPanelBody({
             </button>
           </div>
         </div>
+
+        {syncOpen ? (
+          <div className="border-b border-zinc-800 px-4 py-3 flex flex-col gap-2" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="text-[11px] text-zinc-500">{tt('contentUi.review.sync.hint')}</div>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-zinc-400">{tt('contentUi.review.sync.url')}</span>
+              <input
+                value={syncUrl}
+                onChange={(e) => setSyncUrl(e.target.value)}
+                placeholder="https://xxxx.supabase.co"
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-zinc-400">{tt('contentUi.review.sync.anonKey')}</span>
+              <input
+                type="password"
+                value={syncKey}
+                onChange={(e) => setSyncKey(e.target.value)}
+                placeholder="anon key"
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-emerald-500"
+              />
+            </label>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => void handleSaveSync()}
+                disabled={syncSaving}
+                className="rounded-md border border-emerald-700 bg-emerald-500/10 px-3 py-1.5 text-emerald-300 disabled:opacity-40"
+              >
+                {syncSaving ? tt('contentUi.review.action.saving') : tt('contentUi.review.sync.save')}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-[212px_1fr] flex-1 min-h-0">
           <div className="border-r border-zinc-800 p-3 flex flex-col min-h-0">
