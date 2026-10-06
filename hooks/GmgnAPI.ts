@@ -1719,18 +1719,22 @@ export class GmgnAPI {
       ?? tokenData.base_token_info?.market_cap
       ?? tokenData.base_token_info?.marketCap
       ?? '';
-    const normalizedName =
-      tokenData.name
-      ?? tokenData.base_token_info?.name
-      ?? tokenData.token?.name
-      ?? tokenData.token_basic_stats?.name
-      ?? '';
-    const normalizedSymbol =
-      tokenData.symbol
-      ?? tokenData.base_token_info?.symbol
-      ?? tokenData.token?.symbol
-      ?? tokenData.token_basic_stats?.symbol
-      ?? '';
+    const normalizedName = this.pickFirstString(
+      tokenData.name,
+      tokenData.base_token_info?.name,
+      tokenData.token?.name,
+      tokenData.token_basic_stats?.name,
+    ) ?? '';
+    const normalizedSymbol = this.pickFirstString(
+      tokenData.symbol,
+      tokenData.token_symbol,
+      tokenData.s,
+      tokenData.base_token_info?.symbol,
+      tokenData.base_token_info?.token_symbol,
+      tokenData.token?.symbol,
+      tokenData.token?.token_symbol,
+      tokenData.token_basic_stats?.symbol,
+    ) ?? '';
     const normalizedDecimals =
       tokenData.decimals
       ?? tokenData.base_token_info?.decimals
@@ -2078,6 +2082,73 @@ export class GmgnAPI {
       console.error('Failed to fetch daily profits:', error);
       throw error;
     }
+  }
+
+  /**
+   * Coin ATH market cap from GMGN token info.
+   * Prefers history_highest_market_cap, otherwise ath_price × supply.
+   */
+  public static async getTokenAthMarketCap(chain: string, address: string): Promise<number | null> {
+    const normalizedChain = this.normalizeChainName(chain);
+    const normalizedAddress = this.normalizeQueryAddress(normalizedChain, address);
+    if (!normalizedChain || !normalizedAddress) return null;
+    const rows = await Promise.all([
+      this.fetchRawTokenRow('/mutil_window_token_info', this.CANDLES_BASE_URL, normalizedChain, normalizedAddress).catch(() => null),
+      this.fetchRawTokenRow('/multi_token_info', this.TOKEN_INFO_BASE_URL, normalizedChain, normalizedAddress).catch(() => null),
+    ]);
+    let best = 0;
+    for (const row of rows) {
+      const ath = this.readAthMarketCap(row);
+      if (ath != null && ath > best) best = ath;
+    }
+    return best > 0 ? best : null;
+  }
+
+  private static async fetchRawTokenRow(
+    endpoint: string,
+    baseUrl: string,
+    chain: string,
+    address: string,
+  ): Promise<Record<string, any> | null> {
+    const extraParams = endpoint === '/mutil_window_token_info' ? { worker: '0' } : {};
+    const url = await this.buildApiUrl(endpoint, extraParams, baseUrl);
+    const headers = await this.getHeaders();
+    const response = await this.makeRequest(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ chain, addresses: [address] }),
+    });
+    if (!response.ok) return null;
+    const result = await response.json() as MultiTokenInfoResponse;
+    if (result.code !== 0 || !Array.isArray(result.data) || result.data.length === 0) return null;
+    return result.data[0];
+  }
+
+  private static readAthMarketCap(row: Record<string, any> | null): number | null {
+    if (!row) return null;
+    const direct = [
+      row.history_highest_market_cap,
+      row.ath_market_cap,
+      row.ath_mc,
+      row.price?.history_highest_market_cap,
+      row.price?.ath_market_cap,
+    ];
+    for (const value of direct) {
+      const num = Number(value);
+      if (Number.isFinite(num) && num > 0) return num;
+    }
+    const athPrice = Number(row.ath_price ?? row.price?.ath_price ?? row.highest_price);
+    const supply = Number(
+      row.total_supply
+      ?? row.totalSupply
+      ?? row.circulating_supply
+      ?? row.max_supply
+      ?? row.token?.total_supply,
+    );
+    if (Number.isFinite(athPrice) && athPrice > 0 && Number.isFinite(supply) && supply > 0) {
+      return athPrice * supply;
+    }
+    return null;
   }
 
   public static async getTokenHoldingDetail(

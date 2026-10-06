@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { TradeReview, TradeReviewFilters, TradeReviewUpsertInput } from '@/types/review';
-import { normalizeAddress, normalizeAddressKey, normalizeWalletAddressKey } from '@/services/xSniper/engine/metrics';
+import { isSolanaAddress, normalizeAddress, normalizeAddressKey } from '@/services/xSniper/engine/metrics';
+import { normalizeUnixSeconds } from '@/services/review/sample';
+import { readReviewSample } from '@/services/review/sample';
 
 const TABLE_NAME = 'trade_reviews';
 const CACHE_KEY = 'dagobang_trade_reviews_cache_v1';
@@ -116,6 +118,7 @@ function toReview(row: TradeReviewRow): TradeReview {
   metrics.favoritesCount = favoritesCount;
   metrics.commentsCount = commentsCount;
   metrics.engagementScore = engagementScore;
+  const sample = readReviewSample({ metrics, narrativeTags });
   const qualityScore = Number.isFinite(Number(row.quality_score))
     ? clampScore(Number(row.quality_score))
     : calcQualityScore({
@@ -141,6 +144,13 @@ function toReview(row: TradeReviewRow): TradeReview {
     reviewTitle: row.review_title,
     tags: Array.isArray(row.tags) ? row.tags : [],
     narrativeTags,
+    narrative: sample.narrative,
+    catalyst: sample.catalyst,
+    catalystNote: sample.catalystNote,
+    catalystResult: sample.catalystResult,
+    peakMarketCap: sample.peakMarketCap,
+    notionPageId: sample.notionPageId,
+    notionSyncedHash: sample.notionSyncedHash,
     mistakes: Array.isArray(row.mistakes) ? row.mistakes : [],
     emotionScore: Number(row.emotion_score || 0),
     executionScore: Number(row.execution_score || 0),
@@ -150,8 +160,8 @@ function toReview(row: TradeReviewRow): TradeReview {
     summary: row.summary || '',
     lessonLearned: row.lesson_learned || '',
     nextAction: row.next_action || '',
-    holdStartAt: row.hold_start_at ?? null,
-    holdEndAt: row.hold_end_at ?? null,
+    holdStartAt: normalizeUnixSeconds(row.hold_start_at ?? metrics.holdStartAt),
+    holdEndAt: normalizeUnixSeconds(row.hold_end_at ?? metrics.holdEndAt),
     qualityScore,
     engagementScore,
     metrics,
@@ -161,16 +171,30 @@ function toReview(row: TradeReviewRow): TradeReview {
 }
 
 function toRow(input: TradeReviewUpsertInput): Omit<TradeReviewRow, 'created_at' | 'updated_at'> {
-  const narrativeTags = input.narrativeTags || [];
+  const narrative = String(input.narrative || '').trim();
+  const narrativeTags = narrative ? [narrative] : (input.narrativeTags || []);
   const buyLogic = input.buyLogic || '';
   const sellLogic = input.sellLogic || '';
   const likesCount = normalizeCount(input.metrics?.likesCount);
   const favoritesCount = normalizeCount(input.metrics?.favoritesCount);
   const commentsCount = normalizeCount(input.metrics?.commentsCount);
   const engagementScore = calcEngagementScore(likesCount, favoritesCount, commentsCount);
+  const peak = Number(input.peakMarketCap);
+  const holdStartAt = normalizeUnixSeconds(input.holdStartAt ?? input.metrics?.holdStartAt);
+  const holdEndAt = normalizeUnixSeconds(input.holdEndAt ?? input.metrics?.holdEndAt);
   const mergedMetrics = {
     ...(input.metrics || {}),
     narrativeTags,
+    narrative,
+    catalyst: String(input.catalyst || '').trim(),
+    catalystNote: String(input.catalystNote || '').trim(),
+    catalystResult: String(input.catalystResult || '').trim(),
+    peakMarketCap: Number.isFinite(peak) && peak > 0 ? peak : null,
+    notionPageId: String(input.notionPageId || '').trim(),
+    notionSyncedHash: String(input.notionSyncedHash || '').trim(),
+    holdStartAt,
+    holdEndAt,
+    holdDurationSec: holdStartAt && holdEndAt ? Math.max(0, holdEndAt - holdStartAt) : (input.metrics?.holdDurationSec ?? null),
     buyLogic,
     sellLogic,
     likesCount,
@@ -217,8 +241,8 @@ function toRow(input: TradeReviewUpsertInput): Omit<TradeReviewRow, 'created_at'
     summary: input.summary,
     lesson_learned: input.lessonLearned,
     next_action: input.nextAction,
-    hold_start_at: input.holdStartAt ?? null,
-    hold_end_at: input.holdEndAt ?? null,
+    hold_start_at: holdStartAt,
+    hold_end_at: holdEndAt,
     metrics: mergedMetrics,
   };
 }
@@ -252,14 +276,22 @@ function setCache(items: TradeReview[]) {
   }
 }
 
+function sameStoredAddress(stored: string, query: string): boolean {
+  const left = normalizeAddressKey(stored);
+  const right = normalizeAddressKey(query);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return isSolanaAddress(left) && isSolanaAddress(right) && left.toLowerCase() === right.toLowerCase();
+}
+
 function filterReviews(items: TradeReview[], filters: TradeReviewFilters = {}) {
   const search = (filters.search || '').trim().toLowerCase();
-  const tokenAddress = normalizeAddressKey(filters.tokenAddress || '');
-  const walletAddress = normalizeWalletAddressKey(filters.walletAddress || '');
+  const tokenAddress = String(filters.tokenAddress || '').trim();
+  const walletAddress = String(filters.walletAddress || '').trim();
   let result = items.filter((item) => {
-    if (walletAddress && normalizeWalletAddressKey(item.walletAddress) !== walletAddress) return false;
+    if (walletAddress && !sameStoredAddress(item.walletAddress, walletAddress)) return false;
     if (filters.chain && item.chain !== filters.chain) return false;
-    if (tokenAddress && normalizeAddressKey(item.tokenAddress) !== tokenAddress) return false;
+    if (tokenAddress && !sameStoredAddress(item.tokenAddress, tokenAddress)) return false;
     if (!search) return true;
     const combined = [
       item.tokenAddress,
@@ -271,9 +303,13 @@ function filterReviews(items: TradeReview[], filters: TradeReviewFilters = {}) {
       item.sellLogic,
       item.lessonLearned,
       item.nextAction,
-      item.tags.join(' '),
-      item.narrativeTags.join(' '),
-      item.mistakes.join(' ')
+      item.tags?.join?.(' ') || '',
+      item.narrativeTags?.join?.(' ') || '',
+      item.narrative,
+      item.catalyst,
+      item.catalystNote,
+      item.catalystResult,
+      item.mistakes?.join?.(' ') || ''
     ].join(' ').toLowerCase();
     return combined.includes(search);
   });
@@ -313,13 +349,15 @@ export class ReviewService {
         .select('*')
         .order('updated_at', { ascending: false });
       if (filters.walletAddress) {
-        query = query.eq('wallet_address', normalizeAddress(filters.walletAddress) ?? filters.walletAddress);
+        const wallet = normalizeAddress(filters.walletAddress) ?? filters.walletAddress;
+        query = isSolanaAddress(wallet) ? query.ilike('wallet_address', wallet) : query.eq('wallet_address', wallet);
       }
       if (filters.chain) {
         query = query.eq('chain', filters.chain);
       }
       if (filters.tokenAddress) {
-        query = query.eq('token_address', normalizeAddress(filters.tokenAddress) ?? filters.tokenAddress);
+        const token = normalizeAddress(filters.tokenAddress) ?? filters.tokenAddress;
+        query = isSolanaAddress(token) ? query.ilike('token_address', token) : query.eq('token_address', token);
       }
       if (filters.limit && filters.limit > 0) {
         query = query.limit(filters.limit);

@@ -974,7 +974,7 @@
       "title": "Trade Review",
       "empty": "No review records",
       "placeholder": {
-        "search": "Search token / tags / notes",
+        "search": "Search token / narrative / catalyst",
         "reviewTitle": "Review title",
         "tokenAddress": "Token address",
         "tokenSymbol": "Token symbol",
@@ -986,7 +986,7 @@
         "buyLogic": "Buy logic",
         "sellLogic": "Sell logic",
         "summary": "Trade summary",
-        "lesson": "Biggest lesson",
+        "lesson": "The one rule to change next time. Leave blank if nothing new.",
         "nextAction": "Next action"
       },
       "stats": {
@@ -1029,6 +1029,8 @@
         "totalBuyCost": "Total Buy Cost",
         "totalSellIncome": "Total Sell Income",
         "holdTime": "Hold Duration",
+        "openTime": "Opened",
+        "closeTime": "Closed",
         "tokenPrice": "Current Price",
         "marketCap": "Market Cap",
         "liquidity": "Liquidity",
@@ -1046,7 +1048,7 @@
         "buyLogic": "Buy Logic",
         "sellLogic": "Sell Logic",
         "summary": "Trade Summary",
-        "lessonLearned": "Biggest Lesson",
+        "lessonLearned": "Lesson",
         "nextAction": "Next Action",
         "executionScore": "Execution {0}",
         "emotionScore": "Emotion {0}",
@@ -1055,6 +1057,65 @@
         "buyCard": "Buy",
         "sellCard": "Sell",
         "defaultTitleSuffix": "Review"
+      },
+      "sample": {
+        "peak": "Peak market cap",
+        "peakHint": "Prefilled from the higher of sell cap and price at review. Change it to the highest cap this coin actually reached. 300k / 1.5m works.",
+        "narrative": "Narrative",
+        "addTag": "Add",
+        "catalyst": "Catalyst",
+        "catalystNote": "Expected heat",
+        "catalystNotePlaceholder": "Waiting on whose reply, or which headline",
+        "result": "Did the heat land",
+        "narrativeOpt": {
+          "animal": "Animal",
+          "celebrity": "Celebrity",
+          "ai": "AI",
+          "web2": "Web2 news",
+          "kol": "KOL",
+          "community": "Community meme",
+          "official": "Official"
+        },
+        "catalystOpt": {
+          "celebrity": "Waiting on a celebrity",
+          "web2_news": "Web2 news",
+          "kol_flow": "KOL traffic",
+          "official": "Official action",
+          "community": "Community heat",
+          "none": "No clear heat"
+        },
+        "resultOpt": {
+          "ignited": "Ignited",
+          "missed": "Never came",
+          "fizzled": "Came, no follow-through"
+        },
+        "ceiling": {
+          "above_1m": "Reached 1M",
+          "mid": "Mid",
+          "low": "Low ceiling"
+        },
+        "chainAll": "All",
+        "missingPeak": "{0} incomplete records are left out",
+        "minSample": "Under 5 samples are shown, not treated as a conclusion",
+        "tableNarrative": "Chain × narrative",
+        "tableCatalyst": "Chain × catalyst",
+        "tableResult": "Catalyst × outcome",
+        "colKey": "Group",
+        "colCount": "N",
+        "colAbove": "Reached 1M",
+        "colLow": "Low ceiling",
+        "colMedian": "Median peak",
+        "emptyStats": "Stats appear after peak cap, narrative, and catalyst are filled in",
+        "needNarrative": "Pick a narrative, or add one",
+        "needCatalyst": "Pick a catalyst, or add one",
+        "needResult": "Mark whether the heat landed",
+        "needBuy": "Write the entry reason",
+        "needSell": "Write the exit reason",
+        "athMissing": "ATH was not in the token response",
+        "sellVsAth": "Exit was {0}% of ATH"
+      },
+      "summary": {
+        "empty": "No lessons yet"
       },
       "action": {
         "refresh": "Refresh",
@@ -1066,7 +1127,8 @@
         "close": "Close",
         "maximize": "Maximize",
         "input": "Input",
-        "analysis": "Analysis"
+        "analysis": "Analysis",
+        "summary": "Lessons"
       },
       "toast": {
         "fetchFailed": "Failed to load reviews",

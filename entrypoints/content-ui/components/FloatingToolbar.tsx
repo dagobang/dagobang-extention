@@ -179,12 +179,12 @@ export function FloatingToolbar({
         </ToolBtn>
       ) : null}
 
-      <ToolBtn active={rpcActive} title="RPC" onClick={onToggleRpc}>
-        <SatelliteDish size={14} />
+      <ToolBtn active={reviewActive} title="Review" onClick={onToggleReview}>
+        <NotebookPen size={14} />
       </ToolBtn>
 
       <div ref={moreRef} className="relative">
-        <ToolBtn active={moreOpen || dailyAnalysisActive || reviewActive} title="More" onClick={() => setMoreOpen((v) => !v)}>
+        <ToolBtn active={moreOpen || dailyAnalysisActive || rpcActive} title="More" onClick={() => setMoreOpen((v) => !v)}>
           <MoreHorizontal size={14} />
         </ToolBtn>
         {moreOpen && (
@@ -205,14 +205,14 @@ export function FloatingToolbar({
             </button>
             <button
               type="button"
-              className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${reviewActive ? 'bg-cyan-500/15 text-cyan-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
+              className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${rpcActive ? 'bg-sky-500/15 text-sky-300' : 'text-zinc-200 hover:bg-zinc-800'}`}
               onClick={() => {
-                onToggleReview();
+                onToggleRpc();
                 setMoreOpen(false);
               }}
             >
-              <NotebookPen size={13} />
-              Review
+              <SatelliteDish size={13} />
+              RPC
             </button>
           </div>
         )}

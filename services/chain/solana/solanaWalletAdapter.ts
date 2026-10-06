@@ -3,7 +3,6 @@ import { Keypair } from '@solana/web3.js';
 import { ChainId } from '@/constants/chains/chainId';
 import { decryptJson, encryptJson } from '@/utils/crypto';
 import {
-  getSettings,
   getStoredSolanaWallet,
   getStoredWallet,
   getUnlockedSolanaState,
@@ -234,12 +233,11 @@ function getSolanaGroup(payload: SolanaWalletPayload): MultiChainWalletGroup {
 }
 
 async function persistUnlocked(group: MultiChainWalletGroup, expiresAt?: number) {
-  const settings = expiresAt === undefined ? await getSettings() : null;
   const unlocked: UnlockedSolanaState = {
     kind: 'solana',
     accounts: group.accounts,
     selectedAddress: group.selectedAddress ?? group.accounts[0]?.address,
-    expiresAt: expiresAt ?? (settings ? Date.now() + settings.autoLockSeconds * 1000 : undefined),
+    ...(typeof expiresAt === 'number' ? { expiresAt } : {}),
   };
   await setUnlockedSolanaState(unlocked);
 }
@@ -257,6 +255,7 @@ async function persistPayload(password: string, group: MultiChainWalletGroup) {
 }
 
 async function getFallbackUnlockedState(): Promise<UnlockedSolanaState | null> {
+  if (await getStoredSolanaWallet()) return null;
   const evmUnlocked = await getUnlockedState();
   if (!evmUnlocked?.mnemonic?.trim()) {
     return null;

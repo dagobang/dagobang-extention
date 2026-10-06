@@ -31,6 +31,7 @@ export type ReviewMetrics = {
   avgBuyPrice?: string;
   avgSellPrice?: string;
   holdDurationSec?: number | null;
+  lessonScore?: number;
   likesCount?: number;
   favoritesCount?: number;
   commentsCount?: number;
@@ -49,6 +50,17 @@ export type TradeReview = {
   reviewTitle: string;
   tags: string[];
   narrativeTags: string[];
+  /** Primary narrative. Empty on older records until filled in. */
+  narrative: string;
+  /** Heat the trade was betting on. */
+  catalyst: string;
+  catalystNote: string;
+  /** ignited | missed | fizzled, or empty. */
+  catalystResult: string;
+  /** Peak market cap in USD. Null until the coin's high is filled in. */
+  peakMarketCap: number | null;
+  notionPageId: string;
+  notionSyncedHash: string;
   mistakes: string[];
   emotionScore: number;
   executionScore: number;

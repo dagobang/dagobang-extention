@@ -1299,7 +1299,7 @@ export default defineBackground(() => {
           case 'bg:ping':
             return { ok: true, time: Date.now() };
 
-            case 'bg:prewarmFlapVanity':
+          case 'bg:prewarmFlapVanity':
               TokenFlapLaunchService.prewarmVanitySalt();
               return { ok: true };
 

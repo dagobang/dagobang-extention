@@ -974,7 +974,7 @@
       "title": "交易復盤",
       "empty": "暫無復盤記錄",
       "placeholder": {
-        "search": "搜尋代幣 / 標籤 / 結論",
+        "search": "搜尋代幣 / 敘事 / 預期",
         "reviewTitle": "復盤標題",
         "tokenAddress": "代幣地址",
         "tokenSymbol": "代幣符號",
@@ -986,7 +986,7 @@
         "buyLogic": "買入邏輯（為何在這裡買）",
         "sellLogic": "賣出邏輯（為何在這裡賣）",
         "summary": "本次交易總結",
-        "lesson": "本次最大教訓",
+        "lesson": "下次遇到同類盤，要改的那一條。沒有就留空",
         "nextAction": "下一次改進動作"
       },
       "stats": {
@@ -1029,6 +1029,8 @@
         "totalBuyCost": "總買入金額",
         "totalSellIncome": "總賣出金額",
         "holdTime": "持幣時長",
+        "openTime": "開倉",
+        "closeTime": "清倉",
         "tokenPrice": "當前價格",
         "marketCap": "市值",
         "liquidity": "流動性",
@@ -1046,7 +1048,7 @@
         "buyLogic": "買入邏輯",
         "sellLogic": "賣出邏輯",
         "summary": "本次交易總結",
-        "lessonLearned": "本次最大教訓",
+        "lessonLearned": "教訓",
         "nextAction": "下一次改進動作",
         "executionScore": "執行分 {0}",
         "emotionScore": "情緒分 {0}",
@@ -1055,6 +1057,65 @@
         "buyCard": "買入",
         "sellCard": "賣出",
         "defaultTitleSuffix": "復盤"
+      },
+      "sample": {
+        "peak": "最高市值",
+        "peakHint": "先按賣出市值和當時市值裡較高的填入，改成這隻幣實際到過的最高點。可寫 300k / 1.5m",
+        "narrative": "敘事",
+        "addTag": "新增",
+        "catalyst": "催化劑",
+        "catalystNote": "具體預期",
+        "catalystNotePlaceholder": "等誰回覆，或等哪條新聞、哪個熱點引爆",
+        "result": "催化劑結果",
+        "narrativeOpt": {
+          "animal": "動物",
+          "celebrity": "名人",
+          "ai": "AI",
+          "web2": "Web2 熱點",
+          "kol": "KOL",
+          "community": "社群梗",
+          "official": "官方"
+        },
+        "catalystOpt": {
+          "celebrity": "等名人互動",
+          "web2_news": "Web2 新聞",
+          "kol_flow": "KOL 流量",
+          "official": "官方動作",
+          "community": "社群自己發酵",
+          "none": "沒有明確熱度"
+        },
+        "resultOpt": {
+          "ignited": "引爆",
+          "missed": "沒來",
+          "fizzled": "來了沒人接"
+        },
+        "ceiling": {
+          "above_1m": "到 1M",
+          "mid": "中間",
+          "low": "上限低"
+        },
+        "chainAll": "全部",
+        "missingPeak": "還有 {0} 筆沒記全，未進統計",
+        "minSample": "少於 5 筆只展示，不作為結論",
+        "tableNarrative": "鏈 × 敘事",
+        "tableCatalyst": "鏈 × 催化劑",
+        "tableResult": "催化劑 × 結果",
+        "colKey": "分類",
+        "colCount": "樣本",
+        "colAbove": "到 1M",
+        "colLow": "上限低",
+        "colMedian": "中位最高市值",
+        "emptyStats": "填了最高市值、敘事和催化劑之後，這裡按鏈匯總",
+        "needNarrative": "選一個敘事，沒有就新增",
+        "needCatalyst": "選一個催化劑，沒有就新增",
+        "needResult": "選催化劑有沒有落地",
+        "needBuy": "寫買入理由",
+        "needSell": "寫賣出理由",
+        "athMissing": "介面未返回 ATH",
+        "sellVsAth": "賣出在 ATH 的 {0}%"
+      },
+      "summary": {
+        "empty": "還沒有教訓"
       },
       "action": {
         "refresh": "刷新",
@@ -1066,7 +1127,8 @@
         "close": "關閉",
         "maximize": "最大化",
         "input": "輸入",
-        "analysis": "分析"
+        "analysis": "分析",
+        "summary": "總結"
       },
       "toast": {
         "fetchFailed": "載入復盤失敗",

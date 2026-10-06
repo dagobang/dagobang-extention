@@ -995,7 +995,7 @@
       "title": "交易复盘",
       "empty": "暂无复盘记录",
       "placeholder": {
-        "search": "搜索代币 / 标签 / 结论",
+        "search": "搜索代币 / 叙事 / 预期",
         "reviewTitle": "复盘标题",
         "tokenAddress": "代币地址",
         "tokenSymbol": "代币符号",
@@ -1007,7 +1007,7 @@
         "buyLogic": "买入逻辑（为什么在这里买）",
         "sellLogic": "卖出逻辑（为什么在这里卖）",
         "summary": "本次交易总结",
-        "lesson": "本次最大教训",
+        "lesson": "下次遇到同类盘，要改的那一条。没有就留空",
         "nextAction": "下一次改进动作"
       },
       "stats": {
@@ -1050,6 +1050,8 @@
         "totalBuyCost": "总买入金额",
         "totalSellIncome": "总卖出金额",
         "holdTime": "持币时长",
+        "openTime": "开仓",
+        "closeTime": "清仓",
         "tokenPrice": "当前价格",
         "marketCap": "市值",
         "liquidity": "流动性",
@@ -1067,7 +1069,7 @@
         "buyLogic": "买入逻辑",
         "sellLogic": "卖出逻辑",
         "summary": "本次交易总结",
-        "lessonLearned": "本次最大教训",
+        "lessonLearned": "教训",
         "nextAction": "下一次改进动作",
         "executionScore": "执行分 {0}",
         "emotionScore": "情绪分 {0}",
@@ -1076,6 +1078,65 @@
         "buyCard": "买入",
         "sellCard": "卖出",
         "defaultTitleSuffix": "复盘"
+      },
+      "sample": {
+        "peak": "最高市值",
+        "peakHint": "先按卖出市值和当时市值里较高的填入，改成这只币实际到过的最高点。可写 300k / 1.5m",
+        "narrative": "叙事",
+        "addTag": "新增",
+        "catalyst": "催化剂",
+        "catalystNote": "具体预期",
+        "catalystNotePlaceholder": "等谁回复，或等哪条新闻、哪个热点引爆",
+        "result": "催化剂结果",
+        "narrativeOpt": {
+          "animal": "动物",
+          "celebrity": "名人",
+          "ai": "AI",
+          "web2": "Web2 热点",
+          "kol": "KOL",
+          "community": "社区梗",
+          "official": "官方"
+        },
+        "catalystOpt": {
+          "celebrity": "等名人互动",
+          "web2_news": "Web2 新闻",
+          "kol_flow": "KOL 流量",
+          "official": "官方动作",
+          "community": "社区自己发酵",
+          "none": "没有明确热度"
+        },
+        "resultOpt": {
+          "ignited": "引爆",
+          "missed": "没来",
+          "fizzled": "来了没人接"
+        },
+        "ceiling": {
+          "above_1m": "到 1M",
+          "mid": "中间",
+          "low": "上限低"
+        },
+        "chainAll": "全部",
+        "missingPeak": "还有 {0} 笔没记全，未进统计",
+        "minSample": "少于 5 笔只展示，不作为结论",
+        "tableNarrative": "链 × 叙事",
+        "tableCatalyst": "链 × 催化剂",
+        "tableResult": "催化剂 × 结果",
+        "colKey": "分类",
+        "colCount": "样本",
+        "colAbove": "到 1M",
+        "colLow": "上限低",
+        "colMedian": "中位最高市值",
+        "emptyStats": "填了最高市值、叙事和催化剂之后，这里按链汇总",
+        "needNarrative": "选一个叙事，没有就新增",
+        "needCatalyst": "选一个催化剂，没有就新增",
+        "needResult": "选催化剂有没有落地",
+        "needBuy": "写买入理由",
+        "needSell": "写卖出理由",
+        "athMissing": "接口未返回 ATH",
+        "sellVsAth": "卖出在 ATH 的 {0}%"
+      },
+      "summary": {
+        "empty": "还没有教训"
       },
       "action": {
         "refresh": "刷新",
@@ -1087,7 +1148,8 @@
         "close": "关闭",
         "maximize": "最大化",
         "input": "输入",
-        "analysis": "分析"
+        "analysis": "分析",
+        "summary": "总结"
       },
       "toast": {
         "fetchFailed": "加载复盘失败",

@@ -6,7 +6,7 @@ export default defineConfig({
   manifest: {
     name: 'Dagobang 打狗棒',
     description: 'Trubo Open-source Meme Trading Tool',
-    version: '0.4.0',
+    version: '0.4.1',
     permissions: ['storage', 'alarms', 'sidePanel'],
     host_permissions: [
       'https://*.gmgn.ai/*',
