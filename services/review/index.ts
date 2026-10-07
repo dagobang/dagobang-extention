@@ -402,9 +402,12 @@ export class ReviewService {
   private static client: SupabaseClient | null = null;
   private static configKey = '';
 
+  private static localPush: Promise<void> | null = null;
+
   static resetClient() {
     this.client = null;
     this.configKey = '';
+    this.localPush = null;
   }
 
   private static getClient() {
@@ -421,6 +424,26 @@ export class ReviewService {
     return this.client;
   }
 
+  private static async pushLocalOnlyReviews(client: SupabaseClient): Promise<void> {
+    if (!this.localPush) {
+      this.localPush = (async () => {
+        const localItems = getCache().filter((item) => item?.id);
+        if (!localItems.length) return;
+        const { data, error } = await client.from(TABLE_NAME).select('id');
+        if (error) return;
+        const remoteIds = new Set((Array.isArray(data) ? data : []).map((row) => String((row as { id?: string }).id || '')));
+        for (const item of localItems) {
+          if (remoteIds.has(item.id)) continue;
+          const saved = await this.upsert(item);
+          if (saved.source === 'cloud') remoteIds.add(saved.item.id);
+        }
+      })().finally(() => {
+        this.localPush = null;
+      });
+    }
+    await this.localPush;
+  }
+
   static async list(filters: TradeReviewFilters = {}): Promise<{ items: TradeReview[]; source: 'cloud' | 'local' }> {
     await loadReviewSupabaseConfig();
     const client = this.getClient();
@@ -428,6 +451,8 @@ export class ReviewService {
       return { items: filterReviews(getCache(), filters), source: 'local' };
     }
     try {
+      const localBefore = getCache();
+      await this.pushLocalOnlyReviews(client);
       let query = client
         .from(TABLE_NAME)
         .select('*')
@@ -449,9 +474,17 @@ export class ReviewService {
       const { data, error } = await query;
       if (error) throw error;
       const items = Array.isArray(data) ? (data as TradeReviewRow[]).map(toReview) : [];
-      const filtered = filterReviews(items, { ...filters, tokenAddress: undefined, walletAddress: undefined, chain: undefined, limit: undefined });
-      setCache(items);
-      return { items: filtered, source: 'cloud' };
+      const merged = new Map<string, TradeReview>();
+      for (const item of localBefore) {
+        if (item?.id) merged.set(item.id, item);
+      }
+      for (const item of getCache()) {
+        if (item?.id) merged.set(item.id, item);
+      }
+      for (const item of items) merged.set(item.id, item);
+      const nextCache = Array.from(merged.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+      setCache(nextCache);
+      return { items: filterReviews(nextCache, filters), source: 'cloud' };
     } catch {
       return { items: filterReviews(getCache(), filters), source: 'local' };
     }
