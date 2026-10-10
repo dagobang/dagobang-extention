@@ -2,12 +2,18 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { browser } from 'wxt/browser';
 import type { TradeReview, TradeReviewFilters, TradeReviewUpsertInput } from '@/types/review';
 import { isSolanaAddress, normalizeAddress, normalizeAddressKey } from '@/services/xSniper/engine/metrics';
-import { normalizeUnixSeconds } from '@/services/review/sample';
-import { readReviewSample } from '@/services/review/sample';
+import { normalizeUnixSeconds, readReviewSample } from '@/services/review/sample';
 
 const TABLE_NAME = 'trade_reviews';
 const CACHE_KEY = 'dagobang_trade_reviews_cache_v1';
 const SUPABASE_STORAGE_KEY = 'dagobang_supabase_config_v1';
+const TAG_STORAGE_KEY = 'dagobang_review_tags_v1';
+
+export type ReviewTagCatalog = {
+  narratives: string[];
+  catalysts: string[];
+  results: string[];
+};
 const SUPABASE_URL_KEY = 'dagobang_supabase_url';
 const SUPABASE_ANON_KEY = 'dagobang_supabase_anon_key';
 
@@ -335,6 +341,56 @@ export async function saveReviewSupabaseConfig(url: string, anonKey: string): Pr
   return getSupabaseConfig();
 }
 
+function uniqueTags(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const text = String(value || '').trim().slice(0, 32);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out.slice(0, 80);
+}
+
+export function mergeReviewTagCatalog(...parts: Array<Partial<ReviewTagCatalog> | null | undefined>): ReviewTagCatalog {
+  return {
+    narratives: uniqueTags(parts.flatMap((part) => part?.narratives || [])),
+    catalysts: uniqueTags(parts.flatMap((part) => part?.catalysts || [])),
+    results: uniqueTags(parts.flatMap((part) => part?.results || [])),
+  };
+}
+
+async function readStoredTagCatalog(): Promise<ReviewTagCatalog> {
+  try {
+    const res = await browser.storage.local.get(TAG_STORAGE_KEY);
+    const raw = res?.[TAG_STORAGE_KEY] as Partial<ReviewTagCatalog> | undefined;
+    return mergeReviewTagCatalog(raw);
+  } catch {
+    return { narratives: [], catalysts: [], results: [] };
+  }
+}
+
+export async function loadReviewTagCatalog(): Promise<ReviewTagCatalog> {
+  const [stored, remote] = await Promise.all([
+    readStoredTagCatalog(),
+    ReviewService.listTagCatalog(),
+  ]);
+  return mergeReviewTagCatalog(stored, remote);
+}
+
+export async function rememberReviewTags(partial: Partial<ReviewTagCatalog>): Promise<ReviewTagCatalog> {
+  const stored = await readStoredTagCatalog();
+  const next = mergeReviewTagCatalog(stored, partial);
+  try {
+    await browser.storage.local.set({ [TAG_STORAGE_KEY]: next });
+  } catch {
+  }
+  return next;
+}
+
 function getCache(): TradeReview[] {
   try {
     const raw = window.localStorage.getItem(CACHE_KEY);
@@ -442,6 +498,38 @@ export class ReviewService {
       });
     }
     await this.localPush;
+  }
+
+  static async listTagCatalog(): Promise<ReviewTagCatalog> {
+    await loadReviewSupabaseConfig();
+    const narratives: string[] = [];
+    const catalysts: string[] = [];
+    const results: string[] = [];
+    const push = (item: { narrative?: string; catalyst?: string; catalystResult?: string }) => {
+      narratives.push(String(item.narrative || ''));
+      catalysts.push(String(item.catalyst || ''));
+      results.push(String(item.catalystResult || ''));
+    };
+    for (const item of getCache()) push(item);
+    const client = this.getClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from(TABLE_NAME)
+          .select('narrative_tags, metrics')
+          .limit(1000);
+        if (!error && Array.isArray(data)) {
+          for (const row of data) {
+            push(readReviewSample({
+              metrics: (row as { metrics?: Record<string, any> }).metrics,
+              narrativeTags: (row as { narrative_tags?: string[] | null }).narrative_tags,
+            }));
+          }
+        }
+      } catch {
+      }
+    }
+    return mergeReviewTagCatalog({ narratives, catalysts, results });
   }
 
   static async list(filters: TradeReviewFilters = {}): Promise<{ items: TradeReview[]; source: 'cloud' | 'local' }> {

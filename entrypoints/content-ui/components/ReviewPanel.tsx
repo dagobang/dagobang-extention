@@ -6,7 +6,7 @@ import { normalizeLocale, t, type Locale } from '@/utils/i18n';
 import { parseCurrentUrl, parsePlatformTokenLink } from '@/utils/sites';
 import GmgnAPI from '@/hooks/GmgnAPI';
 import type { ReviewMetrics, TradeReview, TradeReviewUpsertInput } from '@/types/review';
-import { ReviewService, loadReviewSupabaseConfig, saveReviewSupabaseConfig } from '@/services/review';
+import { ReviewService, loadReviewSupabaseConfig, loadReviewTagCatalog, mergeReviewTagCatalog, rememberReviewTags, saveReviewSupabaseConfig, type ReviewTagCatalog } from '@/services/review';
 import { isSolanaAddress, normalizeAddress, normalizeAddressKey } from '@/services/xSniper/engine/metrics';
 import {
   CATALYSTS,
@@ -39,6 +39,7 @@ type ReviewPanelProps = {
 
 type DraftState = {
   id?: string;
+  walletAddress?: string;
   reviewTitle: string;
   chain: string;
   tokenAddress: string;
@@ -71,6 +72,7 @@ type DraftState = {
 function toDraft(initial?: Partial<DraftState>): DraftState {
   return {
     id: initial?.id,
+    walletAddress: initial?.walletAddress || '',
     reviewTitle: initial?.reviewTitle || '',
     chain: initial?.chain || '',
     tokenAddress: initial?.tokenAddress || '',
@@ -106,6 +108,7 @@ function toDraftFromReview(item: TradeReview): DraftState {
   const entry = String(item.buyLogic || '').trim() || String(item.catalystNote || '').trim();
   return toDraft({
     id: item.id,
+    walletAddress: item.walletAddress,
     reviewTitle: item.reviewTitle,
     chain: item.chain,
     tokenAddress: item.tokenAddress,
@@ -185,6 +188,40 @@ function mergeTagOptions(presets: readonly string[], used: string[], current: st
     options.push(text);
   }
   return options;
+}
+
+function ChainFilter({
+  value,
+  onChange,
+  labelAll,
+}: {
+  value: 'all' | 'BSC' | 'SOL' | 'RH';
+  onChange: (next: 'all' | 'BSC' | 'SOL' | 'RH') => void;
+  labelAll: string;
+}) {
+  return (
+    <div className="flex items-center gap-1 mb-2">
+      {(['all', 'BSC', 'SOL', 'RH'] as const).map((chain) => (
+        <button
+          key={chain}
+          type="button"
+          onClick={() => onChange(chain)}
+          className={`rounded-full border px-2 py-0.5 text-[11px] ${value === chain ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200' : 'border-zinc-700 text-zinc-400'}`}
+        >
+          {chain === 'all' ? labelAll : chain}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function readPageToken(href: string): string {
+  try {
+    const info = parseCurrentUrl(href);
+    return normalizeAddress(info?.tokenAddress || '') || String(info?.tokenAddress || '').trim();
+  } catch {
+    return '';
+  }
 }
 
 function tokenPageLink(tokenAddress: string) {
@@ -342,6 +379,8 @@ function ReviewPanelBody({
   const [isMaximized, setIsMaximized] = useState(false);
   const [search, setSearch] = useState('');
   const [reviews, setReviews] = useState<TradeReview[]>([]);
+  const [allReviews, setAllReviews] = useState<TradeReview[]>([]);
+  const [sharedTags, setSharedTags] = useState<ReviewTagCatalog>({ narratives: [], catalysts: [], results: [] });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dataSource, setDataSource] = useState<'cloud' | 'local'>('local');
@@ -354,11 +393,14 @@ function ReviewPanelBody({
   const [activeId, setActiveId] = useState<string | null>(null);
   const pageSymbol = tokenSymbol && !isPlaceholderSymbol(tokenSymbol, tokenAddress || '') ? tokenSymbol : '';
   const pageName = String(tokenName || '').trim();
-  const [draft, setDraft] = useState<DraftState>(() => toDraft({
-    tokenAddress: tokenAddress || '',
-    tokenSymbol: pageSymbol,
-    tokenName: pageName,
-  }));
+  const [draft, setDraft] = useState<DraftState>(() => {
+    const fromUrl = readPageToken(window.location.href);
+    return toDraft({
+      tokenAddress: fromUrl || tokenAddress || '',
+      tokenSymbol: pageSymbol,
+      tokenName: pageName,
+    });
+  });
   const [pos, setPos] = useState(() => {
     const width = window.innerWidth || 0;
     return { x: Math.max(0, (width - 860) / 2), y: 90 };
@@ -366,6 +408,8 @@ function ReviewPanelBody({
   const posRef = useRef(pos);
   const dragging = useRef<null | { startX: number; startY: number; baseX: number; baseY: number }>(null);
   const lessonScoreRef = useRef<Record<string, number>>({});
+  const resolveSeqRef = useRef(0);
+  const [livePageToken, setLivePageToken] = useState(() => readPageToken(window.location.href));
 
   useEffect(() => {
     posRef.current = pos;
@@ -409,6 +453,16 @@ function ReviewPanelBody({
     };
   }, []);
 
+  const fetchAllReviews = async () => {
+    try {
+      const res = await ReviewService.list({});
+      setAllReviews(res.items);
+      setDataSource(res.source);
+    } catch (err: any) {
+      toast.error(err?.message || tt('contentUi.review.toast.fetchFailed'));
+    }
+  };
+
   const fetchReviews = async () => {
     if (!address) return;
     setLoading(true);
@@ -419,10 +473,6 @@ function ReviewPanelBody({
       });
       setReviews(res.items);
       setDataSource(res.source);
-      if (!activeId && res.items.length > 0) {
-        setActiveId(res.items[0].id);
-        setDraft(toDraftFromReview(res.items[0]));
-      }
     } catch (err: any) {
       toast.error(err?.message || tt('contentUi.review.toast.fetchFailed'));
     } finally {
@@ -462,8 +512,8 @@ function ReviewPanelBody({
         ...prev,
         chain: prev.chain && reviewChainLabel(prev.chain) === reviewChainLabel(chain) ? prev.chain : chain,
         tokenAddress: normalizeAddress(targetTokenAddress) ?? targetTokenAddress,
-        tokenSymbol: pickTokenSymbol(prev.tokenSymbol, targetTokenAddress, detail.token?.symbol, (detail as { token_basic_stats?: { symbol?: string } }).token_basic_stats?.symbol, (detail as { symbol?: string }).symbol),
-        tokenName: prev.tokenName || String(detail.token?.name || (detail as { token_basic_stats?: { name?: string } }).token_basic_stats?.name || (detail as { name?: string }).name || '').trim(),
+        tokenSymbol: pickTokenSymbol('', targetTokenAddress, detail.token?.symbol, (detail as { token_basic_stats?: { symbol?: string } }).token_basic_stats?.symbol, (detail as { symbol?: string }).symbol) || pickTokenSymbol(prev.tokenSymbol, targetTokenAddress),
+        tokenName: String(detail.token?.name || (detail as { token_basic_stats?: { name?: string } }).token_basic_stats?.name || (detail as { name?: string }).name || '').trim() || prev.tokenName,
         launchpad: prev.launchpad || detail.token?.launchpad || detail.token?.launchpad_platform || '',
         holdStartAt,
         holdEndAt,
@@ -493,7 +543,7 @@ function ReviewPanelBody({
           lastActiveTimestamp: detail.last_active_timestamp,
           tokenPrice: detail.token?.price || '',
           totalSupply: detail.token?.total_supply || '',
-          tokenLogo: detail.token?.logo || '',
+          tokenLogo: detail.token?.logo || prev.metrics?.tokenLogo || '',
           marketCap: marketCap > 0 ? String(marketCap) : '0',
           liquidity: detail.token?.liquidity || '',
           avgBuyPrice: avgBuyPrice > 0 ? String(avgBuyPrice) : '0',
@@ -519,17 +569,18 @@ function ReviewPanelBody({
       if (!symbol && !name && !logo) return;
       setDraft((prev) => {
         if (prev.tokenAddress && !sameTokenAddress(prev.tokenAddress, targetTokenAddress)) return prev;
-        const nextSymbol = pickTokenSymbol(prev.tokenSymbol, prev.tokenAddress || targetTokenAddress, symbol);
-        if (nextSymbol && !isPlaceholderSymbol(prev.tokenSymbol, prev.tokenAddress || targetTokenAddress) && prev.tokenName && (prev.metrics?.tokenLogo || !logo)) return prev;
+        const nextSymbol = symbol || pickTokenSymbol(prev.tokenSymbol, prev.tokenAddress || targetTokenAddress);
+        const nextName = name || prev.tokenName;
+        const nextTitle = `${nextSymbol || nextName || targetTokenAddress.slice(0, 6)} ${tt('contentUi.review.form.defaultTitleSuffix')}`;
         return {
           ...prev,
           tokenSymbol: nextSymbol,
-          tokenName: prev.tokenName || name,
-          launchpad: prev.launchpad || launchpad,
-          reviewTitle: prev.reviewTitle || `${nextSymbol || name || targetTokenAddress.slice(0, 6)} ${tt('contentUi.review.form.defaultTitleSuffix')}`,
+          tokenName: nextName,
+          launchpad: launchpad || prev.launchpad,
+          reviewTitle: prev.id ? prev.reviewTitle : nextTitle,
           metrics: {
             ...(prev.metrics || {}),
-            tokenLogo: prev.metrics?.tokenLogo || logo,
+            tokenLogo: logo || prev.metrics?.tokenLogo || '',
           },
         };
       });
@@ -551,23 +602,27 @@ function ReviewPanelBody({
     }
   };
 
-  const resolveTokenReview = async () => {
+  const resolveTokenReview = async (seq: number, pageToken: string) => {
     if (!visible || !address) return;
-    const currentToken = normalizeAddress(tokenAddress || '') || String(tokenAddress || '').trim();
+    const currentToken = pageToken || normalizeAddress(tokenAddress || '') || String(tokenAddress || '').trim();
     if (!currentToken) {
       await fetchReviews();
+      await fetchAllReviews();
       return;
     }
     setLoading(true);
     try {
       const chain = await resolveActiveChain();
+      if (seq !== resolveSeqRef.current) return;
       const exact = await ReviewService.list({
         walletAddress: address,
         tokenAddress: currentToken,
         limit: 8,
       });
+      if (seq !== resolveSeqRef.current) return;
       setDataSource(exact.source);
-      const item = exact.items.find((row) => reviewChainLabel(row.chain) === reviewChainLabel(chain)) || exact.items[0];
+      const item = exact.items.find((row) => sameTokenAddress(row.tokenAddress, currentToken) && reviewChainLabel(row.chain) === reviewChainLabel(chain))
+        || exact.items.find((row) => sameTokenAddress(row.tokenAddress, currentToken));
       if (item) {
         const next = toDraftFromReview(item);
         next.tokenAddress = currentToken;
@@ -586,9 +641,7 @@ function ReviewPanelBody({
         setDraft(toDraft({
           chain,
           tokenAddress: currentToken,
-          tokenSymbol: tokenSymbol && !isPlaceholderSymbol(tokenSymbol, currentToken) ? tokenSymbol : '',
-          tokenName: String(tokenName || '').trim(),
-          reviewTitle: `${(tokenSymbol && !isPlaceholderSymbol(tokenSymbol, currentToken) ? tokenSymbol : String(tokenName || '').trim() || currentToken.slice(0, 6))} ${tt('contentUi.review.form.defaultTitleSuffix')}`,
+          reviewTitle: `${currentToken.slice(0, 6)} ${tt('contentUi.review.form.defaultTitleSuffix')}`,
         }));
         void applyTokenProfile(chain, currentToken);
         await applyHoldingDetail(currentToken, chain, true);
@@ -598,12 +651,15 @@ function ReviewPanelBody({
         walletAddress: address,
         search,
       });
+      if (seq !== resolveSeqRef.current) return;
       setReviews(full.items);
       setDataSource(full.source);
+      await fetchAllReviews();
     } catch (err: any) {
+      if (seq !== resolveSeqRef.current) return;
       toast.error(err?.message || tt('contentUi.review.toast.fetchFailed'));
     } finally {
-      setLoading(false);
+      if (seq === resolveSeqRef.current) setLoading(false);
     }
   };
 
@@ -615,13 +671,55 @@ function ReviewPanelBody({
       setSyncUrl(cfg.url);
       setSyncKey(cfg.anonKey);
     });
+    void loadReviewTagCatalog().then((catalog) => {
+      if (!live) return;
+      setSharedTags((prev) => mergeReviewTagCatalog(prev, catalog));
+    });
     return () => { live = false; };
   }, [visible]);
 
   useEffect(() => {
+    if (!visible) return;
+    const read = () => {
+      const next = readPageToken(window.location.href);
+      setLivePageToken((prev) => (prev === next ? prev : next));
+    };
+    read();
+    const timer = window.setInterval(read, 400);
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string } | null;
+      if (data?.type === 'DAGOBANG_URL_CHANGE') read();
+    };
+    window.addEventListener('popstate', read);
+    window.addEventListener('message', onMessage);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('popstate', read);
+      window.removeEventListener('message', onMessage);
+    };
+  }, [visible]);
+
+  const activePageToken = livePageToken || (normalizeAddress(tokenAddress || '') || String(tokenAddress || '').trim());
+
+  useEffect(() => {
     if (!visible || !address) return;
-    void resolveTokenReview();
-  }, [visible, address, tokenAddress, pageChain]);
+    const seq = ++resolveSeqRef.current;
+    const currentToken = activePageToken;
+    if (currentToken) {
+      let switched = false;
+      setDraft((prev) => {
+        if (sameTokenAddress(prev.tokenAddress, currentToken)) return prev;
+        switched = true;
+        return toDraft({
+          chain: pageChain || '',
+          tokenAddress: currentToken,
+          reviewTitle: `${currentToken.slice(0, 6)} ${tt('contentUi.review.form.defaultTitleSuffix')}`,
+        });
+      });
+      if (switched) setActiveId(null);
+    }
+    void resolveTokenReview(seq, currentToken);
+  }, [visible, address, activePageToken, pageChain]);
 
   useEffect(() => {
     if (!visible || !address) return;
@@ -649,7 +747,7 @@ function ReviewPanelBody({
       toast.error(tt('contentUi.review.sample.needCatalyst'));
       return null;
     }
-    if (!isCatalystResult(draft.catalystResult)) {
+    if (!draft.catalystResult.trim()) {
       toast.error(tt('contentUi.review.sample.needResult'));
       return null;
     }
@@ -664,7 +762,7 @@ function ReviewPanelBody({
     const chain = draft.chain || (await resolveActiveChain());
     const opened = normalizeUnixSeconds(draft.holdStartAt ?? draft.metrics?.holdStartAt);
     const closed = normalizeUnixSeconds(draft.holdEndAt ?? draft.metrics?.holdEndAt);
-    const walletAddress = normalizeAddress(address) ?? address.trim();
+    const walletAddress = normalizeAddress(draft.walletAddress || address) ?? String(draft.walletAddress || address || '').trim();
     const storedToken = normalizeAddress(tokenAddr) ?? tokenAddr;
     return {
       id: draft.id,
@@ -739,6 +837,7 @@ function ReviewPanelBody({
       setDraft(toDraftFromReview(res.item));
       setActiveId(res.item.id);
       await fetchReviews();
+      await fetchAllReviews();
       if (!quiet) toast.success(res.source === 'cloud' ? tt('contentUi.review.toast.savedCloud') : tt('contentUi.review.toast.savedLocal'));
       return res.item;
     } catch (err: any) {
@@ -761,6 +860,7 @@ function ReviewPanelBody({
       }));
       setActiveId(null);
       await fetchReviews();
+      await fetchAllReviews();
       toast.success(tt('contentUi.review.toast.deleted'));
     } catch (err: any) {
       toast.error(err?.message || tt('contentUi.review.toast.deleteFailed'));
@@ -806,19 +906,31 @@ function ReviewPanelBody({
     return isCatalystResult(text) ? tt(`contentUi.review.sample.resultOpt.${text}`) : (text || '-');
   };
   const labelCeiling = (option: string) => tt(`contentUi.review.sample.ceiling.${option}`);
+  const rememberTag = (kind: keyof ReviewTagCatalog, value: string) => {
+    const text = String(value || '').trim();
+    if (!text) return;
+    setSharedTags((prev) => mergeReviewTagCatalog(prev, { [kind]: [text] }));
+    void rememberReviewTags({ [kind]: [text] }).then((stored) => {
+      setSharedTags((prev) => mergeReviewTagCatalog(prev, stored));
+    });
+  };
   const narrativeOptions = useMemo(
-    () => mergeTagOptions(NARRATIVES, reviews.map((item) => item.narrative), draft.narrative),
-    [reviews, draft.narrative],
+    () => mergeTagOptions(NARRATIVES, [...sharedTags.narratives, ...reviews.map((item) => item.narrative)], draft.narrative),
+    [sharedTags.narratives, reviews, draft.narrative],
   );
   const catalystOptions = useMemo(
-    () => mergeTagOptions(CATALYSTS, reviews.map((item) => item.catalyst), draft.catalyst),
-    [reviews, draft.catalyst],
+    () => mergeTagOptions(CATALYSTS, [...sharedTags.catalysts, ...reviews.map((item) => item.catalyst)], draft.catalyst),
+    [sharedTags.catalysts, reviews, draft.catalyst],
+  );
+  const resultOptions = useMemo(
+    () => mergeTagOptions(CATALYST_RESULTS, [...sharedTags.results, ...reviews.map((item) => item.catalystResult)], draft.catalystResult),
+    [sharedTags.results, reviews, draft.catalystResult],
   );
 
   const scopedReviews = useMemo(() => {
-    if (chainFilter === 'all') return reviews;
-    return reviews.filter((item) => reviewChainLabel(item.chain) === chainFilter);
-  }, [reviews, chainFilter]);
+    if (chainFilter === 'all') return allReviews;
+    return allReviews.filter((item) => reviewChainLabel(item.chain) === chainFilter);
+  }, [allReviews, chainFilter]);
 
   const completeScoped = useMemo(
     () => scopedReviews.filter((item) => isCompleteSample(item) && item.peakMarketCap != null),
@@ -867,7 +979,7 @@ function ReviewPanelBody({
   const tokenDetailLink = tokenPageLink(draft.tokenAddress || '');
 
   const lessonRows = useMemo(() => {
-    return reviews
+    return scopedReviews
       .map((item) => ({
         item,
         text: String(item.lessonLearned || '').trim(),
@@ -875,7 +987,7 @@ function ReviewPanelBody({
       }))
       .filter((row) => row.text)
       .sort((a, b) => b.score - a.score || (b.item.updatedAt || 0) - (a.item.updatedAt || 0));
-  }, [reviews]);
+  }, [scopedReviews]);
 
   const adjustLessonScore = async (item: TradeReview, delta: number) => {
     const base = lessonScoreRef.current[item.id] ?? (Number(item.metrics?.lessonScore) || 0);
@@ -884,6 +996,7 @@ function ReviewPanelBody({
     const metrics = { ...(item.metrics || {}), lessonScore: score };
     const next = { ...item, metrics };
     setReviews((prev) => prev.map((row) => row.id === item.id ? { ...row, metrics } : row));
+    setAllReviews((prev) => prev.map((row) => row.id === item.id ? { ...row, metrics } : row));
     if (draft.id === item.id) setDraft((prev) => ({ ...prev, metrics }));
     try {
       const res = await ReviewService.upsert(next);
@@ -892,6 +1005,7 @@ function ReviewPanelBody({
         ? res.item
         : { ...res.item, metrics: { ...(res.item.metrics || {}), lessonScore: savedScore } };
       setReviews((prev) => prev.map((row) => row.id === saved.id ? saved : row));
+      setAllReviews((prev) => prev.map((row) => row.id === saved.id ? saved : row));
       setDataSource(res.source);
       if (draft.id === saved.id && savedScore === score) setDraft(toDraftFromReview(saved));
     } catch (err: any) {
@@ -1127,7 +1241,7 @@ function ReviewPanelBody({
                     </div>
                     <div className="mt-1 flex items-center justify-between">
                       <div className={`${Number(draft.metrics?.totalProfit || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-                        {tt('contentUi.review.metrics.totalProfit')}: {formatUsd(draft.metrics?.totalProfit)} ({formatNum(Number(draft.metrics?.totalProfitPnl || 0) * 100, 2)}%)
+                        {tt('contentUi.review.metrics.totalProfit')}: {formatUsd(draft.metrics?.totalProfit)} ({draft.metrics?.totalProfitPnl == null || draft.metrics?.totalProfitPnl === '' ? '-' : `${formatNum(Number(draft.metrics.totalProfitPnl) * 100, 2)}%`})
                       </div>
                       <div className="text-zinc-400">{tt('contentUi.review.metrics.holdTime')}: {formatDuration(draft.metrics?.holdDurationSec)}</div>
                     </div>
@@ -1157,7 +1271,11 @@ function ReviewPanelBody({
                     <ChoiceRow
                       options={narrativeOptions}
                       value={draft.narrative}
-                      onChange={(narrative) => setDraft((prev) => ({ ...prev, narrative: resolveReviewTag(narrative, NARRATIVES, labelNarrative) }))}
+                      onChange={(narrative) => {
+                        const next = resolveReviewTag(narrative, NARRATIVES, labelNarrative);
+                        setDraft((prev) => ({ ...prev, narrative: next }));
+                        rememberTag('narratives', next);
+                      }}
                       labelOf={labelNarrative}
                       activeClass="border-emerald-500 bg-emerald-500/15 text-emerald-200"
                       addPlaceholder={tt('contentUi.review.sample.addTag')}
@@ -1169,7 +1287,11 @@ function ReviewPanelBody({
                     <ChoiceRow
                       options={catalystOptions}
                       value={draft.catalyst}
-                      onChange={(catalyst) => setDraft((prev) => ({ ...prev, catalyst: resolveReviewTag(catalyst, CATALYSTS, labelCatalyst) }))}
+                      onChange={(catalyst) => {
+                        const next = resolveReviewTag(catalyst, CATALYSTS, labelCatalyst);
+                        setDraft((prev) => ({ ...prev, catalyst: next }));
+                        rememberTag('catalysts', next);
+                      }}
                       labelOf={labelCatalyst}
                       activeClass="border-cyan-500 bg-cyan-500/15 text-cyan-200"
                       addPlaceholder={tt('contentUi.review.sample.addTag')}
@@ -1179,11 +1301,16 @@ function ReviewPanelBody({
                   <div className="col-span-2">
                     <div className="text-zinc-500/75 text-[11px] mb-1">{tt('contentUi.review.sample.result')}</div>
                     <ChoiceRow
-                      options={CATALYST_RESULTS}
+                      options={resultOptions}
                       value={draft.catalystResult}
-                      onChange={(catalystResult) => setDraft((prev) => ({ ...prev, catalystResult }))}
+                      onChange={(catalystResult) => {
+                        const next = resolveReviewTag(catalystResult, CATALYST_RESULTS, labelResult);
+                        setDraft((prev) => ({ ...prev, catalystResult: next }));
+                        rememberTag('results', next);
+                      }}
                       labelOf={labelResult}
                       activeClass="border-amber-500 bg-amber-500/15 text-amber-200"
+                      addPlaceholder={tt('contentUi.review.sample.addTag')}
                     />
                   </div>
 
@@ -1239,18 +1366,7 @@ function ReviewPanelBody({
               </>
             ) : viewMode === 'analysis' ? (
               <>
-                <div className="flex items-center gap-1 mb-2">
-                  {(['all', 'BSC', 'SOL', 'RH'] as const).map((chain) => (
-                    <button
-                      key={chain}
-                      type="button"
-                      onClick={() => setChainFilter(chain)}
-                      className={`rounded-full border px-2 py-0.5 text-[11px] ${chainFilter === chain ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200' : 'border-zinc-700 text-zinc-400'}`}
-                    >
-                      {chain === 'all' ? tt('contentUi.review.sample.chainAll') : chain}
-                    </button>
-                  ))}
-                </div>
+                <ChainFilter value={chainFilter} onChange={setChainFilter} labelAll={tt('contentUi.review.sample.chainAll')} />
                 <div className="text-[10px] text-zinc-500 mb-2">
                   {tt('contentUi.review.sample.minSample')}
                   {missingPeak > 0 ? ` · ${tt('contentUi.review.sample.missingPeak', [missingPeak])}` : ''}
@@ -1290,6 +1406,7 @@ function ReviewPanelBody({
               </>
             ) : (
               <div className="flex-1 overflow-auto space-y-1.5 pr-1">
+                <ChainFilter value={chainFilter} onChange={setChainFilter} labelAll={tt('contentUi.review.sample.chainAll')} />
                 {lessonRows.length === 0 ? (
                   <div className="text-zinc-500 text-center py-8">{tt('contentUi.review.summary.empty')}</div>
                 ) : lessonRows.map((row) => (

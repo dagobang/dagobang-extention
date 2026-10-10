@@ -94,12 +94,16 @@ export function parseCurrentUrl(href: string): SiteInfo | null {
 
     // gmgn.ai
     // https://gmgn.ai/<chain>/token/<tokenAddress>
+    // https://gmgn.ai/<lang>/<chain>/token/<tokenAddress>
     if (u.hostname.includes('gmgn.ai')) {
-      // token page
-      if (parts.length >= 3 && parts[1] === 'token') {
+      const tokenIdx = parts.findIndex((part) => part === 'token');
+      if (tokenIdx >= 0 && parts.length > tokenIdx + 1) {
+        const rawToken = parts[tokenIdx + 1];
+        const tokenTail = rawToken.includes('_') ? (rawToken.split('_').pop() || rawToken) : rawToken;
+        const chainPart = tokenIdx > 0 ? parts[tokenIdx - 1] : parts[0];
         return {
-          chain: toSiteChain(parts[0]),
-          tokenAddress: parts[2],
+          chain: toSiteChain(chainPart),
+          tokenAddress: tokenTail,
           platform: 'gmgn',
         };
       }

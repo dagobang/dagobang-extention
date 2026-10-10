@@ -98,6 +98,18 @@ export function catalystLabelOf(value: string): string {
   return legacy ? CATALYST_ZH[legacy] : text;
 }
 
+const RESULT_ZH: Record<ReviewCatalystResult, string> = {
+  ignited: '引爆',
+  missed: '没来',
+  fizzled: '来了没人接',
+};
+
+export function resultLabelOf(value: string): string {
+  const text = reviewText(value);
+  if (isCatalystResult(text)) return RESULT_ZH[text];
+  return text;
+}
+
 export function reviewChainLabel(chain: string): string {
   const value = String(chain || '').trim().toLowerCase();
   if (value === 'bsc' || value === 'bnb') return 'BSC';
@@ -178,7 +190,7 @@ export function readReviewSample(input: {
     narrative,
     catalyst: resolveReviewTag(rawCatalyst, CATALYSTS, catalystLabelOf),
     catalystNote: typeof metrics.catalystNote === 'string' ? metrics.catalystNote : '',
-    catalystResult: isCatalystResult(rawResult) ? rawResult : '',
+    catalystResult: resolveReviewTag(rawResult, CATALYST_RESULTS, resultLabelOf),
     peakMarketCap: peak,
     notionPageId: typeof metrics.notionPageId === 'string' ? metrics.notionPageId : '',
     notionSyncedHash: typeof metrics.notionSyncedHash === 'string' ? metrics.notionSyncedHash : '',
@@ -206,7 +218,7 @@ function reviewText(value: unknown): string {
 export function isCompleteSample(review: Pick<TradeReview, 'narrative' | 'catalyst' | 'catalystResult' | 'peakMarketCap'>): boolean {
   return !!reviewText(review.narrative)
     && !!reviewText(review.catalyst)
-    && isCatalystResult(reviewText(review.catalystResult))
+    && !!reviewText(review.catalystResult)
     && review.peakMarketCap != null
     && Number(review.peakMarketCap) > 0;
 }

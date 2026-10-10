@@ -79,6 +79,7 @@ type MarketTokenRow = {
   prevSmartMoney?: number;
   viewerCount?: number;
   prevViewerCount?: number;
+  walletEntries?: WalletEntry[];
   top10HoldRatio?: number;
   devHoldPercent?: number;
   devMaxBuyPercent?: number;
@@ -95,6 +96,12 @@ type MarketTokenRow = {
   website?: string;
   websiteHost?: string;
   groupLabel?: string;
+};
+
+type WalletEntry = {
+  atMs: number;
+  kol: number;
+  smart: number;
 };
 
 type GroupSourceFilter = 'all' | 'withTweet' | 'withoutTweet';
@@ -127,6 +134,8 @@ const GROUP_SOURCE_FILTER_STORAGE_KEY = 'dagobang_newpool_monitor_group_source_f
 const VIEW_MODE_STORAGE_KEY = 'dagobang_newpool_monitor_view_mode_v1';
 const TWITTER_UNIFIED_CACHE_KEY = 'dagobang_unified_twitter_cache_v1';
 const MCAP_HIGHLIGHT_WINDOW_MS = 6000;
+const WALLET_ENTRY_FRESH_MS = 60 * 1000;
+const WALLET_ENTRY_WINDOW_MS = 5 * 60 * 1000;
 const PANEL_MIN_HEIGHT = 420;
 const PANEL_DEFAULT_HEIGHT = 640;
 const TOKEN_ID_SYNC_DEBOUNCE_MS = 80;
@@ -268,7 +277,7 @@ const mergeTokenRow = (prev: MarketTokenRow | undefined, next: MarketTokenRow): 
   }
   const keys = Object.keys(next) as Array<keyof MarketTokenRow>;
   for (const key of keys) {
-    if (key === 'tokenAddress' || key === 'signalId' || key === 'channel' || key === 'receivedAtMs' || key === 'updatedAtMs' || key === 'createdAtMs' || key === 'sortAtMs') continue;
+    if (key === 'tokenAddress' || key === 'signalId' || key === 'channel' || key === 'receivedAtMs' || key === 'updatedAtMs' || key === 'createdAtMs' || key === 'sortAtMs' || key === 'walletEntries') continue;
     const value = next[key];
     if (!shouldUseIncomingValue(value)) continue;
     if (key === 'devMaxBuyPercent') {
@@ -277,7 +286,23 @@ const mergeTokenRow = (prev: MarketTokenRow | undefined, next: MarketTokenRow): 
     }
     (merged as any)[key] = value;
   }
+  merged.walletEntries = appendWalletEntries(prev, next);
   return merged;
+};
+
+const positiveCount = (current: number | undefined, previous: number | undefined) => {
+  if (typeof current !== 'number' || !Number.isFinite(current)) return 0;
+  if (typeof previous !== 'number' || !Number.isFinite(previous)) return 0;
+  return Math.max(0, current - previous);
+};
+
+const appendWalletEntries = (prev: MarketTokenRow, next: MarketTokenRow): WalletEntry[] => {
+  const now = Date.now();
+  const kept = (prev.walletEntries ?? []).filter((item) => now - item.atMs <= WALLET_ENTRY_WINDOW_MS);
+  const kol = positiveCount(next.kol, prev.kol);
+  const smart = positiveCount(next.smartMoney, prev.smartMoney);
+  if (kol > 0 || smart > 0) kept.push({ atMs: now, kol, smart });
+  return kept;
 };
 
 const collectStringValues = (input: unknown, out: string[], seen: Set<unknown>, depth = 0) => {
@@ -1033,55 +1058,51 @@ const compareByViewerAndMarketCapDesc = (a: MarketTokenRow, b: MarketTokenRow) =
   return compareByMarketCapDesc(a, b);
 };
 
-const getFiniteDelta = (current: number | undefined, previous: number | undefined) => {
-  if (
-    typeof current !== 'number' ||
-    !Number.isFinite(current) ||
-    typeof previous !== 'number' ||
-    !Number.isFinite(previous)
-  ) return 0;
-  return current - previous;
-};
-
 type MemeFlowRankMeta = {
   score: number;
+  latestAtMs: number;
   reason: string;
 };
 
-const getPercentileScore = (current: number | undefined, sortedValues: number[]) => {
-  if (typeof current !== 'number' || !Number.isFinite(current) || !sortedValues.length) return 0;
-  const index = sortedValues.findIndex((value) => current >= value);
-  if (index === -1) return 0;
-  const percentile = 1 - index / Math.max(1, sortedValues.length - 1);
-  return Math.max(0, Math.min(1, percentile));
+/** 1 分钟内满权重，1～5 分钟线性衰减，超过 5 分钟不计。 */
+const walletEntryWeight = (ageMs: number) => {
+  if (ageMs < 0 || ageMs > WALLET_ENTRY_WINDOW_MS) return 0;
+  if (ageMs <= WALLET_ENTRY_FRESH_MS) return 1;
+  return 1 - (ageMs - WALLET_ENTRY_FRESH_MS) / (WALLET_ENTRY_WINDOW_MS - WALLET_ENTRY_FRESH_MS);
 };
 
-const buildSortedMetricValues = (rows: MarketTokenRow[], getter: (row: MarketTokenRow) => number | undefined) =>
-  rows
-    .map(getter)
-    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
-    .sort((a, b) => b - a);
-
-const getPositiveGrowthScore = (current: number | undefined, previous: number | undefined) => {
-  if (
-    typeof current !== 'number' ||
-    !Number.isFinite(current) ||
-    typeof previous !== 'number' ||
-    !Number.isFinite(previous)
-  ) return 0;
-  if (current <= previous) return 0;
-  const base = Math.max(Math.abs(previous), 1);
-  return Math.max(0, Math.min(1, (current - previous) / base));
-};
-
-/** 发酵甜蜜区：$6K ~ $120K。 */
+/** 早期市值 5K～20K 满权重，离开这个区间后下降。市值还没到时不压分。 */
 const getEarlyMarketCapScore = (marketCapUsd: number | undefined) => {
-  if (typeof marketCapUsd !== 'number' || !Number.isFinite(marketCapUsd) || marketCapUsd <= 0) return 0;
-  if (marketCapUsd < 6_000) return 0.35;
-  if (marketCapUsd <= 120_000) return 1;
-  if (marketCapUsd <= 300_000) return 0.42;
-  if (marketCapUsd <= 600_000) return 0.18;
-  return 0.06;
+  if (typeof marketCapUsd !== 'number' || !Number.isFinite(marketCapUsd) || marketCapUsd <= 0) return 0.7;
+  if (marketCapUsd < 5_000) return 0.4;
+  if (marketCapUsd <= 20_000) return 1;
+  if (marketCapUsd <= 40_000) return 0.4;
+  if (marketCapUsd <= 80_000) return 0.15;
+  return 0.05;
+};
+
+const finiteWalletCount = (value: number | undefined) =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+
+/** 大约 3 个钱包之后收益递减，避免人数堆得很高的币把早期币全部压住。 */
+const shapeWalletCount = (count: number) =>
+  count <= 3 ? count : 3 + Math.log2(1 + (count - 3));
+
+const summarizeWalletEntries = (entries: WalletEntry[] | undefined, now: number) => {
+  let weighted = 0;
+  let kol = 0;
+  let smart = 0;
+  let latestAtMs = 0;
+  for (const entry of entries ?? []) {
+    const weight = walletEntryWeight(now - entry.atMs);
+    if (weight <= 0) continue;
+    const count = Math.max(0, entry.kol) + Math.max(0, entry.smart);
+    weighted += count * weight;
+    kol += entry.kol * weight;
+    smart += entry.smart * weight;
+    if (entry.atMs > latestAtMs) latestAtMs = entry.atMs;
+  }
+  return { shaped: shapeWalletCount(weighted), kol, smart, latestAtMs };
 };
 
 /** 24h 成交量 / 市值。 */
@@ -1089,36 +1110,6 @@ const getVolumeToMarketCapRatio = (vol24hUsd: number | undefined, marketCapUsd: 
   if (typeof marketCapUsd !== 'number' || !Number.isFinite(marketCapUsd) || marketCapUsd <= 0) return null;
   if (typeof vol24hUsd !== 'number' || !Number.isFinite(vol24hUsd) || vol24hUsd <= 0) return null;
   return vol24hUsd / marketCapUsd;
-};
-
-/**
- * 量价匹配：Vol ≈ MC 时常见仍在上涨段；Vol 远大于 MC 时多为砸盘后的高换手残余。
- */
-const getVolumeMarketCapFitScore = (ratio: number | null) => {
-  if (ratio == null) return 0.5;
-  if (ratio >= 0.55 && ratio <= 1.35) return 1;
-  if (ratio >= 0.35 && ratio <= 1.85) return 0.88;
-  if (ratio >= 0.18 && ratio <= 2.5) return 0.6;
-  if (ratio > 2.5) {
-    if (ratio >= 8) return 0.04;
-    if (ratio >= 5) return 0.1;
-    if (ratio >= 3.5) return 0.2;
-    return 0.34;
-  }
-  if (ratio < 0.06) return 0.22;
-  return 0.4;
-};
-
-const getVolumeMarketCapTrendPenalty = (
-  ratio: number | null,
-  prevRatio: number | null,
-  marketCapDirection?: MarketTokenRow['marketCapDirection'],
-) => {
-  if (ratio == null || prevRatio == null || prevRatio <= 0) return 0;
-  if (ratio > prevRatio * 1.4 && ratio > 2.2 && marketCapDirection === 'down') {
-    return Math.min(0.12, ((ratio - prevRatio) / Math.max(prevRatio, 1)) * 0.1);
-  }
-  return 0;
 };
 
 type VolumeMarketCapRatioTone = 'healthy' | 'fair' | 'weak' | 'exhausted' | 'missing';
@@ -1152,115 +1143,70 @@ const getVolumeMarketCapRatioClassName = (tone: VolumeMarketCapRatioTone) => {
   }
 };
 
+/** meme 的可交易窗口是分钟级：5 分钟内满分，15 分钟明显让位，40 分钟后只剩残值。 */
+const getPoolAgeWeight = (createdAtMs: number | undefined, now: number) => {
+  if (typeof createdAtMs !== 'number' || !Number.isFinite(createdAtMs) || createdAtMs <= 0) return 0.35;
+  const ageMs = Math.max(0, now - createdAtMs);
+  const freshMs = 5 * 60 * 1000;
+  const fadeMs = 15 * 60 * 1000;
+  const oldMs = 40 * 60 * 1000;
+  if (ageMs <= freshMs) return 1;
+  if (ageMs <= fadeMs) return 1 - ((ageMs - freshMs) / (fadeMs - freshMs)) * 0.65;
+  if (ageMs <= oldMs) return 0.35 - ((ageMs - fadeMs) / (oldMs - fadeMs)) * 0.27;
+  return 0.05;
+};
+
+/**
+ * 量价比只惩罚“已经走完”的盘子。
+ * 开盘 10 分钟内 10 倍左右是第一波成交，不扣分；过了这个窗口，同样的倍数越来越像换手结束。
+ */
+const getChurnWeight = (
+  vol24hUsd: number | undefined,
+  marketCapUsd: number | undefined,
+  createdAtMs: number | undefined,
+  now: number,
+) => {
+  const ratio = getVolumeToMarketCapRatio(vol24hUsd, marketCapUsd);
+  if (ratio == null) return 1;
+  const ageMin = typeof createdAtMs === 'number' && createdAtMs > 0
+    ? Math.max(0, now - createdAtMs) / 60_000
+    : 15;
+  const allowance = ageMin <= 10
+    ? 20
+    : ageMin <= 30
+      ? 20 - ((ageMin - 10) / 20) * 12
+      : ageMin <= 60
+        ? 8 - ((ageMin - 30) / 30) * 4
+        : 4;
+  if (ratio <= allowance) return 1;
+  return Math.max(0.12, 1 / Math.sqrt(ratio / allowance));
+};
+
 const resolveMemeFlowRankMeta = (
   row: MarketTokenRow,
-  context: {
-    kolValues: number[];
-    smartMoneyValues: number[];
-    holderValues: number[];
-  },
   tt: (key: string, subs?: Array<string | number>) => string,
+  now = Date.now(),
 ): MemeFlowRankMeta => {
-  const kolScore = getPercentileScore(row.kol, context.kolValues);
-  const smartMoneyScore = getPercentileScore(row.smartMoney, context.smartMoneyValues);
-  const holderScore = getPercentileScore(row.holders, context.holderValues);
-  const kolDelta = getFiniteDelta(row.kol, row.prevKol);
-  const smartMoneyDelta = getFiniteDelta(row.smartMoney, row.prevSmartMoney);
-  const holderDelta = getFiniteDelta(row.holders, row.prevHolders);
-  const kolGrowthScore = getPositiveGrowthScore(row.kol, row.prevKol);
-  const smartMoneyGrowthScore = getPositiveGrowthScore(row.smartMoney, row.prevSmartMoney);
-  const holderGrowthScore = getPositiveGrowthScore(row.holders, row.prevHolders);
-
-  const hasKolSignal = (typeof row.kol === 'number' && row.kol > 0) || kolDelta > 0;
-  const hasSmartMoneySignal = (typeof row.smartMoney === 'number' && row.smartMoney > 0) || smartMoneyDelta > 0;
-  const hasSmartEntrySignal = hasKolSignal || hasSmartMoneySignal;
-
-  // 发酵看的是“聪明钱/KOL 已开始介入，且市值仍处早期或刚回调”的第一入场点。
-  const smartMoneyLeadScore =
-    kolGrowthScore * 0.28 +
-    smartMoneyGrowthScore * 0.28 +
-    kolScore * 0.22 +
-    smartMoneyScore * 0.22;
-  const smartMoneySynergy =
-    kolDelta > 0 && smartMoneyDelta > 0
-      ? 0.14
-      : hasKolSignal && hasSmartMoneySignal
-        ? 0.08
-        : kolDelta > 0 || smartMoneyDelta > 0
-          ? 0.05
-          : 0;
+  const kol = finiteWalletCount(row.kol);
+  const smart = finiteWalletCount(row.smartMoney);
+  const burst = summarizeWalletEntries(row.walletEntries, now);
   const earlyMarketCapScore = getEarlyMarketCapScore(row.marketCapUsd);
-  const volumeMarketCapRatio = getVolumeToMarketCapRatio(row.vol24hUsd, row.marketCapUsd);
-  const prevVolumeMarketCapRatio = getVolumeToMarketCapRatio(row.prevVol24hUsd, row.prevMarketCapUsd ?? row.marketCapUsd);
-  const volumeMarketCapFitScore = getVolumeMarketCapFitScore(volumeMarketCapRatio);
-  const volumeMarketCapTrendPenalty = getVolumeMarketCapTrendPenalty(
-    volumeMarketCapRatio,
-    prevVolumeMarketCapRatio,
-    row.marketCapDirection,
-  );
-  const volumeMarketCapExhausted = volumeMarketCapRatio != null && volumeMarketCapRatio >= 3.5;
-  const pullbackScore = (() => {
-    if (
-      row.marketCapDirection !== 'down' ||
-      typeof row.prevMarketCapUsd !== 'number' ||
-      !Number.isFinite(row.prevMarketCapUsd) ||
-      typeof row.marketCapUsd !== 'number' ||
-      !Number.isFinite(row.marketCapUsd) ||
-      row.prevMarketCapUsd <= row.marketCapUsd
-    ) return 0;
-    const dropRatio = (row.prevMarketCapUsd - row.marketCapUsd) / Math.max(row.prevMarketCapUsd, 1);
-    if (dropRatio < 0.04) return 0;
-    return Math.max(0, Math.min(1, dropRatio * 2.5));
-  })();
-  const pullbackEntryScore = pullbackScore > 0 && hasSmartEntrySignal
-    ? pullbackScore * (0.55 + smartMoneyLeadScore * 0.45)
-    : 0;
-  const holderConfirmScore = holderGrowthScore * 0.65 + holderScore * 0.35;
-  const hollowHeatPenalty =
-    (typeof row.viewerCount === 'number' && row.viewerCount >= 80) &&
-    !hasSmartEntrySignal &&
-    earlyMarketCapScore < 0.5
-      ? 0.18
-      : 0;
-  const riskPenalty =
-    (row.devHasSold && !hasSmartEntrySignal && holderGrowthScore <= 0 ? 0.1 : 0) +
-    ((typeof row.devHoldPercent === 'number' && row.devHoldPercent >= 10) ? 0.12 : 0) +
-    ((typeof row.top10HoldRatio === 'number' && row.top10HoldRatio >= 0.35) ? 0.08 : 0);
-
-  let score =
-    smartMoneyLeadScore * 0.34 +
-    smartMoneySynergy +
-    earlyMarketCapScore * 0.18 +
-    volumeMarketCapFitScore * 0.24 +
-    pullbackEntryScore * 0.12 +
-    holderConfirmScore * 0.06 -
-    riskPenalty -
-    hollowHeatPenalty -
-    volumeMarketCapTrendPenalty;
-  if (!hasSmartEntrySignal) score *= 0.18;
-  if (volumeMarketCapExhausted) score *= 0.72;
-
-  const reasonCandidates = [
-    { label: tt('contentUi.xMonitor.memeFlowReason.kolIn'), weight: kolDelta > 0 ? kolGrowthScore + 0.22 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.smartMoneyIn'), weight: smartMoneyDelta > 0 ? smartMoneyGrowthScore + 0.22 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.kolIn'), weight: kolScore >= 0.55 && hasKolSignal ? kolScore + 0.12 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.smartMoneyIn'), weight: smartMoneyScore >= 0.55 && hasSmartMoneySignal ? smartMoneyScore + 0.12 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.earlyMc'), weight: earlyMarketCapScore >= 0.72 ? earlyMarketCapScore + 0.16 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.volMcHealthy'), weight: volumeMarketCapFitScore >= 0.88 ? volumeMarketCapFitScore + 0.14 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.volMcExhausted'), weight: volumeMarketCapExhausted ? 0.2 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.pullback'), weight: pullbackEntryScore > 0 ? pullbackEntryScore + 0.18 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.holderUp'), weight: holderDelta > 0 && hasSmartEntrySignal ? holderGrowthScore + 0.1 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.devOut'), weight: row.devHasSold && !hasSmartEntrySignal ? riskPenalty + 0.04 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.devHigh'), weight: typeof row.devHoldPercent === 'number' && row.devHoldPercent >= 10 ? riskPenalty + 0.08 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.topHeavy'), weight: typeof row.top10HoldRatio === 'number' && row.top10HoldRatio >= 0.35 ? riskPenalty + 0.06 : 0 },
-    { label: tt('contentUi.xMonitor.memeFlowReason.hollowHeat'), weight: hollowHeatPenalty > 0 ? hollowHeatPenalty : 0 },
-  ]
-    .filter((item) => item.weight > 0)
-    .sort((a, b) => b.weight - a.weight);
-
+  const ageWeight = getPoolAgeWeight(row.createdAtMs, now);
+  const churnWeight = getChurnWeight(row.vol24hUsd, row.marketCapUsd, row.createdAtMs, now);
+  const stock = shapeWalletCount(kol + smart) * ageWeight * churnWeight;
+  const score = (stock + burst.shaped) * earlyMarketCapScore;
+  const reason = [
+    churnWeight < 0.6 ? tt('contentUi.xMonitor.memeFlowReason.volMcExhausted') : '',
+    smart > 0 || burst.smart > 0 ? tt('contentUi.xMonitor.memeFlowReason.smartMoneyIn') : '',
+    kol > 0 || burst.kol > 0 ? tt('contentUi.xMonitor.memeFlowReason.kolIn') : '',
+    earlyMarketCapScore >= 0.9 && ageWeight >= 0.8 && churnWeight >= 0.8 && kol + smart + burst.shaped > 0
+      ? tt('contentUi.xMonitor.memeFlowReason.earlyMc')
+      : '',
+  ].filter(Boolean).slice(0, 2).join(' / ');
   return {
     score,
-    reason: Array.from(new Set(reasonCandidates.map((item) => item.label))).slice(0, 2).join(' / '),
+    latestAtMs: burst.latestAtMs,
+    reason,
   };
 };
 
@@ -1853,31 +1799,17 @@ export function NewPoolMonitorContent({
     [scopedTokens]
   );
   const memeFlowTokens = useMemo(() => {
-    const holderValues = buildSortedMetricValues(scopedTokens, (row) => row.holders);
-    const kolValues = buildSortedMetricValues(scopedTokens, (row) => row.kol);
-    const smartMoneyValues = buildSortedMetricValues(scopedTokens, (row) => row.smartMoney);
+    const now = Date.now();
     return scopedTokens
       .map((row) => ({
         row,
-        meta: resolveMemeFlowRankMeta(
-          row,
-          { holderValues, kolValues, smartMoneyValues },
-          tt,
-        ),
+        meta: resolveMemeFlowRankMeta(row, tt, now),
       }))
+      .filter((item) => item.meta.score > 0)
       .sort((a, b) => {
         if (b.meta.score !== a.meta.score) return b.meta.score - a.meta.score;
-        const earlyMcDiff = getEarlyMarketCapScore(b.row.marketCapUsd) - getEarlyMarketCapScore(a.row.marketCapUsd);
-        if (earlyMcDiff !== 0) return earlyMcDiff;
-        const volMcDiff =
-          getVolumeMarketCapFitScore(getVolumeToMarketCapRatio(b.row.vol24hUsd, b.row.marketCapUsd)) -
-          getVolumeMarketCapFitScore(getVolumeToMarketCapRatio(a.row.vol24hUsd, a.row.marketCapUsd));
-        if (volMcDiff !== 0) return volMcDiff;
-        const smartDiff =
-          ((b.row.smartMoney ?? 0) + (b.row.kol ?? 0)) -
-          ((a.row.smartMoney ?? 0) + (a.row.kol ?? 0));
-        if (smartDiff !== 0) return smartDiff;
-        return compareByMarketCapDesc(a.row, b.row);
+        if (b.meta.latestAtMs !== a.meta.latestAtMs) return b.meta.latestAtMs - a.meta.latestAtMs;
+        return (b.row.createdAtMs ?? 0) - (a.row.createdAtMs ?? 0);
       });
   }, [scopedTokens, tt]);
   const globalHotTokensForDisplay = useMemo(() => {
@@ -2005,7 +1937,7 @@ export function NewPoolMonitorContent({
                 </div>
               ) : null}
               <span>
-                {viewMode === 'memeFlow' ? '早期优先' : viewMode === 'globalHot' ? '热度优先' : '分组视图'}
+                {viewMode === 'memeFlow' ? '发酵分' : viewMode === 'globalHot' ? '热度优先' : '分组视图'}
               </span>
             </div>
           </div>
